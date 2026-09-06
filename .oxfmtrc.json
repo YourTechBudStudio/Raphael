@@ -1,0 +1,23 @@
+{
+  "ignorePatterns": [
+    "node_modules",
+    "dist",
+    "out",
+    "build",
+    "release",
+    ".expo",
+    ".next",
+    ".turbo",
+    "coverage",
+    ".agents",
+    ".pi"
+  ],
+  "semi": true,
+  "singleQuote": true,
+  "sortImports": {
+    "internalPattern": ["@yourtechbudstudio/raphael-"]
+  },
+  "sortPackageJson": {
+    "sortScripts": true
+  }
+}

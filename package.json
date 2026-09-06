@@ -1,0 +1,27 @@
+{
+  "name": "raphael",
+  "version": "0.0.0",
+  "private": true,
+  "description": "An actionable second brain for agents, organized with PARA and CODE.",
+  "author": "YourTechBud",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm format:check",
+    "fix": "pnpm lint:fix && pnpm format",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint . --threads=8 --deny-warnings --no-error-on-unmatched-pattern",
+    "lint:fix": "oxlint . --threads=8 --fix --no-error-on-unmatched-pattern",
+    "test": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck"
+  },
+  "devDependencies": {
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:"
+  },
+  "engines": {
+    "node": ">=26 <27"
+  },
+  "packageManager": "pnpm@12.3.4+sha512.961aa41fb077da3a04a441d9f8e15ebc0c96da8ef710b2eb67bf9ee7cb0610eabd48f1fd85f51cffe73846785fa0f87c56a3a872a1d893f8446741b5cce45457"
+}

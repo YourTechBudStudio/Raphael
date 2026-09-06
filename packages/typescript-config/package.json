@@ -1,0 +1,26 @@
+{
+  "name": "@yourtechbudstudio/raphael-typescript-config",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "base.json",
+    "bundler.json",
+    "node.json",
+    "react.json"
+  ],
+  "type": "module",
+  "exports": {
+    "./base.json": "./base.json",
+    "./bundler.json": "./bundler.json",
+    "./node.json": "./node.json",
+    "./react.json": "./react.json"
+  },
+  "scripts": {
+    "check": "pnpm typecheck",
+    "typecheck": "node scripts/check.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "typescript": "catalog:"
+  }
+}
