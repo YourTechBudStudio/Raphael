@@ -1,14 +1,18 @@
 # Documentation
 
-Raphael's documentation separates product intent, architectural decisions, and engineering guidance. Product descriptions express intended behavior, not a claim that the features are implemented.
+Raphael's documentation separates product intent, architectural decisions, and engineering guidance. Product and architecture descriptions express intended behavior and agreed boundaries, not a claim that the features are implemented.
 
 ## Understand the product
 
 Start with [Product](./product/README.md) for Raphael's purpose, organizational model, and the relationship between captured thoughts and externally managed work.
 
+## Understand the architecture
+
+Read [Architecture](./architecture/README.md) for conceptual system boundaries, entity relationships, and operation ownership. These documents do not prescribe implementation mechanisms. Dedicated extension documentation will follow in a later phase.
+
 ## Understand decisions
 
-[Architecture decision records](./adrs/README.md) preserve consequential decisions and their rationale. The index is currently empty; architecture and extension documentation will follow in later documentation phases.
+[Architecture decision records](./adrs/README.md) explain the authority decisions behind retrieval and search, mutations, and archive/restore. Use them for rationale and consequences rather than as an implementation guide.
 
 ## Apply engineering guidance
 
