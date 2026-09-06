@@ -35,7 +35,7 @@ Core storage ownership does not make Raphael authoritative for every synchronize
 
 Extensions are trusted backend code installed by the operator. They participate through a stable extension interface rather than replacing the core entity model or universal retrieval APIs.
 
-Extensions can contribute resource kinds, settings, webhook/API handlers, reconciliation behavior, and optional search or mutation hooks. These capabilities do not require every extension to implement every operation. Core functionality remains useful without any extensions installed.
+Extensions can contribute resource kinds, settings, webhook/API handlers, reconciliation behavior, and optional search or mutation hooks. These capabilities do not require every extension to implement every operation. Core functionality remains useful without any extensions installed. See [Model and capabilities](../extensions/model-and-capabilities.md) for the extension-facing overview.
 
 An installed extension being unavailable is different from no extension being configured. Core must retain awareness of applicable mutation restrictions rather than silently relaxing them when extension code cannot be reached.
 

@@ -49,4 +49,4 @@ See [ADR 0003](../adrs/0003-archive-and-restore-authority.md) for the overlappin
 
 ## Open contracts
 
-Exact API paths, payloads, concurrency preconditions, search ranking and pagination, authorization policy, hook delivery and retries, and behavior when moving archived subtrees remain unspecified. The architecture defines ownership without treating these mechanisms as settled.
+Exact API paths, payloads, concurrency preconditions, search ranking and pagination, authorization policy, hook delivery and retries, and behavior when moving archived subtrees remain unspecified. The architecture defines ownership without treating these mechanisms as settled. [Extension hooks](../extensions/hooks.md) describe participation and failure behavior from the extension author's perspective.
