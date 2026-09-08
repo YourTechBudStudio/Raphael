@@ -5,11 +5,11 @@
     "version": "0.0.0",
     "icon": "./assets/images/icon.png",
     "scheme": "raphael",
-    "userInterfaceStyle": "dark",
-    "backgroundColor": "#24273a",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#f8f6fc",
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#24273a",
+        "backgroundColor": "#f8f6fc",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       }
@@ -23,7 +23,7 @@
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#24273a",
+          "backgroundColor": "#f8f6fc",
           "image": "./assets/images/android-icon-foreground.png",
           "imageWidth": 200
         }

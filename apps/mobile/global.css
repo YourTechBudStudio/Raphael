@@ -1,2 +1,32 @@
 @import 'tailwindcss';
 @import 'uniwind';
+
+@theme {
+  --color-canvas: #f8f6fc;
+  --color-card: #f1ecfa;
+  --color-card-warm: #faf5f2;
+  --color-wave: #e9e1f5;
+  --color-wave-warm: #efe3ea;
+  --color-line: #ded5ef;
+  --color-ink: #24134f;
+  --color-ink-soft: #635580;
+  --color-primary: #5b3fc8;
+  --color-primary-soft: #ebe5fb;
+  --color-lilac: #a18ade;
+  --color-lilac-deep: #7d63d6;
+  --color-peach: #ffd0b8;
+  --color-peach-deep: #f4b596;
+  --color-scrim: rgba(36, 19, 79, 0.32);
+  --color-on-primary: #ffffff;
+  --color-danger: #b3261e;
+
+  --font-heading: 'Sora_600SemiBold';
+  --font-heading-bold: 'Sora_700Bold';
+  --font-body: 'SourceSans3_400Regular';
+  --font-body-medium: 'SourceSans3_500Medium';
+  --font-body-semibold: 'SourceSans3_600SemiBold';
+
+  --radius-card: 20px;
+  --radius-tile: 18px;
+  --radius-sheet: 28px;
+}
