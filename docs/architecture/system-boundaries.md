@@ -1,6 +1,6 @@
 # System boundaries
 
-Raphael provides a consistent organizational model for locally captured context and externally managed work. The architecture describes ownership independently of deployment, storage technology, or client framework.
+Raphael provides a consistent organizational model for locally captured context and externally managed work. The architecture separates core guarantees from client and integration behavior.
 
 ## Moving pieces
 
@@ -14,7 +14,7 @@ flowchart LR
     Agents -->|Follow returned references separately| External
 ```
 
-Clients and agents access the same organizational meaning. A path-oriented CLI is an intended interface to Raphael, not a separate source of truth. Reading an external reference through Raphael does not automatically retrieve its external content.
+[Runtime and access](./runtime-and-access.md) defines the single-owner server and client boundary; [Capture and media](./capture-and-media.md) defines local drafts and server-owned attachments. Clients and agents access the same organizational meaning. A path-oriented CLI is an intended interface to Raphael, not a separate source of truth. Reading an external reference through Raphael does not automatically retrieve its external content.
 
 ## Responsibility ownership
 
@@ -43,6 +43,6 @@ Core uses Turso with Drizzle ([ADR 0004](../adrs/0004-canonical-data-and-address
 
 ## Deliberately unspecified
 
-The extension loading mechanism, process topology, and private extension storage boundaries remain undecided. So do settings schemas, route registration details, and custom rendering mechanisms. Durable post-commit delivery is defined in [ADR 0002](../adrs/0002-mutation-authority.md); hook scheduling and ordering remain open. Trusted installation does not settle those choices.
+Extension loading, extension process isolation, private storage boundaries, settings schemas, route registration mechanisms, and custom rendering remain undecided. Durable post-commit delivery is defined in [ADR 0002](../adrs/0002-mutation-authority.md); hook scheduling and ordering remain open. Trusted installation does not settle those choices.
 
 See [Entities and relationships](./entities-and-relationships.md) for the organizational model and [Operations and lifecycle](./operations-and-lifecycle.md) for API boundaries.

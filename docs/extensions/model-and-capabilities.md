@@ -1,12 +1,12 @@
 # Model and capabilities
 
-An extension adds domain-specific behavior to Raphael's core organizational model. It does not replace areas, projects, resources, or the APIs that retrieve their stored representations.
+An extension adds domain-specific behavior to Raphael's core organizational model. Resource kinds, including the built-in note kind, are extensions; areas and projects remain core concepts. Extensions do not replace the entity model or universal retrieval APIs.
 
 ## Trust boundary
 
 Extensions are trusted backend code installed by the operator in their own backend. This is not a third-party marketplace or an untrusted-code sandbox model.
 
-Extensions participate through a stable interface. Trust does not remove responsibility for validating external input, protecting credentials, or keeping failures understandable. An authenticated installation does not make incoming webhook payloads trustworthy.
+Extensions use the same core operations and validation as clients through Raphael's internal SDK. Hooks grant bounded participation, not arbitrary writes to core records. Extensions do not change CLI behavior. Trust does not remove responsibility for validating external input, protecting credentials, or keeping failures understandable. An authenticated installation does not make incoming webhook payloads trustworthy.
 
 ## Optional contributions
 
