@@ -6,7 +6,7 @@ Areas, projects, and resources are distinct entity types. Their product meanings
 
 Areas can contain subareas, projects, and resources. Every project belongs to one area. Every resource has exactly one immediate parent, either an area or a project. Core protects valid parentage and prevents area cycles.
 
-An entity's identity is independent of its title and location. Moving or renaming it does not create a different entity. Including descendant resources in an area's view does not change their immediate parents.
+An entity's identity is independent of its title and location. Moving or renaming it does not create a different entity. Including descendant resources in an area's view does not change their immediate parents. [ADR 0004](../adrs/0004-canonical-data-and-addressing.md) defines stable parent references, sibling-unique slugs, computed paths, and the virtual root.
 
 ## Separate relationships
 
@@ -47,4 +47,4 @@ The same repository may have separate anchors in different areas, producing inte
 
 Resources have a kind and a stored representation that can contain local content, copied external content, a summary, or a reference. Core owns common identity, hierarchy, and lifecycle information; extensions own their custom metadata and mapping policy.
 
-No table layout, metadata schema, external-reference format, or dynamic body/rendering format is prescribed here.
+All entity types use canonical TipTap bodies with core-owned Markdown conversion and search extraction; see [ADR 0005](../adrs/0005-canonical-content-and-search.md). Table layout, metadata schemas, and external-reference formats are not prescribed here.

@@ -39,8 +39,10 @@ Extensions can contribute resource kinds, settings, webhook/API handlers, reconc
 
 An installed extension being unavailable is different from no extension being configured. Core must retain awareness of applicable mutation restrictions rather than silently relaxing them when extension code cannot be reached.
 
+Core uses Turso with Drizzle ([ADR 0004](../adrs/0004-canonical-data-and-addressing.md)) and owns Pi-backed AI capabilities and provider routing ([ADR 0006](../adrs/0006-ai-capability-ownership.md)). Extensions consume those capabilities through Raphael's interface.
+
 ## Deliberately unspecified
 
-The extension loading mechanism, process topology, database technology, and private extension storage boundaries remain undecided. So do settings schemas, route registration details, and custom rendering mechanisms. Durable post-commit delivery is defined in [ADR 0002](../adrs/0002-mutation-authority.md); hook scheduling and ordering remain open. Trusted installation does not settle those choices.
+The extension loading mechanism, process topology, and private extension storage boundaries remain undecided. So do settings schemas, route registration details, and custom rendering mechanisms. Durable post-commit delivery is defined in [ADR 0002](../adrs/0002-mutation-authority.md); hook scheduling and ordering remain open. Trusted installation does not settle those choices.
 
 See [Entities and relationships](./entities-and-relationships.md) for the organizational model and [Operations and lifecycle](./operations-and-lifecycle.md) for API boundaries.

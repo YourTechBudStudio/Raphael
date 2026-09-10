@@ -40,6 +40,6 @@ Extension loading, process boundaries, lifecycle registration, configuration sch
 
 Core records and extension metadata are the baseline representation. Whether extensions can have private schemas or separate databases, and how those are isolated or migrated, remains open; extensions are not being granted unrestricted changes to core storage.
 
-Custom renderers, dynamic blocks, and arbitrary HTML are not settled capabilities. A resource kind can inform future presentation, but these documents do not choose a rendering format or native/web integration mechanism.
+Bodies follow the core document schema in [ADR 0005](../adrs/0005-canonical-content-and-search.md); custom renderers and arbitrary extension-defined blocks are not settled capabilities. Shared AI operations follow [ADR 0006](../adrs/0006-ai-capability-ownership.md), without exposing Pi or provider credentials to extensions.
 
 Continue with [Responsibilities](./responsibilities.md) and [Hooks](./hooks.md).
