@@ -18,8 +18,8 @@ Keys travel in authorization headers over HTTPS outside local connections, not i
 
 AI provider authentication is separate from client access and delegates to Pi, as defined in [ADR 0006](../adrs/0006-ai-capability-ownership.md).
 
-## Initial backend direction
+## Runtime direction
 
-Use Express, Turso Database (the Rust rewrite, not libSQL), and Drizzle. Turso's Tantivy-backed search indexes title, description, and body text with descending field priority. Verify the selected driver/engine combination for recursive hierarchy queries, JSON filtering, transactions, and FTS rather than assuming SQLite feature parity.
+Use Express, embedded SQLite with FTS5, and Drizzle. SQLite avoids a separate database service and supports recursive hierarchy queries. Search weights title above description above body text. Writes are serialized; keep transactions short and external processing outside them.
 
-Start all AI capabilities with ChatGPT subscription authentication. Transcription follows Toph's adapter approach against a ChatGPT backend endpoint, not the public OpenAI transcription API or a built-in Pi feature. Pi auth/storage integration and endpoint compatibility require verification. These integration choices do not alter the authority boundaries in the ADRs.
+Mobile hosts bundled TipTap through `react-native-webview` and uses Expo SQLite for local drafts. Prototype validation does not replace production device and accessibility testing.

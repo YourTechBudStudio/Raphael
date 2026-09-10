@@ -1,6 +1,6 @@
 # Architecture
 
-These documents describe agreed conceptual boundaries, not an implemented system or an implementation specification.
+These documents describe agreed conceptual boundaries, not implementation status or milestone scope.
 
 1. [System boundaries](./system-boundaries.md) — moving pieces and responsibility ownership.
 2. [Entities and relationships](./entities-and-relationships.md) — hierarchy, external bindings, integration anchors, and managed placement.
