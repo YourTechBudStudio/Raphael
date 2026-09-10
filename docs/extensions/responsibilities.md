@@ -27,7 +27,7 @@ Stable external identity permits reconnection without relying on titles. A mappi
 
 ## Synchronization and lifecycle policy
 
-An extension can block a controlled change and direct the caller to its canonical source, or allow local updates and synchronize them afterward. It owns external conflict resolution, retry policy, and loop prevention. Core revisions alone cannot order concurrent changes across systems.
+An extension can block a controlled change and direct the caller to its canonical source, or allow local updates and synchronize them afterward. It owns external conflict resolution, replay-safe effects, and loop prevention; core provides durable post-commit delivery. Core revisions alone cannot order concurrent changes across systems.
 
 Extensions decide whether external events independently warrant archive or restoration. They request addition or withdrawal of their own cause; core applies the corresponding descendant cascade. They must not clear unrelated causes or restore archived work merely because the external object still exists.
 

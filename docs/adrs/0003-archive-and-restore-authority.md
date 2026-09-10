@@ -12,15 +12,17 @@ Extensions may also identify independent external reasons for archiving while an
 
 ## Decision
 
-Raphael has no delete operation. It archives entities while retaining their data and relationships. Archiving an area or project also archives its descendants.
+Raphael archives areas, projects, and resources rather than deleting them, retaining their data, relationships, and reserved sibling slugs.
 
-Archive causes are additive: direct action, a cascade from an ancestor's archive operation, or an independent extension-owned reason. An entity remains archived while any applicable cause remains.
+Core stores explicit user or extension-owned causes on their originating entities. Effective archive status is derived from causes on the entity and its current ancestors; inherited causes are not duplicated onto descendants. Any applicable cause keeps the entity archived.
 
-Restoration removes a particular archive cause and the descendant cascade attributable to it. It does not remove independent causes, including those added after the original cascade. Independently archiving an area or project introduces its own descendant cascade even when that entity is already archived for another reason.
+Ordinary restore removes the target's direct user cause, not inherited or extension-owned causes. Repeated user archive requests do not accumulate duplicate direct causes. Extensions add or withdraw their own independent causes. Removing an ancestor's cause restores descendants only where no other cause remains.
 
 Core owns cascade correctness. Extensions decide when their own reasons apply or cease to apply, then request their addition or withdrawal; they do not manually restore all descendants. This ADR does not prescribe whether reopening a GitHub issue should trigger restoration.
 
 Extensions cannot veto archive or restore. They may register post-commit reactions, but extension unavailability or notification failure does not block or undo the core lifecycle operation.
+
+Updates to effectively archived entities are blocked. Moves are blocked when the target has any direct cause, but an entity archived only through ancestors may move to an active parent, optionally changing its slug in the same operation. Its subtree moves intact; independent descendant causes remain. Creating children in or moving entities into archived containers is forbidden. Archive and restore remain available under core lifecycle rules.
 
 ## Example
 
@@ -35,10 +37,10 @@ A note with an additional independent cause would remain archived after the fina
 
 ## Consequences
 
-- Cause identity and cascade attribution are part of the core lifecycle model, regardless of how they are stored.
+- Cause identity and ownership explain archive status without maintaining descendant cause copies.
 - Ordinary external reconciliation must not revive an archived entity simply because the external object still exists.
 - An archive notification alone is not an independent reason to permanently archive the same entity. Extensions must avoid converting reactions into self-sustaining archive loops.
 - Archive and restore remain subject to core correctness and authorization even though extensions have no veto.
-- Cause storage, lifecycle concurrency, and how moves interact with existing causes remain unspecified.
+- Moving out of archived ancestry removes inherited archiving without restoring the former parent. Revision checks and current-state validation follow [ADR 0002](./0002-mutation-authority.md).
 
 See [Operations and lifecycle](../architecture/operations-and-lifecycle.md) for how this exception fits the mutation model.

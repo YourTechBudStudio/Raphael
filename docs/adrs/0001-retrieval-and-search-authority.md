@@ -14,7 +14,9 @@ Universal retrieval must also remain dependable when extensions are absent or un
 
 Core exclusively owns Get and List. They return stored Raphael entities and never invoke extensions to enrich or retrieve them. Callers can use stored references to fetch external content separately.
 
-Search is always scoped, for example to an area or project with the requested descendant inclusion. Core searches stored context and implicitly invokes optional search hooks for relevant extensions present within that scope.
+List and Search exclude effectively archived entities by default, including those archived through ancestors. Get remains available and reports computed archive status and its causes.
+
+Search is always scoped, for example to an area or project with the requested descendant inclusion. Core owns full-text indexing of titles, descriptions, and text derived from stored bodies, and implicitly invokes optional search hooks for relevant extensions present within that scope.
 
 Extension matches must correspond to existing Raphael entities in scope. Search does not discover unregistered external objects. Core merges matches using Raphael identity, not merely a shared external URL.
 
@@ -24,9 +26,9 @@ An extension may copy searchable content into core records instead of implementi
 
 - Get and List remain independent of external availability, but their bodies may not contain the content that caused an external search match.
 - Search results need sufficient match context and source attribution to explain that distinction.
-- Search failures from participating sources must be reported as incomplete coverage, not disguised as no matches.
+- Search failures from participating sources must be reported as incomplete coverage, independently of pagination or whether any matches were found.
 - Core needs a recognizable declaration of extension presence and scoped entity association; entirely opaque metadata cannot support routing by itself.
 - A repository anchor does not imply that every issue in its repository is registered or searchable.
-- Search ranking, pagination, deadlines, and result payloads remain design work, not decisions in this ADR.
+- Query syntax, ranking, pagination mechanics, and payloads belong in API contracts rather than this authority decision.
 
 See [Operations and lifecycle](../architecture/operations-and-lifecycle.md) for the surrounding API model.

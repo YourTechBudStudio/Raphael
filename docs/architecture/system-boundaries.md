@@ -41,6 +41,6 @@ An installed extension being unavailable is different from no extension being co
 
 ## Deliberately unspecified
 
-The extension loading mechanism, process topology, database technology, and private extension storage boundaries remain undecided. So do settings schemas, route registration details, custom rendering mechanisms, and hook delivery guarantees. Trusted installation does not settle those choices.
+The extension loading mechanism, process topology, database technology, and private extension storage boundaries remain undecided. So do settings schemas, route registration details, and custom rendering mechanisms. Durable post-commit delivery is defined in [ADR 0002](../adrs/0002-mutation-authority.md); hook scheduling and ordering remain open. Trusted installation does not settle those choices.
 
 See [Entities and relationships](./entities-and-relationships.md) for the organizational model and [Operations and lifecycle](./operations-and-lifecycle.md) for API boundaries.

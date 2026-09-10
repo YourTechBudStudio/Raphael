@@ -10,15 +10,15 @@ Extensions participate through a stable interface. Trust does not remove respons
 
 ## Optional contributions
 
-| Capability            | Purpose                                                             | Boundary                                                           |
-| --------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Resource kinds        | Represent domain-specific content or references                     | Areas and projects remain distinct core entity types               |
-| Settings              | Declare integration configuration for Raphael's settings experience | Settings schemas and registration mechanisms are not yet specified |
-| Webhook/API handlers  | Receive integration-specific requests through Raphael               | Does not replace core Get/List APIs                                |
-| Search hooks          | Search external content associated with registered entities         | Must respect the scope supplied by core                            |
-| Mutation checks       | Reject controlled changes or direct callers to the canonical source | Cannot veto archive or restore                                     |
-| Post-commit reactions | Synchronize accepted changes or react to lifecycle events           | Failure does not reverse the committed core operation              |
-| Reconciliation        | Maintain external mappings and declared placement                   | Core protects hierarchy and lifecycle correctness                  |
+| Capability            | Purpose                                                             | Boundary                                                                                          |
+| --------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| Resource kinds        | Represent domain-specific content or references                     | Areas and projects remain distinct core entity types                                              |
+| Settings              | Declare integration configuration for Raphael's settings experience | Settings schemas and registration mechanisms are not yet specified                                |
+| Webhook/API handlers  | Receive integration-specific requests through Raphael               | Does not replace core Get/List APIs                                                               |
+| Search hooks          | Search external content associated with registered entities         | Must respect the scope supplied by core                                                           |
+| Mutation checks       | Reject controlled changes or direct callers to the canonical source | Cannot veto archive or restore                                                                    |
+| Post-commit reactions | Synchronize accepted changes or react to lifecycle events           | Durable, retryable delivery; repeated execution must be safe; failure does not reverse the commit |
+| Reconciliation        | Maintain external mappings and declared placement                   | Core protects hierarchy and lifecycle correctness                                                 |
 
 An extension need not implement every capability. A kind that stores only an external reference is still useful to people and agents without live search or custom rendering.
 

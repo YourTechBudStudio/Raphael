@@ -4,13 +4,13 @@ Hooks contribute behavior at explicit core boundaries. This document defines con
 
 ## Participation
 
-| Operation         | Participation                  | If the participating extension is unavailable |
-| ----------------- | ------------------------------ | --------------------------------------------- |
-| Get / List        | None                           | Stored retrieval remains available            |
-| Search            | Optional relevant search hooks | Report incomplete source coverage             |
-| Create / Update   | Applicable pre-mutation checks | Required checks fail closed; no mutation      |
-| Committed changes | Optional post-commit reactions | Do not undo the local commit                  |
-| Archive / Restore | Post-commit reactions only     | Do not block or undo the lifecycle operation  |
+| Operation              | Participation                  | If the participating extension is unavailable |
+| ---------------------- | ------------------------------ | --------------------------------------------- |
+| Get / List             | None                           | Stored retrieval remains available            |
+| Search                 | Optional relevant search hooks | Report incomplete source coverage             |
+| Create / Update / Move | Applicable pre-mutation checks | Required checks fail closed; no mutation      |
+| Committed changes      | Optional post-commit reactions | Do not undo the local commit                  |
+| Archive / Restore      | Post-commit reactions only     | Do not block or undo the lifecycle operation  |
 
 ## Search
 
@@ -23,7 +23,7 @@ Core merges matches by Raphael identity. A source failure is not a successful se
 ## Pre-mutation checks and post-commit reactions
 
 ```text
-Create or update
+Create, update, or move
   Core validation + applicable extension checks
     Reject or required extension unavailable → error; no mutation
     Accept → core commit
@@ -46,8 +46,8 @@ Extensions cannot veto archive or restore, including cascades affecting entities
 
 A reaction may request a separate lifecycle change when there is an independent reason. The extension adds or withdraws its own archive cause rather than manually changing every descendant. Withdrawing that cause does not force an entity active if another cause remains. See [ADR 0003](../adrs/0003-archive-and-restore-authority.md).
 
-## Unresolved guarantees
+## Delivery guarantees
 
-Hook registration formats, timeouts, cancellation, multi-hook ordering, delivery durability, replay, and retry guarantees remain unspecified. No exactly-once notification or automatic retry contract is implied.
+Core durably records post-commit work alongside the mutation and retries failed invocations. Hooks receive stable invocation identity and must tolerate repeated execution; external effects are not exactly-once. Exhausted failures remain diagnosable without reversing committed data. Pre-mutation and search hooks do not use this durable delivery model. See [ADR 0002](../adrs/0002-mutation-authority.md).
 
-Mutation origin, recursion safeguards, concurrency preconditions, search pagination, and authorization details also require later design. The settled distinction is between a failed precondition, incomplete search, and a failed reaction to an already committed operation.
+Registration, ordering, timeouts, retry policy, mutation origin, and recursion safeguards require implementation contracts.
