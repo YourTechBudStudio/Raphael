@@ -47,4 +47,4 @@ The same repository may have separate anchors in different areas, producing inte
 
 Resources have a kind and a stored representation that can contain local content, copied external content, a summary, or a reference. Core owns common identity, hierarchy, and lifecycle information; extensions own their custom metadata and mapping policy.
 
-All entity types use canonical TipTap bodies with core-owned Markdown conversion and search extraction; see [ADR 0005](../adrs/0005-canonical-content-and-search.md). Table layout, metadata schemas, and external-reference formats are not prescribed here.
+All entity types use canonical TipTap bodies with core-owned Markdown conversion and search extraction; see [ADR 0005](../adrs/0005-canonical-content-and-search.md). [ADR 0007](../adrs/0007-shared-node-storage.md) defines a shared `nodes` table for common fields and hierarchy, with linked tables for specialized entity-type or extension data when needed. Exact metadata schemas and external-reference formats remain unspecified.

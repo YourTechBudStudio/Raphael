@@ -10,5 +10,6 @@ ADRs preserve consequential architectural decisions, their context, and their co
 | [0004](./0004-canonical-data-and-addressing.md)  | Stable identity, parent references, and computed paths | Accepted |
 | [0005](./0005-canonical-content-and-search.md)   | Canonical TipTap bodies and core multi-field search    | Accepted |
 | [0006](./0006-ai-capability-ownership.md)        | Pi-backed AI capabilities and central provider routing | Accepted |
+| [0007](./0007-shared-node-storage.md)           | Shared node storage for areas, projects and resources with specialized data tables       | Accepted |
 
 Read the [architecture overview](../architecture/README.md) for the connected model, or return to the [documentation guide](../README.md).

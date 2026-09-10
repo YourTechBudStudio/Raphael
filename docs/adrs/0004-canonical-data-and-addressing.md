@@ -17,7 +17,7 @@ Accept paths and IDs as selectors for the same core operations. Full paths are c
 ## Consequences
 
 - Moves and slug changes preserve identity and descendant parent references, but change addresses; callers needing durable references use IDs.
-- This decision does not prescribe shared versus separate entity tables.
+- [ADR 0007](./0007-shared-node-storage.md) resolves the storage layout: a shared node table with linked specialized data tables when needed.
 - These identity and hierarchy guarantees are independent of the selected database and ORM; see [Runtime and access](../architecture/runtime-and-access.md) for the initial backend.
 
 See [Entities and relationships](../architecture/entities-and-relationships.md) for parentage and [ADR 0003](./0003-archive-and-restore-authority.md) for archived movement restrictions.
