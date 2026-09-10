@@ -8,11 +8,11 @@ Start with [Product](./product/README.md) for Raphael's purpose, organizational 
 
 ## Understand the architecture
 
-Read [Architecture](./architecture/README.md) for conceptual system boundaries, entity relationships, and operation ownership. These documents do not prescribe implementation mechanisms.
+Read [Architecture](./architecture/README.md) for conceptual system boundaries, entity relationships, and operation ownership. These are connected overviews, not API specifications. Initial technology choices are separated from durable ownership rules.
 
 ## Understand decisions
 
-[Architecture decision records](./adrs/README.md) explain the authority decisions behind retrieval and search, mutations, and archive/restore. Use them for rationale and consequences rather than as an implementation guide.
+[Architecture decision records](./adrs/README.md) own consequential decisions about authority, identity, content, and shared AI capabilities. Use them for the decision, rationale, and consequences; overviews link back rather than restating the full rules. Payloads, settings, and command reference material belong with implementation.
 
 ## Work with extensions
 

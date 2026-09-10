@@ -26,17 +26,11 @@ An extension need not implement every capability. A kind that stores only an ext
 
 Extensions create ordinary core entities and supply their domain-specific metadata. Resource bodies can contain copied external content, summaries, or references; they must not depend on a Get/List hook to become readable.
 
-| Representation and capability            | Search coverage                                                             |
-| ---------------------------------------- | --------------------------------------------------------------------------- |
-| Copied content, no search hook           | Searchable stored content                                                   |
-| External reference with a search hook    | Stored representation plus external content matches for registered entities |
-| External reference without a search hook | Stored representation only; external full content remains unsearchable      |
-
-An extension may combine these approaches. Referenced content remains externally owned even when a copy is stored in Raphael. Locally authored notes are a separate ownership concern.
+Copied content and external references can coexist. Referenced content remains externally owned even when a copy is stored in Raphael; locally authored notes are a separate ownership concern. [ADR 0001](../adrs/0001-retrieval-and-search-authority.md) defines stored versus extension-assisted search coverage.
 
 ## Open mechanisms
 
-Extension loading, process boundaries, lifecycle registration, configuration schemas, and route formats remain undecided. These are capability descriptions, not promises about a particular module or endpoint API.
+[System boundaries](../architecture/system-boundaries.md#deliberately-unspecified) lists unresolved extension mechanisms. Capture intent may be extension-owned metadata; it does not introduce a core capture entity.
 
 Core records and extension metadata are the baseline representation. Whether extensions can have private schemas or separate databases, and how those are isolated or migrated, remains open; extensions are not being granted unrestricted changes to core storage.
 

@@ -1,53 +1,21 @@
 # Hooks
 
-Hooks contribute behavior at explicit core boundaries. This document defines conceptual contracts, not function names, payload schemas, or execution ordering among multiple hooks.
-
-## Participation
-
-| Operation              | Participation                  | If the participating extension is unavailable |
-| ---------------------- | ------------------------------ | --------------------------------------------- |
-| Get / List             | None                           | Stored retrieval remains available            |
-| Search                 | Optional relevant search hooks | Report incomplete source coverage             |
-| Create / Update / Move | Applicable pre-mutation checks | Required checks fail closed; no mutation      |
-| Committed changes      | Optional post-commit reactions | Do not undo the local commit                  |
-| Archive / Restore      | Post-commit reactions only     | Do not block or undo the lifecycle operation  |
+Hooks grant specific participation, not arbitrary access to core state. The ADRs own behavioral guarantees; this document explains obligations for extension authors, not SDK signatures or scheduling.
 
 ## Search
 
-Core resolves the requested scope and invokes only relevant registered search capabilities. The extension must search external content associated with those scoped entities, not broaden a project query to its entire repository.
+Return matches only for existing entities within the supplied scope, with enough attribution and context to explain external-content matches. Do not create entities or discover unregistered objects during search. Report failure rather than returning an empty successful result. Get and List never invoke extensions. See [ADR 0001](../adrs/0001-retrieval-and-search-authority.md).
 
-Matches identify existing Raphael entities. Hooks do not discover unregistered external objects or create entities as a side effect of search. Match context should include enough attribution and excerpt information to explain an external-content match even when that text is absent from the stored body.
+## Pre-mutation participation
 
-Core merges matches by Raphael identity. A source failure is not a successful search with zero results. An extension without a search hook simply contributes whatever searchable representation it has already stored; there is no implied external-content coverage. See [ADR 0001](../adrs/0001-retrieval-and-search-authority.md).
+Checks can reject controlled changes and identify the canonical source to edit instead. Transformations return a candidate that remains subject to core validation. Registered restrictions must remain identifiable when extension code is unavailable, so required checks fail closed.
 
-## Pre-mutation checks and post-commit reactions
+Do not perform external writes before a local commit that may still fail. Archive and restore cannot be vetoed. See [ADR 0002](../adrs/0002-mutation-authority.md).
 
-```text
-Create, update, or move
-  Core validation + applicable extension checks
-    Reject or required extension unavailable → error; no mutation
-    Accept → core commit
-      Notify interested extensions → optional external synchronization
+## Post-commit reactions
 
-Archive or restore
-  Core lifecycle validation → core change
-    Notify interested extensions → no veto
-```
+Use post-commit hooks for external effects. Delivery is durable and retryable; use stable invocation identity to tolerate replay rather than assuming exactly-once execution. A failed reaction cannot reverse committed data. This delivery model does not apply to pre-mutation or search hooks.
 
-Pre-mutation checks can reject controlled changes and identify the canonical source the caller should edit instead. Errors should communicate the extension, affected operation or fields, and useful recovery guidance without requiring an agent to infer authority from prose alone. The error schema remains open.
-
-Checks must not perform external writes before a local commit that could still fail. Post-commit reactions are the boundary for propagating accepted changes. Local success does not imply external synchronization has completed.
-
-Registered restrictions remain enforceable when code fails to load. Core cannot interpret an unavailable required extension as an absent hook. Unrelated operations remain unaffected. See [ADR 0002](../adrs/0002-mutation-authority.md).
-
-## Archive and restore reactions
-
-Extensions cannot veto archive or restore, including cascades affecting entities they manage. Notifications follow the core operation; notification failure does not reverse it.
-
-A reaction may request a separate lifecycle change when there is an independent reason. The extension adds or withdraws its own archive cause rather than manually changing every descendant. Withdrawing that cause does not force an entity active if another cause remains. See [ADR 0003](../adrs/0003-archive-and-restore-authority.md).
-
-## Delivery guarantees
-
-Core durably records post-commit work alongside the mutation and retries failed invocations. Hooks receive stable invocation identity and must tolerate repeated execution; external effects are not exactly-once. Exhausted failures remain diagnosable without reversing committed data. Pre-mutation and search hooks do not use this durable delivery model. See [ADR 0002](../adrs/0002-mutation-authority.md).
+Lifecycle reactions may request a separate change only for an independent reason owned by the extension. Do not convert notifications into self-sustaining archive loops or clear unrelated causes; see [ADR 0003](../adrs/0003-archive-and-restore-authority.md).
 
 Registration, ordering, timeouts, retry policy, mutation origin, and recursion safeguards require implementation contracts.

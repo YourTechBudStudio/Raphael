@@ -14,7 +14,7 @@ flowchart LR
     Agents -->|Follow returned references separately| External
 ```
 
-[Runtime and access](./runtime-and-access.md) defines the single-owner server and client boundary; [Capture and media](./capture-and-media.md) defines local drafts and server-owned attachments. Clients and agents access the same organizational meaning. A path-oriented CLI is an intended interface to Raphael, not a separate source of truth. Reading an external reference through Raphael does not automatically retrieve its external content.
+[Runtime and access](./runtime-and-access.md) defines the single-owner server, client boundary, and initial backend direction. [Capture and media](./capture-and-media.md) defines local drafts and server-owned attachments.
 
 ## Responsibility ownership
 
@@ -33,16 +33,12 @@ Core storage ownership does not make Raphael authoritative for every synchronize
 
 ## Extension boundary
 
-Extensions are trusted backend code installed by the operator. They participate through a stable extension interface rather than replacing the core entity model or universal retrieval APIs.
+Extensions are trusted backend code installed by the operator. They use core operations rather than replacing the entity model or universal retrieval APIs. [Model and capabilities](../extensions/model-and-capabilities.md) owns the trust and capability contract; [Hooks](../extensions/hooks.md) explains bounded participation and failure behavior.
 
-Extensions can contribute resource kinds, settings, webhook/API handlers, reconciliation behavior, and optional search or mutation hooks. These capabilities do not require every extension to implement every operation. Core functionality remains useful without any extensions installed. See [Model and capabilities](../extensions/model-and-capabilities.md) for the extension-facing overview.
-
-An installed extension being unavailable is different from no extension being configured. Core must retain awareness of applicable mutation restrictions rather than silently relaxing them when extension code cannot be reached.
-
-Core uses Turso with Drizzle ([ADR 0004](../adrs/0004-canonical-data-and-addressing.md)) and owns Pi-backed AI capabilities and provider routing ([ADR 0006](../adrs/0006-ai-capability-ownership.md)). Extensions consume those capabilities through Raphael's interface.
+Core also owns shared AI capabilities and provider routing under [ADR 0006](../adrs/0006-ai-capability-ownership.md).
 
 ## Deliberately unspecified
 
-Extension loading, extension process isolation, private storage boundaries, settings schemas, route registration mechanisms, and custom rendering remain undecided. Durable post-commit delivery is defined in [ADR 0002](../adrs/0002-mutation-authority.md); hook scheduling and ordering remain open. Trusted installation does not settle those choices.
+Extension loading, extension process isolation, private storage boundaries, settings schemas, route registration mechanisms, and custom rendering remain undecided. Hook scheduling and ordering remain open; trusted installation does not settle those choices.
 
 See [Entities and relationships](./entities-and-relationships.md) for the organizational model and [Operations and lifecycle](./operations-and-lifecycle.md) for API boundaries.

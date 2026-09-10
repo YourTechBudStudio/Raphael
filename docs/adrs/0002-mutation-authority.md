@@ -8,7 +8,7 @@ Accepted as architectural direction; implementation is not implied.
 
 Raphael stores entities whose fields may be locally authored or governed by an external system. Mandatory two-way synchronization would force every integration to solve external races and conflicts, even when editing the canonical source is the safer policy.
 
-An extension outage must not silently remove the restrictions it registered.
+An extension outage must not silently remove the restrictions it registered. Interrupted requests and concurrent edits must not duplicate creation, overwrite newer state, or lose reactions to committed changes.
 
 ## Decision
 

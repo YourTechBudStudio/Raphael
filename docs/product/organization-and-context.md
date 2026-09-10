@@ -10,7 +10,7 @@ Raphael distinguishes the structure of work from the material that helps people 
 | Project  | A bounded outcome spanning days, weeks, or months, usually with a due date | Belongs to one area and can contain resources          |
 | Resource | A piece of content or an external reference, with an extensible kind       | Has exactly one immediate parent: an area or a project |
 
-Areas and projects are not resource kinds. A note is the default resource kind; integrations can introduce others, such as GitHub issues or repositories. Resource kinds can influence presentation without changing where the resource belongs.
+Areas and projects are not resource kinds. A note is the default resource kind, supplied by a built-in extension; integrations can introduce others, such as GitHub issues or repositories. Resource kinds can influence presentation without changing where the resource belongs.
 
 ## One home, broader views
 
@@ -24,9 +24,7 @@ A resource can contain Raphael-owned material, such as a text note or voice reco
 
 Retrieving a resource returns its stored representation, not an automatic live fetch from the external system. An agent can use the reference to retrieve additional material through the appropriate external tool.
 
-Search is scoped to an area, project, or comparable context. It searches registered entities rather than discovering arbitrary external objects. Relevant integrations may implicitly contribute matches from external content associated with those entities; users do not need to issue separate provider-specific searches.
-
-Search coverage depends on the integration. Copied content can be searched within Raphael; a reference-only resource without external search support makes its stored information searchable, not the external document's full contents. If a participating source fails, results should disclose that the search is incomplete.
+Scoped search finds registered work and its context, including external matches where integrations support them. Results distinguish incomplete coverage from no matches; a stored link alone does not make its entire external document searchable. See [Retrieval and search authority](../adrs/0001-retrieval-and-search-authority.md).
 
 ## Example: Offline Capture
 
@@ -49,6 +47,4 @@ The label mapping is illustrative, not a required GitHub policy or a rule for ev
 
 Raphael archives rather than deletes. Archiving an area or project archives its descendants while retaining their data and relationships.
 
-Restoring it restores only content archived because of that action. An independently archived note remains archived. Likewise, if an integration independently archives a project while its area is archived, restoring the area does not reactivate that project or its contents.
-
-Integration policy determines when external lifecycle events warrant an independent archive or restoration. Losing a label mapping or external association does not by itself require the local work and its notes to be archived.
+Restoring a container does not revive independently archived content. Material archived only through its container can be moved into an active location without restoring the whole container. See [Archive and restore authority](../adrs/0003-archive-and-restore-authority.md) for the cause model.
