@@ -50,6 +50,38 @@ export const LIST_LIMIT_MAX = 500;
 
 export { SLUG_MAX_CODE_POINTS };
 
+/**
+ * The request fields an operation can name when it reports a failure.
+ *
+ * This is our own vocabulary, not anything a caller submitted, so naming one discloses nothing; an
+ * absent field means the request as a whole. It lives in the contracts because both sides need the
+ * same list: the backend produces these names in its failure projections, and a client validates a
+ * received `details.field` against a closed set before showing it to anyone. Two copies of a list
+ * that has to agree is a drift hazard, so there is one.
+ */
+export const REQUEST_FIELDS = [
+  'type',
+  'parent',
+  'target',
+  'title',
+  'slug',
+  'description',
+  'body',
+  'tags',
+  'metadata',
+  'idempotencyKey',
+  'format',
+  'recursive',
+  'types',
+  'skip',
+  'limit',
+] as const;
+
+export type RequestField = (typeof REQUEST_FIELDS)[number];
+
+export const isRequestField = (value: string): value is RequestField =>
+  (REQUEST_FIELDS as readonly string[]).includes(value);
+
 export const NodeId = PositiveSafeInt;
 export const NodeRevision = PositiveSafeInt;
 

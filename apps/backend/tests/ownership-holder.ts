@@ -17,7 +17,15 @@ if (mode === 'hold') {
     )
     .run();
   process.stdout.write('HELD\n');
-  setInterval(() => {}, 1000);
+
+  // The interval keeps the process alive; referencing the connection from inside it keeps the
+  // *database* alive. Nothing below uses `connection` again, and a binding that no reachable code
+  // reads is eligible for collection - at which point better-sqlite3's finalizer closes the handle
+  // and the exclusive lock this process exists to hold is released while the process is still
+  // running. Reading a property each tick keeps it reachable and cannot be optimized away.
+  setInterval(() => {
+    if (!connection.db.open) process.exit(1);
+  }, 1000);
 } else {
   // Attempt access against a database someone else may own.
   try {

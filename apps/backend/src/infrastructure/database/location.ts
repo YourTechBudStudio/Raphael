@@ -7,7 +7,16 @@ import {
   realpathSync,
   statSync,
 } from 'node:fs';
-import { dirname, parse as parsePath, resolve } from 'node:path';
+import { resolve } from 'node:path';
+
+import {
+  formatMode,
+  inspectAncestors,
+  inspectProtectedFile,
+  isGroupOrWorldWritable,
+  supportsPosixModes as posixModesSupported,
+  type PathRejection,
+} from '@raphael/fs-trust';
 
 /**
  * Filesystem preparation and verification for the database location.
@@ -47,57 +56,45 @@ const fail: (reason: string, message: string) => never = (reason, message) => {
 };
 
 /** POSIX mode support. On platforms without it, callers refuse to open storage at all. */
-export const supportsPosixModes = (): boolean => process.platform !== 'win32';
-
-const isGroupOrWorldWritable = (mode: number): boolean => (mode & 0o022) !== 0;
+export const supportsPosixModes = posixModesSupported;
 
 /**
- * A trusted owner is the effective user or root. Ownership matters more than the current mode: an
- * untrusted owner can change the permissions of a directory whenever it likes, so a directory that
- * merely looks restrictive today is not a protection if someone else owns it.
- */
-const isTrustedOwner = (uid: number): boolean => uid === process.getuid?.() || uid === 0;
-
-/**
- * Verify the ancestor chain of a resolved directory. A directory is acceptable when a trusted user
- * owns it and it is not group- or world-writable. The sticky bit is deliberately *not* treated as
- * sufficient on its own: it restricts removal to the entry's owner, the directory's owner, and
- * privileged users, which still leaves an untrusted directory owner able to replace entries. Shared
- * ancestors such as `/tmp` pass because root owns them, not because they are sticky.
+ * Verify the ancestor chain of a resolved directory.
+ *
+ * The rule - a trusted owner, not group- or world-writable, the sticky bit not sufficient on its own -
+ * lives in `@raphael/fs-trust`, because the CLI applies the identical rule to the directory holding an
+ * API key. What stays here is the wording, which is about a database and is written for someone who
+ * configured a database path.
  */
 const verifyAncestors = (directory: string): void => {
-  const { root } = parsePath(directory);
-  let current = directory;
-  for (;;) {
-    let info;
-    try {
-      info = statSync(current);
-    } catch (cause) {
+  const rejection = inspectAncestors(directory);
+  if (rejection === undefined) return;
+  switch (rejection.reason) {
+    case 'ancestor_unreadable':
       fail(
         'ancestor_unreadable',
-        `cannot inspect "${current}" while verifying the data directory.`,
+        `cannot inspect "${rejection.path}" while verifying the data directory.`,
       );
-      throw cause;
-    }
-    if (!isTrustedOwner(info.uid)) {
+      break;
+    case 'ancestor_untrusted_owner':
       fail(
         'ancestor_untrusted_owner',
-        `"${current}" is owned by uid ${info.uid}, which is neither this process's user nor root. ` +
+        `"${rejection.path}" is owned by uid ${rejection.uid}, which is neither this process's user nor root. ` +
           `That owner can change its permissions at any time, so the database beneath it cannot be protected. ` +
           `Choose a database path whose parent directories you own.`,
       );
-    }
-    if (isGroupOrWorldWritable(info.mode) && (info.mode & 0o1000) === 0) {
+      break;
+    case 'ancestor_writable':
       fail(
         'ancestor_writable',
-        `"${current}" is group- or world-writable (mode ${(info.mode & 0o7777).toString(8)}), so another user ` +
+        `"${rejection.path}" is group- or world-writable (mode ${formatMode(rejection.mode ?? 0)}), so another user ` +
           `could replace the directories leading to the database. Restrict it, or choose a different database path.`,
       );
-    }
-    if (current === root) return;
-    const next = dirname(current);
-    if (next === current) return;
-    current = next;
+      break;
+    default:
+      // The artifact reasons cannot arise from an ancestor walk. Naming them as unreachable is better
+      // than a silent fall-through that would treat an untrusted path as acceptable.
+      fail(rejection.reason, `"${rejection.path}" could not be verified.`);
   }
 };
 
@@ -220,28 +217,39 @@ export const verifySidecars = (databasePath: string): void => {
   }
 };
 
+/**
+ * Verify an artifact that already exists: a regular file, ours, and unreadable by anyone else.
+ *
+ * The checks and their order live in `@raphael/fs-trust`; the labels and remediation are storage's.
+ */
 const verifyExistingFile = (path: string, info: import('node:fs').Stats, label: string): void => {
-  if (info.isSymbolicLink()) {
-    fail(
-      'symlink_rejected',
-      `the ${label} at "${path}" is a symbolic link. Raphael will not follow a link to storage; ` +
-        `point the configured path at a regular file instead.`,
-    );
-  }
-  if (!info.isFile()) {
-    fail('not_regular_file', `the ${label} at "${path}" is not a regular file.`);
-  }
-  if (info.uid !== process.getuid?.()) {
-    fail(
-      'foreign_owner',
-      `the ${label} at "${path}" is owned by uid ${info.uid}, not by this process's user.`,
-    );
-  }
-  if ((info.mode & 0o077) !== 0) {
-    fail(
-      'permissive_mode',
-      `the ${label} at "${path}" is readable or writable by other users (mode ${(info.mode & 0o7777).toString(8)}). ` +
-        `Raphael will not report storage as protected when it is not. Run "chmod 600 ${path}" if the file is yours.`,
-    );
+  const rejection: PathRejection | undefined = inspectProtectedFile(path, info);
+  if (rejection === undefined) return;
+  switch (rejection.reason) {
+    case 'symlink_rejected':
+      fail(
+        'symlink_rejected',
+        `the ${label} at "${path}" is a symbolic link. Raphael will not follow a link to storage; ` +
+          `point the configured path at a regular file instead.`,
+      );
+      break;
+    case 'not_regular_file':
+      fail('not_regular_file', `the ${label} at "${path}" is not a regular file.`);
+      break;
+    case 'foreign_owner':
+      fail(
+        'foreign_owner',
+        `the ${label} at "${path}" is owned by uid ${rejection.uid}, not by this process's user.`,
+      );
+      break;
+    case 'permissive_mode':
+      fail(
+        'permissive_mode',
+        `the ${label} at "${path}" is readable or writable by other users (mode ${formatMode(rejection.mode ?? 0)}). ` +
+          `Raphael will not report storage as protected when it is not. Run "chmod 600 ${path}" if the file is yours.`,
+      );
+      break;
+    default:
+      fail(rejection.reason, `the ${label} at "${path}" could not be verified.`);
   }
 };

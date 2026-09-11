@@ -205,6 +205,9 @@ importers:
       '@raphael/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@raphael/fs-trust':
+        specifier: workspace:*
+        version: link:../../packages/fs-trust
       better-sqlite3:
         specifier: 'catalog:'
         version: 13.0.3
@@ -236,6 +239,40 @@ importers:
       drizzle-kit:
         specifier: 'catalog:'
         version: 0.31.10
+      oxfmt:
+        specifier: 'catalog:'
+        version: 0.66.0
+      oxlint:
+        specifier: 'catalog:'
+        version: 1.81.0
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
+  apps/cli:
+    dependencies:
+      '@raphael/backend':
+        specifier: workspace:*
+        version: link:../backend
+      '@raphael/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@raphael/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      '@raphael/fs-trust':
+        specifier: workspace:*
+        version: link:../../packages/fs-trust
+      effect:
+        specifier: 'catalog:'
+        version: 3.22.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.4.1
+      '@yourtechbudstudio/raphael-typescript-config':
+        specifier: workspace:*
+        version: link:../../packages/typescript-config
       oxfmt:
         specifier: 'catalog:'
         version: 0.66.0
@@ -370,6 +407,31 @@ importers:
         specifier: ~6.0.3
         version: 6.0.3
 
+  packages/client:
+    dependencies:
+      '@raphael/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      effect:
+        specifier: 'catalog:'
+        version: 3.22.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.4.1
+      '@yourtechbudstudio/raphael-typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      oxfmt:
+        specifier: 'catalog:'
+        version: 0.66.0
+      oxlint:
+        specifier: 'catalog:'
+        version: 1.81.0
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
   packages/content:
     dependencies:
       '@raphael/contracts':
@@ -451,6 +513,24 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 3.22.2
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.4.1
+      '@yourtechbudstudio/raphael-typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      oxfmt:
+        specifier: 'catalog:'
+        version: 0.66.0
+      oxlint:
+        specifier: 'catalog:'
+        version: 1.81.0
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
+
+  packages/fs-trust:
     devDependencies:
       '@types/node':
         specifier: 'catalog:'

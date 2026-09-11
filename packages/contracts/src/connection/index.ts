@@ -78,6 +78,54 @@ export const authorizationHeaderValue = (key: string): string => `${AUTHORIZATIO
  */
 export const API_KEY_MIN_LENGTH = 32;
 
+/**
+ * The characters a key may contain: visible ASCII, from `!` through `~`.
+ *
+ * This is stricter than "no whitespace" for a measured reason. An HTTP header carries *bytes*, and
+ * Node exposes a received header value as Latin-1 text. A key containing any character above U+007F
+ * is hashed from its UTF-8 string, arrives as those bytes reinterpreted one-per-character, and never
+ * matches - measured during phase 05 for both an emoji key and a Latin-1-range key. A well-behaved
+ * client cannot even send one: `fetch` refuses a header value outside Latin-1 outright.
+ *
+ * So a non-ASCII key is not a key that behaves differently. It is a key that can never authenticate,
+ * on a server that started and reported itself configured. Space and every control character are
+ * excluded by the same range.
+ */
+const USABLE_KEY = /^[\u0021-\u007e]+$/u;
+
+/**
+ * Why a key is unusable. A reason, never the key: the caller chooses wording appropriate to where the
+ * key came from - a server's environment variable, a login prompt, a mobile setup screen - and this
+ * function has no idea which of those it is being asked from.
+ */
+export type ApiKeyRejectionReason = 'empty' | 'unusable_characters' | 'too_short';
+
+export interface ApiKeyRejection {
+  readonly reason: ApiKeyRejectionReason;
+  /** The bound that was missed, for the reason that has one. */
+  readonly limit?: number;
+}
+
+/**
+ * The whole key policy, as a pure predicate: one definition for the server that refuses to start, the
+ * CLI that refuses to save, and the mobile setup screen that refuses to continue.
+ *
+ * `undefined` means the key is usable. Hashing, comparison, storage, and prompting are all somewhere
+ * else; this decides one thing and holds no secret beyond the argument it was handed.
+ *
+ * Length is checked in UTF-16 code units, which is unambiguous here only because the character range
+ * above admits no astral character. It is a floor that rejects obviously unusable keys, not a
+ * strength guarantee - 32 repeated characters satisfy it and remain weak.
+ */
+export const inspectApiKey = (key: string): ApiKeyRejection | undefined => {
+  if (key.length === 0) return { reason: 'empty' };
+  if (!USABLE_KEY.test(key)) return { reason: 'unusable_characters' };
+  if (key.length < API_KEY_MIN_LENGTH) {
+    return { reason: 'too_short', limit: API_KEY_MIN_LENGTH };
+  }
+  return undefined;
+};
+
 export const CONNECTION_ROUTES = {
   verify: { method: 'POST', path: '/api/connection/verify' },
 } as const satisfies Record<string, RouteDescriptor>;

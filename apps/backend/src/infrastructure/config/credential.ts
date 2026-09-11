@@ -1,6 +1,10 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-import { API_KEY_MIN_LENGTH } from '@raphael/contracts/connection';
+import {
+  API_KEY_MIN_LENGTH,
+  inspectApiKey,
+  type ApiKeyRejectionReason,
+} from '@raphael/contracts/connection';
 
 import { API_KEY_VARIABLE, type EnvironmentSnapshot } from './env.ts';
 import { configurationFailure } from './errors.ts';
@@ -24,20 +28,47 @@ import { configurationFailure } from './errors.ts';
 const digestOf = (token: string): Buffer => createHash('sha256').update(token, 'utf8').digest();
 
 /**
- * The characters a key may contain: visible ASCII, from `!` through `~`.
+ * Server-side wording for a shared rejection.
  *
- * This is not stylistic tidiness, and it is stricter than "no whitespace" for a measured reason. An
- * HTTP header carries *bytes*, and Node exposes a received header value as Latin-1 text. A key
- * containing any character above U+007F is hashed here from its UTF-8 string, arrives as those UTF-8
- * bytes reinterpreted one-byte-per-character, and never matches - measured, for both an emoji key and
- * a Latin-1-range key. A well-behaved client cannot even send one: `fetch` refuses a header value
- * outside Latin-1 outright.
+ * The policy itself - the length floor and the visible-ASCII range - lives in the contracts, because
+ * the login command and the mobile setup screen have to apply exactly the same rule and a second copy
+ * of a credential check is a drift hazard. What stays here is the part that is genuinely the server's:
+ * which configuration reason an operator sees, and guidance phrased for someone editing an
+ * environment variable rather than someone typing at a prompt.
  *
- * So a non-ASCII key is not a key that works differently. It is a key that can never authenticate,
- * on a server that started and reported itself configured. Refusing it at startup is the only way the
- * success can be true. Space and every control character are excluded by the same range.
+ * The reason vocabulary is exhaustive, so a value added to it upstream fails to compile here rather
+ * than silently acquiring a default message.
  */
-const USABLE_KEY = /^[\u0021-\u007e]+$/u;
+const explainRejection = (
+  reason: ApiKeyRejectionReason,
+  source: string,
+): { readonly code: 'api_key_missing' | 'api_key_unusable'; readonly message: string } => {
+  switch (reason) {
+    case 'empty':
+      return {
+        code: 'api_key_missing',
+        message: `${source} is empty. Raphael will not start without one.`,
+      };
+    case 'unusable_characters':
+      return {
+        code: 'api_key_unusable',
+        message:
+          `${source} contains a character that cannot travel in an HTTP header: keys must be visible ASCII, ` +
+          `with no spaces, control characters, or non-ASCII characters. A non-ASCII key would let the server ` +
+          `start and then fail every client, because headers carry bytes rather than text. Raphael will not trim ` +
+          `or re-encode a credential. If the value came from a .env file, check that it is quoted and has no ` +
+          `trailing spaces; otherwise generate a new key with "openssl rand -hex 32".`,
+      };
+    case 'too_short':
+      return {
+        code: 'api_key_unusable',
+        message:
+          `${source} is shorter than the ${API_KEY_MIN_LENGTH}-character minimum. ` +
+          `Length is not strength - ${API_KEY_MIN_LENGTH} repeated characters would pass this check and still be a ` +
+          `weak key - so generate a random one with "openssl rand -hex 32".`,
+      };
+  }
+};
 
 export class ApiCredential {
   readonly #digest: Buffer;
@@ -57,29 +88,10 @@ export class ApiCredential {
    * `source` names where the key came from, so an operator reading the failure knows what to edit.
    */
   static fromKey(key: string, source = 'The API key'): ApiCredential {
-    if (key.length === 0) {
-      configurationFailure(
-        'api_key_missing',
-        `${source} is empty. Raphael will not start without one.`,
-      );
-    }
-    if (!USABLE_KEY.test(key)) {
-      configurationFailure(
-        'api_key_unusable',
-        `${source} contains a character that cannot travel in an HTTP header: keys must be visible ASCII, ` +
-          `with no spaces, control characters, or non-ASCII characters. A non-ASCII key would let the server ` +
-          `start and then fail every client, because headers carry bytes rather than text. Raphael will not trim ` +
-          `or re-encode a credential. If the value came from a .env file, check that it is quoted and has no ` +
-          `trailing spaces; otherwise generate a new key with "openssl rand -hex 32".`,
-      );
-    }
-    if (key.length < API_KEY_MIN_LENGTH) {
-      configurationFailure(
-        'api_key_unusable',
-        `${source} is shorter than the ${API_KEY_MIN_LENGTH}-character minimum. ` +
-          `Length is not strength - ${API_KEY_MIN_LENGTH} repeated characters would pass this check and still be a ` +
-          `weak key - so generate a random one with "openssl rand -hex 32".`,
-      );
+    const rejection = inspectApiKey(key);
+    if (rejection !== undefined) {
+      const { code, message } = explainRejection(rejection.reason, source);
+      configurationFailure(code, message);
     }
     return new ApiCredential(digestOf(key));
   }

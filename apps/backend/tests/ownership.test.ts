@@ -13,11 +13,32 @@ import { one, openMigrated, rejects, tempDatabase } from './support.ts';
 
 const HOLDER = fileURLToPath(new URL('./ownership-holder.ts', import.meta.url));
 
-const attemptAccess = (databasePath: string): string =>
-  spawnSync(process.execPath, [HOLDER, databasePath, 'access'], {
+/**
+ * Run a competing process against a database and report what it managed to do.
+ *
+ * The competitor's own fate is part of the answer. `spawnSync` can fail to start a process at all
+ * under load, and can return a null `stdout` when it does, so reading `.stdout.trim()` directly turns
+ * "the competitor never ran" into an empty string that looks like a failed ownership check. The two
+ * are different facts and the assertions below need to be able to tell them apart.
+ */
+interface AccessAttempt {
+  readonly output: string;
+  readonly detail: string;
+}
+
+const attemptAccess = (databasePath: string): AccessAttempt => {
+  const result = spawnSync(process.execPath, [HOLDER, databasePath, 'access'], {
     encoding: 'utf8',
     timeout: 30_000,
-  }).stdout.trim();
+  });
+  const output = (result.stdout ?? '').trim();
+  const parts = [`status=${result.status}`, `signal=${result.signal}`];
+  if (result.error !== undefined) parts.push(`error=${result.error.message}`);
+  const stderr = (result.stderr ?? '').trim();
+  if (stderr !== '') parts.push(`stderr=${stderr}`);
+  if (output === '') parts.push('no stdout');
+  return { output, detail: `competitor: ${parts.join(' ')}` };
+};
 
 describe('pragmas', () => {
   test('durability and integrity settings are verified by readback, not assumed', () => {
@@ -109,7 +130,7 @@ describe('exclusive ownership', () => {
     const temp = tempDatabase('cross-process');
     const connection = openMigrated(temp.file);
     try {
-      const result = attemptAccess(temp.file);
+      const result = attemptAccess(temp.file).output;
       assert.match(result, /^REFUSED/);
       assert.match(result, /already in use by another Raphael process/);
     } finally {
@@ -133,7 +154,11 @@ describe('exclusive ownership', () => {
       connection.db.exec('BEGIN IMMEDIATE');
       connection.db.exec('ROLLBACK');
 
-      assert.match(attemptAccess(temp.file), /^REFUSED/, 'still owned after commit and rollback');
+      assert.match(
+        attemptAccess(temp.file).output,
+        /^REFUSED/,
+        'still owned after commit and rollback',
+      );
     } finally {
       connection.close();
       temp.cleanup();
@@ -145,7 +170,7 @@ describe('exclusive ownership', () => {
     const connection = openMigrated(temp.file);
     try {
       const started = Date.now();
-      assert.match(attemptAccess(temp.file), /^REFUSED/);
+      assert.match(attemptAccess(temp.file).output, /^REFUSED/);
       // The child uses a 200ms acquisition timeout; process startup dominates the rest. The claim is
       // only that it is bounded and quick, not a latency guarantee.
       assert.ok(Date.now() - started < 20_000, 'refusal must not hang');
@@ -160,7 +185,7 @@ describe('exclusive ownership', () => {
     const connection = openMigrated(temp.file);
     connection.close();
     try {
-      assert.match(attemptAccess(temp.file), /^OPENED/);
+      assert.match(attemptAccess(temp.file).output, /^OPENED/);
     } finally {
       temp.cleanup();
     }
@@ -178,34 +203,75 @@ describe('exclusive ownership', () => {
 describe('process death', () => {
   test('ownership is released and WAL-only committed data survives', async () => {
     const temp = tempDatabase('crash');
+    const child = spawn(process.execPath, [HOLDER, temp.file, 'hold'], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    // The holder's own fate is recorded rather than assumed. It announces readiness and then holds
+    // ownership until it is killed, so if it dies on its own the competing process will open a
+    // database nothing owns - and the assertion below would report "not REFUSED" while saying nothing
+    // about the reason. Capturing exit, signal, and stderr is what makes that failure diagnosable
+    // instead of merely reproducible.
+    let output = '';
+    let stderr = '';
+    let ended: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+    let spawnError: Error | undefined;
+    child.stdout.on('data', (chunk: Buffer) => (output += String(chunk)));
+    child.stderr.on('data', (chunk: Buffer) => (stderr += String(chunk)));
+    child.on('error', (error) => (spawnError = error));
+    child.on('exit', (code, signal) => (ended = { code, signal }));
+
+    const holderState = (): string =>
+      `holder: ${
+        spawnError !== undefined
+          ? `spawn error ${spawnError.message}`
+          : ended === undefined
+            ? 'still running'
+            : `exited code=${ended.code} signal=${ended.signal}`
+      }${stderr === '' ? '' : `; stderr: ${stderr.trim()}`}`;
+
     try {
-      const child = spawn(process.execPath, [HOLDER, temp.file, 'hold'], {
-        stdio: ['ignore', 'pipe', 'inherit'],
-      });
-      let output = '';
       await new Promise<void>((resolve) => {
-        child.stdout.on('data', (chunk: Buffer) => {
-          output += String(chunk);
-          if (output.includes('HELD')) resolve();
-        });
+        const settle = (): void => {
+          if (output.includes('HELD') || ended !== undefined || spawnError !== undefined) resolve();
+        };
+        child.stdout.on('data', settle);
+        child.on('exit', settle);
+        child.on('error', settle);
         setTimeout(resolve, 20_000);
+        settle();
       });
-      assert.match(output, /HELD/, 'the holder must acquire ownership');
-      assert.match(attemptAccess(temp.file), /^REFUSED/, 'held while the holder lives');
+      assert.match(output, /HELD/, `the holder must acquire ownership (${holderState()})`);
+      assert.equal(ended, undefined, `the holder must still be alive (${holderState()})`);
+      const contested = attemptAccess(temp.file);
+      assert.match(
+        contested.output,
+        /^REFUSED/,
+        `held while the holder lives (${holderState()}; ${contested.detail})`,
+      );
 
       // No clean shutdown: the kernel releases the lock, with no stale-lock file to clean up.
       child.kill('SIGKILL');
       await new Promise((resolve) => setTimeout(resolve, 800));
 
       const recovered = attemptAccess(temp.file);
-      assert.match(recovered, /^OPENED/, 'ownership released by process death');
+      assert.match(
+        recovered.output,
+        /^OPENED/,
+        `ownership released by process death (${recovered.detail})`,
+      );
       // Read the row back. The main file opening is not by itself evidence that the WAL was recovered.
       assert.match(
-        recovered,
+        recovered.output,
         /committed-before-crash/,
         'data committed only to the WAL must survive',
       );
     } finally {
+      // The holder outlives any assertion that throws before the kill above. It holds an open
+      // database and an interval that never ends, so leaking one does not merely leave a stray
+      // process - it keeps the whole test run from terminating, which turns one failed assertion
+      // into a hung `pnpm check`.
+      child.kill('SIGKILL');
       temp.cleanup();
     }
   });

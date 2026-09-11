@@ -29,6 +29,7 @@ export {
   NodeId,
   NodeRevision,
   NodeTypeSchema,
+  REQUEST_FIELDS,
   SLUG_MAX_CODE_POINTS,
   SlugInput,
   TAGS_MAX_COUNT,
@@ -41,11 +42,13 @@ export {
   type MetadataRejection,
   type MetadataRejectionReason,
   type NodeType,
+  type RequestField,
   type TipTapDocumentTransport,
   type TitleRejection,
   type TitleRejectionReason,
   inspectMetadataInput,
   inspectTitleInput,
+  isRequestField,
 } from './fields.ts';
 export { compareNodeOrder } from './ordering.ts';
 export {
@@ -65,6 +68,10 @@ export {
   NodeTypeFilter,
   ScopePath,
   ScopeSelector,
+  type CreateRequestInput,
+  type GetPathRequestInput,
+  type GetRequestInput,
+  type ListRequestInput,
   decodeCreateRequest,
   decodeCreateResponse,
   decodeGetPathRequest,

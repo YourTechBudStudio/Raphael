@@ -167,6 +167,23 @@ export type GetResponse = Schema.Schema.Type<typeof GetResponse>;
 export type ListResponse = Schema.Schema.Type<typeof ListResponse>;
 export type GetPathResponse = Schema.Schema.Type<typeof GetPathResponse>;
 
+/**
+ * What a caller passes in, as opposed to what a decoder hands back.
+ *
+ * These are the schemas' *encoded* side, and they differ from the decoded types in ways that matter to
+ * anyone assembling a request: `format`, `skip`, and `limit` are optional here and always present
+ * there, and a field with a transform accepts its submitted shape rather than its stored one. Typing a
+ * client operation with the decoded type would demand that callers supply values the decoder exists to
+ * supply for them.
+ *
+ * Runtime decoding is still the authority. These types make an ordinary mistake a compile error; they
+ * do not make the decode step optional, because a caller in plain JavaScript has no types at all.
+ */
+export type CreateRequestInput = Schema.Schema.Encoded<typeof CreateRequest>;
+export type GetRequestInput = Schema.Schema.Encoded<typeof GetRequest>;
+export type ListRequestInput = Schema.Schema.Encoded<typeof ListRequest>;
+export type GetPathRequestInput = Schema.Schema.Encoded<typeof GetPathRequest>;
+
 export const decodeCreateRequest = requestDecoder(CreateRequest);
 export const decodeGetRequest = requestDecoder(GetRequest);
 export const decodeListRequest = requestDecoder(ListRequest);

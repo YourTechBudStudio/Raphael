@@ -1,45 +1,41 @@
 {
-  "name": "@raphael/backend",
+  "name": "@raphael/client",
   "version": "0.0.0",
   "private": true,
   "files": [
-    "dist",
-    "drizzle"
+    "dist"
   ],
   "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./nodes": {
+      "types": "./dist/nodes/index.d.ts",
+      "default": "./dist/nodes/index.js"
+    },
+    "./connection": {
+      "types": "./dist/connection/index.d.ts",
+      "default": "./dist/connection/index.js"
     }
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
     "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm format:check",
-    "db:generate": "drizzle-kit generate",
     "fix": "oxlint . --fix && oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint . --deny-warnings",
-    "measure": "node bench/responsiveness.ts",
     "test": "node --test \"src/**/*.test.ts\" \"tests/*.test.ts\"",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
-    "@raphael/content": "workspace:*",
     "@raphael/contracts": "workspace:*",
-    "@raphael/fs-trust": "workspace:*",
-    "better-sqlite3": "catalog:",
-    "drizzle-orm": "catalog:",
-    "effect": "catalog:",
-    "express": "5.2.1",
-    "yaml": "2.9.0"
+    "effect": "catalog:"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "catalog:",
-    "@types/express": "5.0.6",
     "@types/node": "catalog:",
     "@yourtechbudstudio/raphael-typescript-config": "workspace:*",
-    "drizzle-kit": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "typescript": "catalog:"

@@ -51,3 +51,4 @@ export {
 } from './shared/limits.ts';
 export { NonNegativeSafeInt, PositiveSafeInt, SafeInt } from './shared/numbers.ts';
 export { type RouteDescriptor } from './shared/route.ts';
+export { SHUTTING_DOWN_REASON, projectRecoveryDetails, type RecoveryDetails } from './recovery.ts';

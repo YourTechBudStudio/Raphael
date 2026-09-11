@@ -1,5 +1,6 @@
 import type { ContentFailure } from '@raphael/content';
 import type { ApiErrorCode, JsonObject } from '@raphael/contracts';
+import type { RequestField } from '@raphael/contracts/nodes';
 import { Data } from 'effect';
 
 import type { NodeType, StoredNodeType } from './types.ts';
@@ -30,25 +31,13 @@ export type InvalidInputReason =
   | 'unsupported_node_type';
 
 /**
- * The request fields an operation can name in a failure. These are our own vocabulary rather than
- * anything submitted, so naming one discloses nothing; an absent field means the request as a whole.
+ * The request fields an operation can name in a failure.
+ *
+ * The vocabulary itself lives in `@raphael/contracts/nodes`, because both sides need the same list:
+ * this module produces the names, and a client validates a received `details.field` against a closed
+ * set before showing it to anyone. Re-exported here so callers of this capability keep one import.
  */
-export type RequestField =
-  | 'type'
-  | 'parent'
-  | 'target'
-  | 'title'
-  | 'slug'
-  | 'description'
-  | 'body'
-  | 'tags'
-  | 'metadata'
-  | 'idempotencyKey'
-  | 'format'
-  | 'recursive'
-  | 'types'
-  | 'skip'
-  | 'limit';
+export type { RequestField };
 
 export class InvalidInput extends Data.TaggedError('InvalidInput')<{
   readonly field?: RequestField;

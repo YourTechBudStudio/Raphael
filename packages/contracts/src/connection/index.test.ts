@@ -4,11 +4,13 @@ import test from 'node:test';
 import { Either } from 'effect';
 
 import {
+  API_KEY_MIN_LENGTH,
   CONNECTION_ROUTES,
   PROTOCOL_VERSION,
   decodeVerifyRequest,
   decodeVerifyResponse,
   describeProtocolMismatch,
+  inspectApiKey,
   isCompatibleProtocolVersion,
 } from './index.ts';
 
@@ -55,4 +57,55 @@ test('an incompatible version decodes, so the mismatch can be explained', () => 
   assert.equal(isCompatibleProtocolVersion(PROTOCOL_VERSION + 1), false);
   assert.match(describeProtocolMismatch(PROTOCOL_VERSION + 1), /Update the client\./);
   assert.match(describeProtocolMismatch(PROTOCOL_VERSION - 1), /Update the server\./);
+});
+
+/**
+ * The key policy. It lives here rather than in the server because the server, the login command, and
+ * mobile setup all have to apply exactly the same rule - a key the CLI is willing to save but the
+ * server will not start with is a setup that fails after the person thought it succeeded.
+ */
+
+test('a usable key is accepted in every shape a generator produces', () => {
+  const shapes = [
+    'a'.repeat(API_KEY_MIN_LENGTH),
+    '0123456789abcdef0123456789abcdef', // hex
+    'dGhpcy1pcy1hLXRlc3Qta2V5LXZhbHVlLTEyMw', // base64url
+    'dGhpcyBpcyBhIHRlc3Qga2V5IHZhbHVlIQ==', // base64 with padding
+    '!#$%&()*+,-./:;<=>?@[]^_`{|}~0123456789', // the full visible-ASCII range
+  ];
+  for (const key of shapes) {
+    assert.equal(inspectApiKey(key), undefined, `${key.slice(0, 8)}... should be usable`);
+  }
+});
+
+test('an empty key is distinguished from a short one', () => {
+  assert.deepEqual(inspectApiKey(''), { reason: 'empty' });
+  assert.deepEqual(inspectApiKey('a'.repeat(API_KEY_MIN_LENGTH - 1)), {
+    reason: 'too_short',
+    limit: API_KEY_MIN_LENGTH,
+  });
+});
+
+test('a key that could never travel in a header is refused before length is considered', () => {
+  // Measured in phase 05: a non-ASCII key is hashed from its UTF-8 string, arrives as those bytes
+  // reinterpreted one-per-character, and never matches - and `fetch` refuses to send it at all. Both
+  // of these are long enough to pass the floor, so character rejection has to come first or they
+  // would start a server that no client could ever authenticate against.
+  for (const key of ['é'.repeat(API_KEY_MIN_LENGTH), '🔑'.repeat(API_KEY_MIN_LENGTH)]) {
+    assert.deepEqual(inspectApiKey(key), { reason: 'unusable_characters' });
+  }
+});
+
+test('whitespace and control characters are refused rather than trimmed', () => {
+  const base = 'a'.repeat(API_KEY_MIN_LENGTH);
+  for (const key of [` ${base}`, `${base} `, `${base}\n`, `${base}\u0000`, `${base}\t`]) {
+    assert.deepEqual(inspectApiKey(key), { reason: 'unusable_characters' });
+  }
+});
+
+test('the rejection never carries the key it rejected', () => {
+  const secret = 'super-secret-value-that-is-long-enough-\u0000';
+  const rejection = inspectApiKey(secret);
+  assert.notEqual(rejection, undefined);
+  assert.equal(JSON.stringify(rejection).includes('super-secret'), false);
 });
