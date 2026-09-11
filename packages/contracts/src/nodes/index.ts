@@ -42,7 +42,10 @@ export {
   type MetadataRejectionReason,
   type NodeType,
   type TipTapDocumentTransport,
+  type TitleRejection,
+  type TitleRejectionReason,
   inspectMetadataInput,
+  inspectTitleInput,
 } from './fields.ts';
 export { compareNodeOrder } from './ordering.ts';
 export {

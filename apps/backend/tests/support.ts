@@ -2,10 +2,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { Clock, Effect, Either } from 'effect';
+
 import {
   openDatabase,
   type DatabaseConnection,
 } from '../src/infrastructure/database/connection.ts';
+import { Db } from '../src/infrastructure/database/layer.ts';
 import { migrateToLatest } from '../src/infrastructure/database/migrate.ts';
 
 /** The canonical empty body, as the seed migration writes it. */
@@ -139,4 +142,65 @@ export const insertNode = (
   db.prepare(
     `INSERT INTO nodes (${columns.join(', ')}) VALUES (${columns.map(() => '?').join(', ')})`,
   ).run(...params);
+};
+
+/**
+ * A clock the test controls.
+ *
+ * `next` is called for every sample, so a test can advance time between the preliminary replay lookup
+ * and the authoritative one inside the transaction - and can also use the sample as a deliberate seam,
+ * which is how the request-detachment tests reach the one instant between fingerprinting and storage.
+ */
+export const controlledClock = (next: () => number): Clock.Clock => ({
+  [Clock.ClockTypeId]: Clock.ClockTypeId,
+  currentTimeMillis: Effect.sync(next),
+  currentTimeNanos: Effect.sync(() => BigInt(next()) * 1_000_000n),
+  unsafeCurrentTimeMillis: next,
+  unsafeCurrentTimeNanos: () => BigInt(next()) * 1_000_000n,
+  sleep: () => Effect.void,
+});
+
+/** A clock frozen at one instant. */
+export const clockAt = (millis: number): Clock.Clock => controlledClock(() => millis);
+
+/**
+ * Runs a node operation against a real connection, returning the failure rather than throwing it.
+ *
+ * Operations declare only `Db`, so the clock comes from Effect's default services and a test replaces it
+ * with `withClock` rather than building a layer. Nothing here is asynchronous: the operations are
+ * synchronous all the way down, and `runSync` is what proves it.
+ */
+export const runNodes = <A, E>(
+  connection: DatabaseConnection,
+  effect: Effect.Effect<A, E, Db>,
+  clock: Clock.Clock = clockAt(1_700_000_000_000),
+): Either.Either<A, E> =>
+  Effect.runSync(
+    Effect.either(
+      Effect.provideService(Effect.withClock(effect, clock), Db, {
+        db: connection.db,
+        databasePath: connection.databasePath,
+      }),
+    ),
+  );
+
+/** The successful value, or a failed assertion naming the error that arrived instead. */
+export const expectRight = <A, E>(result: Either.Either<A, E>): A => {
+  if (Either.isLeft(result)) {
+    throw new Error(`expected success, got ${JSON.stringify(publicOrTag(result.left))}`);
+  }
+  return result.right;
+};
+
+/** The failure, or a failed assertion saying the operation unexpectedly succeeded. */
+export const expectLeft = <A, E>(result: Either.Either<A, E>): E => {
+  if (Either.isRight(result)) {
+    throw new Error('expected a failure, but the operation succeeded');
+  }
+  return result.left;
+};
+
+const publicOrTag = (error: unknown): unknown => {
+  const tag = (error as { _tag?: unknown })._tag;
+  return typeof tag === 'string' ? { _tag: tag, ...(error as object) } : error;
 };

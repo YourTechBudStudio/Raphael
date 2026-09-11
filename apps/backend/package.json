@@ -24,12 +24,13 @@
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
+    "@raphael/content": "workspace:*",
+    "@raphael/contracts": "workspace:*",
     "better-sqlite3": "catalog:",
     "drizzle-orm": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@raphael/content": "workspace:*",
     "@types/better-sqlite3": "catalog:",
     "@types/node": "catalog:",
     "@yourtechbudstudio/raphael-typescript-config": "workspace:*",

@@ -62,17 +62,54 @@ export const BODY_FORMATS = ['markdown', 'tiptap'] as const;
 export type BodyFormat = (typeof BODY_FORMATS)[number];
 export const BodyFormatSchema = Schema.Literal(...BODY_FORMATS);
 
+export type TitleRejectionReason =
+  /**
+   * Present but not a string. Callers present this as an ordinary invalid field rather than as title
+   * guidance, because "a title is required" is the wrong advice for someone who submitted a number.
+   */
+  | 'not_string'
+  /** Absent, empty, or whitespace only. */
+  | 'title_required'
+  /** Longer than the limit once trimmed. */
+  | 'title_too_long';
+
+export interface TitleRejection {
+  readonly reason: TitleRejectionReason;
+  /** The bound that was exceeded, when the reason is a limit. */
+  readonly limit?: number;
+}
+
 /**
- * Titles are mandatory. Length is measured on the trimmed value because core trims before saving, so
- * rejecting on the untrimmed length would reject a title that is going to fit.
+ * Inspects a submitted title and names what is wrong with it, without repeating the value.
+ *
+ * This exists so the schema refinement and the server's own diagnostics apply one title policy rather
+ * than two. A decoder's formatted message can carry the submitted value, so the server cannot forward
+ * one; it re-inspects the field through this helper and reports only the reason and limit returned
+ * here. Length is measured on the trimmed value because core trims before saving, so rejecting on the
+ * untrimmed length would reject a title that is going to fit.
  */
+export const inspectTitleInput = (input: unknown): TitleRejection | undefined => {
+  // `undefined` means the property was absent, which JSON cannot otherwise express: a parsed payload
+  // never holds an explicit `undefined`. An absent title is a missing one, so it earns the actionable
+  // reason rather than being lumped in with a number or an object.
+  if (input === undefined) return { reason: 'title_required' };
+  if (typeof input !== 'string') return { reason: 'not_string' };
+  const trimmed = input.trim();
+  if (trimmed.length === 0) return { reason: 'title_required' };
+  if (codePointLength(trimmed) > TITLE_MAX_CODE_POINTS) {
+    return { reason: 'title_too_long', limit: TITLE_MAX_CODE_POINTS };
+  }
+  return undefined;
+};
+
+/** Titles are mandatory. The policy itself lives in `inspectTitleInput`. */
 export const TitleInput = Schema.String.pipe(
   Schema.filter((value) => {
-    const trimmed = value.trim();
-    if (trimmed.length === 0) return 'a title is required';
-    return codePointLength(trimmed) <= TITLE_MAX_CODE_POINTS
-      ? true
-      : `a title may be at most ${TITLE_MAX_CODE_POINTS} characters`;
+    const rejection = inspectTitleInput(value);
+    if (rejection === undefined) return true;
+    return rejection.reason === 'title_too_long'
+      ? `a title may be at most ${TITLE_MAX_CODE_POINTS} characters`
+      : 'a title is required';
   }),
 );
 
