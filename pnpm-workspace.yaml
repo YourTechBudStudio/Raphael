@@ -19,7 +19,11 @@ catalog:
   '@tiptap/extension-strike': 3.31.3
   '@tiptap/extension-text': 3.31.3
   '@tiptap/pm': 3.31.3
+  '@types/better-sqlite3': 9.6.0
   '@types/node': 26.4.1
+  'better-sqlite3': 13.0.3
+  'drizzle-kit': 0.31.10
+  'drizzle-orm': 0.45.2
   effect: 3.22.2
   'markdown-it': 15.0.1
   oxfmt: 0.66.0
@@ -28,3 +32,9 @@ catalog:
 
 # Package-specific dependencies stay local; shared versions opt into catalog:.
 catalogMode: manual
+
+# better-sqlite3 ships prebuilt N-API binaries and needs no compilation; pnpm still flags it because
+# the package contains binding.gyp. Denying the build is deliberate - we never compile it from source.
+allowBuilds:
+  better-sqlite3: false
+  esbuild: false

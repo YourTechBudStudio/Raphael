@@ -1,0 +1,292 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "1edca227-d028-4151-943f-6eded9e75580",
+  "prevId": "00000000-0000-0000-0000-000000000000",
+  "tables": {
+    "creation_replays": {
+      "name": "creation_replays",
+      "columns": {
+        "key": {
+          "name": "key",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "fingerprint": {
+          "name": "fingerprint",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "result_json": {
+          "name": "result_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "creation_replays_expires_at": {
+          "name": "creation_replays_expires_at",
+          "columns": [
+            "expires_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "creation_replays_created_at_safe": {
+          "name": "creation_replays_created_at_safe",
+          "value": "typeof(created_at) = 'integer' AND created_at >= 0 AND created_at <= 9007199254740991"
+        },
+        "creation_replays_expires_at_safe": {
+          "name": "creation_replays_expires_at_safe",
+          "value": "typeof(expires_at) = 'integer' AND expires_at >= 0 AND expires_at <= 9007199254740991"
+        },
+        "creation_replays_key_present": {
+          "name": "creation_replays_key_present",
+          "value": "length(key) > 0"
+        },
+        "creation_replays_result_json": {
+          "name": "creation_replays_result_json",
+          "value": "json_valid(result_json)"
+        }
+      }
+    },
+    "nodes": {
+      "name": "nodes",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "parent_id": {
+          "name": "parent_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "parent_type": {
+          "name": "parent_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 1
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "''"
+        },
+        "body": {
+          "name": "body",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "tags": {
+          "name": "tags",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'[]'"
+        },
+        "metadata": {
+          "name": "metadata",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'{}'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "nodes_sibling_slug": {
+          "name": "nodes_sibling_slug",
+          "columns": [
+            "parent_id",
+            "slug"
+          ],
+          "isUnique": true,
+          "where": "parent_id IS NOT NULL"
+        },
+        "nodes_root_slug": {
+          "name": "nodes_root_slug",
+          "columns": [
+            "slug"
+          ],
+          "isUnique": true,
+          "where": "parent_id IS NULL"
+        },
+        "nodes_id_type": {
+          "name": "nodes_id_type",
+          "columns": [
+            "id",
+            "type"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "nodes_parent_fk": {
+          "name": "nodes_parent_fk",
+          "tableFrom": "nodes",
+          "tableTo": "nodes",
+          "columnsFrom": [
+            "parent_id",
+            "parent_type"
+          ],
+          "columnsTo": [
+            "id",
+            "type"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "nodes_type_supported": {
+          "name": "nodes_type_supported",
+          "value": "type IN ('area', 'project', 'resource')"
+        },
+        "nodes_title_present": {
+          "name": "nodes_title_present",
+          "value": "length(title) > 0"
+        },
+        "nodes_slug_present": {
+          "name": "nodes_slug_present",
+          "value": "length(slug) > 0"
+        },
+        "nodes_id_safe": {
+          "name": "nodes_id_safe",
+          "value": "typeof(id) = 'integer' AND id > 0 AND id <= 9007199254740991"
+        },
+        "nodes_revision_safe": {
+          "name": "nodes_revision_safe",
+          "value": "typeof(revision) = 'integer' AND revision > 0 AND revision <= 9007199254740991"
+        },
+        "nodes_created_at_safe": {
+          "name": "nodes_created_at_safe",
+          "value": "typeof(created_at) = 'integer' AND created_at >= 0 AND created_at <= 9007199254740991"
+        },
+        "nodes_updated_at_safe": {
+          "name": "nodes_updated_at_safe",
+          "value": "typeof(updated_at) = 'integer' AND updated_at >= 0 AND updated_at <= 9007199254740991"
+        },
+        "nodes_parent_pair": {
+          "name": "nodes_parent_pair",
+          "value": "(parent_id IS NULL) = (parent_type IS NULL)"
+        },
+        "nodes_root_is_area": {
+          "name": "nodes_root_is_area",
+          "value": "parent_type IS NOT NULL OR type = 'area'"
+        },
+        "nodes_allowed_parentage": {
+          "name": "nodes_allowed_parentage",
+          "value": "parent_type IS NULL\n        OR (parent_type = 'area' AND type IN ('area', 'project', 'resource'))\n        OR (parent_type = 'project' AND type = 'resource')"
+        },
+        "nodes_not_self_parent": {
+          "name": "nodes_not_self_parent",
+          "value": "parent_id IS NULL OR parent_id <> id"
+        },
+        "nodes_body_json": {
+          "name": "nodes_body_json",
+          "value": "json_valid(body) AND json_type(body) = 'object'"
+        },
+        "nodes_tags_json": {
+          "name": "nodes_tags_json",
+          "value": "json_valid(tags) AND json_type(tags) = 'array'"
+        },
+        "nodes_metadata_json": {
+          "name": "nodes_metadata_json",
+          "value": "json_valid(metadata) AND json_type(metadata) = 'object'"
+        }
+      }
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

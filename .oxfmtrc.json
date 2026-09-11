@@ -10,6 +10,7 @@
     ".turbo",
     "coverage",
     "**/tests/fixtures/**",
+    "**/drizzle/**",
     ".agents",
     ".pi"
   ],
