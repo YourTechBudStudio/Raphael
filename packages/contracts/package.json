@@ -1,0 +1,42 @@
+{
+  "name": "@raphael/contracts",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./nodes": {
+      "types": "./dist/nodes/index.d.ts",
+      "default": "./dist/nodes/index.js"
+    },
+    "./connection": {
+      "types": "./dist/connection/index.d.ts",
+      "default": "./dist/connection/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm format:check",
+    "fix": "oxlint . --fix && oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint . --deny-warnings",
+    "test": "node --test \"src/**/*.test.ts\" \"tests/*.test.ts\"",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "effect": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@yourtechbudstudio/raphael-typescript-config": "workspace:*",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "typescript": "catalog:"
+  }
+}

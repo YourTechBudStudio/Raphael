@@ -4,10 +4,10 @@ All epics and stories live in GitHub issues in `YourTechBudStudio/Raphael`. Use 
 
 ## Labels and relationships
 
-| Issue | Required labels | Optional labels |
-| --- | --- | --- |
-| Epic | `type: epic` | Either `epic: candidate` or `epic: committed` |
-| Story | `type: story` and exactly one of `story: implementation` or `story: spike` | — |
+| Issue | Required labels                                                            | Optional labels                               |
+| ----- | -------------------------------------------------------------------------- | --------------------------------------------- |
+| Epic  | `type: epic`                                                               | Either `epic: candidate` or `epic: committed` |
+| Story | `type: story` and exactly one of `story: implementation` or `story: spike` | —                                             |
 
 An epic without a commitment label is undecided. Each story belongs to one epic through GitHub's native parent/sub-issue relationship. Use native blocked-by relationships for dependencies.
 
