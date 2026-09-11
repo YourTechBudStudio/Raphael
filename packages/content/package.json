@@ -1,0 +1,60 @@
+{
+  "name": "@raphael/content",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "default": "./dist/schema/index.js"
+    },
+    "./conversion": {
+      "types": "./dist/conversion/index.d.ts",
+      "default": "./dist/conversion/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm format:check",
+    "fix": "oxlint . --fix && oxfmt --write .",
+    "format:check": "oxfmt --check .",
+    "lint": "oxlint . --deny-warnings",
+    "test": "node --test \"src/**/*.test.ts\" \"tests/*.test.ts\"",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "dependencies": {
+    "@raphael/contracts": "workspace:*",
+    "@tiptap/core": "catalog:",
+    "@tiptap/extension-blockquote": "catalog:",
+    "@tiptap/extension-bold": "catalog:",
+    "@tiptap/extension-code": "catalog:",
+    "@tiptap/extension-code-block": "catalog:",
+    "@tiptap/extension-document": "catalog:",
+    "@tiptap/extension-hard-break": "catalog:",
+    "@tiptap/extension-heading": "catalog:",
+    "@tiptap/extension-horizontal-rule": "catalog:",
+    "@tiptap/extension-italic": "catalog:",
+    "@tiptap/extension-link": "catalog:",
+    "@tiptap/extension-list": "catalog:",
+    "@tiptap/extension-paragraph": "catalog:",
+    "@tiptap/extension-strike": "catalog:",
+    "@tiptap/extension-text": "catalog:",
+    "@tiptap/pm": "catalog:",
+    "effect": "catalog:",
+    "markdown-it": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@yourtechbudstudio/raphael-typescript-config": "workspace:*",
+    "oxfmt": "catalog:",
+    "oxlint": "catalog:",
+    "typescript": "catalog:"
+  }
+}

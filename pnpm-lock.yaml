@@ -107,12 +107,63 @@ settings:
 
 catalogs:
   default:
+    '@tiptap/core':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-blockquote':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-bold':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-code':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-code-block':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-document':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-hard-break':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-heading':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-horizontal-rule':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-italic':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-link':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-list':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-paragraph':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-strike':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/extension-text':
+      specifier: 3.31.3
+      version: 3.31.3
+    '@tiptap/pm':
+      specifier: 3.31.3
+      version: 3.31.3
     '@types/node':
       specifier: 26.4.1
       version: 26.4.1
     effect:
       specifier: 3.22.2
       version: 3.22.2
+    markdown-it:
+      specifier: 15.0.1
+      version: 15.0.1
     oxfmt:
       specifier: 0.66.0
       version: 0.66.0
@@ -257,6 +308,82 @@ importers:
       typescript:
         specifier: ~6.0.3
         version: 6.0.3
+
+  packages/content:
+    dependencies:
+      '@raphael/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@tiptap/core':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/pm@3.31.3)
+      '@tiptap/extension-blockquote':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)
+      '@tiptap/extension-bold':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
+      '@tiptap/extension-code':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
+      '@tiptap/extension-code-block':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)
+      '@tiptap/extension-document':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
+      '@tiptap/extension-hard-break':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
+      '@tiptap/extension-heading':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
+      '@tiptap/extension-horizontal-rule':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)
+      '@tiptap/extension-italic':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
+      '@tiptap/extension-link':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)
+      '@tiptap/extension-list':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)
+      '@tiptap/extension-paragraph':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
+      '@tiptap/extension-strike':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
+      '@tiptap/extension-text':
+        specifier: 'catalog:'
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
+      '@tiptap/pm':
+        specifier: 'catalog:'
+        version: 3.31.3
+      effect:
+        specifier: 'catalog:'
+        version: 3.22.2
+      markdown-it:
+        specifier: 'catalog:'
+        version: 15.0.1
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.4.1
+      '@yourtechbudstudio/raphael-typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      oxfmt:
+        specifier: 'catalog:'
+        version: 0.66.0
+      oxlint:
+        specifier: 'catalog:'
+        version: 1.81.0
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
 
   packages/contracts:
     dependencies:
@@ -1907,6 +2034,9 @@ packages:
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
 
+  argparse@3.0.1:
+    resolution: {integrity: sha512-nM4mHF/KM1v59ZNKX7zfusQz5wUAxR511YG8Vo6TyiV4aqhu++rbJW4v04xsWhpSsHFj66flT8P7znVpyO20xQ==}
+
   aria-hidden@1.2.6:
     resolution: {integrity: sha512-ik3ZgC9dY/lYVVM++OISsaYDeg1tb0VtP5uL3ouh1koGOaUMDPpbFIei4JkFimWUFPn90sbMNMXQAIVOlnYKJA==}
     engines: {node: '>=10'}
@@ -2241,6 +2371,10 @@ packages:
   entities@4.5.0:
     resolution: {integrity: sha512-V0hjH4dGPh9Ao5p0MoRY6BVqtwCjhz6vI5LT8AJ55H+4g9/4vbHx1I54fS0XuclLhDHArPQCiMjDxjaL8fPxhw==}
     engines: {node: '>=0.12'}
+
+  entities@8.1.0:
+    resolution: {integrity: sha512-kxL7msIffSuh9aaFAMD7rxAIuTRMAHMeBtgHW2yUdWw732ZNh4MehkF2gdjvtdmikkaIP9bFDDJOPlsvm7avrA==}
+    engines: {node: '>=20.19.0'}
 
   error-stack-parser@2.1.4:
     resolution: {integrity: sha512-Sk5V6wVazPhq5MhpO+AUxJn5x7XSXGl1R93Vn7i+zS15KDVxQijejNCrz8340/2bgLBjR9GtEG8ZVKONDjcqGQ==}
@@ -2885,6 +3019,9 @@ packages:
     resolution: {integrity: sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA==}
     engines: {node: '>= 12.0.0'}
 
+  linkify-it@6.1.0:
+    resolution: {integrity: sha512-wJ/TwpSDTLepCrQoYWYIExIKg5Zchex2Nn5yk2mFnB+6PtdkHtyLx742md9csRjjOnGkKIS/RrbY7l8D6gT9Vw==}
+
   linkifyjs@4.3.3:
     resolution: {integrity: sha512-P8aEP5U/D1/IlTY2OeYsErdwh9bGuLE30NcXtKEjgdHcahveQoQwM2yZNsioQHsWFz0P7KKudisbrzCgR0sDHg==}
 
@@ -2925,11 +3062,18 @@ packages:
   makeerror@1.0.12:
     resolution: {integrity: sha512-JmqCvUhmt43madlpFzG4BQzG2Z3m6tvQDNKdClZnO3VbIudJYmxsT0FNJMeiB2+JTSlTQTSbU8QdesVmwJcmLg==}
 
+  markdown-it@15.0.1:
+    resolution: {integrity: sha512-9/7gE95FNPkfUWrjJIoHZza2iLmuJlPD0UNMxPi7bxUrbCR525YZY0r+zyfes0dZI5ZZ/uNIXUJca0pJvtw41g==}
+    hasBin: true
+
   marky@1.3.0:
     resolution: {integrity: sha512-ocnPZQLNpvbedwTy9kNrQEsknEfgvcLMvOtz3sFeWApDq1MXH1TqkCIx58xlpESsfwQOnuBO9beyQuNGzVvuhQ==}
 
   mdn-data@2.0.14:
     resolution: {integrity: sha512-dn6wd0uw5GsdswPFfsgMp5NSB0/aDe6fK94YJV/AJDYXL6HVLWBsxeq7js7Ad+mU2K9LAlwpk6kN2D5mwCPVow==}
+
+  mdurl@2.1.0:
+    resolution: {integrity: sha512-1+HBaOx0zi/dQWht8rNv9MYf9qqpqL/kxI0hXImU6Y547zM6Sni8BQibt7ifgMcYtQg41ao3Ivd6cnSM86inpg==}
 
   memoize-one@5.2.1:
     resolution: {integrity: sha512-zYiwtZUcYyXKo/np96AGZAckk+FWWsUdJ3cHGGmld7+AhvcWmQyGCYUh1hc4Q/pkOhb65dQR/pqCyK0cOaHz4Q==}
@@ -3324,6 +3468,10 @@ packages:
 
   prosemirror-view@1.42.3:
     resolution: {integrity: sha512-oTN7EtH+CpwxU9NrwEYWd0UZ4JUx7l048l5A2Xppm4p/60isZYLnth9QVQmC3VRIvdrIWCxwZSd+Uz791G31/w==}
+
+  punycode.js@2.3.1:
+    resolution: {integrity: sha512-uxFIHU0YlHYhDQtV4R9J6a52SLx28BCjT+4ieh7IGbgwVJWO+km431c4yRlREUAsAmt/uMjQUyQHNEPf0M39CA==}
+    engines: {node: '>=6'}
 
   pure-rand@6.1.0:
     resolution: {integrity: sha512-bVWawvoZoBYpp6yIoQtQXHZjmz35RSVHnUOTefl8Vcjr8snTPY1wnpSPMWekcFwbxI6gtmT7rSYPFvz71ldiOA==}
@@ -3757,6 +3905,9 @@ packages:
   ua-parser-js@1.0.41:
     resolution: {integrity: sha512-LbBDqdIC5s8iROCUjMbW1f5dJQTEFB1+KO9ogbvlb3nm9n4YHa5p4KTvFPWvh2Hs8gZMBuiB1/8+pdfe/tDPug==}
     hasBin: true
+
+  uc.micro@3.0.0:
+    resolution: {integrity: sha512-U3PppEkleoTnIfi8BozMx3yju3qc/L6SwqWo2Sw+54PX+PX0q9I+r1Um5HCmqD7n9VDX5/v3vQH/AjA6deDdtw==}
 
   undici-types@8.3.0:
     resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
@@ -5692,6 +5843,8 @@ snapshots:
 
   argparse@2.0.1: {}
 
+  argparse@3.0.1: {}
+
   aria-hidden@1.2.6:
     dependencies:
       tslib: 2.8.1
@@ -6067,6 +6220,8 @@ snapshots:
       tapable: 2.3.3
 
   entities@4.5.0: {}
+
+  entities@8.1.0: {}
 
   error-stack-parser@2.1.4:
     dependencies:
@@ -6658,6 +6813,10 @@ snapshots:
       lightningcss-win32-arm64-msvc: 1.33.0
       lightningcss-win32-x64-msvc: 1.33.0
 
+  linkify-it@6.1.0:
+    dependencies:
+      uc.micro: 3.0.0
+
   linkifyjs@4.3.3: {}
 
   lodash.debounce@4.0.8: {}
@@ -6694,9 +6853,20 @@ snapshots:
     dependencies:
       tmpl: 1.0.5
 
+  markdown-it@15.0.1:
+    dependencies:
+      argparse: 3.0.1
+      entities: 8.1.0
+      linkify-it: 6.1.0
+      mdurl: 2.1.0
+      punycode.js: 2.3.1
+      uc.micro: 3.0.0
+
   marky@1.3.0: {}
 
   mdn-data@2.0.14: {}
+
+  mdurl@2.1.0: {}
 
   memoize-one@5.2.1: {}
 
@@ -7334,6 +7504,8 @@ snapshots:
       prosemirror-state: 1.4.4
       prosemirror-transform: 1.12.1
 
+  punycode.js@2.3.1: {}
+
   pure-rand@6.1.0: {}
 
   query-string@7.1.3:
@@ -7795,6 +7967,8 @@ snapshots:
       '@typescript/typescript-win32-x64': 7.0.2
 
   ua-parser-js@1.0.41: {}
+
+  uc.micro@3.0.0: {}
 
   undici-types@8.3.0: {}
 

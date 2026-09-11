@@ -1,0 +1,37 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "heading",
+      "attrs": { "level": 1 },
+      "content": [{ "type": "text", "text": "Title" }]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        { "type": "text", "text": "Some " },
+        { "type": "text", "marks": [{ "type": "bold" }], "text": "bold" },
+        { "type": "text", "text": " text with a " },
+        {
+          "type": "text",
+          "marks": [{ "type": "link", "attrs": { "href": "https://example.com" } }],
+          "text": "link"
+        },
+        { "type": "text", "text": "." }
+      ]
+    },
+    {
+      "type": "bulletList",
+      "content": [
+        {
+          "type": "listItem",
+          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "first" }] }]
+        },
+        {
+          "type": "listItem",
+          "content": [{ "type": "paragraph", "content": [{ "type": "text", "text": "second" }] }]
+        }
+      ]
+    }
+  ]
+}
