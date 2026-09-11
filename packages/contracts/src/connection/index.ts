@@ -1,6 +1,7 @@
 import { Schema } from 'effect';
 
 import { requestDecoder, responseDecoder } from '../shared/decode.ts';
+import { isJsonObject } from '../shared/json.ts';
 import { PositiveSafeInt } from '../shared/numbers.ts';
 import type { RouteDescriptor } from '../shared/route.ts';
 
@@ -12,14 +13,21 @@ import type { RouteDescriptor } from '../shared/route.ts';
 export const PROTOCOL_VERSION = 1;
 
 /**
- * Verification carries no input, and any property is refused. The explicit key check is necessary
- * because an empty struct alone accepts whatever it is given: excess-property handling has no declared
- * field to compare against.
+ * Verification carries no input, and any property is refused.
+ *
+ * The explicit check is doing more work than it looks like. An empty struct on its own accepts almost
+ * anything: excess-property handling has no declared field to compare against, so it has nothing to
+ * reject, and a number, an array, or any object with no own enumerable keys all satisfy it. Measured,
+ * not assumed - `42` and `[]` both decoded as valid requests before this filter existed.
+ *
+ * `isJsonObject` is the same predicate the rest of the contracts use for an arbitrary JSON object, so
+ * "an object" means one thing across the package rather than two nearly-identical spellings.
  */
 export const VerifyRequest = Schema.Struct({}).pipe(
-  Schema.filter((value) =>
-    Object.keys(value).length === 0 ? true : 'verification takes no input',
-  ),
+  Schema.filter((value) => {
+    if (!isJsonObject(value)) return 'verification takes a JSON object';
+    return Object.keys(value).length === 0 ? true : 'verification takes no input';
+  }),
 );
 
 /**
@@ -47,6 +55,28 @@ export const describeProtocolMismatch = (version: number): string =>
   version > PROTOCOL_VERSION
     ? `This server speaks protocol ${version}; this client understands ${PROTOCOL_VERSION}. Update the client.`
     : `This server speaks protocol ${version}; this client understands ${PROTOCOL_VERSION}. Update the server.`;
+
+/**
+ * How a credential travels. One header, one scheme, defined once so the server, the typed client, and
+ * the mobile app cannot disagree about the spelling.
+ *
+ * This is a contract datum, not an authentication framework: there is no negotiation, no second
+ * scheme, and no alternative location. The key never appears in a URL or a query string.
+ */
+export const AUTHORIZATION_HEADER = 'authorization';
+export const AUTHORIZATION_SCHEME = 'Bearer';
+
+/** The exact header value a client sends. The token is used verbatim; nothing trims or re-encodes it. */
+export const authorizationHeaderValue = (key: string): string => `${AUTHORIZATION_SCHEME} ${key}`;
+
+/**
+ * The floor on a configured key, in characters.
+ *
+ * Length is not entropy - thirty-two repeated characters satisfy this and remain weak - so this is a
+ * floor that rejects obviously unusable keys, not a strength guarantee. Generate a random 32-byte
+ * secret and encode it for header transport.
+ */
+export const API_KEY_MIN_LENGTH = 32;
 
 export const CONNECTION_ROUTES = {
   verify: { method: 'POST', path: '/api/connection/verify' },

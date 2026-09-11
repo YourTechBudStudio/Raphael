@@ -4,16 +4,24 @@ import { responseDecoder } from './decode.ts';
 import { JsonObjectSafe, type JsonObject } from './json.ts';
 
 /**
- * Every error this release's operations can produce. Unused provider or lifecycle codes are
- * deliberately absent: a code exists here only when something returns it.
+ * Every error this release can produce. Unused provider or lifecycle codes are deliberately absent: a
+ * code exists here only when something returns it.
+ *
+ * The catalog spans two owners. Most codes are operation outcomes, produced by a capability and
+ * projected from its own tagged failure. `unauthorized`, `route_not_found`, `method_not_allowed`,
+ * `payload_too_large`, and `unsupported_media_type` are *transport* outcomes: the HTTP host produces
+ * them from its own fields before any operation runs, and no capability failure ever projects to one.
  */
 export const API_ERROR_CODES = [
   'invalid_input',
   'unauthorized',
   'node_not_found',
+  'route_not_found',
+  'method_not_allowed',
   'slug_conflict',
   'idempotency_conflict',
   'payload_too_large',
+  'unsupported_media_type',
   'invalid_parent',
   'unsupported_content',
   'storage_busy',
@@ -34,9 +42,12 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorCode, number>> = {
   invalid_input: 400,
   unauthorized: 401,
   node_not_found: 404,
+  route_not_found: 404,
+  method_not_allowed: 405,
   slug_conflict: 409,
   idempotency_conflict: 409,
   payload_too_large: 413,
+  unsupported_media_type: 415,
   invalid_parent: 422,
   unsupported_content: 422,
   storage_busy: 503,

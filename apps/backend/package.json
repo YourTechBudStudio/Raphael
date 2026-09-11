@@ -20,6 +20,7 @@
     "fix": "oxlint . --fix && oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint . --deny-warnings",
+    "measure": "node bench/responsiveness.ts",
     "test": "node --test \"src/**/*.test.ts\" \"tests/*.test.ts\"",
     "typecheck": "tsc --project tsconfig.json"
   },
@@ -28,10 +29,13 @@
     "@raphael/contracts": "workspace:*",
     "better-sqlite3": "catalog:",
     "drizzle-orm": "catalog:",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "express": "5.2.1",
+    "yaml": "2.9.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "catalog:",
+    "@types/express": "5.0.6",
     "@types/node": "catalog:",
     "@yourtechbudstudio/raphael-typescript-config": "workspace:*",
     "drizzle-kit": "catalog:",

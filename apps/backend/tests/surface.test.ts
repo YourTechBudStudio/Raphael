@@ -41,6 +41,20 @@ const COMPOSITION = [
   'openDatabase',
 ] as const;
 
+/** Phase 05: starting a server, and working out what to start it with. */
+const RUNTIME = [
+  'ApiCredential',
+  'CONFIG_DEFAULTS',
+  'ConfigurationError',
+  'DEFAULT_DEADLINES',
+  'consoleLogger',
+  'loadConfiguration',
+  'resolveOptions',
+  'serve',
+  'silentLogger',
+  'validateOptions',
+] as const;
+
 /** Names that must never be reachable from either root. */
 const PRIVATE_TO_THE_CAPABILITY = [
   'nodes',
@@ -48,16 +62,24 @@ const PRIVATE_TO_THE_CAPABILITY = [
   'MAX_SAFE_DB_INTEGER',
   'REPLAY_TTL_MS',
   'STORED_NODE_TYPES',
+  // The transport reaches these through `serve`. A caller that could register its own route table,
+  // build its own app, or run its own collector could also compose one without authentication.
+  'buildApp',
+  'nodeRoutes',
+  'connectionRoutes',
+  'collectExpiredReplays',
+  'sweepExpiredReplays',
+  'authenticate',
 ] as const;
 
 test('the nodes capability publishes its operations and its error contract, and no storage detail', () => {
   assert.deepEqual([...Object.keys(capability)].sort(), [...OPERATIONS, ...ERROR_CONTRACT].sort());
 });
 
-test('the package root adds composition primitives and still no storage detail', () => {
+test('the package root adds composition and runtime primitives, and still no storage detail', () => {
   assert.deepEqual(
     [...Object.keys(packageRoot)].sort(),
-    [...OPERATIONS, ...ERROR_CONTRACT, ...COMPOSITION].sort(),
+    [...OPERATIONS, ...ERROR_CONTRACT, ...COMPOSITION, ...RUNTIME].sort(),
   );
 });
 

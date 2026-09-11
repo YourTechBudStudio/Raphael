@@ -24,6 +24,19 @@ test('verification carries no input, and an unknown property is refused', () => 
   assert.equal(Either.isLeft(decodeVerifyRequest(undefined)), true);
 });
 
+test('a value that is merely key-less is not an empty object', () => {
+  // An empty struct has no declared field to compare against, so on its own it accepts a number, an
+  // array, or any object with no own enumerable keys. Each of these decoded as a valid request until
+  // the shape was checked explicitly.
+  for (const value of [42, [], new Date(), null, 'text', true]) {
+    assert.equal(
+      Either.isLeft(decodeVerifyRequest(value)),
+      true,
+      `${JSON.stringify(value)} must not decode as a verification request`,
+    );
+  }
+});
+
 test('the response reports a protocol version and nothing about the server', () => {
   const decoded = decodeVerifyResponse({ protocolVersion: PROTOCOL_VERSION });
   assert.equal(Either.isRight(decoded), true);
