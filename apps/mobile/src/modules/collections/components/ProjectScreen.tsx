@@ -15,12 +15,20 @@ import {
   ActiveButton,
 } from '../../../ui';
 import { CaptureBar } from '../../capture';
-import { goBack, openHome, openSearch, useSheetsStore, LocationTopBar } from '../../navigation';
+import {
+  goBack,
+  openBrowse,
+  openHome,
+  openSearch,
+  useSheetsStore,
+  LocationTopBar,
+} from '../../navigation';
 import { ResourceGrid, type ResourceGridItem } from '../../resources';
 import { useProjectActive } from '../client/active';
 import { useFavoriteToggle } from '../client/favorites';
 import { useLocationPath, useProject, useProjectContents } from '../client/queries';
 import { ProjectHeaderSkeleton, ProjectNotesSkeleton } from './ProjectSkeleton';
+import { ReadOnlyBody } from './ReadOnlyBody';
 
 /** Stands in for the ancestor chain for the ~120 ms before it arrives. */
 const FALLBACK_PATH = ['Areas'];
@@ -47,7 +55,6 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const contents = useProjectContents(projectId);
   const locationPath = useLocationPath(target);
 
-  const openBrowse = useSheetsStore((state) => state.openBrowse);
   const openNewNote = useSheetsStore((state) => state.openNewNote);
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
 
@@ -125,7 +132,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
     );
   }
 
-  const { name, description } = project.data;
+  const { name, description, body } = project.data;
 
   return (
     <View className="flex-1">
@@ -182,6 +189,8 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
             </Text>
           ) : null}
         </View>
+
+        <ReadOnlyBody body={body} kind="project" />
 
         <View className="mt-7 gap-3">
           <SectionHeading>Project notes</SectionHeading>

@@ -1,14 +1,16 @@
 import { X } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
-import {
-  TextInput,
-  Text,
-  View,
-  type NativeSyntheticEvent,
-  type TextInputContentSizeChangeEventData,
-} from 'react-native';
+import { TextInput, Text, View } from 'react-native';
 
-import { colors, confirmDiscard, IconButton, SavePill, Sheet, SheetBody } from '../../../ui';
+import {
+  colors,
+  confirmDiscard,
+  GrowingTextInput,
+  IconButton,
+  SavePill,
+  Sheet,
+  SheetBody,
+} from '../../../ui';
 import { useSheetsStore } from '../../navigation';
 import { useCreateNote } from '../client/mutations';
 import { useCaptureLocation } from '../client/queries';
@@ -20,13 +22,6 @@ const DISCARD_PROMPT = {
   keepLabel: 'Keep writing',
 } as const;
 
-/** Four lines of body text at 22px line height, so the sheet opens with room to write. */
-const BODY_MIN_HEIGHT = 88;
-/**
- * The body stops growing here and scrolls within itself, so the caret stays with the keyboard
- * rather than running off the end of the sheet's own scroll.
- */
-const BODY_MAX_HEIGHT = 220;
 /** The title takes focus after the sheet has settled, so the entry spring is not interrupted. */
 const FOCUS_DELAY = 320;
 
@@ -68,7 +63,6 @@ export function NewNoteSheet() {
 
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
-  const [bodyHeight, setBodyHeight] = useState(BODY_MIN_HEIGHT);
   const [failed, setFailed] = useState(false);
   const titleInput = useRef<TextInput>(null);
   const bodyInput = useRef<TextInput>(null);
@@ -101,7 +95,6 @@ export function NewNoteSheet() {
   const reset = () => {
     setTitle('');
     setBody('');
-    setBodyHeight(BODY_MIN_HEIGHT);
     setFailed(false);
     createNote.reset();
   };
@@ -150,11 +143,6 @@ export function NewNoteSheet() {
         closeSheet();
       }
     });
-  };
-
-  const handleBodySize = (event: NativeSyntheticEvent<TextInputContentSizeChangeEventData>) => {
-    const height = event.nativeEvent.contentSize.height;
-    setBodyHeight(Math.min(Math.max(height, BODY_MIN_HEIGHT), BODY_MAX_HEIGHT));
   };
 
   return (
@@ -212,19 +200,14 @@ export function NewNoteSheet() {
           value={title}
         />
 
-        <TextInput
+        <GrowingTextInput
           accessibilityLabel="Note"
-          className="mt-3 font-body text-[16px] leading-[22px] text-ink"
+          className="mt-3"
           editable={!saving}
-          multiline
           onChangeText={setBody}
-          onContentSizeChange={handleBodySize}
           placeholder="Start writing…"
-          placeholderTextColor={colors.inkSoft}
           ref={bodyInput}
-          style={{ height: bodyHeight }}
           testID="new-note-body"
-          textAlignVertical="top"
           value={body}
         />
 

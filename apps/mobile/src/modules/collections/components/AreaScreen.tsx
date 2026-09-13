@@ -16,6 +16,7 @@ import { CaptureBar } from '../../capture';
 import {
   goBack,
   openArea,
+  openBrowse,
   openHome,
   openProject,
   openSearch,
@@ -26,7 +27,9 @@ import { ResourceGrid } from '../../resources';
 import { useFavoriteToggle } from '../client/favorites';
 import { useArea, useAreaContents, useLocationPath } from '../client/queries';
 import { areaNoteGridItems } from './noteSpans';
+import { ReadOnlyBody } from './ReadOnlyBody';
 import { TileGrid, type TileGridItem } from './TileGrid';
+import { UnresolvedAttempts } from './UnresolvedAttempts';
 
 export interface AreaScreenProps {
   areaId: string;
@@ -45,9 +48,9 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   const area = areaQuery.data;
   const contents = contentsQuery.data;
 
-  const openBrowse = useSheetsStore((state) => state.openBrowse);
   const openNewNote = useSheetsStore((state) => state.openNewNote);
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
+  const openNewContainer = useSheetsStore((state) => state.openNewContainer);
 
   const names = (path ?? []).map((step) => step.name);
   // A root area has only itself in the path, so the chip names the collection it belongs to.
@@ -143,15 +146,33 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
         )}
 
         {area === undefined || area === null ? null : (
-          <View className="mt-3 flex-row items-center gap-1">
-            <FavoriteButton
-              favorited={favorite.isFavorite(target)}
-              label={area.name}
-              onToggle={() => {
-                favorite.toggle(target);
+          <View className="mt-3 flex-row flex-wrap items-center gap-x-3 gap-y-2">
+            <View className="flex-row items-center gap-1">
+              <FavoriteButton
+                favorited={favorite.isFavorite(target)}
+                label={area.name}
+                onToggle={() => {
+                  favorite.toggle(target);
+                }}
+              />
+              <Text className="font-body text-[15px] text-ink-soft">Favorite</Text>
+            </View>
+            {/* Creation is rare, so it is two quiet chips beside Favorite rather than a call to
+                action. Each opens the sheet with its destination and type already settled. */}
+            <Chip
+              accessibilityHint={`Opens a sheet to name a new area inside ${area.name}`}
+              label="New area"
+              onPress={() => {
+                openNewContainer({ type: 'area', parentAreaId: area.id });
               }}
             />
-            <Text className="font-body text-[15px] text-ink-soft">Favorite</Text>
+            <Chip
+              accessibilityHint={`Opens a sheet to name a new project inside ${area.name}`}
+              label="New project"
+              onPress={() => {
+                openNewContainer({ type: 'project', parentAreaId: area.id });
+              }}
+            />
           </View>
         )}
         {favorite.isError ? (
@@ -159,6 +180,10 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
             Favorite did not update. Try again.
           </Text>
         ) : null}
+
+        {area === undefined || area === null ? null : <ReadOnlyBody body={area.body} kind="area" />}
+
+        <UnresolvedAttempts className="mt-6" parentAreaId={areaId} />
 
         {contentsQuery.isError ? (
           <View className="mt-8">

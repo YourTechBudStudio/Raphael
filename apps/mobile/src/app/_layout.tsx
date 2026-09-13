@@ -15,8 +15,9 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import '../../global.css';
 import { queryClient } from '../infrastructure/query/query-client';
-import { BrowseSheet } from '../modules/browse';
 import { NewNoteSheet, VoiceCaptureSheet } from '../modules/capture';
+import { NewContainerSheet } from '../modules/collections';
+import { ConnectionGate } from '../modules/connection';
 import { colors } from '../ui/theme';
 
 // Keep Home underneath directly opened routes, including the search modal.
@@ -51,16 +52,24 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <QueryClientProvider client={queryClient}>
           <StatusBar style="dark" />
-          <Stack
-            initialRouteName="index"
-            screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.canvas } }}
-          >
-            <Stack.Screen name="index" />
-            <Stack.Screen name="search" options={{ presentation: 'modal' }} />
-          </Stack>
-          <BrowseSheet />
-          <NewNoteSheet />
-          <VoiceCaptureSheet />
+          <ConnectionGate>
+            <Stack
+              initialRouteName="index"
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: colors.canvas },
+              }}
+            >
+              <Stack.Screen name="index" />
+              <Stack.Screen name="browse" />
+              <Stack.Screen name="settings" />
+              <Stack.Screen name="change-server" />
+              <Stack.Screen name="search" options={{ presentation: 'modal' }} />
+            </Stack>
+            <NewNoteSheet />
+            <VoiceCaptureSheet />
+            <NewContainerSheet />
+          </ConnectionGate>
         </QueryClientProvider>
       </GestureHandlerRootView>
     </SafeAreaProvider>

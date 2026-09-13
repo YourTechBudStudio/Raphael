@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronLeft, Layers, Search } from 'lucide-react-native';
+import { ChevronDown, ChevronLeft, Layers, Search, Settings } from 'lucide-react-native';
+import type { ReactNode } from 'react';
 import { Text, View } from 'react-native';
 
 import { Chip, IconButton } from '../../../ui';
@@ -19,11 +20,12 @@ function formatPath(path: readonly string[]): string {
 export interface HomeTopBarProps {
   onBrowse: () => void;
   onSearch: () => void;
+  onSettings: () => void;
   testID?: string | undefined;
 }
 
-/** Home: the wordmark, the Browse chip, and search. */
-export function HomeTopBar({ onBrowse, onSearch, testID }: HomeTopBarProps) {
+/** Home: the wordmark, the Browse chip, search, and settings. */
+export function HomeTopBar({ onBrowse, onSearch, onSettings, testID }: HomeTopBarProps) {
   return (
     <View className="h-14 flex-row items-center justify-between" testID={testID}>
       <Text
@@ -31,8 +33,8 @@ export function HomeTopBar({ onBrowse, onSearch, testID }: HomeTopBarProps) {
         adjustsFontSizeToFit
         className="font-heading text-[34px] leading-[42px] text-ink"
         // The wordmark scales with the platform text size, but only so far: past this the row
-        // would push the Browse chip and search off the screen.
-        maxFontSizeMultiplier={1.3}
+        // would push the Browse chip and the two icon actions off the screen.
+        maxFontSizeMultiplier={1.2}
         numberOfLines={1}
       >
         raphael
@@ -45,7 +47,38 @@ export function HomeTopBar({ onBrowse, onSearch, testID }: HomeTopBarProps) {
           onPress={onBrowse}
         />
         <IconButton icon={Search} label="Search" onPress={onSearch} />
+        <IconButton
+          accessibilityHint="Opens settings, including the server connection"
+          icon={Settings}
+          label="Settings"
+          onPress={onSettings}
+        />
       </View>
+    </View>
+  );
+}
+
+export interface TitleTopBarProps {
+  title: string;
+  onBack: () => void;
+  /** One quiet control at the trailing edge, such as Browse's plus for a top-level area. */
+  trailing?: ReactNode | undefined;
+  testID?: string | undefined;
+}
+
+/** Settings and Browse: back and the screen title, with no location or search chrome. */
+export function TitleTopBar({ title, onBack, trailing, testID }: TitleTopBarProps) {
+  return (
+    <View className="h-14 flex-row items-center gap-2" testID={testID}>
+      <IconButton icon={ChevronLeft} label="Back" onPress={onBack} />
+      <Text
+        accessibilityRole="header"
+        className="flex-1 font-heading text-[24px] leading-[30px] text-ink"
+        numberOfLines={1}
+      >
+        {title}
+      </Text>
+      {trailing}
     </View>
   );
 }

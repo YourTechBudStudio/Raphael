@@ -4,7 +4,7 @@ import type { Resource } from '../../../infrastructure/api/contracts';
 import { EmptyState, Screen, SectionError, SectionHeading, Chip } from '../../../ui';
 import { CaptureBar } from '../../capture';
 import { useActiveProjects, useProjectActive } from '../../collections';
-import { openSearch, useSheetsStore, HomeTopBar } from '../../navigation';
+import { openBrowse, openSearch, openSettings, useSheetsStore, HomeTopBar } from '../../navigation';
 import { ResourceGrid, type ResourceGridItem } from '../../resources';
 import { useHomeFeed } from '../client/queries';
 import { ActiveProjectCard } from './ActiveProjectCard';
@@ -36,7 +36,6 @@ export function HomeScreen() {
   const projects = useActiveProjects();
   const active = useProjectActive();
   const feed = useHomeFeed();
-  const openBrowse = useSheetsStore((state) => state.openBrowse);
   const openNewNote = useSheetsStore((state) => state.openNewNote);
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
 
@@ -45,12 +44,11 @@ export function HomeScreen() {
       <Screen
         header={
           <HomeTopBar
-            onBrowse={() => {
-              openBrowse(null);
-            }}
+            onBrowse={openBrowse}
             onSearch={() => {
               openSearch(null);
             }}
+            onSettings={openSettings}
           />
         }
       >
@@ -73,12 +71,7 @@ export function HomeScreen() {
                   description="Open a project from Browse and mark it as Active to keep it here."
                   title="What deserves your attention?"
                 />
-                <Chip
-                  label="Browse projects"
-                  onPress={() => {
-                    openBrowse(null);
-                  }}
-                />
+                <Chip label="Browse projects" onPress={openBrowse} />
               </View>
             ) : (
               projects.data.map((project) => (

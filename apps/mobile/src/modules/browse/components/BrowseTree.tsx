@@ -108,7 +108,8 @@ function BrowseBranch({
               'flex-1 font-body text-[16px]',
               isCurrent ? 'text-primary' : 'text-ink',
             )}
-            numberOfLines={1}
+            // Long titles wrap once rather than vanish behind an ellipsis; a third line is cut.
+            numberOfLines={2}
           >
             {node.name}
           </Text>

@@ -11,6 +11,60 @@ export interface ParentRef {
 /** Reference to a favorited collection. */
 export type FavoriteRef = ParentRef;
 
+/**
+ * What a container creation makes and where. The root holds only areas, so `parentAreaId` is
+ * null exactly when `type` is `area` and the new area will sit at the top of the tree.
+ */
+export interface ContainerTarget {
+  type: CollectionType;
+  parentAreaId: string | null;
+}
+
+/**
+ * One creation request. The key identifies the logical attempt across retries, and the three
+ * authored fields are what that attempt says: only the title is required, and the other two are
+ * the empty string when they were left alone.
+ */
+export interface CreateContainerInput extends ContainerTarget {
+  title: string;
+  description: string;
+  /** Markdown source, as written. */
+  body: string;
+  attemptKey: string;
+}
+
+/**
+ * What a creation request came back with. `uncertain` is the answer when the request left the
+ * phone but no answer arrived: the container may or may not exist, and only a check by key
+ * can say. It is never a failure the sheet may quietly retry as if nothing had been sent.
+ */
+export type CreateContainerOutcome =
+  | { kind: 'created'; collection: Collection }
+  | {
+      kind: 'rejected';
+      reason: 'collision' | 'title_unusable' | 'parent_missing' | 'other';
+      message: string;
+    }
+  | { kind: 'uncertain' };
+
+/** What the server says about an earlier attempt when asked by its key. */
+export type AttemptCheck =
+  | { kind: 'created'; collection: Collection }
+  | { kind: 'not_created' }
+  | { kind: 'expired' };
+
+/**
+ * An attempt whose outcome is unknown, kept so it can be resolved later rather than repeated.
+ * It carries the whole payload, unchanged, because resolving it means asking about or resending
+ * exactly what was sent, not something reassembled from what is on screen now.
+ */
+export interface PendingAttempt extends ContainerTarget {
+  attemptKey: string;
+  title: string;
+  description: string;
+  body: string;
+}
+
 /** Where a capture flow writes to. 'home' means the default inbox area. */
 export type CaptureTarget = ParentRef | { type: 'home'; id?: undefined };
 
@@ -21,6 +75,8 @@ export interface Area {
   id: string;
   name: string;
   description: string;
+  /** The saved body as Markdown source, shown read-only. Empty when nothing has been written. */
+  body: string;
   parentAreaId: string | null;
   emblem: AreaEmblem;
 }
@@ -29,6 +85,8 @@ export interface Project {
   id: string;
   name: string;
   description: string;
+  /** The saved body as Markdown source, shown read-only. Empty when nothing has been written. */
+  body: string;
   areaId: string;
   emblem: ProjectEmblem;
 }

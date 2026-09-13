@@ -291,6 +291,12 @@ importers:
       '@expo-google-fonts/source-sans-3':
         specifier: 0.4.1
         version: 0.4.1
+      '@raphael/client':
+        specifier: workspace:*
+        version: link:../../packages/client
+      '@raphael/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@shopify/flash-list':
         specifier: 2.0.2
         version: 2.0.2(@babel/runtime@7.29.7)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)

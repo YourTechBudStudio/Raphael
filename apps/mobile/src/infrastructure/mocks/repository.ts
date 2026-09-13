@@ -1,9 +1,14 @@
+import { deriveSlug } from '@raphael/contracts/nodes';
+
 import type {
   Area,
   AreaContents,
+  AttemptCheck,
   BrowseNode,
   CaptureTarget,
   Collection,
+  CreateContainerInput,
+  CreateContainerOutcome,
   FavoriteRef,
   LocationStep,
   NoteResource,
@@ -42,6 +47,8 @@ const db = {
   resources: [...resourceFixtures],
   favorites: [...favoriteFixtures],
   activeProjectIds: [...activeFixtures],
+  /** Creations by attempt key, so a repeated attempt answers with what it already made. */
+  attempts: new Map<string, Collection>(),
 };
 
 const byNewest = (a: Resource, b: Resource): number => b.createdAt.localeCompare(a.createdAt);
@@ -50,6 +57,16 @@ const sameRef = (a: ParentRef, b: ParentRef): boolean => a.type === b.type && a.
 
 /** Areas are never shown in Browse, favorites, or search under the inbox id. */
 const isInbox = (area: Area): boolean => area.id === INBOX_AREA_ID;
+
+/**
+ * The server's slug for a title, or null when none can be derived. Reads the Either by its tag
+ * so the mock does not take a dependency on `effect` for one branch.
+ */
+const slugOf = (title: string): string | null => {
+  const derived = deriveSlug(title);
+
+  return derived._tag === 'Right' ? derived.right : null;
+};
 
 const findArea = (id: string): Area | undefined => db.areas.find((area) => area.id === id);
 
@@ -295,6 +312,114 @@ export const repository = {
     return db.favorites
       .map(toCollection)
       .filter((collection): collection is Collection => collection !== undefined);
+  },
+
+  /**
+   * Creates an area or project, or says why not. Collision is real here: a sibling of either
+   * type whose derived slug matches is refused, which is the server's rule. Nothing in this mock
+   * ever answers `uncertain`; that outcome and expiry are exercised by the sheet's own tests.
+   */
+  async createContainer(input: CreateContainerInput): Promise<CreateContainerOutcome> {
+    await delay();
+
+    const replay = db.attempts.get(input.attemptKey);
+
+    if (replay !== undefined) {
+      return { kind: 'created', collection: replay };
+    }
+
+    const parent = input.parentAreaId === null ? null : findArea(input.parentAreaId);
+
+    if (parent === undefined || (input.type === 'project' && parent === null)) {
+      return {
+        kind: 'rejected',
+        reason: 'parent_missing',
+        message: 'The place this was going to no longer exists.',
+      };
+    }
+
+    const title = input.title.trim();
+    const slug = slugOf(title);
+
+    if (slug === null) {
+      return {
+        kind: 'rejected',
+        reason: 'title_unusable',
+        message: 'That title has no letters or numbers to make an address from.',
+      };
+    }
+
+    const parentId = parent === null ? null : parent.id;
+    const siblings: { name: string; type: 'area' | 'project' }[] = [
+      ...db.areas
+        .filter((area) => area.parentAreaId === parentId && !isInbox(area))
+        .map((area) => ({ name: area.name, type: 'area' as const })),
+      ...(parentId === null ? [] : projectsOf(parentId)).map((project) => ({
+        name: project.name,
+        type: 'project' as const,
+      })),
+    ];
+    const taken = siblings.find((sibling) => slugOf(sibling.name) === slug);
+
+    if (taken !== undefined) {
+      const where = parent === null ? 'at the top level' : `in ${parent.name}`;
+
+      return {
+        kind: 'rejected',
+        reason: 'collision',
+        message: `There is already ${taken.type === 'area' ? 'an area' : 'a project'} called ${taken.name} ${where}.`,
+      };
+    }
+
+    let id = slug;
+
+    while (findArea(id) !== undefined || findProject(id) !== undefined) {
+      id = `${id}-${String(db.areas.length + db.projects.length + 1)}`;
+    }
+
+    const created: Collection =
+      input.type === 'area'
+        ? {
+            type: 'area',
+            id,
+            name: title,
+            description: input.description.trim(),
+            body: input.body.trim(),
+            parentAreaId: parentId,
+            emblem: 'layers',
+          }
+        : {
+            type: 'project',
+            id,
+            name: title,
+            description: input.description.trim(),
+            body: input.body.trim(),
+            areaId: parentId ?? '',
+            emblem: 'petals',
+          };
+
+    if (created.type === 'area') {
+      const { type: _type, ...area } = created;
+      db.areas = [...db.areas, area];
+    } else {
+      const { type: _type, ...project } = created;
+      db.projects = [...db.projects, project];
+    }
+
+    db.attempts.set(input.attemptKey, created);
+
+    return { kind: 'created', collection: created };
+  },
+
+  /** What became of an attempt. This mock never forgets one, so nothing here ever expires. */
+  async checkAttempt(attemptKey: string): Promise<AttemptCheck> {
+    await delay();
+
+    const created = db.attempts.get(attemptKey);
+
+    return created === undefined
+      ? { kind: 'not_created' }
+      : { kind: 'created', collection: created };
   },
 
   /** Writes a text note into the capture target and returns it. */

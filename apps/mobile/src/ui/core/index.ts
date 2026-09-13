@@ -13,10 +13,12 @@ export {
   type GithubMarkProps,
 } from './Emblem';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
+export { GrowingTextInput, type GrowingTextInputProps } from './GrowingTextInput';
 export { FavoriteButton, type FavoriteButtonProps } from './FavoriteButton';
 export { IconButton, type IconButtonProps } from './IconButton';
 
 export { PressableFeedback, type PressableFeedbackProps } from './PressableFeedback';
+export { PrimaryButton, type PrimaryButtonProps } from './PrimaryButton';
 export { SavePill, type SavePillProps } from './SavePill';
 export { SectionError, type SectionErrorProps } from './SectionError';
 export {

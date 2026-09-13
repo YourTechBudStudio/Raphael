@@ -4,3 +4,5 @@ export { useBrowseTree, useFavorites, useLocationPath } from './client/queries';
 export { AreaScreen } from './components/AreaScreen';
 export { ProjectScreen } from './components/ProjectScreen';
 export { CollectionTile } from './components/CollectionTile';
+export { NewContainerSheet } from './components/NewContainerSheet';
+export { UnresolvedAttempts } from './components/UnresolvedAttempts';

@@ -1,1 +1,1 @@
-export { BrowseSheet } from './components/BrowseSheet';
+export { BrowseScreen, type BrowseScreenProps } from './components/BrowseScreen';

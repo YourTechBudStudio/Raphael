@@ -29,6 +29,46 @@ export function openCollection(collection: Collection | ParentRef): void {
   openProject(collection.id);
 }
 
+/**
+ * Opens Browse, the whole area and project tree, with `current` marked as where you are.
+ *
+ * Browse is a pushed screen rather than a sheet so the creation sheet can open over it. It is a
+ * card, not a modal: on iOS a native modal sits above the sheets rendered in the root layout, and
+ * "New area" from the root of the tree would open a sheet nobody could see.
+ */
+export function openBrowse(current: ParentRef | null = null): void {
+  router.push({
+    pathname: '/browse',
+    params: current === null ? {} : { currentType: current.type, currentId: current.id },
+  });
+}
+
+/**
+ * Reads a collection reference out of route params, for the routes that take one as context:
+ * a search scope, or the location Browse marks as current. Anything that is not a collection
+ * reads as "none" rather than as an error, because a stale link is not the reader's mistake.
+ */
+export function parseCollectionRef(
+  type: string | undefined,
+  id: string | undefined,
+): ParentRef | null {
+  if (id === undefined || id === '') {
+    return null;
+  }
+
+  return type === 'area' || type === 'project' ? { type, id } : null;
+}
+
+/** Opens settings, where the server connection lives. */
+export function openSettings(): void {
+  router.push('/settings');
+}
+
+/** Opens the screen that points this device at a different server. */
+export function openChangeServer(): void {
+  router.push('/change-server');
+}
+
 /** Opens the search modal, optionally limited to one collection subtree. */
 export function openSearch(scope: SearchScope = null): void {
   router.push({

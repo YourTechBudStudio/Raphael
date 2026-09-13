@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { mobileApi } from '../../../infrastructure/api';
 import type { FavoriteRef, ParentRef } from '../../../infrastructure/api/contracts';
@@ -14,6 +14,22 @@ const queryKeys = {
   locationPath: (target: ParentRef | null) =>
     ['location-path', target === null ? 'none' : `${target.type}:${target.id}`] as const,
 };
+
+/**
+ * A container was created under `parentAreaId`: the parent's contents, the tree, and every
+ * favorites-style projection of names are stale. Search is not cached, so nothing to do there.
+ */
+export function invalidateHierarchy(
+  client: QueryClient,
+  parentAreaId: string | null,
+): Promise<void> {
+  return Promise.all([
+    client.invalidateQueries({ queryKey: queryKeys.browseTree }),
+    parentAreaId === null
+      ? Promise.resolve()
+      : client.invalidateQueries({ queryKey: queryKeys.areaContents(parentAreaId) }),
+  ]).then(() => undefined);
+}
 
 export function useArea(id: string) {
   return useQuery({
