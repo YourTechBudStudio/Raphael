@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import type { PendingAttempt } from '../../../infrastructure/api/contracts';
+import type { PendingAttempt } from './types.ts';
 
 interface PendingState {
   /** Attempts closed while their outcome was unknown, oldest first. */
@@ -12,10 +12,11 @@ interface PendingState {
 /**
  * Unresolved creation attempts, in memory.
  *
- * In memory is a mock-phase limitation, not the design: an attempt that outlives the app has to
- * outlive the process, and phase 09 owns writing these somewhere durable. What is settled here
- * is the shape and the rule: an attempt is kept exactly as it was sent, and resolved only by a
- * definite answer about that key.
+ * Nothing in this release renders or writes to this store: phase 08 removed every production path
+ * into container creation, and this is kept alongside the reducer as reviewed behaviour phase 09
+ * builds on. In memory is a limitation phase 09 owns - an attempt that outlives the app has to
+ * outlive the process. What is settled here is the shape and the rule: an attempt is kept exactly
+ * as it was sent, and resolved only by a definite answer about that key.
  */
 export const usePendingStore = create<PendingState>((set) => ({
   attempts: [],

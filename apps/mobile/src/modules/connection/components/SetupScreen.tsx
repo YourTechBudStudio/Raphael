@@ -3,16 +3,14 @@ import { useEffect, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { IconButton, PrimaryButton } from '../../../ui';
+import { Chip, IconButton, PrimaryButton } from '../../../ui';
 import { gutter } from '../../../ui/theme';
 import { verifyConnection } from '../client/verify';
-import { SAMPLE_CONNECTION } from '../sample';
 import { handshakeRows, hasFieldProblem, inspectSetupInput, type SetupPhase } from '../setup';
 import type { Connection } from '../state/connection';
 import { useConnectionStore } from '../state/connection';
 import { ConnectionField } from './ConnectionField';
 import { Handshake } from './Handshake';
-import { PreviewPanel } from './PreviewPanel';
 
 export interface SetupScreenProps {
   /**
@@ -26,8 +24,6 @@ export interface SetupScreenProps {
   replacing?: Connection | undefined;
   /** Leaving without replacing anything. Only meaningful alongside `replacing`. */
   onCancel?: (() => void) | undefined;
-  /** Called after the new connection is recorded, so the caller can leave this screen. */
-  onReplaced?: (() => void) | undefined;
 }
 
 /**
@@ -41,14 +37,25 @@ export interface SetupScreenProps {
  * Connect is always pressable. The checks underneath report what is known; they do not stand
  * between the person and the button, and pressing with an unusable field is how you find out why.
  */
-export function SetupScreen({ replacing, onCancel, onReplaced }: SetupScreenProps = {}) {
+export function SetupScreen({ replacing, onCancel }: SetupScreenProps = {}) {
   const [endpoint, setEndpoint] = useState('');
   const [key, setKey] = useState('');
   const [revealed, setRevealed] = useState(false);
   const [settled, setSettled] = useState({ endpoint: false, key: false });
   const [attempted, setAttempted] = useState(false);
   const [phase, setPhase] = useState<SetupPhase>({ kind: 'idle' });
-  const connect = useConnectionStore((state) => state.connect);
+  // A verified server that could not be written down while another one is already in place. It is
+  // not a handshake failure - all five conditions held - so it is said separately, under the button.
+  const [notSaved, setNotSaved] = useState<string | null>(null);
+  const establish = useConnectionStore((state) => state.establish);
+  // A deletion that failed during a disconnect. It is read from the store rather than passed in,
+  // because the screen that asked for the disconnect was unmounted by the gate the moment the
+  // phase changed - this is the first screen that exists afterwards, so it is where it can be said.
+  const removalProblem = useConnectionStore((state) =>
+    state.phase.kind === 'absent' ? state.phase.removalProblem : null,
+  );
+  const retryRemoval = useConnectionStore((state) => state.retryRemoval);
+  const [retryingRemoval, setRetryingRemoval] = useState(false);
   const insets = useSafeAreaInsets();
 
   // Kept in a ref so an in-flight verification cannot resolve into a later attempt's state.
@@ -70,6 +77,7 @@ export function SetupScreen({ replacing, onCancel, onReplaced }: SetupScreenProp
     // against values that are no longer the ones we checked.
     setSettled((current) => ({ ...current, [field]: false }));
     setAttempted(false);
+    setNotSaved(null);
     // Typing during the success hold abandons it: the values are no longer the ones that answered.
     attempt.current += 1;
     setPhase({ kind: 'idle' });
@@ -86,6 +94,7 @@ export function SetupScreen({ replacing, onCancel, onReplaced }: SetupScreenProp
     // finally say why rather than leaving the button looking broken.
     setAttempted(true);
     setSettled({ endpoint: true, key: true });
+    setNotSaved(null);
     if (hasFieldProblem(inspectSetupInput(endpoint, key))) {
       setPhase({ kind: 'idle' });
       return;
@@ -94,20 +103,49 @@ export function SetupScreen({ replacing, onCancel, onReplaced }: SetupScreenProp
     const mine = ++attempt.current;
     setPhase({ kind: 'verifying' });
     void verifyConnection(endpoint, key).then((outcome) => {
+      // A verification that finishes after the person changed a field, backed out, or started
+      // another attempt is answering a question nobody is asking. It must not connect anything.
       if (mine !== attempt.current) return;
-      if (outcome.ok) {
-        setPhase({ kind: 'connected' });
-        // The completed handshake is the one moment this screen's argument pays off, so it is
-        // allowed to finish its sentence before the app moves on. Short enough to read, short
-        // enough not to feel like a wait.
-        hold.current = setTimeout(() => {
-          if (mine !== attempt.current) return;
-          connect(outcome.connection);
-          onReplaced?.();
-        }, SUCCESS_HOLD_MS);
+      if (!outcome.ok) {
+        setPhase({ kind: 'failed', problem: outcome.problem });
         return;
       }
-      setPhase({ kind: 'failed', problem: outcome.problem });
+
+      setPhase({ kind: 'connected' });
+      // The completed handshake is the one moment this screen's argument pays off, so it is
+      // allowed to finish its sentence before the app moves on. Short enough to read, short
+      // enough not to feel like a wait.
+      hold.current = setTimeout(() => {
+        if (mine !== attempt.current) return;
+
+        void establish(outcome.server).then((result) => {
+          if (mine !== attempt.current) return;
+
+          // Replacing a working connection is the one case where a failed write changes nothing.
+          // The old server stays live and the screen says why the new one did not take its place.
+          if (result.kind === 'replace_not_saved') {
+            setPhase({ kind: 'idle' });
+            setNotSaved(result.message);
+            return;
+          }
+
+          if (result.kind === 'unusable') {
+            setPhase({
+              kind: 'failed',
+              problem: {
+                step: 'address',
+                title: 'That connection cannot be used.',
+                detail: result.message,
+              },
+            });
+            return;
+          }
+
+          // `activated` leaves through the gate, which swaps this screen out on its own.
+          // `superseded` means a newer decision already won, and this screen is no longer the one
+          // in charge of anything.
+        });
+      }, SUCCESS_HOLD_MS);
     });
   };
 
@@ -129,6 +167,33 @@ export function SetupScreen({ replacing, onCancel, onReplaced }: SetupScreenProp
         showsVerticalScrollIndicator={false}
       >
         <View className="gap-7">
+          {removalProblem === null ? null : (
+            <View
+              accessibilityLiveRegion="assertive"
+              accessibilityRole="alert"
+              className="gap-2 rounded-card border border-danger bg-card px-4 py-3"
+            >
+              <Text className="font-body-semibold text-[15px] leading-[21px] text-danger">
+                The old key may still be on this device.
+              </Text>
+              <Text className="font-body text-[14px] leading-[20px] text-ink-soft">
+                {`Raphael has stopped using it, but deleting it from secure storage failed, so it may be read again the next time the app opens. ${removalProblem}`}
+              </Text>
+              <View className="flex-row pt-1">
+                <Chip
+                  accessibilityHint="Tries to delete the saved key from this device again"
+                  label={retryingRemoval ? 'Removing…' : 'Try removing it again'}
+                  onPress={() => {
+                    setRetryingRemoval(true);
+                    void retryRemoval().finally(() => {
+                      setRetryingRemoval(false);
+                    });
+                  }}
+                />
+              </View>
+            </View>
+          )}
+
           {replacing === undefined ? (
             <View className="gap-2">
               <Text
@@ -220,21 +285,6 @@ export function SetupScreen({ replacing, onCancel, onReplaced }: SetupScreenProp
           </View>
 
           <Handshake rows={rows} />
-
-          <PreviewPanel
-            actions={[
-              {
-                label: 'Enter without a server',
-                onPress: () => {
-                  attempt.current += 1;
-                  setPhase({ kind: 'idle' });
-                  connect(SAMPLE_CONNECTION);
-                  onReplaced?.();
-                },
-              },
-            ]}
-            description="No server is contacted and nothing is verified. This exists so the screens behind this one can be reviewed while there is nothing to connect to."
-          />
         </View>
       </ScrollView>
 
@@ -242,6 +292,16 @@ export function SetupScreen({ replacing, onCancel, onReplaced }: SetupScreenProp
         className="border-t border-line bg-canvas px-5 pt-3"
         style={{ paddingBottom: insets.bottom + 12 }}
       >
+        {notSaved === null ? null : (
+          <View accessibilityLiveRegion="assertive" accessibilityRole="alert" className="pb-3">
+            <Text className="font-body-semibold text-[15px] leading-[21px] text-danger">
+              That server answered, but this device could not save it.
+            </Text>
+            <Text className="font-body text-[14px] leading-[20px] text-ink-soft">
+              {`${notSaved} You are still connected to ${replacing?.origin ?? 'your server'}, which has not changed.`}
+            </Text>
+          </View>
+        )}
         <PrimaryButton
           busy={verifying}
           label={connectLabel(phase.kind, replacing !== undefined)}

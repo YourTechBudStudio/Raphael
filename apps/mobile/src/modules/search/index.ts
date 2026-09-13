@@ -1,1 +1,1 @@
-export { SearchScreen } from './components/SearchScreen';
+export { SearchScreen, type SearchScreenProps } from './components/SearchScreen';

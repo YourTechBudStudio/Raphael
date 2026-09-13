@@ -3,15 +3,20 @@ import { Text, View } from 'react-native';
 import type { Resource } from '../../../infrastructure/api/contracts';
 import { EmptyState, Screen, SectionError, SectionHeading, Chip } from '../../../ui';
 import { CaptureBar } from '../../capture';
-import { useActiveProjects, useProjectActive } from '../../collections';
+import {
+  HierarchyError,
+  HierarchyStale,
+  useActiveProjectIds,
+  useHierarchy,
+  useProjectActive,
+  type HierarchyNode,
+} from '../../collections';
+import { RejectionNotice } from '../../connection';
 import { openBrowse, openSearch, openSettings, useSheetsStore, HomeTopBar } from '../../navigation';
 import { ResourceGrid, type ResourceGridItem } from '../../resources';
 import { useHomeFeed } from '../client/queries';
 import { ActiveProjectCard } from './ActiveProjectCard';
 import { ActiveSkeleton, NotesSkeleton } from './Skeletons';
-
-/** Home captures into the inbox: nothing is chosen yet, so the note lands there. */
-const HOME_TARGET = { type: 'home' } as const;
 
 /**
  * The feed reads as the board does: the first voice note takes the full width so its waveform
@@ -31,13 +36,31 @@ function toGridItems(feed: readonly Resource[]): ResourceGridItem[] {
   });
 }
 
-/** Home orients first: deliberately active projects together, then recent captures. */
+/**
+ * Home orients first: deliberately active projects together, then recent captures.
+ *
+ * An active project is stored as an id, so the card's title and description are read out of the
+ * hierarchy. That makes this section depend on the hierarchy loading, and it reports that
+ * dependency honestly rather than showing an empty list when the server could not be reached.
+ *
+ * The notes here are kept on this device for the session.
+ */
 export function HomeScreen() {
-  const projects = useActiveProjects();
+  const selected = useActiveProjectIds();
+  const tree = useHierarchy();
   const active = useProjectActive();
   const feed = useHomeFeed();
   const openNewNote = useSheetsStore((state) => state.openNewNote);
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
+
+  const hierarchy = tree.hierarchy;
+  const projects: readonly HierarchyNode[] | undefined =
+    selected.data === undefined || hierarchy === undefined
+      ? undefined
+      : selected.data
+          .map((id) => hierarchy.byId.get(id))
+          .filter((node): node is HierarchyNode => node !== undefined && node.type === 'project');
+  const projectsFailed = selected.isError || (tree.isError && hierarchy === undefined);
 
   return (
     <View className="flex-1">
@@ -53,19 +76,27 @@ export function HomeScreen() {
         }
       >
         <View className="gap-7">
+          <RejectionNotice />
           <View className="gap-3">
             <SectionHeading>Active projects</SectionHeading>
-            {projects.isError ? (
+            {/* These cards are named from the hierarchy, so a stale hierarchy is stale names. */}
+            <HierarchyStale tree={tree} />
+            {projectsFailed && !selected.isError ? (
+              // Only the hierarchy failed, so it gets to explain itself - and to decline a retry
+              // when trying again cannot help.
+              <HierarchyError title="Active projects did not load." tree={tree} />
+            ) : projectsFailed ? (
               <SectionError
                 onRetry={() => {
-                  void projects.refetch();
+                  if (selected.isError) void selected.refetch();
+                  if (tree.isError) tree.refetch();
                 }}
-                retrying={projects.isFetching}
+                retrying={selected.isFetching || tree.isFetching}
                 title="Active projects did not load."
               />
-            ) : projects.data === undefined ? (
+            ) : projects === undefined ? (
               <ActiveSkeleton />
-            ) : projects.data.length === 0 ? (
+            ) : projects.length === 0 ? (
               <View className="gap-3">
                 <EmptyState
                   description="Open a project from Browse and mark it as Active to keep it here."
@@ -74,7 +105,7 @@ export function HomeScreen() {
                 <Chip label="Browse projects" onPress={openBrowse} />
               </View>
             ) : (
-              projects.data.map((project) => (
+              projects.map((project) => (
                 <ActiveProjectCard
                   key={project.id}
                   project={project}
@@ -86,7 +117,7 @@ export function HomeScreen() {
                 />
               ))
             )}
-            {active.isError && !projects.isError ? (
+            {active.isError && !projectsFailed ? (
               <Text accessibilityLiveRegion="polite" className="font-body text-[15px] text-danger">
                 Active status did not update. Try again.
               </Text>
@@ -116,14 +147,7 @@ export function HomeScreen() {
           </View>
         </View>
       </Screen>
-      <CaptureBar
-        onNewNote={() => {
-          openNewNote(HOME_TARGET);
-        }}
-        onVoice={() => {
-          openVoiceCapture(HOME_TARGET);
-        }}
-      />
+      <CaptureBar onNewNote={openNewNote} onVoice={openVoiceCapture} />
     </View>
   );
 }

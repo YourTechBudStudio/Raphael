@@ -12,6 +12,7 @@ export {
   type EmblemProps,
   type GithubMarkProps,
 } from './Emblem';
+export { emblemFor } from './emblem-for';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
 export { GrowingTextInput, type GrowingTextInputProps } from './GrowingTextInput';
 export { FavoriteButton, type FavoriteButtonProps } from './FavoriteButton';

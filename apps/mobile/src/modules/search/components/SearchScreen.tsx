@@ -2,31 +2,31 @@ import { ChevronLeft } from 'lucide-react-native';
 import { useEffect, useState } from 'react';
 import { Text, View } from 'react-native';
 
-import type {
-  Collection,
-  Resource,
-  SearchResults,
-  SearchScope,
-} from '../../../infrastructure/api/contracts';
+import type { ContainerRef, Resource } from '../../../infrastructure/api/contracts';
 import {
+  emblemFor,
   EmptyState,
   IconButton,
   Screen,
   SearchField,
-  SectionError,
   SectionHeading,
 } from '../../../ui';
-import { useLocationPath, CollectionTile } from '../../collections';
+import {
+  CollectionTile,
+  HierarchyError,
+  HierarchyStale,
+  type HierarchyNode,
+} from '../../collections';
 import { goBack, leaveSearchFor } from '../../navigation';
 import { ResourceGrid, type ResourceGridItem } from '../../resources';
-import { useSearch } from '../client/queries';
+import { useSearch, type SearchResults } from '../client/results';
 
 /** Long enough that a fast typist runs one search, short enough to feel immediate. */
 const DEBOUNCE_MS = 150;
 
 export interface SearchScreenProps {
-  /** Limits the search to one collection subtree. Everything is searched when absent. */
-  scope?: SearchScope | undefined;
+  /** Limits the search to one container subtree. Everything is searched when absent. */
+  scope?: ContainerRef | null | undefined;
 }
 
 /** Voice cards need the full width, and a lone card looks stranded in one column. */
@@ -38,29 +38,26 @@ function toGridItems(resources: readonly Resource[]): ResourceGridItem[] {
   );
 }
 
-/** Which of the mutually exclusive things the body is currently showing. */
-type Status = 'idle' | 'loading' | 'failed' | 'empty' | 'results';
-
 interface ResultGroupsProps {
   results: SearchResults;
-  onOpenCollection: (collection: Collection) => void;
+  onOpenContainer: (ref: ContainerRef) => void;
 }
 
 /** Results grouped the way the content is kept: places first, then what is inside them. */
-function ResultGroups({ results, onOpenCollection }: ResultGroupsProps) {
+function ResultGroups({ results, onOpenContainer }: ResultGroupsProps) {
   return (
     <View className="mt-5 gap-7">
-      {results.collections.length > 0 ? (
+      {results.containers.length > 0 ? (
         <View className="gap-4">
           <SectionHeading>Areas &amp; projects</SectionHeading>
-          {results.collections.map((collection, index) => (
+          {results.containers.map((container: HierarchyNode, index) => (
             <CollectionTile
-              description={collection.description}
-              emblem={collection.emblem}
-              key={`${collection.type}-${collection.id}`}
-              name={collection.name}
+              description={container.description}
+              emblem={emblemFor(container.type, container.id)}
+              key={container.id}
+              name={container.title}
               onPress={() => {
-                onOpenCollection(collection);
+                onOpenContainer({ type: container.type, id: container.id });
               }}
               waveSeed={index}
             />
@@ -78,7 +75,14 @@ function ResultGroups({ results, onOpenCollection }: ResultGroupsProps) {
   );
 }
 
-/** The modal search screen: one field, a scope line, and results grouped the way they are kept. */
+/**
+ * The modal search screen: one field, a scope line, and results grouped the way they are kept.
+ *
+ * Areas and projects are filtered out of the loaded hierarchy; notes are searched over what this
+ * device is holding for the session. The two are kept apart in the failure states as well as in the
+ * results, because "the hierarchy did not load" and "nothing matches" are different answers and
+ * only one of them is about what the person was looking for.
+ */
 export function SearchScreen({ scope = null }: SearchScreenProps) {
   const [text, setText] = useState('');
   const [debounced, setDebounced] = useState('');
@@ -94,41 +98,18 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
   }, [text]);
 
   const query = debounced.trim();
-
-  // The scope name comes from the location path; an id that resolves to nothing is not a scope.
-  const { data: path } = useLocationPath(scope);
-  const scopeName = path === undefined ? undefined : path[path.length - 1]?.name;
-  const scopeMissing = scope !== null && path !== undefined && path.length === 0;
-  const effectiveScope = scopeMissing ? null : scope;
-
-  const { data, isPending, isError, isFetching, isPlaceholderData, refetch } = useSearch(
-    query,
-    effectiveScope,
-  );
-
-  // Refining a query keeps the previous results on screen. They are dimmed while the next ones
-  // arrive, so the list never looks like a confident answer to what is in the field.
-  const stale = isFetching && isPlaceholderData;
-
-  const status: Status =
-    query === ''
-      ? 'idle'
-      : isError
-        ? 'failed'
-        : isPending || data === undefined
-          ? 'loading'
-          : data.collections.length === 0 && data.resources.length === 0
-            ? 'empty'
-            : 'results';
+  const search = useSearch(query, scope);
+  const { results } = search;
+  const empty = results.containers.length === 0 && results.resources.length === 0;
 
   const scopeLine =
     scope === null
       ? 'Searching everything'
-      : scopeMissing
+      : search.scopeMissing
         ? `That ${scope.type} is no longer here. Searching everything instead.`
-        : scopeName === undefined
+        : search.scopeName === undefined
           ? `Searching in this ${scope.type}`
-          : `Searching in ${scopeName}`;
+          : `Searching in ${search.scopeName}`;
 
   return (
     <Screen
@@ -163,48 +144,44 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
         {scopeLine}
       </Text>
 
-      {status === 'idle' ? (
+      {query === '' ? (
         <EmptyState
           className="mt-5"
           description="Names and summaries both count. Nothing is searched until you do."
           title="Start typing."
         />
-      ) : status === 'loading' ? (
-        <Text
-          accessibilityLiveRegion="polite"
-          className="mt-5 font-body text-[14px] leading-[20px] text-ink-soft"
-        >
-          Searching…
-        </Text>
-      ) : status === 'failed' ? (
-        <View className="mt-5">
-          <SectionError
-            onRetry={() => {
-              void refetch();
-            }}
-            retrying={isFetching}
-            title="Search failed."
-          />
-        </View>
-      ) : status === 'empty' ? (
-        <EmptyState
-          className="mt-5"
-          description="Try a shorter word. The search reads titles and summaries, and nothing else."
-          title={`Nothing matches “${query}”.`}
-        />
-      ) : status === 'results' && data !== undefined ? (
-        <View className={stale ? 'opacity-60' : ''}>
-          {stale ? (
+      ) : (
+        <View>
+          {/* Said above the results, not instead of them: notes may still have matched. */}
+          {search.containersFailed ? (
+            <View className="mt-5">
+              <HierarchyError
+                title="Areas and projects could not be searched — the hierarchy did not load."
+                tree={search.tree}
+              />
+            </View>
+          ) : null}
+
+          <HierarchyStale className="mt-5" tree={search.tree} />
+
+          {search.isPending ? (
             <Text
               accessibilityLiveRegion="polite"
               className="mt-5 font-body text-[14px] leading-[20px] text-ink-soft"
             >
               Searching…
             </Text>
-          ) : null}
-          <ResultGroups onOpenCollection={leaveSearchFor} results={data} />
+          ) : empty && !search.containersFailed ? (
+            <EmptyState
+              className="mt-5"
+              description="Try a shorter word. The search reads titles, descriptions, and summaries, and nothing else."
+              title={`Nothing matches “${query}”.`}
+            />
+          ) : (
+            <ResultGroups onOpenContainer={leaveSearchFor} results={results} />
+          )}
         </View>
-      ) : null}
+      )}
     </Screen>
   );
 }

@@ -1,4 +1,7 @@
 {
   "extends": ["expo/tsconfig.base", "@yourtechbudstudio/raphael-typescript-config/base.json"],
-  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
+  "compilerOptions": {
+    "allowImportingTsExtensions": true
+  }
 }

@@ -11,9 +11,10 @@ import {
   Sheet,
   SheetBody,
 } from '../../../ui';
+import type { AreaOption } from '../../collections';
 import { useSheetsStore } from '../../navigation';
 import { useCreateNote } from '../client/mutations';
-import { useCaptureLocation } from '../client/queries';
+import { AreaPicker } from './AreaPicker';
 
 /** Leaving with unsaved writing throws it away, so the sheet says so before it does. */
 const DISCARD_PROMPT = {
@@ -36,52 +37,50 @@ function firstLine(body: string): string {
 }
 
 /**
- * Where the note lands. The name arrives with the location query, so the line says it is still
- * loading rather than naming the wrong place, and still says something true if the name never
- * arrives: the note goes where the capture flow started either way.
- */
-function destinationLine(parentName: string | undefined, failed: boolean): string {
-  if (parentName !== undefined) {
-    return `Saving to ${parentName}`;
-  }
-
-  return failed ? 'Saving to the place you opened this from.' : 'Finding where this note goes…';
-}
-
-/**
- * The New note sheet: a title, a body, and one Save. It is mounted for the whole app and reads
- * both its open state and where the note goes from the sheets store.
+ * The New note sheet: a title, a body, a destination, and one Save.
  *
- * Save waits for the note to actually exist before the sheet closes, and closing with unsaved
- * writing asks first.
+ * The destination is chosen here, every time, and nothing chooses it for you. That is a deliberate
+ * change: the sheet used to be handed a target when it opened, and when it was opened from Home
+ * that target was a hidden inbox area. Filing someone's thinking somewhere they did not pick is the
+ * failure mode a second brain cannot have, so Save stays off until an area is tapped.
+ *
+ * What is written stays written. The draft survives the area list loading, failing, and being
+ * retried, because losing what someone typed because their server was slow would be a worse bug
+ * than the one being fixed.
+ *
+ * These notes are kept on this device for the session. Nothing here reaches the server, and no copy
+ * in this sheet says otherwise.
  */
 export function NewNoteSheet() {
   const open = useSheetsStore((state) => state.open);
-  const target = useSheetsStore((state) => state.captureTarget);
+  const session = useSheetsStore((state) => state.session);
   const closeSheet = useSheetsStore((state) => state.close);
-  const visible = open === 'new-note';
+  // Keyed on the opening. The sheet stays mounted so it can animate out, which means without an
+  // identity that changes per opening the next open would show the last one's aftermath.
+  return <NoteForm key={session} onClose={closeSheet} visible={open === 'new-note'} />;
+}
 
+interface NoteFormProps {
+  visible: boolean;
+  onClose: () => void;
+}
+
+function NoteForm({ visible, onClose }: NoteFormProps) {
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
+  const [destination, setDestination] = useState<AreaOption | null>(null);
   const [failed, setFailed] = useState(false);
   const titleInput = useRef<TextInput>(null);
   const bodyInput = useRef<TextInput>(null);
 
   const createNote = useCreateNote();
-  const path = useCaptureLocation(target, visible);
-  const steps = path.data ?? [];
-  const parentName = steps.length === 0 ? undefined : steps[steps.length - 1]?.name;
-
-  const destination = destinationLine(parentName, path.isError);
 
   const hasContent = title.trim() !== '' || body.trim() !== '';
   const saving = createNote.isPending;
-  const canSave = hasContent && !saving;
+  const canSave = hasContent && destination !== null && !saving;
 
   useEffect(() => {
-    if (!visible) {
-      return;
-    }
+    if (!visible) return;
 
     const timer = setTimeout(() => {
       titleInput.current?.focus();
@@ -92,17 +91,8 @@ export function NewNoteSheet() {
     };
   }, [visible]);
 
-  const reset = () => {
-    setTitle('');
-    setBody('');
-    setFailed(false);
-    createNote.reset();
-  };
-
   const handleSave = () => {
-    if (!canSave) {
-      return;
-    }
+    if (!canSave || destination === null) return;
 
     setFailed(false);
 
@@ -110,15 +100,12 @@ export function NewNoteSheet() {
 
     createNote.mutate(
       {
-        target,
+        parent: { type: 'area', id: destination.id },
         title: trimmedTitle === '' ? firstLine(body) : trimmedTitle,
         body: body.trim(),
       },
       {
-        onSuccess: () => {
-          reset();
-          closeSheet();
-        },
+        onSuccess: onClose,
         onError: () => {
           setFailed(true);
         },
@@ -127,21 +114,16 @@ export function NewNoteSheet() {
   };
 
   const handleClose = () => {
-    if (saving) {
-      return;
-    }
+    if (saving) return;
 
     if (!hasContent) {
-      reset();
-      closeSheet();
+      onClose();
+
       return;
     }
 
     void confirmDiscard(DISCARD_PROMPT).then((discard) => {
-      if (discard) {
-        reset();
-        closeSheet();
-      }
+      if (discard) onClose();
     });
   };
 
@@ -165,7 +147,9 @@ export function NewNoteSheet() {
         />
         <SavePill
           accessibilityHint={
-            parentName === undefined ? 'Saves this note' : `Saves this note to ${parentName}`
+            destination === null
+              ? 'Choose an area below before saving'
+              : `Saves this note in ${destination.title}`
           }
           disabled={!canSave}
           label={saving ? 'Saving…' : 'Save'}
@@ -221,11 +205,24 @@ export function NewNoteSheet() {
           </Text>
         ) : null}
 
-        <Text
-          accessibilityLiveRegion="polite"
-          className="mt-4 pb-5 font-body text-[14px] text-ink-soft"
-        >
-          {destination}
+        <View accessibilityRole="radiogroup" className="mt-6 gap-2 border-t border-line pt-4">
+          <Text accessibilityRole="header" className="font-heading text-[16px] text-ink">
+            Where does this go?
+          </Text>
+          <Text className="font-body text-[14px] leading-[20px] text-ink-soft">
+            {destination === null
+              ? 'Pick an area. Raphael will not choose one for you.'
+              : `Filing in ${destination.title}${destination.context === '' ? '' : ` · ${destination.context}`}.`}
+          </Text>
+          <AreaPicker
+            disabled={saving}
+            onSelect={setDestination}
+            selectedId={destination?.id ?? null}
+          />
+        </View>
+
+        <Text className="mt-5 pb-5 font-body text-[13px] leading-[19px] text-ink-soft">
+          Notes are kept on this device for now. Raphael does not store them on your server yet.
         </Text>
       </SheetBody>
     </Sheet>

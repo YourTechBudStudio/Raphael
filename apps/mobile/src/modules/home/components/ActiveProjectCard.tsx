@@ -1,11 +1,11 @@
 import { Text, View } from 'react-native';
 
-import type { Project } from '../../../infrastructure/api/contracts';
-import { Card, Emblem, ActiveButton, PressableFeedback } from '../../../ui';
+import { Card, Emblem, emblemFor, ActiveButton, PressableFeedback } from '../../../ui';
+import type { HierarchyNode } from '../../collections';
 import { openProject } from '../../navigation';
 
 interface ActiveProjectCardProps {
-  project: Project;
+  project: HierarchyNode;
   active: boolean;
   disabled: boolean;
   onToggle: () => void;
@@ -17,7 +17,7 @@ export function ActiveProjectCard({ project, active, disabled, onToggle }: Activ
     <Card className="flex-row items-center gap-2 px-3 py-2" wave waveHeight={24}>
       <PressableFeedback
         accessibilityHint="Opens project"
-        accessibilityLabel={project.name}
+        accessibilityLabel={project.title}
         className="min-h-16 flex-row items-center gap-3 py-2"
         hitSlop={0}
         onPress={() => {
@@ -25,15 +25,15 @@ export function ActiveProjectCard({ project, active, disabled, onToggle }: Activ
         }}
         style={{ flex: 1 }}
       >
-        <Emblem name={project.emblem} size={32} />
+        <Emblem name={emblemFor('project', project.id)} size={32} />
         <View className="flex-1 gap-1">
-          <Text className="font-heading text-[18px] leading-[24px] text-ink">{project.name}</Text>
+          <Text className="font-heading text-[18px] leading-[24px] text-ink">{project.title}</Text>
           <Text className="font-body text-[15px] leading-[20px] text-ink-soft">
             {project.description}
           </Text>
         </View>
       </PressableFeedback>
-      <ActiveButton disabled={disabled} active={active} label={project.name} onToggle={onToggle} />
+      <ActiveButton disabled={disabled} active={active} label={project.title} onToggle={onToggle} />
     </Card>
   );
 }

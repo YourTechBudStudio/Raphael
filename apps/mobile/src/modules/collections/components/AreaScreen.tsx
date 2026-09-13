@@ -2,9 +2,11 @@ import { FileText, Layers } from 'lucide-react-native';
 import { useMemo } from 'react';
 import { Text, View } from 'react-native';
 
-import type { ParentRef } from '../../../infrastructure/api/contracts';
+import type { ContainerRef } from '../../../infrastructure/api/contracts';
+import { asClientFailure, isNotFound } from '../../../infrastructure/query/failure';
 import {
   Chip,
+  emblemFor,
   EmptyState,
   Eyebrow,
   SectionHeading,
@@ -13,6 +15,7 @@ import {
   SectionError,
 } from '../../../ui';
 import { CaptureBar } from '../../capture';
+import { RejectionNotice } from '../../connection';
 import {
   goBack,
   openArea,
@@ -23,43 +26,84 @@ import {
   useSheetsStore,
   LocationTopBar,
 } from '../../navigation';
-import { ResourceGrid } from '../../resources';
+import { ResourceGrid, useLocalResources } from '../../resources';
 import { useFavoriteToggle } from '../client/favorites';
-import { useArea, useAreaContents, useLocationPath } from '../client/queries';
+import { pathSegments } from '../client/hierarchy';
+import {
+  ancestorsOf,
+  childrenOf,
+  useContainer,
+  useContainerPath,
+  useHierarchy,
+} from '../client/queries';
+import { HierarchyError, HierarchyStale } from './HierarchyError';
 import { areaNoteGridItems } from './noteSpans';
 import { ReadOnlyBody } from './ReadOnlyBody';
 import { TileGrid, type TileGridItem } from './TileGrid';
-import { UnresolvedAttempts } from './UnresolvedAttempts';
+
+/** Stands in when there is no client failure to inspect, so the not-found check stays total. */
+const NO_FAILURE = {
+  kind: 'transport',
+  mutationOutcome: 'not_applicable',
+  message: '',
+} as const;
 
 export interface AreaScreenProps {
-  areaId: string;
+  /** Null when the route parameter did not name a container. */
+  areaId: number | null;
 }
 
-/** The Area screen: where it sits, what it holds, and what it is called. */
+/**
+ * The Area screen: where it sits, what it holds, and what it is called.
+ *
+ * Two reads, and deliberately not three. Get supplies the area itself, because only Get carries a
+ * body. What the area holds comes from the one shared hierarchy every screen reads, rather than a
+ * List of its own: two reads of the same fact can disagree, and someone with the tree and this
+ * screen both in front of them would see the disagreement.
+ *
+ * Notes here are kept on this device for the session. They sit under the same heading as before and
+ * are not marked as different, which is a condition the owner accepted rather than an oversight.
+ */
 export function AreaScreen({ areaId }: AreaScreenProps) {
-  const known = areaId !== '';
-  const target = useMemo<ParentRef>(() => ({ type: 'area', id: areaId }), [areaId]);
+  const target = useMemo<ContainerRef | null>(
+    () => (areaId === null ? null : { type: 'area', id: areaId }),
+    [areaId],
+  );
 
   const favorite = useFavoriteToggle();
-  const areaQuery = useArea(areaId);
-  const contentsQuery = useAreaContents(areaId);
-  const { data: path } = useLocationPath(target);
-
-  const area = areaQuery.data;
-  const contents = contentsQuery.data;
+  const areaQuery = useContainer(target);
+  const tree = useHierarchy();
+  const notes = useLocalResources();
 
   const openNewNote = useSheetsStore((state) => state.openNewNote);
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
-  const openNewContainer = useSheetsStore((state) => state.openNewContainer);
 
-  const names = (path ?? []).map((step) => step.name);
+  const entity = areaQuery.data;
+  // A route can name a real container of the wrong kind. Rendering a project as an area would
+  // describe it with the wrong vocabulary and offer the wrong actions, so it is refused.
+  const wrongType = entity !== undefined && entity.type !== 'area';
+  // The server looking and finding nothing is not the same as not being able to ask. Only the
+  // first is "this is gone"; the second is a read to try again, and offering the wrong one of the
+  // two either loops someone forever or tells them their area was deleted because the wifi dropped.
+  const gone = areaQuery.isError && isNotFound(asClientFailure(areaQuery.error) ?? NO_FAILURE);
+  const notFound = areaId === null || wrongType || gone;
+  const failed = areaQuery.isError && !gone;
+
+  const ancestors = ancestorsOf(tree.hierarchy, areaId);
+  // Titles are what a person wants to read, and the hierarchy has them - but only while it is a
+  // current reading. A hierarchy that has not arrived, that failed, or that is known to be out of
+  // date cannot be asked where something is, because the answer would be last week's answer.
+  const namedHere = ancestors.length > 0 && !tree.isStale;
+  // So the server is asked instead, and only then. This is the canonical current address, in slugs
+  // rather than titles, which is less friendly and entirely true.
+  const canonical = useContainerPath(namedHere || notFound ? null : areaId);
+  const names = ancestors.map((step) => step.title);
   // A root area has only itself in the path, so the chip names the collection it belongs to.
-  const chipPath = names.length > 1 ? names : ['Areas', ...names];
-
-  // A screen that cannot name its location browses and searches everything instead of a dead node.
-  const notFound = !known || (area === null && !areaQuery.isPending);
-  // A failed read is not a missing area, but neither one can name a location for the chip.
-  const failed = areaQuery.isError;
+  const chipPath = namedHere
+    ? names.length > 1
+      ? names
+      : ['Areas', ...names]
+    : pathSegments(canonical.data);
   const scope = notFound || failed ? null : target;
 
   const header = (
@@ -71,7 +115,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
       onSearch={() => {
         openSearch(scope);
       }}
-      path={notFound || failed ? ['Areas'] : chipPath}
+      path={notFound || failed ? [] : chipPath}
     />
   );
 
@@ -79,9 +123,15 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
     return (
       <Screen captureBar={false} header={header}>
         <EmptyState
-          description="The link may be old, or the area was removed. Home still knows where everything is."
+          description={
+            wrongType
+              ? 'That link points at a project, not an area. Browse knows where everything is.'
+              : gone
+                ? 'Your server has no area with that id. It may have been removed since this link was made.'
+                : 'The link may be old, or the area was removed. Browse still knows where everything is.'
+          }
           icon={Layers}
-          title="We could not find that area."
+          title={wrongType ? 'That is not an area.' : 'We could not find that area.'}
         />
         <View className="mt-4 flex-row">
           <Chip accessibilityHint="Opens the home screen" label="Go to home" onPress={openHome} />
@@ -93,6 +143,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   if (failed) {
     return (
       <Screen captureBar={false} header={header}>
+        <RejectionNotice className="mb-4" />
         <SectionError
           onRetry={() => {
             void areaQuery.refetch();
@@ -104,25 +155,28 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
     );
   }
 
-  const subareas = contents?.subareas ?? [];
-  const projects = contents?.projects ?? [];
-  const resources = contents?.resources ?? [];
+  const children = childrenOf(tree.hierarchy, areaId);
+  const subareas = children?.subareas ?? [];
+  const projects = children?.projects ?? [];
+  const resources = (notes.data ?? []).filter(
+    (resource) => resource.parent.type === 'area' && resource.parent.id === areaId,
+  );
   // The boards give a project tile its description only when subareas are not using the space.
   const showProjectDescriptions = subareas.length === 0;
 
   const subareaTiles: TileGridItem[] = subareas.map((subarea) => ({
-    id: subarea.id,
-    name: subarea.name,
-    emblem: subarea.emblem,
+    id: String(subarea.id),
+    name: subarea.title,
+    emblem: emblemFor('area', subarea.id),
     onPress: () => {
       openArea(subarea.id);
     },
   }));
 
   const projectTiles: TileGridItem[] = projects.map((project) => ({
-    id: project.id,
-    name: project.name,
-    emblem: project.emblem,
+    id: String(project.id),
+    name: project.title,
+    emblem: emblemFor('project', project.id),
     description: showProjectDescriptions ? project.description : undefined,
     onPress: () => {
       openProject(project.id);
@@ -132,47 +186,32 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   return (
     <View className="flex-1">
       <Screen header={header}>
+        <RejectionNotice className="mb-4" />
         <Eyebrow>Area</Eyebrow>
         <Text
           accessibilityRole="header"
           className="mt-1 font-heading text-[40px] leading-[48px] text-ink"
         >
-          {area === undefined || area === null ? 'Loading…' : area.name}
+          {entity === undefined ? 'Loading…' : entity.title}
         </Text>
-        {area === undefined || area === null ? null : (
+        {entity === undefined ? null : (
           <Text className="mt-2 font-body text-[16px] leading-[22px] text-ink">
-            {area.description}
+            {entity.description}
           </Text>
         )}
 
-        {area === undefined || area === null ? null : (
+        {entity === undefined || target === null ? null : (
           <View className="mt-3 flex-row flex-wrap items-center gap-x-3 gap-y-2">
             <View className="flex-row items-center gap-1">
               <FavoriteButton
                 favorited={favorite.isFavorite(target)}
-                label={area.name}
+                label={entity.title}
                 onToggle={() => {
                   favorite.toggle(target);
                 }}
               />
               <Text className="font-body text-[15px] text-ink-soft">Favorite</Text>
             </View>
-            {/* Creation is rare, so it is two quiet chips beside Favorite rather than a call to
-                action. Each opens the sheet with its destination and type already settled. */}
-            <Chip
-              accessibilityHint={`Opens a sheet to name a new area inside ${area.name}`}
-              label="New area"
-              onPress={() => {
-                openNewContainer({ type: 'area', parentAreaId: area.id });
-              }}
-            />
-            <Chip
-              accessibilityHint={`Opens a sheet to name a new project inside ${area.name}`}
-              label="New project"
-              onPress={() => {
-                openNewContainer({ type: 'project', parentAreaId: area.id });
-              }}
-            />
           </View>
         )}
         {favorite.isError ? (
@@ -181,30 +220,41 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
           </Text>
         ) : null}
 
-        {area === undefined || area === null ? null : <ReadOnlyBody body={area.body} kind="area" />}
+        {entity === undefined ? null : (
+          <ReadOnlyBody
+            body={entity.body.format === 'markdown' ? entity.body.value : ''}
+            kind="area"
+          />
+        )}
 
-        <UnresolvedAttempts className="mt-6" parentAreaId={areaId} />
-
-        {contentsQuery.isError ? (
+        {tree.isError && tree.hierarchy === undefined ? (
           <View className="mt-8">
-            <SectionError
-              onRetry={() => {
-                void contentsQuery.refetch();
-              }}
-              retrying={contentsQuery.isFetching}
-              title="What this area holds did not load."
-            />
+            <HierarchyError title="What this area holds did not load." tree={tree} />
           </View>
-        ) : contents === undefined ? (
-          // Until the contents arrive, say so. Empty sections here would claim the area is bare.
+        ) : tree.hierarchy === undefined ? (
+          // Until the hierarchy arrives, say so. Empty sections here would claim the area is bare.
           <Text
             accessibilityRole="text"
             className="mt-8 font-body text-[16px] leading-[22px] text-ink-soft"
           >
             Loading what this area holds…
           </Text>
+        ) : children === undefined ? (
+          // The hierarchy loaded and this area is not in it, while Get answered for it. The two
+          // reads disagree, which is a real possibility while someone is editing on the server.
+          // Saying "loading" forever, or showing no subareas as though it had none, would both be
+          // inventions; the honest move is to name the disagreement and offer a fresh read.
+          <View className="mt-8">
+            <SectionError
+              onRetry={tree.refetch}
+              retrying={tree.isFetching}
+              title="This area was not in the hierarchy Raphael last read."
+            />
+          </View>
         ) : (
           <>
+            <HierarchyStale className="mt-8" tree={tree} />
+
             {subareas.length > 0 ? (
               <View className="mt-8 gap-4">
                 <SectionHeading>Subareas</SectionHeading>
@@ -239,15 +289,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
           </>
         )}
       </Screen>
-      <CaptureBar
-        onNewNote={() => {
-          openNewNote(target);
-        }}
-        onVoice={() => {
-          openVoiceCapture(target);
-        }}
-        targetName={area?.name}
-      />
+      <CaptureBar onNewNote={openNewNote} onVoice={openVoiceCapture} />
     </View>
   );
 }

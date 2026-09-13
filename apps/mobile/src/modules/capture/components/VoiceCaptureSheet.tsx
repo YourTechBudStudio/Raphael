@@ -1,5 +1,5 @@
 import { X } from 'lucide-react-native';
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
 
 import {
@@ -11,11 +11,12 @@ import {
   SheetBody,
   SheetHeader,
 } from '../../../ui';
+import type { AreaOption } from '../../collections';
 import { useSheetsStore } from '../../navigation';
 import { usePlaybackStore, formatDuration, Waveform } from '../../playback';
 import { useCreateVoiceNote } from '../client/mutations';
-import { useCaptureLocation } from '../client/queries';
 import { MAX_RECORDING_SECONDS, useMockRecorder } from '../state/useMockRecorder';
+import { AreaPicker } from './AreaPicker';
 import { RecordingIndicator, ReviewPlayButton, StopButton, TextAction } from './controls';
 import { liveBars, savedWaveform } from './waveform';
 
@@ -32,25 +33,31 @@ const DISCARD_PROMPT = {
 
 /**
  * Voice capture: recording starts as soon as the sheet opens, stops into a review state where the
- * take can be played back, redone, or saved as a voice note in the current capture target.
+ * take can be played back, redone, filed in an area, and saved.
+ *
+ * The destination is chosen in the review step, and nothing chooses it for anyone. The same rule as
+ * the note sheet, for the same reason and by the same removal: there is no inbox to fall back to
+ * and no current screen to infer from, so Save is off until an area is tapped. It is asked after
+ * the recording rather than before because a thought worth recording should never wait on a list
+ * loading - you speak first, then decide where it goes.
  *
  * Nothing here is a real recording. The levels come from a mock generator, and the sheet is honest
  * about what it holds: it says where the note will be saved, it asks before throwing a take away,
- * and it says so when a save does not land.
+ * and it says so when a save does not land. Voice notes are kept on this device for the session.
  */
 export function VoiceCaptureSheet() {
   const open = useSheetsStore((state) => state.open);
-  const captureTarget = useSheetsStore((state) => state.captureTarget);
+  const sheetSession = useSheetsStore((state) => state.session);
   const closeSheet = useSheetsStore((state) => state.close);
 
   const visible = open === 'voice-capture';
+  const [destination, setDestination] = useState<AreaOption | null>(null);
 
-  const pathQuery = useCaptureLocation(captureTarget, visible);
-  const path = pathQuery.data ?? [];
-  const targetName = path.length === 0 ? undefined : path[path.length - 1]?.name;
-  // Until the location is known the destination is unknown, not assumed: the same "…" the New
-  // note sheet shows while it waits.
-  const destination = targetName ?? '…';
+  // A new opening starts with nothing chosen. Carrying the last take's destination forward would
+  // be the silent default this sheet exists to remove.
+  useEffect(() => {
+    setDestination(null);
+  }, [sheetSession]);
 
   const recorder = useMockRecorder(visible);
   const createVoiceNote = useCreateVoiceNote();
@@ -136,13 +143,13 @@ export function VoiceCaptureSheet() {
   };
 
   const handleSave = () => {
-    if (!hasTake || saving) {
+    if (!hasTake || saving || destination === null) {
       return;
     }
 
     createVoiceNote.mutate(
       {
-        target: captureTarget,
+        parent: { type: 'area', id: destination.id },
         title: `Voice note ${formatDuration(durationSeconds)}`,
         durationSeconds,
         waveform: captured,
@@ -160,7 +167,11 @@ export function VoiceCaptureSheet() {
   };
 
   const timeLabel = formatDuration(elapsedForDisplay());
-  const subtitle = recording ? `Recording to ${destination}` : `Saving to ${destination}`;
+  const subtitle = recording
+    ? 'Recording'
+    : destination === null
+      ? 'Choose where this goes'
+      : `Saving in ${destination.title}`;
 
   const closeButton = (
     <IconButton
@@ -192,9 +203,11 @@ export function VoiceCaptureSheet() {
               trailing: (
                 <SavePill
                   accessibilityHint={
-                    saving ? 'Saving this voice note' : `Saves this voice note to ${destination}`
+                    destination === null
+                      ? 'Choose an area below before saving'
+                      : `Saves this voice note in ${destination.title}`
                   }
-                  disabled={!hasTake || saving}
+                  disabled={!hasTake || saving || destination === null}
                   label={saving ? 'Saving…' : 'Save'}
                   onPress={handleSave}
                   testID="voice-capture-save"
@@ -239,6 +252,27 @@ export function VoiceCaptureSheet() {
             That voice note did not save. The recording is still here — try Save again.
           </Text>
         ) : null}
+
+        {recording || !hasTake ? null : (
+          <View accessibilityRole="radiogroup" className="gap-2 border-t border-line pt-4">
+            <Text accessibilityRole="header" className="font-heading text-[16px] text-ink">
+              Where does this go?
+            </Text>
+            <Text className="font-body text-[14px] leading-[20px] text-ink-soft">
+              {destination === null
+                ? 'Pick an area. Raphael will not choose one for you.'
+                : `Filing in ${destination.title}${destination.context === '' ? '' : ` · ${destination.context}`}.`}
+            </Text>
+            <AreaPicker
+              disabled={saving}
+              onSelect={setDestination}
+              selectedId={destination?.id ?? null}
+            />
+            <Text className="font-body text-[13px] leading-[19px] text-ink-soft">
+              Voice notes are kept on this device for now.
+            </Text>
+          </View>
+        )}
       </SheetBody>
 
       {recording ? (

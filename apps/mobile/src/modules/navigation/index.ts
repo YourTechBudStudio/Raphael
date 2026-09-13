@@ -5,12 +5,14 @@ export {
   openArea,
   openBrowse,
   openChangeServer,
-  openCollection,
+  openContainer,
   openHome,
   openProject,
   openSearch,
   openSettings,
-  parseCollectionRef,
+  parseContainerRef,
+  parseNodeId,
+  resetToHome,
 } from './routes';
-// One shared overlay state preserves mutual exclusion between the capture and creation sheets.
+// One shared overlay state preserves mutual exclusion between the capture sheets.
 export { useSheetsStore } from './state/sheets';

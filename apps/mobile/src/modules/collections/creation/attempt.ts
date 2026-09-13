@@ -3,7 +3,7 @@ import type {
   ContainerTarget,
   CreateContainerOutcome,
   PendingAttempt,
-} from '../../../infrastructure/api/contracts';
+} from './types';
 
 /**
  * The creation sheet's state, as a pure machine.

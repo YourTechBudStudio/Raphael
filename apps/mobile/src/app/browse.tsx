@@ -1,7 +1,7 @@
 import { useLocalSearchParams } from 'expo-router';
 
 import { BrowseScreen } from '../modules/browse';
-import { parseCollectionRef } from '../modules/navigation';
+import { parseContainerRef } from '../modules/navigation';
 
 /** Browse. Optional `currentType` and `currentId` mark the location it was opened from. */
 export default function BrowseRoute() {
@@ -10,5 +10,5 @@ export default function BrowseRoute() {
     currentId?: string;
   }>();
 
-  return <BrowseScreen current={parseCollectionRef(currentType, currentId)} />;
+  return <BrowseScreen current={parseContainerRef(currentType, currentId)} />;
 }

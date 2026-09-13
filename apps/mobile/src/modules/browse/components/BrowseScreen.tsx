@@ -1,48 +1,48 @@
-import { Layers, Plus, Star } from 'lucide-react-native';
+import { Layers, Star } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
-import type { BrowseNode, ParentRef } from '../../../infrastructure/api/contracts';
+import type { ContainerRef } from '../../../infrastructure/api/contracts';
+import { EmptyState, PressableFeedback, Screen, SearchField, colors } from '../../../ui';
 import {
-  EmptyState,
-  IconButton,
-  PressableFeedback,
-  Screen,
-  SearchField,
-  SectionError,
-  colors,
-} from '../../../ui';
-import { UnresolvedAttempts, useBrowseTree, useLocationPath } from '../../collections';
-import { goBack, openCollection, TitleTopBar, useSheetsStore } from '../../navigation';
+  ancestorsOf,
+  HierarchyError,
+  HierarchyStale,
+  useHierarchy,
+  type HierarchyNode,
+  type HierarchyQuery,
+} from '../../collections';
+import { RejectionNotice } from '../../connection';
+import { goBack, openContainer, TitleTopBar } from '../../navigation';
 import { useBrowseStore } from '../state/tree';
 import { BrowseTree } from './BrowseTree';
 import { FavoritesList } from './FavoritesList';
 import { filterTree } from './tree';
 
-/**
- * The root holds areas and nothing else. Creating one is the single creation Browse offers,
- * because the root is the only container without a screen of its own; everything inside an area
- * is made from that area's screen. Creation is rare, so it is one quiet icon rather than a row.
- */
-const ROOT_AREA = { type: 'area', parentAreaId: null } as const;
-
 type Tab = 'all' | 'favorites';
 
 export interface BrowseScreenProps {
   /** The location Browse was opened from, highlighted as current. Null when opened from Home. */
-  current: ParentRef | null;
+  current: ContainerRef | null;
 }
 
 /**
- * Browse: the whole area and project tree, with the location it was opened from marked as
- * current. Tapping a row pushes that location, so back from it returns here.
+ * Browse: the whole area and project tree, with the location it was opened from marked as current.
+ * Tapping a row pushes that location, so back from it returns here.
+ *
+ * Creating containers is not here. Phase 09 owns it; the plus that used to sit in this title bar is
+ * gone rather than disabled, because a control that cannot do anything is a thing someone has to
+ * discover is broken.
+ *
+ * The filter runs over exactly what is loaded, and what is loaded is the complete hierarchy or
+ * nothing at all - so "no areas or projects" here is a statement about the server, not about how
+ * far a paginated read happened to get.
  */
 export function BrowseScreen({ current }: BrowseScreenProps) {
   const expanded = useBrowseStore((state) => state.expanded);
   const toggle = useBrowseStore((state) => state.toggle);
   const expandMany = useBrowseStore((state) => state.expandMany);
-  const openNewContainer = useSheetsStore((state) => state.openNewContainer);
 
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<Tab>('all');
@@ -61,27 +61,31 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
     [],
   );
 
-  const tree = useBrowseTree();
-  const { data: path } = useLocationPath(current);
+  const tree = useHierarchy();
+  const ancestorIds = useMemo(
+    () => ancestorsOf(tree.hierarchy, current?.id ?? null).map((step) => step.id),
+    [tree.hierarchy, current],
+  );
 
   // The current location and everything above it opens, so the highlight is on screen.
   useEffect(() => {
-    if (path !== undefined) {
-      expandMany(path.map((step) => step.id));
-    }
-  }, [path, expandMany]);
+    if (ancestorIds.length > 0) expandMany(ancestorIds);
+  }, [ancestorIds, expandMany]);
 
   const filtering = query.trim() !== '';
-  const nodes = useMemo(() => filterTree(tree.data ?? [], query), [tree.data, query]);
+  const nodes = useMemo(
+    () => filterTree(tree.hierarchy?.roots ?? [], query),
+    [tree.hierarchy, query],
+  );
 
-  const select = (node: ParentRef) => {
+  const select = (node: ContainerRef) => {
     if (current !== null && current.type === node.type && current.id === node.id) {
       goBack();
 
       return;
     }
 
-    openCollection(node);
+    openContainer(node);
   };
 
   const selectTab = (value: Tab) => {
@@ -97,21 +101,7 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
           captureBar={false}
           header={
             <View className="gap-3 pb-1">
-              <TitleTopBar
-                onBack={goBack}
-                title="Browse"
-                trailing={
-                  <IconButton
-                    accessibilityHint="Opens a sheet to name a new area at the top level"
-                    icon={Plus}
-                    label="New top-level area"
-                    onPress={() => {
-                      openNewContainer(ROOT_AREA);
-                    }}
-                    testID="browse-new-area"
-                  />
-                }
-              />
+              <TitleTopBar onBack={goBack} title="Browse" />
               <Tabs onSelect={selectTab} tab={tab} />
               <SearchField
                 accessibilityLabel={
@@ -128,7 +118,7 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
           }
           testID="browse-screen"
         >
-          {tab === 'all' ? <UnresolvedAttempts className="mb-3" parentAreaId={null} /> : null}
+          <RejectionNotice className="mb-3" />
           {tab === 'favorites' ? (
             <FavoritesList onSelect={select} query={query} />
           ) : (
@@ -136,15 +126,12 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
               current={current}
               expandedIds={expanded}
               filtering={filtering}
-              isError={tree.isError}
+              hasHierarchy={tree.hierarchy !== undefined}
               isPending={tree.isPending}
               nodes={nodes}
-              onRetry={() => {
-                void tree.refetch();
-              }}
               onSelect={select}
               onToggle={toggle}
-              retrying={tree.isFetching}
+              tree={tree}
             />
           )}
         </Screen>
@@ -191,17 +178,16 @@ function Tabs({ tab, onSelect }: TabsProps) {
 }
 
 interface TreeBodyProps {
-  nodes: readonly BrowseNode[];
+  nodes: readonly HierarchyNode[];
   /** The node Browse was opened from, or null when opened from Home. */
-  current: ParentRef | null;
-  expandedIds: ReadonlySet<string>;
+  current: ContainerRef | null;
+  expandedIds: ReadonlySet<number>;
   filtering: boolean;
+  hasHierarchy: boolean;
   isPending: boolean;
-  isError: boolean;
-  retrying: boolean;
-  onRetry: () => void;
-  onToggle: (id: string) => void;
-  onSelect: (node: BrowseNode) => void;
+  tree: HierarchyQuery;
+  onToggle: (id: number) => void;
+  onSelect: (node: HierarchyNode) => void;
 }
 
 /** The tree, or an honest account of why it is not there. */
@@ -210,24 +196,19 @@ function TreeBody({
   current,
   expandedIds,
   filtering,
+  hasHierarchy,
   isPending,
-  isError,
-  retrying,
-  onRetry,
+  tree,
   onToggle,
   onSelect,
 }: TreeBodyProps) {
-  if (isError) {
-    return (
-      <SectionError
-        onRetry={onRetry}
-        retrying={retrying}
-        title="Areas and projects did not load."
-      />
-    );
+  // A failed refresh over a hierarchy that did load keeps the tree and says so. Blanking it would
+  // throw away a complete reading because the next one was interrupted.
+  if (tree.isError && !hasHierarchy) {
+    return <HierarchyError title="Areas and projects did not load." tree={tree} />;
   }
 
-  if (isPending) {
+  if (isPending || !hasHierarchy) {
     return (
       <View className="items-center py-8">
         <ActivityIndicator accessibilityLabel="Loading areas and projects" color={colors.primary} />
@@ -235,28 +216,32 @@ function TreeBody({
     );
   }
 
-  if (nodes.length === 0) {
-    return filtering ? (
-      <EmptyState
-        description="Nothing here matches that. Try a shorter word."
-        title="No areas or projects."
-      />
-    ) : (
-      <EmptyState
-        description="Areas and projects show up here once you make one. The plus above makes the first."
-        title="Nothing to browse yet."
-      />
-    );
-  }
-
   return (
-    <BrowseTree
-      current={current}
-      expandedIds={expandedIds}
-      forceExpanded={filtering}
-      nodes={nodes}
-      onSelect={onSelect}
-      onToggle={onToggle}
-    />
+    <View className="gap-3">
+      <HierarchyStale tree={tree} />
+
+      {nodes.length === 0 ? (
+        filtering ? (
+          <EmptyState
+            description="Nothing here matches that. Try a shorter word."
+            title="No areas or projects."
+          />
+        ) : (
+          <EmptyState
+            description="Areas and projects live on your server. This one has none yet."
+            title="Nothing to browse yet."
+          />
+        )
+      ) : (
+        <BrowseTree
+          current={current}
+          expandedIds={expandedIds}
+          forceExpanded={filtering}
+          nodes={nodes}
+          onSelect={onSelect}
+          onToggle={onToggle}
+        />
+      )}
+    </View>
   );
 }

@@ -153,6 +153,19 @@ const uncertainty = (mutating: boolean): MutationOutcome =>
 
 const definite = (mutating: boolean): MutationOutcome => (mutating ? 'rejected' : 'not_applicable');
 
+/**
+ * The same sentence for both ways a fetch implementation can fail to offer a readable body: no `body`
+ * property at all, or one without `getReader`. Both mean the implementation cannot stream, which is a
+ * fact about the client's environment rather than about the server's answer.
+ */
+const unsupportedFetch = (mutating: boolean): ClientFailure => ({
+  kind: 'unsupported_fetch',
+  mutationOutcome: uncertainty(mutating),
+  message:
+    'The configured fetch implementation does not provide a readable response body. Raphael reads ' +
+    'responses incrementally under a size limit and will not buffer one first.',
+});
+
 const invalidResponse = (
   reason: InvalidResponseReason,
   message: string,
@@ -338,6 +351,16 @@ const readResponse = async <A>(
     );
   }
 
+  // `undefined` and `null` are different facts and must not collapse into one. A spec-compliant
+  // response carries `body: null` when there is genuinely nothing to read, which is a broken answer
+  // from the server. An implementation that never defines `body` at all is not answering that
+  // question - it is saying it does not stream - and it is checked first because dereferencing it
+  // below would throw a `TypeError` out of this function, which is called outside the `catch` that
+  // builds transport failures. That escapes the failure model every caller reads and surfaces as a
+  // rejected promise instead of a result.
+  if (response.body === undefined) {
+    return fail(unsupportedFetch(mutating));
+  }
   if (response.body === null) {
     return fail(
       invalidResponse(
@@ -349,13 +372,7 @@ const readResponse = async <A>(
     );
   }
   if (typeof response.body.getReader !== 'function') {
-    return fail({
-      kind: 'unsupported_fetch',
-      mutationOutcome: uncertainty(mutating),
-      message:
-        'The configured fetch implementation does not provide a readable response body. Raphael reads ' +
-        'responses incrementally under a size limit and will not buffer one first.',
-    });
+    return fail(unsupportedFetch(mutating));
   }
 
   let bytes: Uint8Array | 'too_large';

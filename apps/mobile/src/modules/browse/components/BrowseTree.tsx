@@ -1,8 +1,9 @@
 import clsx from 'clsx';
 import { Text, View } from 'react-native';
 
-import type { BrowseNode, ParentRef } from '../../../infrastructure/api/contracts';
-import { Emblem, PressableFeedback } from '../../../ui';
+import type { ContainerRef } from '../../../infrastructure/api/contracts';
+import { Emblem, emblemFor, PressableFeedback } from '../../../ui';
+import type { HierarchyNode } from '../../collections';
 import { DisclosureButton } from './DisclosureButton';
 
 /** Each level steps in by this much, per the navigation boards. */
@@ -15,17 +16,17 @@ const HALF_ROW = 22;
 const ROW = 44;
 
 export interface BrowseTreeProps {
-  nodes: readonly BrowseNode[];
-  /** The node the sheet was opened from, highlighted as current. Null when opened from Home. */
-  current: ParentRef | null;
-  expandedIds: ReadonlySet<string>;
+  nodes: readonly HierarchyNode[];
+  /** The node Browse was opened from, highlighted as current. Null when opened from Home. */
+  current: ContainerRef | null;
+  expandedIds: ReadonlySet<number>;
   /** True while filtering: every branch is open so matches are visible without tapping. */
   forceExpanded: boolean;
-  onToggle: (id: string) => void;
-  onSelect: (node: BrowseNode) => void;
+  onToggle: (id: number) => void;
+  onSelect: (node: HierarchyNode) => void;
 }
 
-/** The area and project tree inside the Browse sheet. */
+/** The area and project tree on the Browse screen. */
 export function BrowseTree({
   nodes,
   current,
@@ -41,7 +42,7 @@ export function BrowseTree({
           current={current}
           expandedIds={expandedIds}
           forceExpanded={forceExpanded}
-          key={`${node.type}:${node.id}`}
+          key={node.id}
           node={node}
           onSelect={onSelect}
           onToggle={onToggle}
@@ -52,7 +53,7 @@ export function BrowseTree({
 }
 
 interface BrowseBranchProps extends Omit<BrowseTreeProps, 'nodes'> {
-  node: BrowseNode;
+  node: HierarchyNode;
 }
 
 function BrowseBranch({
@@ -74,7 +75,7 @@ function BrowseBranch({
           <DisclosureButton
             expanded={expanded}
             interactive={!forceExpanded}
-            name={node.name}
+            name={node.title}
             onPress={() => {
               onToggle(node.id);
             }}
@@ -83,8 +84,8 @@ function BrowseBranch({
           <View style={{ width: ROW }} />
         )}
         <PressableFeedback
-          accessibilityHint={isCurrent ? 'Closes Browse' : `Opens ${node.name}`}
-          accessibilityLabel={isCurrent ? `${node.name}, current` : node.name}
+          accessibilityHint={isCurrent ? 'Closes Browse' : `Opens ${node.title}`}
+          accessibilityLabel={isCurrent ? `${node.title}, current` : node.title}
           accessibilityState={{ selected: isCurrent }}
           className={clsx(
             'flex-row items-center gap-3 rounded-card px-2 py-1.5',
@@ -98,11 +99,7 @@ function BrowseBranch({
           {/* The navigation boards draw the tree with petals for every project and a bare
               violet layers mark for every area, so the rows read as one list on the sheet
               surface rather than as tiles. */}
-          <Emblem
-            background={false}
-            name={node.type === 'project' ? 'petals' : node.emblem}
-            size={26}
-          />
+          <Emblem background={false} name={emblemFor(node.type, node.id)} size={26} />
           <Text
             className={clsx(
               'flex-1 font-body text-[16px]',
@@ -111,7 +108,7 @@ function BrowseBranch({
             // Long titles wrap once rather than vanish behind an ellipsis; a third line is cut.
             numberOfLines={2}
           >
-            {node.name}
+            {node.title}
           </Text>
           {isCurrent ? (
             <Text className="font-body-medium text-[14px] text-primary">Current</Text>
@@ -125,7 +122,7 @@ function BrowseBranch({
             style={{ bottom: HALF_ROW, left: CONNECTOR_X, top: 0 }}
           />
           {node.children.map((child) => (
-            <View key={`${child.type}:${child.id}`}>
+            <View key={child.id}>
               <View
                 className="absolute h-px bg-line"
                 style={{

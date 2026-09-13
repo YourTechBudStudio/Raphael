@@ -20,6 +20,36 @@ function Row({ label, value }: RowProps) {
   );
 }
 
+/**
+ * Where the key is, and why, when the answer is not simply "saved".
+ *
+ * There are three causes and they are genuinely different things to say, so they are modelled
+ * separately even though two of them share a heading. "We tried and the keychain refused" and
+ * "there is no keychain on this platform" are not the same event, and collapsing them would leave
+ * one of the two people who hit them with an explanation that does not match what happened.
+ */
+const storageCopy = (
+  connection: Connection,
+): { readonly saved: boolean; readonly where: string; readonly detail: string | null } => {
+  switch (connection.storage.kind) {
+    case 'saved':
+      return { saved: true, where: 'Saved on this device', detail: null };
+    case 'write_failed':
+      return {
+        saved: false,
+        where: 'Held until you close the app',
+        detail: `This device's secure storage would not accept the key, so it is only in memory. ${connection.storage.message} Raphael will ask for it again next time you open the app.`,
+      };
+    case 'unsupported':
+      return {
+        saved: false,
+        where: 'Held until you close the app',
+        detail:
+          'This platform has no secure storage, so nothing was written. Raphael will ask for the key again next time.',
+      };
+  }
+};
+
 export interface ConnectionCardProps {
   connection: Connection;
 }
@@ -33,47 +63,39 @@ export interface ConnectionCardProps {
  * is the thing that can actually differ between two otherwise identical connections.
  *
  * The protocol version is deliberately not here. It is recorded on the connection because it is
- * what verification actually established, but it is a fact about two programs agreeing, not
- * something the owner of one server has any use for or any way to act on.
+ * what verification established, but it is a fact about two programs agreeing, not something the
+ * owner of one server has any use for or any way to act on - and it is historical besides: it says
+ * what was true when the connection was made, not what is true now.
  */
 export function ConnectionCard({ connection }: ConnectionCardProps) {
-  const forgotten = !connection.remembered;
+  const storage = storageCopy(connection);
 
   return (
     <View className="gap-3 rounded-card border border-line bg-card p-4">
       <View className="flex-row items-center gap-2.5">
         <View
           className={
-            forgotten ? 'h-2 w-2 rounded-full bg-danger' : 'h-2 w-2 rounded-full bg-primary'
+            storage.saved ? 'h-2 w-2 rounded-full bg-primary' : 'h-2 w-2 rounded-full bg-danger'
           }
         />
         <Text className="font-heading text-[16px] leading-[22px] text-ink">
-          {forgotten ? 'Connected, but not saved' : 'Connected'}
+          {storage.saved ? 'Connected' : 'Connected, but not saved'}
         </Text>
       </View>
 
       <View className="gap-0.5">
         <Row label="Address" value={connection.origin} />
-        <Row
-          label="API key"
-          value={forgotten ? 'Held until you close the app' : 'Saved on this device'}
-        />
+        <Row label="API key" value={storage.where} />
       </View>
 
-      {forgotten ? (
-        // Deliberately neutral about why the key is not saved. Nothing writes to secure storage in
-        // this phase, so blaming a failed write would name an event that never happened. Phase 08
-        // attempts a real write, and only then is "we tried and could not" a state that exists and
-        // a different thing to say than "we have not tried"; splitting the two before the write
-        // exists would be inventing a distinction the app cannot yet make.
+      {storage.detail === null ? null : (
         <Text
           accessibilityLiveRegion="polite"
           className="font-body text-[14px] leading-[20px] text-ink-soft"
         >
-          This key is not stored anywhere, so Raphael will ask for it again next time you open the
-          app. Everything works until then.
+          {storage.detail}
         </Text>
-      ) : null}
+      )}
     </View>
   );
 }

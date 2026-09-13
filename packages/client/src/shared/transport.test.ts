@@ -466,6 +466,23 @@ describe('a fetch implementation that cannot stream', () => {
     if (!result.ok) assert.equal(result.failure.kind, 'unsupported_fetch');
   });
 
+  it('resolves rather than rejecting when the implementation defines no body at all', async () => {
+    // React Native's XHR-backed fetch is the case this guards. `undefined` is not `null`, so the
+    // empty-body check does not catch it, and `readResponse` runs outside the `catch` that builds
+    // transport failures - so dereferencing it threw a `TypeError` past the failure model entirely
+    // and reached callers as a rejected promise. Asserting on the resolved value is the point of
+    // this test: `rejects` would pass just as well against the bug.
+    const transport = createTransport({
+      endpoint: 'https://example.com',
+      apiKey: KEY,
+      fetch: respondWith(undefined),
+    }) as Transport;
+
+    const result = await call(transport);
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.failure.kind, 'unsupported_fetch');
+  });
+
   it('distinguishes a genuinely empty body from a missing streaming API', async () => {
     // A null body is a broken response, not evidence about the implementation - so it must not be
     // reported as an unsupported fetch, which would send someone to fix the wrong thing.

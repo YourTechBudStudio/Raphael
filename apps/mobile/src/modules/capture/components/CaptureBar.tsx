@@ -10,15 +10,18 @@ const CONTROL_SIZE = 56;
 export interface CaptureBarProps {
   onNewNote: () => void;
   onVoice: () => void;
-  /** Names where the capture lands, e.g. `Design`, for the spoken hints. */
-  targetName?: string | undefined;
   testID?: string | undefined;
 }
 
-/** The floating capture pair: a New note pill and a mic circle, pinned above the safe area. */
-export function CaptureBar({ onNewNote, onVoice, targetName, testID }: CaptureBarProps) {
+/**
+ * The floating capture pair: a New note pill and a mic circle, pinned above the safe area.
+ *
+ * It used to name where a capture would land. It cannot any more, and should not: the destination
+ * is chosen inside the sheet, so a bar that promised one before the sheet opened would be naming a
+ * place nobody had picked yet.
+ */
+export function CaptureBar({ onNewNote, onVoice, testID }: CaptureBarProps) {
   const insets = useSafeAreaInsets();
-  const hint = targetName === undefined ? undefined : `Saves to ${targetName}`;
 
   return (
     <View
@@ -29,7 +32,7 @@ export function CaptureBar({ onNewNote, onVoice, targetName, testID }: CaptureBa
     >
       <View className="flex-row items-center gap-3">
         <PressableFeedback
-          accessibilityHint={hint}
+          accessibilityHint="Opens a sheet to write a note and choose where it goes"
           accessibilityLabel="New note"
           className="flex-row items-center justify-center gap-2 rounded-full bg-primary px-7"
           onPress={onNewNote}
@@ -48,7 +51,7 @@ export function CaptureBar({ onNewNote, onVoice, targetName, testID }: CaptureBa
           )}
         </PressableFeedback>
         <PressableFeedback
-          accessibilityHint={hint}
+          accessibilityHint="Starts recording a voice note"
           accessibilityLabel="Record a voice note"
           className="items-center justify-center rounded-full bg-primary"
           onPress={onVoice}

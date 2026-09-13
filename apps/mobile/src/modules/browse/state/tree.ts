@@ -1,15 +1,15 @@
 import { create } from 'zustand';
 
 interface BrowseState {
-  /** Ids of the expanded tree nodes. Persists across sheet opens. */
-  expanded: ReadonlySet<string>;
-  toggle: (id: string) => void;
+  /** Ids of the expanded tree nodes. Persists across visits to Browse. */
+  expanded: ReadonlySet<number>;
+  toggle: (id: number) => void;
   /** Expands the given ids without collapsing anything, used for ancestors of the current node. */
-  expandMany: (ids: readonly string[]) => void;
+  expandMany: (ids: readonly number[]) => void;
 }
 
 export const useBrowseStore = create<BrowseState>((set) => ({
-  expanded: new Set<string>(),
+  expanded: new Set<number>(),
   toggle: (id) => {
     set((state) => {
       const next = new Set(state.expanded);

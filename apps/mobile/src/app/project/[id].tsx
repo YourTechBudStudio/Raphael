@@ -1,13 +1,11 @@
 import { useLocalSearchParams } from 'expo-router';
 
 import { ProjectScreen } from '../../modules/collections';
+import { parseNodeId } from '../../modules/navigation';
 
-/**
- * A deep link can arrive without an id; passing the empty string through lets the screen say
- * the project is not here rather than querying for `undefined`.
- */
+/** A project. A parameter that is not a positive id names nothing, and the screen says so. */
 export default function ProjectRoute() {
   const { id } = useLocalSearchParams<{ id?: string }>();
 
-  return <ProjectScreen projectId={id ?? ''} />;
+  return <ProjectScreen projectId={parseNodeId(id)} />;
 }

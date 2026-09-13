@@ -10,8 +10,15 @@ const VISIBLE_PATH_SEGMENTS = 2;
 /**
  * The chip shows the tail of the path, the way the boards do: `Creative work / Design`.
  * Anything above it is replaced by a leading ellipsis, so the current location stays readable.
+ *
+ * An empty path means the location is genuinely not known - neither the hierarchy nor the server
+ * could name it. The chip then says only what pressing it does. It used to say "Areas", which reads
+ * as a location and is one the screens had no grounds to claim: a project can never sit at the top
+ * level, so that was a statement about the hierarchy that could not have been true.
  */
 function formatPath(path: readonly string[]): string {
+  if (path.length === 0) return 'Browse';
+
   const visible = path.slice(-VISIBLE_PATH_SEGMENTS);
   const elided = path.length > visible.length;
   return `${elided ? '… / ' : ''}${visible.join(' / ')}`;
@@ -107,7 +114,11 @@ export function LocationTopBar({
       <IconButton icon={ChevronLeft} label="Back" onPress={onBack} />
       <Chip
         accessibilityHint="Opens the list of areas and projects"
-        accessibilityLabel={`Location: ${path.join(', ')}`}
+        accessibilityLabel={
+          path.length === 0
+            ? 'Browse. Raphael could not name where this is.'
+            : `Location: ${path.join(', ')}`
+        }
         icon={Layers}
         label={label}
         onPress={onOpenBrowse}

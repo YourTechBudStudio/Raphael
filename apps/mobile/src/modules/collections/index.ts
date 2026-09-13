@@ -1,8 +1,26 @@
-export { useActiveProjects, useProjectActive } from './client/active';
-export { useFavoriteToggle } from './client/favorites';
-export { useBrowseTree, useFavorites, useLocationPath } from './client/queries';
+export { useActiveProjectIds, useProjectActive } from './client/active';
+export { useFavorites, useFavoriteToggle } from './client/favorites';
+export {
+  allAreas,
+  areaOptions,
+  pathSegments,
+  pathTo,
+  subtreeIds,
+  type AreaOption,
+  type Hierarchy,
+  type HierarchyNode,
+} from './client/hierarchy';
+export {
+  ancestorsOf,
+  childrenOf,
+  invalidateHierarchy,
+  useContainer,
+  useContainerPath,
+  useHierarchy,
+  type ContainerChildren,
+  type HierarchyQuery,
+} from './client/queries';
 export { AreaScreen } from './components/AreaScreen';
-export { ProjectScreen } from './components/ProjectScreen';
+export { HierarchyError, HierarchyStale } from './components/HierarchyError';
 export { CollectionTile } from './components/CollectionTile';
-export { NewContainerSheet } from './components/NewContainerSheet';
-export { UnresolvedAttempts } from './components/UnresolvedAttempts';
+export { ProjectScreen } from './components/ProjectScreen';

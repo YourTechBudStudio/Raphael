@@ -1,6 +1,6 @@
 import { useLocalSearchParams } from 'expo-router';
 
-import { parseCollectionRef } from '../modules/navigation';
+import { parseContainerRef } from '../modules/navigation';
 import { SearchScreen } from '../modules/search';
 
 /** Search, presented as a modal. Optional `scopeType` and `scopeId` limit it to one subtree. */
@@ -10,5 +10,5 @@ export default function SearchRoute() {
     scopeId?: string;
   }>();
 
-  return <SearchScreen scope={parseCollectionRef(scopeType, scopeId)} />;
+  return <SearchScreen scope={parseContainerRef(scopeType, scopeId)} />;
 }

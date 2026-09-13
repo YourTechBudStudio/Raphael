@@ -14,9 +14,8 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import '../../global.css';
-import { queryClient } from '../infrastructure/query/query-client';
+import { queryClient, startAppStateBridge } from '../infrastructure/query/query-client';
 import { NewNoteSheet, VoiceCaptureSheet } from '../modules/capture';
-import { NewContainerSheet } from '../modules/collections';
 import { ConnectionGate } from '../modules/connection';
 import { colors } from '../ui/theme';
 
@@ -43,6 +42,10 @@ export default function RootLayout() {
     }
   }, [ready]);
 
+  // Foreground is the focus event that matters on a phone, and it is what makes a stale hierarchy
+  // refresh when someone comes back rather than showing them what was true an hour ago.
+  useEffect(startAppStateBridge, []);
+
   if (!ready) {
     return null;
   }
@@ -68,7 +71,6 @@ export default function RootLayout() {
             </Stack>
             <NewNoteSheet />
             <VoiceCaptureSheet />
-            <NewContainerSheet />
           </ConnectionGate>
         </QueryClientProvider>
       </GestureHandlerRootView>

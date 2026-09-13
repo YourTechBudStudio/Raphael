@@ -2,7 +2,8 @@ import { ChevronLeft, Search } from 'lucide-react-native';
 import { useMemo, type ReactNode } from 'react';
 import { Text, View } from 'react-native';
 
-import type { ParentRef, Resource } from '../../../infrastructure/api/contracts';
+import type { ContainerRef, Resource } from '../../../infrastructure/api/contracts';
+import { asClientFailure, isNotFound } from '../../../infrastructure/query/failure';
 import {
   Chip,
   EmptyState,
@@ -15,6 +16,7 @@ import {
   ActiveButton,
 } from '../../../ui';
 import { CaptureBar } from '../../capture';
+import { RejectionNotice } from '../../connection';
 import {
   goBack,
   openBrowse,
@@ -23,47 +25,69 @@ import {
   useSheetsStore,
   LocationTopBar,
 } from '../../navigation';
-import { ResourceGrid, type ResourceGridItem } from '../../resources';
+import { ResourceGrid, useLocalResources, type ResourceGridItem } from '../../resources';
 import { useProjectActive } from '../client/active';
 import { useFavoriteToggle } from '../client/favorites';
-import { useLocationPath, useProject, useProjectContents } from '../client/queries';
+import { pathSegments } from '../client/hierarchy';
+import { ancestorsOf, useContainer, useContainerPath, useHierarchy } from '../client/queries';
 import { ProjectHeaderSkeleton, ProjectNotesSkeleton } from './ProjectSkeleton';
 import { ReadOnlyBody } from './ReadOnlyBody';
 
-/** Stands in for the ancestor chain for the ~120 ms before it arrives. */
-const FALLBACK_PATH = ['Areas'];
+/** Stands in when there is no client failure to inspect, so the not-found check stays total. */
+const NO_FAILURE = {
+  kind: 'transport',
+  mutationOutcome: 'not_applicable',
+  message: '',
+} as const;
 
 /** The star beside the 40px title, sized to sit level with its cap height as on the board. */
 const TITLE_STAR_SIZE = 22;
 
 export interface ProjectScreenProps {
-  projectId: string;
+  /** Null when the route parameter did not name a container. */
+  projectId: number | null;
 }
 
 /**
- * A project: where it sits, what it is, and every note captured into it. The location chip
- * carries the parent area chain, and the capture bar writes here rather than to the inbox.
+ * A project: where it sits, what it is, and every note captured into it.
+ *
+ * Notes here are kept on this device for the session; the project itself comes from the server.
  */
 export function ProjectScreen({ projectId }: ProjectScreenProps) {
-  // A route without an id names no project, so the queries never run and nothing is on its way.
-  const known = projectId !== '';
-  const target = useMemo<ParentRef>(() => ({ type: 'project', id: projectId }), [projectId]);
+  const target = useMemo<ContainerRef | null>(
+    () => (projectId === null ? null : { type: 'project', id: projectId }),
+    [projectId],
+  );
 
   const favorite = useFavoriteToggle();
   const active = useProjectActive();
-  const project = useProject(projectId);
-  const contents = useProjectContents(projectId);
-  const locationPath = useLocationPath(target);
+  const project = useContainer(target);
+  const tree = useHierarchy();
+  const notes = useLocalResources();
 
   const openNewNote = useSheetsStore((state) => state.openNewNote);
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
 
-  // The chip names where the project lives, so it ends at the parent area, not the project.
-  const parentPath = (locationPath.data ?? []).slice(0, -1).map((step) => step.name);
+  const entity = project.data;
+  const wrongType = entity !== undefined && entity.type !== 'project';
+  // A server that looked and found nothing is a project that is gone. A server that could not be
+  // asked is a read to try again. Only the first may say "not here".
+  const gone = project.isError && isNotFound(asClientFailure(project.error) ?? NO_FAILURE);
 
-  const goToSearch = () => {
-    openSearch(target);
-  };
+  // The chip names where the project lives, so it ends at the parent area, not the project.
+  //
+  // Titles come from the hierarchy while it is a current reading; otherwise the server is asked for
+  // the canonical address. It used to fall back to "Areas", which said the project sat at the top
+  // level - something that cannot happen, since every project has a parent area. A screen that
+  // cannot name its location now says so rather than making one up, and because the fallback is a
+  // live read rather than the hierarchy, there is no stale hierarchy state left on this screen to
+  // report: nothing else here comes from it.
+  const ancestors = ancestorsOf(tree.hierarchy, projectId);
+  const namedHere = ancestors.length > 0 && !tree.isStale;
+  const canonical = useContainerPath(namedHere || projectId === null ? null : projectId);
+  const parentPath = namedHere
+    ? ancestors.slice(0, -1).map((step) => step.title)
+    : pathSegments(canonical.data).slice(0, -1);
 
   const header = (
     <LocationTopBar
@@ -71,8 +95,10 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
       onOpenBrowse={() => {
         openBrowse(target);
       }}
-      onSearch={goToSearch}
-      path={parentPath.length > 0 ? parentPath : FALLBACK_PATH}
+      onSearch={() => {
+        openSearch(target);
+      }}
+      path={parentPath}
     />
   );
 
@@ -93,12 +119,18 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
 
   // Absent and failed read differently: one is a project that is gone, the other a read that
   // can be tried again. Saying "not here" about a failed read would be a claim about the data.
-  if (!known || project.data === null) {
+  if (projectId === null || wrongType || gone) {
     return (
       <Screen captureBar={false} header={bareHeader}>
         <EmptyState
-          description="It may have been removed, or the link is out of date."
-          title="This project is not here."
+          description={
+            wrongType
+              ? 'That link points at an area, not a project.'
+              : gone
+                ? 'Your server has no project with that id. It may have been removed since this link was made.'
+                : 'It may have been removed, or the link is out of date.'
+          }
+          title={wrongType ? 'That is not a project.' : 'This project is not here.'}
         />
         <View className="mt-4 flex-row">
           <Chip accessibilityHint="Opens the home screen" label="Go to home" onPress={openHome} />
@@ -110,6 +142,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   if (project.isError) {
     return (
       <Screen captureBar={false} header={bareHeader}>
+        <RejectionNotice className="mb-4" />
         <SectionError
           onRetry={() => {
             void project.refetch();
@@ -121,7 +154,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
     );
   }
 
-  if (project.isPending || project.data === undefined) {
+  if (entity === undefined) {
     return (
       <Screen captureBar={false} header={header}>
         <View className="gap-7">
@@ -132,11 +165,15 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
     );
   }
 
-  const { name, description, body } = project.data;
+  const { title, description } = entity;
+  const resources = (notes.data ?? []).filter(
+    (resource) => resource.parent.type === 'project' && resource.parent.id === projectId,
+  );
 
   return (
     <View className="flex-1">
       <Screen header={header}>
+        <RejectionNotice className="mb-4" />
         <View>
           <Eyebrow>Project</Eyebrow>
           <View className="mt-1 flex-row items-center gap-3">
@@ -144,7 +181,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
               accessibilityRole="header"
               className="shrink font-heading text-[40px] leading-[48px] text-ink"
             >
-              {name}
+              {title}
             </Text>
           </View>
           <Text className="mt-2 font-body text-[16px] leading-[22px] text-ink">{description}</Text>
@@ -153,7 +190,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
               <ActiveButton
                 active={active.isActive(projectId)}
                 disabled={active.isDisabled(projectId)}
-                label={name}
+                label={title}
                 onToggle={() => {
                   active.toggle(projectId);
                 }}
@@ -162,10 +199,10 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
             </View>
             <View className="flex-row items-center gap-1">
               <FavoriteButton
-                favorited={favorite.isFavorite(target)}
-                label={name}
+                favorited={target !== null && favorite.isFavorite(target)}
+                label={title}
                 onToggle={() => {
-                  favorite.toggle(target);
+                  if (target !== null) favorite.toggle(target);
                 }}
                 size={TITLE_STAR_SIZE}
               />
@@ -190,30 +227,25 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
           ) : null}
         </View>
 
-        <ReadOnlyBody body={body} kind="project" />
+        <ReadOnlyBody
+          body={entity.body.format === 'markdown' ? entity.body.value : ''}
+          kind="project"
+        />
 
         <View className="mt-7 gap-3">
           <SectionHeading>Project notes</SectionHeading>
           <ProjectNotes
-            isError={contents.isError}
-            isPending={contents.isPending}
+            isError={notes.isError}
+            isPending={notes.isPending}
             onRetry={() => {
-              void contents.refetch();
+              void notes.refetch();
             }}
-            resources={contents.data?.resources ?? []}
-            retrying={contents.isFetching}
+            resources={resources}
+            retrying={notes.isFetching}
           />
         </View>
       </Screen>
-      <CaptureBar
-        onNewNote={() => {
-          openNewNote(target);
-        }}
-        onVoice={() => {
-          openVoiceCapture(target);
-        }}
-        targetName={name}
-      />
+      <CaptureBar onNewNote={openNewNote} onVoice={openVoiceCapture} />
     </View>
   );
 }
