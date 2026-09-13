@@ -1,7 +1,7 @@
 import { Text, View } from 'react-native';
 
 import { Chip, confirmDiscard, Screen, SectionHeading } from '../../../ui';
-import { goBack, openChangeServer, TitleTopBar } from '../../navigation';
+import { goBack, openChangeServer, openRecovery, TitleTopBar } from '../../navigation';
 import { useConnectionStore } from '../state/connection';
 import { ConnectionCard } from './ConnectionCard';
 import { RejectionNotice } from './RejectionNotice';
@@ -23,7 +23,7 @@ export function SettingsScreen() {
     void confirmDiscard({
       title: 'Disconnect from this server?',
       message:
-        'Raphael will forget the address and the key, and ask for them again. Notes and stars kept on this device go with it. Nothing on the server is changed or deleted.',
+        'Raphael will forget the address and the key, and ask for them again. Notes and stars kept on this device go with it. Creations it could not finish are kept and stay listed under Unfinished. Nothing on the server is changed or deleted.',
       keepLabel: 'Stay connected',
       discardLabel: 'Disconnect',
     }).then((confirmed) => {
@@ -55,6 +55,21 @@ export function SettingsScreen() {
               accessibilityHint="Forgets this server and returns to setup"
               label="Disconnect"
               onPress={onDisconnect}
+            />
+          </View>
+        </View>
+
+        <View className="gap-3">
+          <SectionHeading>On this phone</SectionHeading>
+          <Text className="font-body text-[15px] leading-[22px] text-ink-soft">
+            Creations Raphael has not been able to finish are kept here until you resolve them,
+            including any made against a server you have since left.
+          </Text>
+          <View className="flex-row">
+            <Chip
+              accessibilityHint="Opens everything left unfinished on this phone"
+              label="Unfinished creations"
+              onPress={openRecovery}
             />
           </View>
         </View>

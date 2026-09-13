@@ -1,10 +1,10 @@
 import { get as getNode, getPath, list } from '@raphael/client/nodes';
-import type { GetResponse } from '@raphael/contracts/nodes';
+import type { CreateResponse, GetResponse } from '@raphael/contracts/nodes';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
 import { unwrap } from '../../../infrastructure/query/failure';
-import { scopeKey } from '../../../infrastructure/query/keys';
+import { activationOf, scopeKey } from '../../../infrastructure/query/keys';
 import { useConnectionSession, type ConnectionSession } from '../../connection';
 import {
   fetchHierarchy,
@@ -42,16 +42,47 @@ const keys = {
 };
 
 /**
- * A container was created or moved: the hierarchy is stale.
+ * A container was created or moved under `activation`: that connection's hierarchy is stale.
  *
  * The one cache entry point other capabilities are given, so nothing outside this module has to
- * know the key. Phase 09's creation calls it; nothing in this phase does, because nothing in this
- * phase writes a container.
+ * know the key.
+ *
+ * **Scoped to one activation, deliberately.** The predicate used to match on the key's third element
+ * alone, which meant every connection's hierarchy - including retired ones nothing is reading. A
+ * completion arriving from a connection that has since been switched away from would have marked the
+ * current connection's hierarchy stale and pulled a fresh read of a server that had nothing to do
+ * with it.
  */
-export function invalidateHierarchy(client: QueryClient): Promise<void> {
+export function invalidateHierarchy(client: QueryClient, activation: number): Promise<void> {
   return client.invalidateQueries({
-    predicate: (query) => query.queryKey[2] === HIERARCHY,
+    predicate: (query) =>
+      activationOf(query.queryKey) === activation && query.queryKey[2] === HIERARCHY,
   });
+}
+
+/**
+ * A creation landed: hold on to what the server said, and mark the hierarchy stale.
+ *
+ * Seeding is absent-only. That is not because a container we just created is usually the newest
+ * thing known about it - it is because writing only where nothing is cached can never overwrite a
+ * reading that is already there, and a replay can return a snapshot from days ago. Where something
+ * is cached, this leaves it alone and lets the ordinary refetch decide.
+ *
+ * Kept beside the invalidation rather than exported separately: they are one consequence of one
+ * event, and creation lives inside this capability, so neither needs to become a public API to be
+ * reachable by the code that calls them.
+ */
+export async function recordCreation(
+  client: QueryClient,
+  response: CreateResponse,
+  activation: number,
+): Promise<void> {
+  const entity = response.entity;
+  const key = keys.entity(activation, { type: entity.type, id: entity.id });
+
+  if (client.getQueryData(key) === undefined) client.setQueryData(key, entity);
+
+  await invalidateHierarchy(client, activation);
 }
 
 export interface HierarchyQuery {

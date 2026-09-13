@@ -1,4 +1,4 @@
-import { FileText, Layers } from 'lucide-react-native';
+import { FileText, Layers, Plus } from 'lucide-react-native';
 import { useMemo } from 'react';
 import { Text, View } from 'react-native';
 
@@ -22,6 +22,7 @@ import {
   openBrowse,
   openHome,
   openProject,
+  openRecovery,
   openSearch,
   useSheetsStore,
   LocationTopBar,
@@ -36,6 +37,7 @@ import {
   useContainerPath,
   useHierarchy,
 } from '../client/queries';
+import { PendingSummary } from '../creation';
 import { HierarchyError, HierarchyStale } from './HierarchyError';
 import { areaNoteGridItems } from './noteSpans';
 import { ReadOnlyBody } from './ReadOnlyBody';
@@ -77,6 +79,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
 
   const openNewNote = useSheetsStore((state) => state.openNewNote);
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
+  const openNewContainer = useSheetsStore((state) => state.openNewContainer);
 
   const entity = areaQuery.data;
   // A route can name a real container of the wrong kind. Rendering a project as an area would
@@ -255,12 +258,37 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
           <>
             <HierarchyStale className="mt-8" tree={tree} />
 
-            {subareas.length > 0 ? (
-              <View className="mt-8 gap-4">
-                <SectionHeading>Subareas</SectionHeading>
-                <TileGrid items={subareaTiles} />
+            {/* Drawn from the local record, so it survives a hierarchy that will not load - which
+                is exactly when someone most needs to know a creation was left in the air. */}
+            {areaId === null ? null : (
+              <View className="mt-8">
+                <PendingSummary onOpen={openRecovery} parentAreaId={areaId} />
               </View>
-            ) : null}
+            )}
+
+            <View className="mt-8 gap-4">
+              <SectionHeading>Subareas</SectionHeading>
+              {subareas.length > 0 ? (
+                <TileGrid items={subareaTiles} />
+              ) : (
+                <EmptyState
+                  description="An area can hold areas of its own when one subject needs dividing."
+                  title="No subareas in this area."
+                />
+              )}
+              {areaId === null ? null : (
+                <View className="flex-row">
+                  <Chip
+                    accessibilityHint="Creates an area inside this one"
+                    icon={Plus}
+                    label="New area"
+                    onPress={() => {
+                      openNewContainer('area', areaId);
+                    }}
+                  />
+                </View>
+              )}
+            </View>
 
             <View className="mt-8 gap-4">
               <SectionHeading>Projects</SectionHeading>
@@ -271,6 +299,18 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
                   description="Projects with an end in sight belong here. This area has none yet."
                   title="No projects in this area."
                 />
+              )}
+              {areaId === null ? null : (
+                <View className="flex-row">
+                  <Chip
+                    accessibilityHint="Creates a project inside this area"
+                    icon={Plus}
+                    label="New project"
+                    onPress={() => {
+                      openNewContainer('project', areaId);
+                    }}
+                  />
+                </View>
               )}
             </View>
 

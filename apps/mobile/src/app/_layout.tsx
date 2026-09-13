@@ -16,6 +16,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import '../../global.css';
 import { queryClient, startAppStateBridge } from '../infrastructure/query/query-client';
 import { NewNoteSheet, VoiceCaptureSheet } from '../modules/capture';
+import { ContainerCreationHost, PendingAttempts, useCreationStore } from '../modules/collections';
 import { ConnectionGate } from '../modules/connection';
 import { colors } from '../ui/theme';
 
@@ -46,6 +47,10 @@ export default function RootLayout() {
   // refresh when someone comes back rather than showing them what was true an hour ago.
   useEffect(startAppStateBridge, []);
 
+  // Opened once, for the whole process. Unfinished creations have to be readable before anything
+  // asks about them, including on the setup screen, which is outside the connection gate.
+  useCreationStore();
+
   if (!ready) {
     return null;
   }
@@ -55,7 +60,11 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <QueryClientProvider client={queryClient}>
           <StatusBar style="dark" />
-          <ConnectionGate>
+          {/* Unfinished creations survive a disconnect and an unreadable keychain, so they are
+              reachable from the screens that stand in for the app when there is no connection.
+              Nothing there can send anything; reading, recovering input, and discarding need no
+              server at all. */}
+          <ConnectionGate unconnected={<PendingAttempts hideWhenEmpty />}>
             <Stack
               initialRouteName="index"
               screenOptions={{
@@ -65,12 +74,14 @@ export default function RootLayout() {
             >
               <Stack.Screen name="index" />
               <Stack.Screen name="browse" />
+              <Stack.Screen name="recovery" />
               <Stack.Screen name="settings" />
               <Stack.Screen name="change-server" />
               <Stack.Screen name="search" options={{ presentation: 'modal' }} />
             </Stack>
             <NewNoteSheet />
             <VoiceCaptureSheet />
+            <ContainerCreationHost />
           </ConnectionGate>
         </QueryClientProvider>
       </GestureHandlerRootView>

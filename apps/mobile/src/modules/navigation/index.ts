@@ -8,6 +8,7 @@ export {
   openContainer,
   openHome,
   openProject,
+  openRecovery,
   openSearch,
   openSettings,
   parseContainerRef,
@@ -15,4 +16,4 @@ export {
   resetToHome,
 } from './routes';
 // One shared overlay state preserves mutual exclusion between the capture sheets.
-export { useSheetsStore } from './state/sheets';
+export { useSheetsStore, type OpenSheet } from './state/sheets';

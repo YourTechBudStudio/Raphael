@@ -1,4 +1,5 @@
-import { Text, View } from 'react-native';
+import type { ReactNode } from 'react';
+import { ScrollView, Text, View } from 'react-native';
 
 import { Chip } from '../../../ui';
 import { gutter } from '../../../ui/theme';
@@ -6,6 +7,11 @@ import { useConnectionStore } from '../state/connection';
 
 export interface StoredConnectionProblemProps {
   message: string;
+  /**
+   * Shown below the explanation. A keychain that cannot be read says nothing about records this app
+   * keeps for itself, so anything unfinished stays reachable from here.
+   */
+  footer?: ReactNode | undefined;
 }
 
 /**
@@ -20,12 +26,15 @@ export interface StoredConnectionProblemProps {
  * The way out deletes the stored record, so it says that plainly rather than calling itself
  * "start again". Nothing on the server is touched, and the address and key can be entered again.
  */
-export function StoredConnectionProblem({ message }: StoredConnectionProblemProps) {
+export function StoredConnectionProblem({ message, footer }: StoredConnectionProblemProps) {
   const disconnect = useConnectionStore((state) => state.disconnect);
 
   return (
-    <View className="flex-1 items-center justify-center bg-canvas" style={{ padding: gutter }}>
-      <View className="max-w-[420px] gap-3">
+    <ScrollView
+      className="flex-1 bg-canvas"
+      contentContainerStyle={{ padding: gutter, flexGrow: 1, justifyContent: 'center' }}
+    >
+      <View className="max-w-[420px] gap-3 self-center">
         <Text
           accessibilityRole="header"
           className="font-heading text-[28px] leading-[34px] text-ink"
@@ -51,7 +60,8 @@ export function StoredConnectionProblem({ message }: StoredConnectionProblemProp
             }}
           />
         </View>
+        {footer === undefined ? null : <View className="pt-4">{footer}</View>}
       </View>
-    </View>
+    </ScrollView>
   );
 }

@@ -57,7 +57,7 @@ export function NewNoteSheet() {
   const closeSheet = useSheetsStore((state) => state.close);
   // Keyed on the opening. The sheet stays mounted so it can animate out, which means without an
   // identity that changes per opening the next open would show the last one's aftermath.
-  return <NoteForm key={session} onClose={closeSheet} visible={open === 'new-note'} />;
+  return <NoteForm key={session} onClose={closeSheet} visible={open?.kind === 'new-note'} />;
 }
 
 interface NoteFormProps {

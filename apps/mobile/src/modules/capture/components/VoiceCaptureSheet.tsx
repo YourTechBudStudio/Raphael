@@ -50,7 +50,7 @@ export function VoiceCaptureSheet() {
   const sheetSession = useSheetsStore((state) => state.session);
   const closeSheet = useSheetsStore((state) => state.close);
 
-  const visible = open === 'voice-capture';
+  const visible = open?.kind === 'voice-capture';
   const [destination, setDestination] = useState<AreaOption | null>(null);
 
   // A new opening starts with nothing chosen. Carrying the last take's destination forward would

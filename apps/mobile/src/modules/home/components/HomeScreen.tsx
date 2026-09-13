@@ -6,13 +6,21 @@ import { CaptureBar } from '../../capture';
 import {
   HierarchyError,
   HierarchyStale,
+  PendingSummary,
   useActiveProjectIds,
   useHierarchy,
   useProjectActive,
   type HierarchyNode,
 } from '../../collections';
 import { RejectionNotice } from '../../connection';
-import { openBrowse, openSearch, openSettings, useSheetsStore, HomeTopBar } from '../../navigation';
+import {
+  openBrowse,
+  openRecovery,
+  openSearch,
+  openSettings,
+  useSheetsStore,
+  HomeTopBar,
+} from '../../navigation';
 import { ResourceGrid, type ResourceGridItem } from '../../resources';
 import { useHomeFeed } from '../client/queries';
 import { ActiveProjectCard } from './ActiveProjectCard';
@@ -77,6 +85,10 @@ export function HomeScreen() {
       >
         <View className="gap-7">
           <RejectionNotice />
+          {/* Every unfinished creation, including the root-targeted ones that belong to no area and
+              would otherwise be discoverable nowhere. Read from the local record, so it is here
+              whether or not the server can be reached. */}
+          <PendingSummary onOpen={openRecovery} />
           <View className="gap-3">
             <SectionHeading>Active projects</SectionHeading>
             {/* These cards are named from the hierarchy, so a stale hierarchy is stale names. */}

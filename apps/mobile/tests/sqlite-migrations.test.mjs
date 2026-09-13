@@ -1,0 +1,202 @@
+/**
+ * The migration runner, against real SQLite.
+ *
+ * What is being defended is that a database is never left in a shape no version describes, and never
+ * quietly rebuilt. The interesting cases are the unhappy ones: a step that throws partway, a file
+ * written by a build that does not exist yet, and an initialization interrupted between two steps.
+ */
+
+import assert from 'node:assert/strict';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { after, describe, it } from 'node:test';
+
+import { migrate } from '../src/infrastructure/sqlite/migrate.ts';
+import { openNodeDatabase } from './support/node-sqlite.mjs';
+
+const STEP_ONE = {
+  version: 1,
+  statements: ['CREATE TABLE thing (id TEXT PRIMARY KEY, label TEXT NOT NULL)'],
+};
+const STEP_TWO = { version: 2, statements: ['ALTER TABLE thing ADD COLUMN note TEXT'] };
+
+const temporaries = [];
+
+after(async () => {
+  await Promise.all(temporaries.map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+const temporaryFile = async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'raphael-sqlite-'));
+  temporaries.push(dir);
+
+  return path.join(dir, 'test.db');
+};
+
+const version = async (db) => (await db.get('PRAGMA user_version')).user_version;
+
+describe('migrate', () => {
+  it('applies every step and records the version it reached', async () => {
+    const db = await openNodeDatabase();
+
+    assert.deepEqual(await migrate(db, [STEP_ONE, STEP_TWO]), { kind: 'ready', version: 2 });
+    assert.equal(await version(db), 2);
+
+    await db.run('INSERT INTO thing (id, label, note) VALUES (?, ?, ?)', ['a', 'one', 'n']);
+    assert.equal((await db.all('SELECT * FROM thing')).length, 1);
+
+    await db.close();
+  });
+
+  it('is safe to repeat, and repeats nothing it already applied', async () => {
+    const db = await openNodeDatabase();
+
+    await migrate(db, [STEP_ONE, STEP_TWO]);
+    await db.run('INSERT INTO thing (id, label) VALUES (?, ?)', ['a', 'one']);
+
+    // The second run must not re-run CREATE TABLE, which would throw, nor drop what is stored.
+    assert.deepEqual(await migrate(db, [STEP_ONE, STEP_TWO]), { kind: 'ready', version: 2 });
+    assert.equal((await db.all('SELECT * FROM thing')).length, 1);
+
+    await db.close();
+  });
+
+  it('resumes an initialization that was interrupted between steps', async () => {
+    const db = await openNodeDatabase();
+
+    // Exactly what a process killed after step one leaves behind.
+    await migrate(db, [STEP_ONE]);
+    assert.equal(await version(db), 1);
+
+    assert.deepEqual(await migrate(db, [STEP_ONE, STEP_TWO]), { kind: 'ready', version: 2 });
+    await db.run('INSERT INTO thing (id, label, note) VALUES (?, ?, ?)', ['a', 'one', 'n']);
+
+    await db.close();
+  });
+
+  it('rolls a failed step back and stays at the previous version', async () => {
+    const db = await openNodeDatabase();
+    await migrate(db, [STEP_ONE]);
+
+    const broken = {
+      version: 2,
+      statements: ['CREATE TABLE other (id TEXT PRIMARY KEY)', 'THIS IS NOT SQL'],
+    };
+
+    const outcome = await migrate(db, [STEP_ONE, broken]);
+    assert.equal(outcome.kind, 'failed');
+    assert.equal(outcome.version, 1);
+
+    // The half of the step that did succeed is gone with the transaction that carried it.
+    assert.equal(await version(db), 1);
+    await assert.rejects(() => db.all('SELECT * FROM other'));
+
+    await db.close();
+  });
+
+  it('refuses a database written by a newer build without touching it', async () => {
+    const db = await openNodeDatabase();
+    await migrate(db, [STEP_ONE, STEP_TWO]);
+    await db.run('PRAGMA user_version = 9');
+
+    assert.deepEqual(await migrate(db, [STEP_ONE, STEP_TWO]), {
+      kind: 'unsupported_version',
+      found: 9,
+      supported: 2,
+    });
+    // Refused means refused: the version is not lowered and the schema is not rewritten.
+    assert.equal(await version(db), 9);
+
+    await db.close();
+  });
+
+  it('keeps what it committed across close and reopen', async () => {
+    const file = await temporaryFile();
+
+    const first = await openNodeDatabase(file);
+    await migrate(first, [STEP_ONE, STEP_TWO]);
+    await first.run('INSERT INTO thing (id, label) VALUES (?, ?)', ['a', 'one']);
+    await first.close();
+
+    const second = await openNodeDatabase(file);
+    assert.equal(await version(second), 2);
+    assert.equal((await second.all('SELECT * FROM thing')).length, 1);
+    await second.close();
+  });
+
+  it('refuses a step list that is not contiguous from 1', async () => {
+    const db = await openNodeDatabase();
+
+    await assert.rejects(() => migrate(db, [STEP_TWO]), /contiguous/);
+
+    await db.close();
+  });
+});
+
+describe('transactions', () => {
+  it('rolls back everything in a body that throws', async () => {
+    const db = await openNodeDatabase();
+    await migrate(db, [STEP_ONE]);
+
+    await assert.rejects(() =>
+      db.transaction(async (tx) => {
+        await tx.run('INSERT INTO thing (id, label) VALUES (?, ?)', ['a', 'one']);
+        throw new Error('no');
+      }),
+    );
+
+    assert.equal((await db.all('SELECT * FROM thing')).length, 0);
+
+    await db.close();
+  });
+
+  it('enforces the schema constraints rather than the caller doing it', async () => {
+    const db = await openNodeDatabase();
+    await migrate(db, [STEP_ONE]);
+    await db.run('INSERT INTO thing (id, label) VALUES (?, ?)', ['a', 'one']);
+
+    await assert.rejects(() => db.run('INSERT INTO thing (id, label) VALUES (?, ?)', ['a', 'two']));
+
+    await db.close();
+  });
+
+  it('serializes overlapping transaction bodies', async () => {
+    const db = await openNodeDatabase();
+    await migrate(db, [STEP_ONE]);
+
+    const order = [];
+    const first = db.transaction(async (tx) => {
+      order.push('first-in');
+      await tx.run('INSERT INTO thing (id, label) VALUES (?, ?)', ['a', 'one']);
+      order.push('first-out');
+    });
+    const second = db.transaction(async () => {
+      order.push('second-in');
+    });
+
+    await Promise.all([first, second]);
+    assert.deepEqual(order, ['first-in', 'first-out', 'second-in']);
+
+    await db.close();
+  });
+
+  it('keeps the queue alive after a transaction fails', async () => {
+    const db = await openNodeDatabase();
+    await migrate(db, [STEP_ONE]);
+
+    const failing = db.transaction(async () => {
+      throw new Error('no');
+    });
+    const following = db.transaction(async (tx) => {
+      await tx.run('INSERT INTO thing (id, label) VALUES (?, ?)', ['a', 'one']);
+
+      return 'done';
+    });
+
+    await assert.rejects(() => failing);
+    assert.equal(await following, 'done');
+
+    await db.close();
+  });
+});

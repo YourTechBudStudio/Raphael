@@ -20,7 +20,11 @@ export {
   type ContainerChildren,
   type HierarchyQuery,
 } from './client/queries';
+export { useCreationStore } from './client/creation';
 export { AreaScreen } from './components/AreaScreen';
+export { ContainerCreationHost } from './components/ContainerCreationHost';
+export { RecoveryScreen } from './components/RecoveryScreen';
+export { PendingAttempts, PendingSummary } from './creation';
 export { HierarchyError, HierarchyStale } from './components/HierarchyError';
 export { CollectionTile } from './components/CollectionTile';
 export { ProjectScreen } from './components/ProjectScreen';

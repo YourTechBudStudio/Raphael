@@ -52,6 +52,11 @@ export function openSettings(): void {
   router.push('/settings');
 }
 
+/** Opens the list of creations left unfinished on this phone. */
+export function openRecovery(): void {
+  router.push('/recovery');
+}
+
 /** Opens the screen that points this device at a different server. */
 export function openChangeServer(): void {
   router.push('/change-server');

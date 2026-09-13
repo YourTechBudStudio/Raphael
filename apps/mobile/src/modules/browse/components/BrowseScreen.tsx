@@ -1,20 +1,21 @@
-import { Layers, Star } from 'lucide-react-native';
+import { Layers, Plus, Star } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
-import { EmptyState, PressableFeedback, Screen, SearchField, colors } from '../../../ui';
+import { Chip, EmptyState, PressableFeedback, Screen, SearchField, colors } from '../../../ui';
 import {
   ancestorsOf,
   HierarchyError,
   HierarchyStale,
+  PendingSummary,
   useHierarchy,
   type HierarchyNode,
   type HierarchyQuery,
 } from '../../collections';
 import { RejectionNotice } from '../../connection';
-import { goBack, openContainer, TitleTopBar } from '../../navigation';
+import { goBack, openContainer, openRecovery, TitleTopBar, useSheetsStore } from '../../navigation';
 import { useBrowseStore } from '../state/tree';
 import { BrowseTree } from './BrowseTree';
 import { FavoritesList } from './FavoritesList';
@@ -62,6 +63,7 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
   );
 
   const tree = useHierarchy();
+  const openNewContainer = useSheetsStore((state) => state.openNewContainer);
   const ancestorIds = useMemo(
     () => ancestorsOf(tree.hierarchy, current?.id ?? null).map((step) => step.id),
     [tree.hierarchy, current],
@@ -119,6 +121,24 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
           testID="browse-screen"
         >
           <RejectionNotice className="mb-3" />
+          {/* The root holds only areas, so this is the one place a top-level area can be made. An
+              attempt aimed at the root belongs to no area, which is why the summary is here too:
+              Home carries it as well, and between them there is nowhere it can hide. */}
+          {tab === 'favorites' ? null : (
+            <View className="mb-4 gap-3">
+              <PendingSummary onOpen={openRecovery} parentAreaId={null} />
+              <View className="flex-row">
+                <Chip
+                  accessibilityHint="Creates an area at the top level"
+                  icon={Plus}
+                  label="New area"
+                  onPress={() => {
+                    openNewContainer('area', null);
+                  }}
+                />
+              </View>
+            </View>
+          )}
           {tab === 'favorites' ? (
             <FavoritesList onSelect={select} query={query} />
           ) : (

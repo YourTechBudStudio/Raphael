@@ -77,36 +77,81 @@ test('capabilities use public interfaces and UI stays independent of product cod
 });
 
 /**
- * Container creation is phase 09's, and the boundary is checked rather than trusted.
+ * Creation has exactly one owner, and one dispatcher.
  *
- * The reviewed reducer and its pending-attempt store are kept, deliberately, because phase 09 builds
- * the real creation on the behaviour they encode. Keeping them is only safe if nothing in the
- * running app can reach them: a retained sheet, a route, or a store action would be a way to invoke
- * creation that no screen advertises and no reviewer would look for. Hiding a button does not
- * establish that. This does.
+ * Phase 08 kept the reviewed reducer unreachable and checked that nothing could call it. That
+ * restriction is gone - creation is real now - and this replaces it with the boundary that actually
+ * matters. `modules/collections/creation/` decides whether an unfinished creation is resent. A
+ * second caller of it would be a second dispatcher for the same durable attempt, which is the one
+ * bug this design exists to make impossible, so the capability keeps it private and says so here.
  */
-test('nothing in the running app can reach container creation', () => {
-  const reachable = files.filter(
-    (file) => !file.endsWith('.test.mjs') && !file.includes(`creation${path.sep}`),
-  );
+test('container creation is private to the collections capability', () => {
+  for (const file of files) {
+    const [layer, module] = file.split(path.sep);
+    if (layer === 'modules' && module === 'collections') continue;
 
-  for (const file of reachable) {
     for (const specifier of imports(file)) {
       assert.ok(
-        !/creation\/|state\/pending/.test(specifier),
-        `${file}: reaches phase 09 creation code through ${specifier}`,
+        !/(^|\/)creation(\/|$)/.test(specifier),
+        `${file}: reaches collections' private creation code through ${specifier}`,
       );
     }
   }
+});
 
-  // The mock that used to create containers is gone with the rest of the mock repository, so there
-  // is no implementation left to call even if something found its way to the reducer.
+/**
+ * The native database exists on one platform, and only that platform's bundle knows about it.
+ *
+ * A lazy `await import('expo-sqlite')` is not enough and was tried: Metro walks a dynamic import
+ * when it builds the graph, so the web bundle pulled in the browser worker and failed on the wasm
+ * asset beside it. A runtime platform check cannot fix a build-time resolution, so the driver is
+ * split by file - `driver.ts` for native, `driver.web.ts` for web - and `expo-sqlite` is named in
+ * exactly one of them.
+ */
+test('expo-sqlite is named only by the native driver', () => {
+  const native = path.join('infrastructure', 'sqlite', 'driver.ts');
+
   for (const file of files) {
-    const source = readFileSync(path.join(root, file), 'utf8');
+    for (const specifier of imports(file)) {
+      if (specifier !== 'expo-sqlite') continue;
+      assert.equal(file, native, `${file}: imports the native database directly`);
+    }
+  }
+
+  // Both halves must exist, or the split silently stops being one: a missing web file would send
+  // web straight back to the native one.
+  for (const half of ['driver.ts', 'driver.web.ts']) {
     assert.ok(
-      !/createContainer|checkAttempt/.test(source),
-      `${file}: still references mock container creation`,
+      files.includes(path.join('infrastructure', 'sqlite', half)),
+      `the sqlite driver is missing its ${half} half`,
     );
+  }
+});
+
+/**
+ * Test-only implementations never reach a build.
+ *
+ * A `node:sqlite` adapter and a real backend are both test dependencies, and both are entirely
+ * plausible things to import by accident: one looks like the production driver and the other is the
+ * server this app talks to. Either would ship, and the Node adapter would ship as something that
+ * cannot run on a phone at all.
+ */
+test('production code cannot reach the test backend or the Node database adapter', () => {
+  for (const file of files) {
+    for (const specifier of imports(file)) {
+      assert.ok(
+        !specifier.startsWith('node:'),
+        `${file}: imports the Node standard library, which is not on a phone`,
+      );
+      assert.ok(
+        !/(^|\/)tests(\/|$)/.test(specifier),
+        `${file}: imports test-only code through ${specifier}`,
+      );
+      assert.ok(
+        !specifier.startsWith('@raphael/backend'),
+        `${file}: imports the backend, which is a test dependency only`,
+      );
+    }
   }
 });
 

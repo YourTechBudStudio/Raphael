@@ -13,6 +13,15 @@ import { UnsupportedPlatform } from './UnsupportedPlatform';
 
 export interface ConnectionGateProps {
   children: ReactNode;
+  /**
+   * Rendered on the screens that stand in for the app when there is no usable connection.
+   *
+   * Those screens replace the whole router, so anything that must stay reachable without a server
+   * cannot be a route and cannot be reached from Settings either. Composition passes it in rather
+   * than this capability importing it, which would be a cycle and a boundary this module does not
+   * need to cross.
+   */
+  unconnected?: ReactNode | undefined;
 }
 
 /**
@@ -32,7 +41,7 @@ export interface ConnectionGateProps {
  * empty keychain, so it gets a screen that says so rather than being swept into first-run setup
  * where it would look like the connection had simply never existed.
  */
-export function ConnectionGate({ children }: ConnectionGateProps) {
+export function ConnectionGate({ children, unconnected }: ConnectionGateProps) {
   const phase = useConnectionStore((state) => state.phase);
   const hydrate = useConnectionStore((state) => state.hydrate);
 
@@ -65,8 +74,8 @@ export function ConnectionGate({ children }: ConnectionGateProps) {
   if (!SECURE_STORAGE_SUPPORTED) return <UnsupportedPlatform />;
 
   if (phase.kind === 'unreadable') {
-    return <StoredConnectionProblem message={phase.message} />;
+    return <StoredConnectionProblem footer={unconnected} message={phase.message} />;
   }
 
-  return phase.kind === 'active' ? <>{children}</> : <SetupScreen />;
+  return phase.kind === 'active' ? <>{children}</> : <SetupScreen footer={unconnected} />;
 }
