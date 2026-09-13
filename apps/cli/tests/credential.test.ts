@@ -268,23 +268,16 @@ describe('the environment pair', () => {
     );
   });
 
-  it('refuses an unusable key from the environment without echoing it', () => {
-    // A distinctive sentinel, not something like "short": ordinary wording about a key being
-    // "shorter than the minimum" would contain that as a substring and the assertion would pass for
-    // the wrong reason.
-    const sentinel = 'zqx-sentinel-value';
-    const environment = {
-      ...home(),
-      RAPHAEL_ENDPOINT: 'https://x.example.com',
-      RAPHAEL_API_KEY: sentinel,
-    };
-    try {
-      resolveConnection(environment, 'linux');
-      assert.fail('should have refused');
-    } catch (error) {
-      assert.ok(error instanceof ConnectionError);
-      assert.equal(error.reason, 'unusable_environment_key');
-      assert.equal(error.message.includes(sentinel), false);
+  it('takes any key the environment supplies, whatever its shape', () => {
+    // There is no shape rule: whatever started the server is the key. A key that cannot travel in
+    // an HTTP header will fail at the first request instead, which is the cost of not policing it.
+    for (const key of ['x', 'a key with spaces', '\u{1F511}', `${'k'.repeat(40)} `]) {
+      const resolved = resolveConnection(
+        { ...home(), RAPHAEL_ENDPOINT: 'https://x.example.com', RAPHAEL_API_KEY: key },
+        'linux',
+      );
+      assert.equal(resolved.source, 'environment');
+      assert.equal(resolved.config.apiKey, key);
     }
   });
 

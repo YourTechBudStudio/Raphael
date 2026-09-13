@@ -16,19 +16,14 @@ import { createInterface } from 'node:readline';
 
 import { isEndpointRejection, parseEndpoint } from '@raphael/client';
 import { verify } from '@raphael/client/connection';
-import { inspectApiKey } from '@raphael/contracts/connection';
+import { hasApiKey } from '@raphael/contracts/connection';
 
 import { UsageError, parseArgs } from '../../shared/args.ts';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE, type ExitCode } from '../../shared/exit.ts';
 import { forTerminal, writeJson, writeLine, type Streams } from '../../shared/output.ts';
 import { reportFailure } from '../../shared/report.ts';
 import { configLocation, saveConfig } from './config.ts';
-import {
-  API_KEY_VARIABLE,
-  ENDPOINT_VARIABLE,
-  describeKeyRejection,
-  transportFor,
-} from './remote.ts';
+import { API_KEY_VARIABLE, ENDPOINT_VARIABLE, transportFor } from './remote.ts';
 
 export const LOGIN_HELP = `Usage: raphael login [--json]
 
@@ -184,9 +179,8 @@ export const runLogin = async (
     return EXIT_USAGE;
   }
 
-  const rejection = inspectApiKey(key);
-  if (rejection !== undefined) {
-    writeLine(streams.err, describeKeyRejection(rejection.reason, rejection.limit, 'That key'));
+  if (!hasApiKey(key)) {
+    writeLine(streams.err, 'No key was entered. Nothing was saved.');
     return EXIT_USAGE;
   }
 

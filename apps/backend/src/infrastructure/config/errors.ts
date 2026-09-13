@@ -17,8 +17,7 @@ export type ConfigurationReason =
   | 'config_invalid'
   | 'env_unreadable'
   | 'env_too_large'
-  | 'api_key_missing'
-  | 'api_key_unusable';
+  | 'api_key_missing';
 
 export class ConfigurationError extends Error {
   readonly reason: ConfigurationReason;

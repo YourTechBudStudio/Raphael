@@ -536,12 +536,15 @@ describe('connecting', () => {
     assert.match(ran.stderr, /unauthorized/);
   });
 
-  it('refuses a plain-http endpoint that is not this machine', async () => {
+  it('still refuses an endpoint that cannot carry a credential', async () => {
+    // Plain http to any host is allowed; userinfo in the URL is not, because it would put the key
+    // into shell history and logs whatever the scheme.
     const ran = await run(['get', '/work'], {
-      env: { RAPHAEL_ENDPOINT: 'http://raphael.example.com' },
+      env: { RAPHAEL_ENDPOINT: 'http://user:secret@raphael.example.com' },
     });
     assert.equal(ran.code, 2);
-    assert.match(ran.stderr, /https/);
+    assert.match(ran.stderr, /username and password/);
+    assert.equal(ran.stderr.includes('secret'), false);
   });
 
   it('reports an unreachable server as uncertain for a creation', async () => {

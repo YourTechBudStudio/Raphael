@@ -50,11 +50,14 @@ export const isCompatibleProtocolVersion = (version: number): boolean =>
  * Recovery wording for a mismatch. There is no negotiation or fallback: the owner updates one side.
  * A successful check also does not license skipping response validation later, because the server can
  * be upgraded after setup.
+ *
+ * "Raphael here" rather than "the client": this sentence is read on a phone as often as in a
+ * terminal, and someone holding a phone does not think of it as a client.
  */
 export const describeProtocolMismatch = (version: number): string =>
   version > PROTOCOL_VERSION
-    ? `This server speaks protocol ${version}; this client understands ${PROTOCOL_VERSION}. Update the client.`
-    : `This server speaks protocol ${version}; this client understands ${PROTOCOL_VERSION}. Update the server.`;
+    ? `This server speaks protocol ${version}; Raphael here understands ${PROTOCOL_VERSION}. Update Raphael here.`
+    : `This server speaks protocol ${version}; Raphael here understands ${PROTOCOL_VERSION}. Update the server.`;
 
 /**
  * How a credential travels. One header, one scheme, defined once so the server, the typed client, and
@@ -70,61 +73,23 @@ export const AUTHORIZATION_SCHEME = 'Bearer';
 export const authorizationHeaderValue = (key: string): string => `${AUTHORIZATION_SCHEME} ${key}`;
 
 /**
- * The floor on a configured key, in characters.
+ * The only thing Raphael asks of an API key: that there is one.
  *
- * Length is not entropy - thirty-two repeated characters satisfy this and remain weak - so this is a
- * floor that rejects obviously unusable keys, not a strength guarantee. Generate a random 32-byte
- * secret and encode it for header transport.
+ * There is deliberately no length floor, no character set, and no shape. The key is whatever the
+ * owner configured their server with, and this is a single-owner product where that is their call.
+ *
+ * One consequence is worth knowing rather than guarding against. An HTTP header carries bytes, and
+ * Node exposes a received header value as Latin-1 text, so a key containing any character above
+ * U+007F is hashed from its UTF-8 string, arrives as those bytes reinterpreted one per character,
+ * and never matches - measured in phase 05 for both an emoji key and a Latin-1-range key. A
+ * well-behaved client cannot even send one: `fetch` refuses a header value outside Latin-1
+ * outright. Such a key will fail as a transport error at the first request rather than as a setup
+ * refusal. That is the accepted cost of not policing the value.
+ *
+ * Empty is not a restriction on what a key may be - it is the absence of one, which every caller
+ * has to handle anyway.
  */
-export const API_KEY_MIN_LENGTH = 32;
-
-/**
- * The characters a key may contain: visible ASCII, from `!` through `~`.
- *
- * This is stricter than "no whitespace" for a measured reason. An HTTP header carries *bytes*, and
- * Node exposes a received header value as Latin-1 text. A key containing any character above U+007F
- * is hashed from its UTF-8 string, arrives as those bytes reinterpreted one-per-character, and never
- * matches - measured during phase 05 for both an emoji key and a Latin-1-range key. A well-behaved
- * client cannot even send one: `fetch` refuses a header value outside Latin-1 outright.
- *
- * So a non-ASCII key is not a key that behaves differently. It is a key that can never authenticate,
- * on a server that started and reported itself configured. Space and every control character are
- * excluded by the same range.
- */
-const USABLE_KEY = /^[\u0021-\u007e]+$/u;
-
-/**
- * Why a key is unusable. A reason, never the key: the caller chooses wording appropriate to where the
- * key came from - a server's environment variable, a login prompt, a mobile setup screen - and this
- * function has no idea which of those it is being asked from.
- */
-export type ApiKeyRejectionReason = 'empty' | 'unusable_characters' | 'too_short';
-
-export interface ApiKeyRejection {
-  readonly reason: ApiKeyRejectionReason;
-  /** The bound that was missed, for the reason that has one. */
-  readonly limit?: number;
-}
-
-/**
- * The whole key policy, as a pure predicate: one definition for the server that refuses to start, the
- * CLI that refuses to save, and the mobile setup screen that refuses to continue.
- *
- * `undefined` means the key is usable. Hashing, comparison, storage, and prompting are all somewhere
- * else; this decides one thing and holds no secret beyond the argument it was handed.
- *
- * Length is checked in UTF-16 code units, which is unambiguous here only because the character range
- * above admits no astral character. It is a floor that rejects obviously unusable keys, not a
- * strength guarantee - 32 repeated characters satisfy it and remain weak.
- */
-export const inspectApiKey = (key: string): ApiKeyRejection | undefined => {
-  if (key.length === 0) return { reason: 'empty' };
-  if (!USABLE_KEY.test(key)) return { reason: 'unusable_characters' };
-  if (key.length < API_KEY_MIN_LENGTH) {
-    return { reason: 'too_short', limit: API_KEY_MIN_LENGTH };
-  }
-  return undefined;
-};
+export const hasApiKey = (key: string): boolean => key !== '';
 
 export const CONNECTION_ROUTES = {
   verify: { method: 'POST', path: '/api/connection/verify' },

@@ -1,10 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-import {
-  API_KEY_MIN_LENGTH,
-  inspectApiKey,
-  type ApiKeyRejectionReason,
-} from '@raphael/contracts/connection';
+import { hasApiKey } from '@raphael/contracts/connection';
 
 import { API_KEY_VARIABLE, type EnvironmentSnapshot } from './env.ts';
 import { configurationFailure } from './errors.ts';
@@ -27,49 +23,6 @@ import { configurationFailure } from './errors.ts';
 
 const digestOf = (token: string): Buffer => createHash('sha256').update(token, 'utf8').digest();
 
-/**
- * Server-side wording for a shared rejection.
- *
- * The policy itself - the length floor and the visible-ASCII range - lives in the contracts, because
- * the login command and the mobile setup screen have to apply exactly the same rule and a second copy
- * of a credential check is a drift hazard. What stays here is the part that is genuinely the server's:
- * which configuration reason an operator sees, and guidance phrased for someone editing an
- * environment variable rather than someone typing at a prompt.
- *
- * The reason vocabulary is exhaustive, so a value added to it upstream fails to compile here rather
- * than silently acquiring a default message.
- */
-const explainRejection = (
-  reason: ApiKeyRejectionReason,
-  source: string,
-): { readonly code: 'api_key_missing' | 'api_key_unusable'; readonly message: string } => {
-  switch (reason) {
-    case 'empty':
-      return {
-        code: 'api_key_missing',
-        message: `${source} is empty. Raphael will not start without one.`,
-      };
-    case 'unusable_characters':
-      return {
-        code: 'api_key_unusable',
-        message:
-          `${source} contains a character that cannot travel in an HTTP header: keys must be visible ASCII, ` +
-          `with no spaces, control characters, or non-ASCII characters. A non-ASCII key would let the server ` +
-          `start and then fail every client, because headers carry bytes rather than text. Raphael will not trim ` +
-          `or re-encode a credential. If the value came from a .env file, check that it is quoted and has no ` +
-          `trailing spaces; otherwise generate a new key with "openssl rand -hex 32".`,
-      };
-    case 'too_short':
-      return {
-        code: 'api_key_unusable',
-        message:
-          `${source} is shorter than the ${API_KEY_MIN_LENGTH}-character minimum. ` +
-          `Length is not strength - ${API_KEY_MIN_LENGTH} repeated characters would pass this check and still be a ` +
-          `weak key - so generate a random one with "openssl rand -hex 32".`,
-      };
-  }
-};
-
 export class ApiCredential {
   readonly #digest: Buffer;
 
@@ -78,20 +31,21 @@ export class ApiCredential {
   }
 
   /**
-   * The only way to build a credential, and therefore the only place the key policy lives.
+   * The only way to build a credential.
    *
-   * It enforces the policy rather than trusting a caller to have done so. `serve` is an importable
-   * boundary, so "the loader checks it" would only be true of keys that came through the loader - a
-   * programmatic caller could otherwise hand the server a one-character key and the 32-character
-   * minimum would be a rule that applied to configuration files rather than to this server.
+   * A key's content is the owner's business: there is no length floor and no character set. The one
+   * thing this refuses is not having a key, and it refuses it here rather than trusting the loader,
+   * because `serve` is an importable boundary and a programmatic caller could otherwise start a
+   * server with no credential at all.
    *
    * `source` names where the key came from, so an operator reading the failure knows what to edit.
    */
   static fromKey(key: string, source = 'The API key'): ApiCredential {
-    const rejection = inspectApiKey(key);
-    if (rejection !== undefined) {
-      const { code, message } = explainRejection(rejection.reason, source);
-      configurationFailure(code, message);
+    if (!hasApiKey(key)) {
+      configurationFailure(
+        'api_key_missing',
+        `${source} is empty. Raphael will not start without one.`,
+      );
     }
     return new ApiCredential(digestOf(key));
   }

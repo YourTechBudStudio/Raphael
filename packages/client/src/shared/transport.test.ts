@@ -83,13 +83,24 @@ const json = (response: ServerResponse, status: number, payload: unknown): void 
 };
 
 describe('transport construction', () => {
-  it('refuses an endpoint that would send the key in the clear', () => {
+  it('builds a transport for a plain-http endpoint, anywhere', () => {
+    // The owner decides whether the key travels in the clear; the transport does not veto it.
     const built = createTransport({
       endpoint: 'http://raphael.example.com',
       apiKey: KEY,
       fetch: fetch as unknown as FetchLike,
     });
-    assert.equal(isTransportRejection(built), true);
+    assert.equal(isTransportRejection(built), false);
+  });
+
+  it('still refuses an endpoint that cannot carry a credential at all', () => {
+    // Not a transport-security rule: userinfo lands in logs and shell history whatever the scheme.
+    const built = createTransport({
+      endpoint: 'https://user:secret@raphael.example.com',
+      apiKey: KEY,
+      fetch: fetch as unknown as FetchLike,
+    });
+    assert.equal(isTransportRejection(built) && built.reason, 'credentials_in_url');
   });
 
   it('refuses an empty key rather than sending an empty credential', () => {
@@ -101,39 +112,18 @@ describe('transport construction', () => {
     assert.equal(isTransportRejection(built) && built.reason, 'api_key_missing');
   });
 
-  it('refuses a key that could never travel in a header, before any request exists', async () => {
-    // `fetch` rejects a header value outside Latin-1 outright. Without this check that rejection
-    // arrives as a transport failure - and for a creation, as post-dispatch uncertainty about work
-    // that was never dispatched. A key that cannot work is a configuration answer, not a mystery.
-    for (const apiKey of [`${KEY}\n`, `${KEY} `, 'é'.repeat(32), '🔑'.repeat(32)]) {
+  it('accepts any key the owner configured, whatever its shape', () => {
+    // There is no length floor and no character set: the key is whatever started the server. A key
+    // outside Latin-1 cannot in fact travel in a header and will fail at the first request as a
+    // transport error - that is the accepted cost of not policing the value here.
+    for (const apiKey of ['a', `${KEY} `, 'a key with spaces', 'é'.repeat(32), '🔑']) {
       const built = createTransport({
         endpoint: 'https://example.com',
         apiKey,
         fetch: fetch as unknown as FetchLike,
       });
-      assert.equal(isTransportRejection(built), true, JSON.stringify(apiKey.slice(0, 4)));
-      if (isTransportRejection(built)) assert.equal(built.reason, 'api_key_unusable');
+      assert.equal(isTransportRejection(built), false, JSON.stringify(apiKey.slice(0, 4)));
     }
-  });
-
-  it('refuses a key below the shared minimum', () => {
-    const built = createTransport({
-      endpoint: 'https://example.com',
-      apiKey: 'a'.repeat(31),
-      fetch: fetch as unknown as FetchLike,
-    });
-    assert.equal(isTransportRejection(built) && built.reason, 'api_key_unusable');
-  });
-
-  it('never echoes the key it refused', () => {
-    const secret = `${'z'.repeat(40)}\n`;
-    const built = createTransport({
-      endpoint: 'https://example.com',
-      apiKey: secret,
-      fetch: fetch as unknown as FetchLike,
-    });
-    assert.equal(isTransportRejection(built), true);
-    if (isTransportRejection(built)) assert.equal(built.message.includes('zzz'), false);
   });
 
   it('bounds the timeout override', () => {

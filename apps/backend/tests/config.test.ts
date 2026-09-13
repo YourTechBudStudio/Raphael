@@ -333,84 +333,48 @@ describe('the environment and the credential', () => {
     });
   });
 
-  test('a short key is refused, and the message does not pretend length is strength', () => {
-    withTempDir('key-short', (dir) => {
-      const error = refuses(
-        () => load({ dir, env: { [API_KEY_VARIABLE]: 'x'.repeat(31) }, readEnvFile: false }),
-        'api_key_unusable',
-      );
-      assert.match(error.message, /Length is not strength/u);
-    });
-  });
-
-  test('a non-ASCII key is refused, because it could never authenticate', () => {
-    withTempDir('key-non-ascii', (dir) => {
-      // Measured, and the reason this is a startup failure rather than a style rule: an HTTP header
-      // carries bytes, and Node exposes a received value as Latin-1 text. A key hashed from its UTF-8
-      // string arrives as those bytes reinterpreted and never matches - so the server would start,
-      // report itself configured, and fail every client forever. `fetch` will not even send such a
-      // header. Both an emoji key and a Latin-1-range key are covered.
-      for (const key of ['\u{1F511}'.repeat(40), 'é'.repeat(40), `${'k'.repeat(39)}\u00e9`]) {
-        refuses(
-          () => load({ dir, env: { [API_KEY_VARIABLE]: key }, readEnvFile: false }),
-          'api_key_unusable',
-        );
-      }
-    });
-  });
-
-  test('ordinary generated key shapes are accepted', () => {
+  test('a key is whatever the owner configured, of any length or alphabet', () => {
     withTempDir('key-shapes', (dir) => {
-      // Hex, base64url, and base64 with padding: the forms the setup guidance recommends, plus what a
-      // password manager is likely to produce. The restriction is to visible ASCII, not to hex.
+      // There is no length floor and no character set. Hex, base64, a passphrase with spaces, a
+      // single character: if it started the server, it is the key.
       for (const key of [
+        'x',
         'a3f9'.repeat(16),
-        'Zm9vYmFyLWJhei1xdXV4LWNvcmdlLWdyYXVsdA',
         'Zm9vYmFyLWJhei1xdXV4LWNvcmdlLWdyYXVsdA==',
-        `${'x'.repeat(30)}-_.~+/=`,
-      ]) {
-        assert.doesNotThrow(() =>
-          load({ dir, env: { [API_KEY_VARIABLE]: key }, readEnvFile: false }),
-        );
-      }
-    });
-  });
-
-  test('a key with whitespace or a control character is refused, never trimmed', () => {
-    withTempDir('key-unusable', (dir) => {
-      for (const key of [
-        ` ${GOOD_KEY}`,
-        `${GOOD_KEY} `,
+        'a key with spaces',
         `${GOOD_KEY}\n`,
-        GOOD_KEY.replace('k', '\t'),
+        '\u{1F511}'.repeat(8),
       ]) {
-        refuses(
+        assert.doesNotThrow(
           () => load({ dir, env: { [API_KEY_VARIABLE]: key }, readEnvFile: false }),
-          'api_key_unusable',
+          JSON.stringify(key),
         );
       }
     });
   });
 
-  test('no diagnostic ever carries the key', () => {
-    withTempDir('key-not-disclosed', (dir) => {
-      const secret = `${'s'.repeat(40)} `;
-      const error = refuses(
-        () => load({ dir, env: { [API_KEY_VARIABLE]: secret }, readEnvFile: false }),
-        'api_key_unusable',
-      );
-      assert.equal(error.message.includes('s'.repeat(40)), false);
-    });
+  test('a key is stored exactly as given, never trimmed', () => {
+    // Quietly trimming would make a server that accepts a key its owner did not set, and reject the
+    // one they did. Whatever surrounding whitespace they configured is part of the credential.
+    const padded = `  ${GOOD_KEY}  `;
+    const credential = ApiCredential.fromKey(padded);
+    assert.equal(credential.matches(padded), true);
+    assert.equal(credential.matches(GOOD_KEY), false);
   });
 
-  test('the key policy holds for a programmatic caller, not only for configuration', () => {
-    // `serve` is importable, so a policy enforced only by the loader would be a rule about
-    // configuration files rather than about this server. `fromKey` is the only constructor and it is
-    // where the policy lives.
-    for (const key of ['x', '', 'k'.repeat(31), `${'k'.repeat(40)} `, '\u{1F511}'.repeat(40)]) {
-      assert.throws(() => ApiCredential.fromKey(key), ConfigurationError, `"${key}" was accepted`);
-    }
-    assert.doesNotThrow(() => ApiCredential.fromKey(GOOD_KEY));
+  test('a key that cannot travel in a header still starts the server', () => {
+    // Deliberate, and worth stating. An HTTP header carries bytes, and Node reads a received value
+    // back as Latin-1, so a key above U+007F can never match - `fetch` will not even send one. That
+    // is now a request-time transport failure rather than a startup refusal: the owner's key is the
+    // owner's business, and the cost is that this particular mistake surfaces later.
+    assert.doesNotThrow(() => ApiCredential.fromKey('\u{1F511}'.repeat(8)));
+  });
+
+  test('only the absence of a key stops a programmatic caller', () => {
+    // `serve` is importable, so the one rule there is has to live in the constructor rather than in
+    // the loader, or it would be a rule about configuration files rather than about this server.
+    assert.throws(() => ApiCredential.fromKey(''), ConfigurationError);
+    assert.doesNotThrow(() => ApiCredential.fromKey('x'));
   });
 
   test('a credential does not become readable by being printed or serialized', () => {

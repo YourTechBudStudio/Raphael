@@ -26,7 +26,7 @@ import {
 import {
   AUTHORIZATION_HEADER,
   authorizationHeaderValue,
-  inspectApiKey,
+  hasApiKey,
 } from '@raphael/contracts/connection';
 import { Either } from 'effect';
 
@@ -35,7 +35,6 @@ import {
   parseEndpoint,
   routeUrl,
   type Endpoint,
-  type EndpointPolicy,
   type EndpointRejection,
 } from './endpoint.ts';
 import {
@@ -81,13 +80,11 @@ export interface TransportOptions {
   /** Required. See the note above about global fetch. */
   readonly fetch: FetchLike;
   readonly timeoutMs?: number;
-  readonly policy?: EndpointPolicy;
 }
 
 export type TransportRejection =
   | EndpointRejection
   | { readonly reason: 'api_key_missing'; readonly message: string }
-  | { readonly reason: 'api_key_unusable'; readonly message: string }
   | { readonly reason: 'timeout_out_of_range'; readonly message: string };
 
 export interface Transport {
@@ -120,28 +117,15 @@ export const createTransport = (options: TransportOptions): Transport | Transpor
   const apiKey = options.apiKey;
   const fetchImpl = options.fetch;
   const timeout = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const policy = options.policy ?? {};
 
-  const endpoint = parseEndpoint(endpointInput, policy);
+  const endpoint = parseEndpoint(endpointInput);
   if (isEndpointRejection(endpoint)) return endpoint;
 
-  // The whole key policy, not merely "not empty". A key carrying a newline or a non-ASCII character
-  // cannot travel in an HTTP header at all: `fetch` refuses to send it, which would surface as a
-  // transport failure and - for a creation - as post-dispatch uncertainty about work that was never
-  // dispatched. Refusing it here means a key that cannot work is a configuration answer, not a
-  // mystery about whether something was created.
-  const keyRejection = inspectApiKey(apiKey);
-  if (keyRejection !== undefined) {
-    return keyRejection.reason === 'empty'
-      ? { reason: 'api_key_missing', message: 'An API key is required to talk to a server.' }
-      : {
-          reason: 'api_key_unusable',
-          message:
-            keyRejection.reason === 'too_short'
-              ? `The API key is shorter than the ${keyRejection.limit ?? 32}-character minimum.`
-              : 'The API key contains a character that cannot travel in an HTTP header. Keys must be ' +
-                'visible ASCII, with no spaces, control characters, or non-ASCII characters.',
-        };
+  // A key is whatever the owner configured; the only thing that stops a request here is not having
+  // one at all. A key that cannot travel in a header - anything outside Latin-1 - is deliberately
+  // not refused here and will surface as a transport failure at the first request instead.
+  if (!hasApiKey(apiKey)) {
+    return { reason: 'api_key_missing', message: 'An API key is required to talk to a server.' };
   }
   if (!Number.isSafeInteger(timeout) || timeout < MIN_TIMEOUT_MS || timeout > MAX_TIMEOUT_MS) {
     return {
@@ -293,7 +277,7 @@ const dispatch = async <A>(
         return fail({
           kind: 'timeout',
           mutationOutcome: uncertainty(call.mutating),
-          message: `The server did not answer within ${timeoutMs}ms.`,
+          message: 'The server did not answer in time.',
           timeoutMs,
         });
       }
@@ -382,7 +366,7 @@ const readResponse = async <A>(
       return fail({
         kind: 'timeout',
         mutationOutcome: uncertainty(mutating),
-        message: `The response did not finish arriving within ${timeoutMs}ms.`,
+        message: 'The response did not finish arriving in time.',
         timeoutMs,
       });
     }

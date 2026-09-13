@@ -1,10 +1,15 @@
 /**
- * Where a server is, and whether it is safe to send a full-access credential there.
+ * Where a server is.
  *
- * The rule: HTTPS anywhere, plain HTTP only to an address that is recognizably this machine, plus one
- * narrow opt-in for the Android emulator's host alias. There is no bypass, no "private networks are
- * fine" exception, and no way to turn off certificate verification. A credential that leaves this
- * machine in the clear is disclosed, and a policy with a lever eventually gets the lever pulled.
+ * HTTP and HTTPS are both accepted, to any host. This is the owner's explicit decision, and the cost
+ * is worth writing down rather than discovering: over plain HTTP the full-access API key travels in
+ * a header in the clear on every request, so anyone who can observe the path - another device on the
+ * network, a router, an upstream hop - can read it and then has the whole second brain. Raphael does
+ * not warn about this per request; the decision is made once, here.
+ *
+ * What is still refused is an address that cannot safely carry a credential at all: userinfo in the
+ * URL, a query string, a fragment, or a scheme that is not HTTP. Those are about the address being
+ * malformed for this purpose, not about transport security.
  *
  * An endpoint may carry a base path, because terminating TLS at a reverse proxy under a prefix is an
  * ordinary deployment. Joining is string concatenation against the trimmed base, never
@@ -17,8 +22,7 @@ export type EndpointRejectionReason =
   | 'unsupported_scheme'
   | 'credentials_in_url'
   | 'query_not_allowed'
-  | 'fragment_not_allowed'
-  | 'insecure_scheme';
+  | 'fragment_not_allowed';
 
 export interface EndpointRejection {
   readonly reason: EndpointRejectionReason;
@@ -32,39 +36,6 @@ export interface Endpoint {
   readonly origin: string;
 }
 
-export interface EndpointPolicy {
-  /**
-   * Permit plain HTTP to `10.0.2.2`, the alias an Android emulator uses for its host machine.
-   *
-   * Deliberately this one address rather than a general "allow insecure hosts": the emulator case is
-   * real and cannot be solved with TLS, and every other private address can be. The CLI never sets
-   * this; only a mobile build talking to a development machine does.
-   */
-  readonly androidEmulatorLoopback?: boolean;
-}
-
-/**
- * Addresses that are unambiguously this machine.
- *
- * `localhost` is included by name even though a hostile resolver could point it elsewhere. Excluding
- * it would make ordinary local development impossible while doing nothing about an attacker who
- * already controls name resolution; the honest position is that this is a name-based decision and it
- * inherits whatever the resolver says.
- */
-const isLoopbackHost = (hostname: string): boolean => {
-  if (hostname === 'localhost') return true;
-  // URL keeps IPv6 literals in brackets.
-  if (hostname === '[::1]' || hostname === '::1') return true;
-  const ipv4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname);
-  if (ipv4 === null) return false;
-  const octets = ipv4.slice(1).map(Number);
-  if (octets.some((octet) => octet > 255)) return false;
-  // The whole 127.0.0.0/8 block, not just 127.0.0.1.
-  return octets[0] === 127;
-};
-
-const ANDROID_EMULATOR_HOST = '10.0.2.2';
-
 const reject = (reason: EndpointRejectionReason, message: string): EndpointRejection => ({
   reason,
   message,
@@ -76,10 +47,7 @@ const reject = (reason: EndpointRejectionReason, message: string): EndpointRejec
  * Returns a rejection rather than throwing, because this runs on input a person typed at a prompt and
  * the caller has better wording for that context than a thrown error does.
  */
-export const parseEndpoint = (
-  input: string,
-  policy: EndpointPolicy = {},
-): Endpoint | EndpointRejection => {
+export const parseEndpoint = (input: string): Endpoint | EndpointRejection => {
   let url: URL;
   try {
     url = new URL(input);
@@ -110,18 +78,6 @@ export const parseEndpoint = (
   }
   if (url.hash !== '') {
     return reject('fragment_not_allowed', 'The server address must not carry a fragment.');
-  }
-
-  if (url.protocol === 'http:') {
-    const emulator =
-      policy.androidEmulatorLoopback === true && url.hostname === ANDROID_EMULATOR_HOST;
-    if (!isLoopbackHost(url.hostname) && !emulator) {
-      return reject(
-        'insecure_scheme',
-        `Plain HTTP is only allowed to this machine. "${url.hostname}" needs https, or the API key would ` +
-          `travel in the clear. Terminate TLS in front of Raphael and use its https address.`,
-      );
-    }
   }
 
   // `url.pathname` is at least "/", so trimming the trailing slash leaves either "" or "/prefix".

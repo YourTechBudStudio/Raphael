@@ -21,7 +21,6 @@ import {
   type FetchLike,
   type Transport,
 } from '@raphael/client';
-import { inspectApiKey } from '@raphael/contracts/connection';
 
 import { ConfigError, configLocation, loadConfig, type StoredConfig } from './config.ts';
 
@@ -74,41 +73,11 @@ export const resolveConnection = (
           'saved login.',
       );
     }
-    const rejection = inspectApiKey(apiKey);
-    if (rejection !== undefined) {
-      throw new ConnectionError(
-        'unusable_environment_key',
-        describeKeyRejection(rejection.reason, rejection.limit, API_KEY_VARIABLE),
-      );
-    }
     return { config: { endpoint, apiKey }, source: 'environment' };
   }
 
   const config = loadConfig(configLocation(environment, platform));
   return { config, source: 'configuration' };
-};
-
-/** Shared wording for a key that cannot be used, whatever handed it to us. */
-export const describeKeyRejection = (
-  reason: 'empty' | 'unusable_characters' | 'too_short',
-  limit: number | undefined,
-  source: string,
-): string => {
-  switch (reason) {
-    case 'empty':
-      return `${source} is empty.`;
-    case 'unusable_characters':
-      return (
-        `${source} contains a character that cannot travel in an HTTP header. Keys must be visible ASCII, ` +
-        'with no spaces, control characters, or non-ASCII characters. Check for a stray quote or trailing space.'
-      );
-    case 'too_short':
-      return (
-        `${source} is shorter than the ${limit ?? 32}-character minimum. Length is not strength - ` +
-        `${limit ?? 32} repeated characters would pass this check and still be weak - so generate a random ` +
-        'one with "openssl rand -hex 32".'
-      );
-  }
 };
 
 /**

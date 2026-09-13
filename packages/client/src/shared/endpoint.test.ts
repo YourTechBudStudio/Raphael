@@ -3,48 +3,43 @@ import { describe, it } from 'node:test';
 
 import { isEndpointRejection, parseEndpoint, routeUrl, type Endpoint } from './endpoint.ts';
 
-const accept = (input: string, policy = {}): Endpoint => {
-  const parsed = parseEndpoint(input, policy);
+const accept = (input: string): Endpoint => {
+  const parsed = parseEndpoint(input);
   assert.equal(isEndpointRejection(parsed), false, `${input} should have been accepted`);
   return parsed as Endpoint;
 };
 
-const rejection = (input: string, policy = {}): string => {
-  const parsed = parseEndpoint(input, policy);
+const rejection = (input: string): string => {
+  const parsed = parseEndpoint(input);
   assert.equal(isEndpointRejection(parsed), true, `${input} should have been refused`);
   return isEndpointRejection(parsed) ? parsed.reason : '';
 };
 
-describe('endpoint scheme policy', () => {
+describe('endpoint schemes', () => {
   it('accepts https anywhere', () => {
     assert.equal(accept('https://raphael.example.com').base, 'https://raphael.example.com');
     assert.equal(accept('https://192.168.1.10:8443').base, 'https://192.168.1.10:8443');
   });
 
-  it('accepts plain http only to this machine', () => {
-    for (const host of ['127.0.0.1', '127.1.2.3', 'localhost', '[::1]']) {
-      accept(`http://${host}:3000`);
+  it("accepts plain http to any host, which is the owner's decision", () => {
+    // Deliberate, and the cost is real: over http the full-access key travels in the clear on every
+    // request. Raphael does not decide this for the owner, and there is no host list that quietly
+    // re-imposes it - a home LAN address is treated exactly like a public one.
+    for (const host of [
+      '127.0.0.1',
+      'localhost',
+      '[::1]',
+      '10.0.2.2',
+      '192.168.1.10',
+      '172.16.0.5',
+      'raphael.example.com',
+    ]) {
+      assert.equal(
+        accept(`http://${host}:3000`).origin,
+        new URL(`http://${host}:3000`).origin,
+        host,
+      );
     }
-  });
-
-  it('refuses plain http to anywhere else, private addresses included', () => {
-    // A blanket "private networks are safe" exception is exactly what this does not have: a key on a
-    // home or office LAN is still a key in the clear.
-    for (const host of ['192.168.1.10', '10.1.2.3', '172.16.0.5', 'raphael.example.com']) {
-      assert.equal(rejection(`http://${host}:3000`), 'insecure_scheme', host);
-    }
-  });
-
-  it('permits the Android emulator host alias only when that opt-in is set', () => {
-    assert.equal(rejection('http://10.0.2.2:3000'), 'insecure_scheme');
-    accept('http://10.0.2.2:3000', { androidEmulatorLoopback: true });
-  });
-
-  it('does not let the emulator opt-in become a general insecure-host switch', () => {
-    const policy = { androidEmulatorLoopback: true };
-    assert.equal(rejection('http://10.0.2.3:3000', policy), 'insecure_scheme');
-    assert.equal(rejection('http://10.0.0.2:3000', policy), 'insecure_scheme');
-    assert.equal(rejection('http://example.com', policy), 'insecure_scheme');
   });
 
   it('refuses schemes that are not http or https', () => {
@@ -58,9 +53,9 @@ describe('endpoint scheme policy', () => {
     assert.equal(rejection(''), 'malformed');
   });
 
-  it('recognizes loopback through every spelling the URL parser canonicalizes', () => {
-    // Measured, not assumed: `new URL` normalizes hex, decimal, and short-form IPv4 to a dotted quad
-    // before the loopback test ever sees it, so these are not bypasses to defend against separately.
+  it('canonicalizes the spellings the URL parser normalizes', () => {
+    // Measured, not assumed: `new URL` normalizes hex, decimal, and short-form IPv4 to a dotted
+    // quad, so requests are built from one spelling whatever was typed.
     for (const input of ['http://0x7f.0.0.1', 'http://2130706433', 'http://127.1']) {
       assert.equal(accept(input).origin, 'http://127.0.0.1', input);
     }
@@ -73,11 +68,10 @@ describe('endpoint scheme policy', () => {
     }
   });
 
-  it('does not recognize IPv4-mapped IPv6 loopback, and that is deliberate', () => {
-    // `[::ffff:127.0.0.1]` normalizes to `[::ffff:7f00:1]`, which this check does not read as
-    // loopback. Refusing it is the conservative direction: an unusual spelling of "this machine" is
-    // better answered with "use https" than with a second address parser to get subtly wrong.
-    assert.equal(rejection('http://[::ffff:127.0.0.1]'), 'insecure_scheme');
+  it('accepts an IPv4-mapped IPv6 address without having to understand it', () => {
+    // `[::ffff:127.0.0.1]` normalizes to `[::ffff:7f00:1]`. Nothing here needs to know whether that
+    // means loopback any more, which is one address parser this client no longer has to get right.
+    assert.equal(accept('http://[::ffff:127.0.0.1]').origin, 'http://[::ffff:7f00:1]');
   });
 });
 

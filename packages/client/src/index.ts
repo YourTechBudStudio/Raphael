@@ -14,7 +14,6 @@ export {
   parseEndpoint,
   routeUrl,
   type Endpoint,
-  type EndpointPolicy,
   type EndpointRejection,
   type EndpointRejectionReason,
 } from './shared/endpoint.ts';
