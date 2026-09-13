@@ -9,9 +9,36 @@
  * `raphael help` work on a machine that is not set up yet.
  */
 
+import { readFileSync } from 'node:fs';
+
 import { NODE_TYPES } from '@raphael/contracts/nodes';
 
-export const VERSION = '0.0.0';
+/**
+ * The version this command actually is, read from the manifest it shipped with.
+ *
+ * Module-relative, never from the working directory: `src/help.ts` and the compiled `dist/help.js`
+ * both sit exactly one level below the package root, so the same URL resolves to the same manifest
+ * whether this runs from a checkout or from an install. A hand-maintained literal beside a
+ * `package.json` that carries its own version is two answers to one question, and the installed one
+ * is the answer that matters.
+ *
+ * Read on demand rather than at module load, so `raphael --help` still touches nothing at all. There
+ * is no fallback: a package whose own manifest cannot be read is broken, and saying "0.0.0" would
+ * hide that behind a plausible number.
+ */
+export const version = (): string => {
+  const manifest: unknown = JSON.parse(
+    readFileSync(new URL('../package.json', import.meta.url), 'utf8'),
+  );
+  if (typeof manifest !== 'object' || manifest === null || !('version' in manifest)) {
+    throw new Error('package manifest has no version field.');
+  }
+  const { version: value } = manifest as { readonly version: unknown };
+  if (typeof value !== 'string' || value === '') {
+    throw new Error('package manifest version is not a string.');
+  }
+  return value;
+};
 
 export const ROOT_HELP = `raphael - an actionable second brain for agents
 

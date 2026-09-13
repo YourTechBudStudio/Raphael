@@ -378,6 +378,137 @@ describe('the collection loop', () => {
     }
   });
 
+  test('interrupting a sweep that is genuinely mid-backlog stops it part-way', async () => {
+    // The stronger half of the check above. That one interrupts a loop between sweeps, which
+    // establishes that no *new* sweep starts; it says nothing about a sweep that is already running,
+    // and shutdown interrupts the collector without knowing which of the two it has caught.
+    //
+    // Being inside a sweep is arranged rather than hoped for: a backlog far larger than one batch,
+    // and a batch size small enough that finishing takes many of them. The yield between batches is a
+    // real macrotask, so the interruption lands between batches with rows still to go - which is the
+    // observable that proves the sweep was active, because a sweep that had not started would leave
+    // every row and one that had finished would leave none.
+    const temp = tempDatabase('gc-mid-sweep');
+    let connection: DatabaseConnection | undefined;
+    try {
+      connection = openMigrated(temp.file);
+      const total = 400;
+      for (let index = 0; index < total; index += 1) {
+        insertReplay(connection, `expired-${String(index).padStart(4, '0')}`, 1);
+      }
+
+      let failures = 0;
+      const fiber = Effect.runFork(
+        Effect.provideService(
+          collectExpiredReplays({
+            batchSize: 5,
+            intervalMs: 60_000,
+            onSweep: () => {},
+            onFailure: () => {
+              failures += 1;
+            },
+          }),
+          Db,
+          { db: connection.db, databasePath: connection.databasePath },
+        ),
+      );
+
+      // Wait until the sweep has demonstrably started and demonstrably not finished.
+      const deadline = Date.now() + 5_000;
+      let midway = total;
+      while (Date.now() < deadline) {
+        midway = count(connection.db, 'SELECT count(*) AS c FROM creation_replays');
+        if (midway < total && midway > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+      assert.ok(
+        midway < total,
+        'the sweep never started, so nothing here is about an active sweep',
+      );
+      assert.ok(midway > 0, 'the sweep finished before it could be interrupted; raise the backlog');
+
+      const exit = await Effect.runPromise(Fiber.interrupt(fiber));
+      assert.equal(Exit.isInterrupted(exit), true, 'interruption must not be swallowed');
+
+      // Stopped part-way: committed batches are gone and the rest are still there. A sweep is a
+      // series of short transactions, so an interrupted one leaves exactly this.
+      const afterInterrupt = count(connection.db, 'SELECT count(*) AS c FROM creation_replays');
+      assert.ok(afterInterrupt > 0, 'the sweep ran to completion despite being interrupted');
+
+      // And nothing continues afterwards. This is the guarantee shutdown depends on: collection stops
+      // before the drain, so nothing it started can still be touching the database later.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      assert.equal(
+        count(connection.db, 'SELECT count(*) AS c FROM creation_replays'),
+        afterInterrupt,
+        'a batch ran after the collector was interrupted',
+      );
+      assert.equal(failures, 0, 'interruption must not be reported as a sweep failure');
+    } finally {
+      connection?.close();
+      temp.cleanup();
+    }
+  });
+
+  test('nothing touches the database after the collector is interrupted and storage is closed', async () => {
+    // The order shutdown actually uses: stop collecting, then release the database. If an interrupted
+    // sweep could still reach a closed connection, better-sqlite3 would throw "The database
+    // connection is not open" from a fiber nobody is watching - so this closes storage underneath a
+    // collector that was mid-backlog and asserts that nothing is raised and nothing is reported.
+    const temp = tempDatabase('gc-after-close');
+    let connection: DatabaseConnection | undefined;
+    let closed = false;
+    const raised: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      raised.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    process.on('uncaughtException', onUnhandled);
+    try {
+      connection = openMigrated(temp.file);
+      for (let index = 0; index < 400; index += 1) {
+        insertReplay(connection, `expired-${String(index).padStart(4, '0')}`, 1);
+      }
+
+      let failures = 0;
+      const fiber = Effect.runFork(
+        Effect.provideService(
+          collectExpiredReplays({
+            batchSize: 5,
+            intervalMs: 60_000,
+            onSweep: () => {},
+            onFailure: () => {
+              failures += 1;
+            },
+          }),
+          Db,
+          { db: connection.db, databasePath: connection.databasePath },
+        ),
+      );
+
+      const deadline = Date.now() + 5_000;
+      while (Date.now() < deadline) {
+        const remaining = count(connection.db, 'SELECT count(*) AS c FROM creation_replays');
+        if (remaining < 400 && remaining > 0) break;
+        await new Promise((resolve) => setTimeout(resolve, 1));
+      }
+
+      await Effect.runPromise(Fiber.interrupt(fiber));
+      connection.close();
+      closed = true;
+
+      // Long enough for several more batches and several more intervals, had any been coming.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.deepEqual(raised, [], 'something reached the database after it was closed');
+      assert.equal(failures, 0, 'a sweep failed after the collector was interrupted');
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      process.off('uncaughtException', onUnhandled);
+      if (!closed) connection?.close();
+      temp.cleanup();
+    }
+  });
+
   test('a failing sweep is reported and retried, never fatal and never a tight loop', async () => {
     const temp = tempDatabase('gc-loop-failure');
     let connection: DatabaseConnection | undefined;

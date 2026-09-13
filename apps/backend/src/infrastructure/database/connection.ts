@@ -63,6 +63,28 @@ export type DatabaseConnection = {
   readonly close: () => void;
 };
 
+/**
+ * Whether an open failure is really the native driver failing to load.
+ *
+ * Worth separating, because the two are indistinguishable to an operator otherwise and lead to
+ * completely different actions. "Cannot open the database" sends someone to check permissions, the
+ * path, and the disk; none of that is wrong with a machine whose prebuilt binary is missing or was
+ * built for another Node version, and nothing they try will work until they reinstall.
+ *
+ * The classification is deliberately narrow and the cause itself is never printed: a load failure
+ * carries a filesystem path to the binary and a stack through the module loader, and a startup
+ * diagnostic is not the place for either. What reaches the operator is our own sentence.
+ */
+const NATIVE_LOAD_SIGNALS =
+  /dlopen|\.node\b|bindings file|NODE_MODULE_VERSION|invalid ELF header|mach-o|not a valid Win32 application/i;
+
+export const isNativeLoadFailure = (cause: unknown): boolean => {
+  if (typeof cause !== 'object' || cause === null) return false;
+  const { code, message } = cause as { code?: unknown; message?: unknown };
+  if (code === 'ERR_DLOPEN_FAILED') return true;
+  return typeof message === 'string' && NATIVE_LOAD_SIGNALS.test(message);
+};
+
 /** SQLite result codes that mean another holder has the database, rather than something being wrong
  * with it. Anything else is a genuine open failure and must not be disguised as contention. */
 const BUSY_CODES = new Set(['SQLITE_BUSY', 'SQLITE_PROTOCOL', 'SQLITE_BUSY_SNAPSHOT']);
@@ -121,6 +143,17 @@ export const openDatabase = (options: DatabaseOptions): DatabaseConnection => {
   try {
     db = new Database(databasePath);
   } catch (cause) {
+    if (isNativeLoadFailure(cause)) {
+      throw new DatabaseUnavailableError(
+        'driver_unavailable',
+        `the SQLite driver for this platform could not be loaded, so the database at ` +
+          `"${databasePath}" cannot be opened. This is an installation problem rather than a problem ` +
+          `with the database: the prebuilt better-sqlite3 binary for ${process.platform}-${process.arch} ` +
+          `is missing, unreadable, or was built for a different version of Node. Reinstall Raphael on ` +
+          `this machine. Remote commands do not need this driver and are unaffected.`,
+        { cause },
+      );
+    }
     throw new DatabaseUnavailableError(
       'open_failed',
       `cannot open the database at "${databasePath}".`,

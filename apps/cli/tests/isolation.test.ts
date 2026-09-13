@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -152,6 +152,16 @@ describe('help and version need nothing', () => {
       assert.equal(ran.stdout.includes('FORBIDDEN_IMPORT'), false);
     });
   }
+
+  it('reports the version in its own manifest, not a literal beside it', async () => {
+    // The point of reading the manifest is that an installed copy reports what it actually is. If
+    // this ever drifts back to a hand-maintained constant, the two answers disagree here first.
+    const manifest: unknown = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
+    const { version } = manifest as { readonly version: string };
+    const ran = await runGuarded(['--version']);
+    assert.equal(ran.code, 0);
+    assert.equal(ran.stdout.trim(), version);
+  });
 
   it('reports an unknown command as a usage error without loading anything', async () => {
     const ran = await runGuarded(['frobnicate']);

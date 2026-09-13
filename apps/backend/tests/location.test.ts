@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, statSync, symlinkSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
-import { openDatabase } from '../src/infrastructure/database/connection.ts';
+import { isNativeLoadFailure, openDatabase } from '../src/infrastructure/database/connection.ts';
 import {
   DatabaseLocationError,
   prepareDataDirectory,
@@ -187,6 +187,45 @@ describe(
     });
   },
 );
+
+describe('telling a broken driver apart from a broken database', () => {
+  // These lead to completely different actions. "Cannot open the database" sends someone to check
+  // permissions, the path, and the disk, none of which is wrong on a machine whose prebuilt binary
+  // is missing or was built for another version of Node - and nothing they try there will work.
+  // The end-to-end evidence is in the acceptance suite, which blocks a real `dlopen`; this pins the
+  // classification itself, so it stays covered by the ordinary gate.
+  for (const [what, cause] of [
+    [
+      'a failed dlopen',
+      Object.assign(new Error('something failed'), { code: 'ERR_DLOPEN_FAILED' }),
+    ],
+    ['a missing bindings file', new Error('Could not locate the bindings file. Tried: ...')],
+    ['an addon path in the message', new Error('cannot open better_sqlite3.node')],
+    ['a Node ABI mismatch', new Error('was compiled against a different NODE_MODULE_VERSION')],
+    ['a foreign architecture', new Error('invalid ELF header')],
+  ] as const) {
+    test(`recognises ${what}`, () => {
+      assert.equal(isNativeLoadFailure(cause), true);
+    });
+  }
+
+  for (const [what, cause] of [
+    [
+      'an ordinary SQLite failure',
+      Object.assign(new Error('unable to open database file'), { code: 'SQLITE_CANTOPEN' }),
+    ],
+    [
+      'a permission failure',
+      new Error("EACCES: permission denied, open '/somewhere/raphael.sqlite'"),
+    ],
+    ['nothing at all', null],
+    ['a string', 'dlopen'],
+  ] as const) {
+    test(`does not claim ${what} is a driver problem`, () => {
+      assert.equal(isNativeLoadFailure(cause), false);
+    });
+  }
+});
 
 describe('unsupported platforms', () => {
   test('storage is refused where the protection cannot be established', () => {

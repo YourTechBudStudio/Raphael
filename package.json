@@ -6,6 +6,7 @@
   "author": "YourTechBud",
   "type": "module",
   "scripts": {
+    "acceptance": "node --test tests/acceptance/*.test.ts",
     "build": "pnpm -r --if-present build",
     "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm format:check",
     "fix": "pnpm lint:fix && pnpm format",
@@ -16,11 +17,14 @@
     "mobile:start": "pnpm --filter @raphael/mobile start",
     "server:dev": "pnpm --filter @raphael/backend build && node apps/cli/src/main.ts server serve",
     "test": "pnpm -r --if-present test",
-    "typecheck": "pnpm -r --if-present typecheck"
+    "typecheck": "pnpm -r --if-present typecheck && tsc --project tests/acceptance/tsconfig.json"
   },
   "devDependencies": {
+    "@types/node": "catalog:",
+    "@yourtechbudstudio/raphael-typescript-config": "workspace:*",
     "oxfmt": "catalog:",
-    "oxlint": "catalog:"
+    "oxlint": "catalog:",
+    "typescript": "catalog:"
   },
   "engines": {
     "node": ">=26 <27"

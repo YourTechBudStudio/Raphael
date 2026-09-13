@@ -190,12 +190,21 @@ importers:
 
   .:
     devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 26.4.1
+      '@yourtechbudstudio/raphael-typescript-config':
+        specifier: workspace:*
+        version: link:packages/typescript-config
       oxfmt:
         specifier: 'catalog:'
         version: 0.66.0
       oxlint:
         specifier: 'catalog:'
         version: 1.81.0
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
 
   apps/backend:
     dependencies:

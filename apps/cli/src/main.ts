@@ -16,7 +16,7 @@
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { ROOT_HELP, SERVER_HELP, VERSION } from './help.ts';
+import { ROOT_HELP, SERVER_HELP, version } from './help.ts';
 import { ConfigError } from './modules/connection/config.ts';
 import { LOGIN_HELP, runLogin, terminalPrompter } from './modules/connection/login.ts';
 import { ConnectionError, resolveConnection, transportFor } from './modules/connection/remote.ts';
@@ -67,7 +67,7 @@ export const dispatch = async (argv: readonly string[], cli: CliEnvironment): Pr
     return EXIT_OK;
   }
   if (command === '--version' || command === '-v' || command === 'version') {
-    writeLine(streams.out, VERSION);
+    writeLine(streams.out, version());
     return EXIT_OK;
   }
 
