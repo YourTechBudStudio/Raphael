@@ -7,7 +7,9 @@ Raphael is a second brain for agents. It combines PARA and CODE to organize info
 ## Structure
 
 - `apps/mobile` is the Expo frontend for Android and iOS and the primary way to use Raphael from a phone.
-- `apps/backend` (coming next) owns backend behavior, persistence, and the canonical stored data.
+- `apps/backend` owns backend behavior, SQLite persistence, and canonical area/project operations.
+- `apps/cli` provides local server startup and remote hierarchy commands through one `raphael` executable.
+- `packages/` contains shared contracts, HTTP client, content conversion, filesystem trust, and TypeScript configuration.
 - `apps/web` (coming next) is the web frontend for using Raphael outside the mobile clients.
 
 ## Rules

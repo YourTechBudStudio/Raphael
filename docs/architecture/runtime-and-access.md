@@ -1,7 +1,5 @@
 # Runtime and access
 
-This describes agreed direction, not implementation status.
-
 ## Server and clients
 
 The backend owns canonical records and exposes operation-oriented HTTP APIs. Selectors and inputs belong in request bodies rather than separate path/query addressing schemes. Read operations remain read-only regardless of transport.
@@ -14,7 +12,7 @@ Clients and extensions use the same core operations and validation. Extensions c
 
 Each instance is a single-owner second brain with one configured API key granting full API access. Mobile, web, CLI, and agent clients use the same key; there are no user accounts, roles, or independently revocable client keys. Client setup supplies an endpoint and key. Rotation requires updating every client.
 
-Keys travel in authorization headers over HTTPS outside local connections, not in URLs. A missing server API key fails closed. Global API access does not grant arbitrary database access or expose server-local administration and provider secrets.
+Keys travel in authorization headers, not in URLs. Current clients accept HTTP and HTTPS to any host; plaintext HTTP exposes the full-access key, so HTTPS is recommended rather than enforced. Key validation requires a nonempty value, with generated header-compatible secrets recommended. A missing or empty server API key fails closed. Global API access does not grant arbitrary database access or expose server-local administration and provider secrets.
 
 AI provider authentication is separate from client access and delegates to Pi, as defined in [ADR 0006](../adrs/0006-ai-capability-ownership.md).
 
