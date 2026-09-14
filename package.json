@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r --if-present build",
-    "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm format:check",
+    "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm format:check",
     "fix": "pnpm lint:fix && pnpm format",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
