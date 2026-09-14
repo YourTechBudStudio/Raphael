@@ -9,13 +9,8 @@
  * function of an environment variable and of module evaluation order. Importing the implementation
  * directly is the whole point of this file.
  *
- * Measured, not assumed. The phase 08 native probe ran the transport's guarantees through this
- * implementation on an Android emulator against a real server and controlled listeners: redirects are
- * refused before the credential is replayed, an overrunning body is cut off at the ceiling, stalled
- * headers time out, and cancellation works both before headers and mid-body. `FetchResponse.type` is
- * hard-coded to `'default'`, so the transport's `opaqueredirect` test can never fire here and the 3xx
- * status check is the only redirect defence on this runtime - which the probe confirmed is enough.
- * iOS was not exercised. The probe and its harness live in `tests/native-probe/`.
+ * Expo's `FetchResponse.type` is hard-coded to `'default'`, so the shared transport relies on
+ * its 3xx status check to reject redirects on this runtime.
  */
 
 import type { FetchLike } from '@raphael/client';
