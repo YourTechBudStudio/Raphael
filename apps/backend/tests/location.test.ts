@@ -192,8 +192,7 @@ describe('telling a broken driver apart from a broken database', () => {
   // These lead to completely different actions. "Cannot open the database" sends someone to check
   // permissions, the path, and the disk, none of which is wrong on a machine whose prebuilt binary
   // is missing or was built for another version of Node - and nothing they try there will work.
-  // The end-to-end evidence is in the acceptance suite, which blocks a real `dlopen`; this pins the
-  // classification itself, so it stays covered by the ordinary gate.
+  // These cases pin the classification of native driver load failures.
   for (const [what, cause] of [
     [
       'a failed dlopen',
