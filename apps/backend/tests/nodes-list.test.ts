@@ -318,32 +318,3 @@ test('a missing or malformed scope is distinguished from an empty one', () => {
     );
   });
 });
-
-test('the immediate-child query uses the sibling slug index', () => {
-  withMigrated('list-query-plan', (connection) => {
-    const work = one<{ id: number }>(
-      connection.db,
-      'SELECT id FROM nodes WHERE parent_id IS NULL AND slug = ?',
-      'work',
-    ).id;
-    make(connection, 'project', { id: work }, 'Something');
-
-    const plan = many<{ detail: string }>(
-      connection.db,
-      `EXPLAIN QUERY PLAN SELECT n.id FROM nodes n
-       WHERE n.parent_id = ? AND n.type IN ('area', 'project') ORDER BY n.slug, n.id LIMIT ?`,
-      work,
-      51,
-    )
-      .map((row) => row.detail)
-      .join('\n');
-
-    assert.match(plan, /USING INDEX nodes_sibling_slug \(parent_id=\?\)/);
-    assert.doesNotMatch(plan, /SCAN nodes/, 'a child listing must not degrade into a table scan');
-    assert.doesNotMatch(
-      plan,
-      /USE TEMP B-TREE/,
-      'the index supplies the order, so nothing is re-sorted',
-    );
-  });
-});

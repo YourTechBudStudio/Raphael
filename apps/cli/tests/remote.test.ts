@@ -9,13 +9,14 @@ import { fileURLToPath } from 'node:url';
 import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
 import { Effect, Exit, Scope } from 'effect';
 
+import { run as runCli } from '../src/main.ts';
+
 /**
  * The CLI against a real server.
  *
- * A live backend on an ephemeral port over a real on-disk database, and the CLI run as a genuine
- * subprocess through its built entry point. Nothing is stubbed, because what is being tested is
- * whether the installed command works - argument parsing, transport, exit codes, and stream
- * discipline all have to be real for that to mean anything.
+ * A live backend on an ephemeral port over a real on-disk database. Most cases call the CLI's
+ * entry function with captured streams, exercising argument parsing and real HTTP without starting
+ * a process per assertion. Subprocess cases retain evidence for stdin, OS exit codes, and streams.
  *
  * The server is started by the test and torn down in `after`, which is what keeps this a bounded
  * automated check rather than a long-running process.
@@ -78,11 +79,11 @@ interface Ran {
   readonly stderr: string;
 }
 
-const run = (
+const runProcess = (
   args: readonly string[],
   options: { env?: Record<string, string>; stdin?: string } = {},
 ): Promise<Ran> =>
-  new Promise((resolveRun) => {
+  new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [binary, ...args], {
       env: {
         PATH: process.env.PATH ?? '',
@@ -91,15 +92,47 @@ const run = (
         ...options.env,
       },
       cwd: packageRoot,
+      timeout: 15_000,
+      killSignal: 'SIGKILL',
     });
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
     child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
+    child.on('error', rejectRun);
     child.on('close', (code) => resolveRun({ code, stdout, stderr }));
     if (options.stdin !== undefined) child.stdin.end(options.stdin);
     else child.stdin.end();
   });
+
+const run = async (
+  args: readonly string[],
+  options: { env?: Record<string, string>; stdin?: string } = {},
+): Promise<Ran> => {
+  if (options.stdin !== undefined) return runProcess(args, options);
+  let stdout = '';
+  let stderr = '';
+  const code = await runCli(args, {
+    streams: {
+      out: (text) => {
+        stdout += text;
+      },
+      err: (text) => {
+        stderr += text;
+      },
+    },
+    environment: { RAPHAEL_ENDPOINT: endpoint, RAPHAEL_API_KEY: KEY, ...options.env },
+    platform: process.platform,
+    cwd: packageRoot,
+    onSignal: () => {
+      throw new Error('Remote commands must not register signal handlers');
+    },
+    exit: () => {
+      throw new Error('Remote commands must return their exit code');
+    },
+  });
+  return { code, stdout, stderr };
+};
 
 const jsonOf = (ran: Ran): any => JSON.parse(ran.stdout);
 
@@ -500,11 +533,13 @@ describe('pagination', () => {
 
 describe('stream and exit discipline', () => {
   it('puts results on stdout and diagnostics on stderr', async () => {
-    const ok = await run(['get', '/work', '--json']);
+    const ok = await runProcess(['get', '/work', '--json']);
+    assert.equal(ok.code, 0, ok.stderr);
     assert.equal(ok.stderr, '');
     assert.ok(ok.stdout.length > 0);
 
-    const bad = await run(['get', '/nope', '--json']);
+    const bad = await runProcess(['get', '/nope', '--json']);
+    assert.equal(bad.code, 1, bad.stderr);
     assert.equal(bad.stdout, '');
     assert.ok(bad.stderr.length > 0);
   });
@@ -556,18 +591,6 @@ describe('connecting', () => {
     assert.equal(ran.code, 1);
     assert.match(ran.stderr, /Could not confirm whether this was created/);
     assert.match(ran.stderr, /--idempotency-key/);
-  });
-
-  it('never claims work was not applied while also saying it could not confirm', async () => {
-    // The server's generic storage_busy message reads "The request was not applied; try again". When
-    // the client's classification is `unknown`, printing both that and "could not confirm" would give
-    // a person two incompatible answers and invite an unsafe repeat. This asserts the contradiction is
-    // absent from what the command actually writes.
-    const ran = await run(['create', 'project', '/work/contradiction', '--title', 'C'], {
-      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
-    });
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /Could not confirm whether this was created/);
     assert.equal(ran.stderr.includes('not applied'), false);
     assert.equal(ran.stderr.includes('was not created'), false);
   });

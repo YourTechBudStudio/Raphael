@@ -24,10 +24,16 @@ const KEY = 'test-key-0123456789abcdef0123456789';
 const directories: string[] = [];
 const children: ChildProcessWithoutNullStreams[] = [];
 
-after(() => {
-  for (const child of children) {
-    if (child.exitCode === null) child.kill('SIGKILL');
-  }
+after(async () => {
+  await Promise.all(
+    children.map(async (child) => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      await new Promise<void>((resolveExit) => {
+        child.once('close', () => resolveExit());
+        child.kill('SIGKILL');
+      });
+    }),
+  );
   for (const directory of directories) rmSync(directory, { recursive: true, force: true });
 });
 
@@ -48,15 +54,18 @@ const startServe = (args: readonly string[], env: Record<string, string>, cwd: s
   const child = spawn(process.execPath, [binary, 'server', 'serve', ...args], {
     env: { PATH: process.env.PATH ?? '', ...env },
     cwd,
+    timeout: 15_000,
+    killSignal: 'SIGKILL',
   });
   children.push(child);
   let out = '';
   let err = '';
   child.stdout.on('data', (chunk: Buffer) => (out += chunk.toString('utf8')));
   child.stderr.on('data', (chunk: Buffer) => (err += chunk.toString('utf8')));
-  const exited = new Promise<number | null>((resolveExit) =>
-    child.on('close', (code) => resolveExit(code)),
-  );
+  const exited = new Promise<number | null>((resolveExit, rejectExit) => {
+    child.on('error', rejectExit);
+    child.on('close', (code) => resolveExit(code));
+  });
   return { child, stdout: () => out, stderr: () => err, exited };
 };
 
@@ -77,7 +86,7 @@ const configFile = (directory: string, body: string): string => {
 };
 
 describe('starting', () => {
-  it('listens, reports where, and shuts down cleanly on SIGINT', async () => {
+  it('serves requests without remote configuration and shuts down cleanly on SIGINT', async () => {
     const directory = workspace();
     // A fixed port rather than 0: a configuration file may not ask for an ephemeral port, deliberately,
     // because an operator's clients need a fixed address to be configured against.
@@ -86,11 +95,27 @@ describe('starting', () => {
       `server:\n  host: 127.0.0.1\n  port: 39217\ndatabase:\n  path: ./data/raphael.sqlite\n`,
     );
 
-    const started = startServe(['--config', config], { RAPHAEL_API_KEY: KEY }, directory);
+    const started = startServe(
+      ['--config', config],
+      {
+        RAPHAEL_API_KEY: KEY,
+        RAPHAEL_ENDPOINT: 'http://not-a-real-host.invalid',
+        XDG_CONFIG_HOME: '/nonexistent/relative',
+      },
+      directory,
+    );
     await waitFor(() => started.stdout().includes('Press Ctrl-C'), 'the server to be ready');
     // The address is reported by the backend's startup log, which the CLI does not duplicate.
     assert.match(started.stdout(), /server\.listening/);
     assert.match(started.stdout(), /port=39217/);
+
+    const response = await fetch('http://127.0.0.1:39217/api/connection/verify', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { protocolVersion: 1 });
 
     // The backend registers no signal handler; this is the CLI's to own.
     started.child.kill('SIGINT');
@@ -112,27 +137,6 @@ describe('starting', () => {
     started.child.kill('SIGTERM');
     assert.equal(await started.exited, 0);
   });
-
-  it('answers requests while it is running', async () => {
-    const directory = workspace();
-    const config = configFile(
-      directory,
-      `server:\n  host: 127.0.0.1\n  port: 39219\ndatabase:\n  path: ./data/raphael.sqlite\n`,
-    );
-    const started = startServe(['--config', config], { RAPHAEL_API_KEY: KEY }, directory);
-    await waitFor(() => started.stdout().includes('Press Ctrl-C'), 'the server to be ready');
-
-    const response = await fetch('http://127.0.0.1:39219/api/connection/verify', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
-      body: '{}',
-    });
-    assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { protocolVersion: 1 });
-
-    started.child.kill('SIGINT');
-    await started.exited;
-  });
 });
 
 describe('refusing to start', () => {
@@ -153,6 +157,8 @@ describe('refusing to start', () => {
 
     assert.equal(await started.exited, 2);
     assert.match(started.stderr(), /reason: config_invalid/);
+    assert.equal(started.stderr().includes(KEY), false);
+    assert.equal(started.stdout().includes(KEY), false);
   });
 
   it('reports an unreadable configuration file', async () => {
@@ -164,39 +170,5 @@ describe('refusing to start', () => {
     );
     assert.equal(await started.exited, 2);
     assert.match(started.stderr(), /reason: config_unreadable/);
-  });
-
-  it('never prints the key, whatever it refuses', async () => {
-    const directory = workspace();
-    const config = configFile(directory, `server:\n  port: 70000\n`);
-    const started = startServe(['--config', config], { RAPHAEL_API_KEY: KEY }, directory);
-    await started.exited;
-    assert.equal(started.stderr().includes(KEY), false);
-    assert.equal(started.stdout().includes(KEY), false);
-  });
-});
-
-describe('what serve ignores', () => {
-  it('does not read the saved login', async () => {
-    // A server runs a server; it does not connect to one. A remote configuration pointing somewhere
-    // unusable must make no difference at all.
-    const directory = workspace();
-    const config = configFile(
-      directory,
-      `server:\n  host: 127.0.0.1\n  port: 39221\ndatabase:\n  path: ./data/raphael.sqlite\n`,
-    );
-    const started = startServe(
-      ['--config', config],
-      {
-        RAPHAEL_API_KEY: KEY,
-        RAPHAEL_ENDPOINT: 'http://not-a-real-host.invalid',
-        XDG_CONFIG_HOME: '/nonexistent/relative',
-      },
-      directory,
-    );
-
-    await waitFor(() => started.stdout().includes('Press Ctrl-C'), 'the server to be ready');
-    started.child.kill('SIGINT');
-    assert.equal(await started.exited, 0);
   });
 });

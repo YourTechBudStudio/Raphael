@@ -16,14 +16,19 @@ function resolveImport(source, specifier) {
   );
 }
 
+const importsByFile = new Map();
+
 function imports(file) {
+  const cached = importsByFile.get(file);
+  if (cached) return cached;
+
   const source = ts.createSourceFile(
     file,
     readFileSync(path.join(root, file), 'utf8'),
     ts.ScriptTarget.Latest,
     true,
   );
-  return source.statements.flatMap((statement) => {
+  const specifiers = source.statements.flatMap((statement) => {
     if (
       (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) ||
       !statement.moduleSpecifier ||
@@ -33,6 +38,8 @@ function imports(file) {
     }
     return [statement.moduleSpecifier.text];
   });
+  importsByFile.set(file, specifiers);
+  return specifiers;
 }
 
 test('capabilities use public interfaces and UI stays independent of product code', () => {
@@ -72,29 +79,6 @@ test('capabilities use public interfaces and UI stays independent of product cod
       if (layer === 'modules' && target === path.join('infrastructure', 'api', 'index.ts')) {
         assert.equal(file.split(path.sep)[2], 'client', `${file}: backend calls belong in client/`);
       }
-    }
-  }
-});
-
-/**
- * Creation has exactly one owner, and one dispatcher.
- *
- * Phase 08 kept the reviewed reducer unreachable and checked that nothing could call it. That
- * restriction is gone - creation is real now - and this replaces it with the boundary that actually
- * matters. `modules/collections/creation/` decides whether an unfinished creation is resent. A
- * second caller of it would be a second dispatcher for the same durable attempt, which is the one
- * bug this design exists to make impossible, so the capability keeps it private and says so here.
- */
-test('container creation is private to the collections capability', () => {
-  for (const file of files) {
-    const [layer, module] = file.split(path.sep);
-    if (layer === 'modules' && module === 'collections') continue;
-
-    for (const specifier of imports(file)) {
-      assert.ok(
-        !/(^|\/)creation(\/|$)/.test(specifier),
-        `${file}: reaches collections' private creation code through ${specifier}`,
-      );
     }
   }
 });

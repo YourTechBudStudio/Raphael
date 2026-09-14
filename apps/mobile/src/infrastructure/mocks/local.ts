@@ -21,14 +21,6 @@ import type { ContainerRef, NoteResource, Resource, VoiceResource } from '../api
  * matching slugs, assuming seeded ids - invents a relationship the owner never expressed.
  */
 
-/** Simulated latency, so the loading states these screens were designed with are still real. */
-const LATENCY_MS = 120;
-
-const delay = (): Promise<void> =>
-  new Promise((resolve) => {
-    setTimeout(resolve, LATENCY_MS);
-  });
-
 interface Bucket {
   resources: readonly Resource[];
   favorites: readonly ContainerRef[];
@@ -60,8 +52,6 @@ const nextId = (prefix: string): string => {
 export const localContent = {
   /** Everything captured against this connection, newest first. */
   async getResources(connectionId: string): Promise<Resource[]> {
-    await delay();
-
     return [...read(connectionId).resources].sort(byNewest);
   },
 
@@ -71,8 +61,6 @@ export const localContent = {
     title: string,
     body: string,
   ): Promise<NoteResource> {
-    await delay();
-
     const note: NoteResource = {
       id: nextId('note'),
       kind: 'note',
@@ -94,8 +82,6 @@ export const localContent = {
     durationSeconds: number,
     waveform: readonly number[],
   ): Promise<VoiceResource> {
-    await delay();
-
     const voice: VoiceResource = {
       id: nextId('voice'),
       kind: 'voice',
@@ -114,14 +100,10 @@ export const localContent = {
 
   /** Starred containers, in the order they were starred. References only, never titles. */
   async getFavorites(connectionId: string): Promise<ContainerRef[]> {
-    await delay();
-
     return [...read(connectionId).favorites];
   },
 
   async toggleFavorite(connectionId: string, ref: ContainerRef): Promise<ContainerRef[]> {
-    await delay();
-
     const bucket = read(connectionId);
     const starred = bucket.favorites.some((favorite) => sameRef(favorite, ref));
     const favorites = starred
@@ -134,14 +116,10 @@ export const localContent = {
 
   /** Deliberately active projects, by id, in selection order. */
   async getActiveProjects(connectionId: string): Promise<number[]> {
-    await delay();
-
     return [...read(connectionId).activeProjectIds];
   },
 
   async setProjectActive(connectionId: string, id: number, active: boolean): Promise<void> {
-    await delay();
-
     const bucket = read(connectionId);
     const present = bucket.activeProjectIds.includes(id);
 

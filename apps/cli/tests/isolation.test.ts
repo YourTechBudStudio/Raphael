@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { after, describe, it } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 /**
  * Help and version must work on a machine that is not set up.
@@ -80,7 +80,7 @@ interface Ran {
 
 const runGuarded = (args: readonly string[], script = binary): Promise<Ran> => {
   const directory = hookDirectory();
-  return new Promise((resolveRun) => {
+  return new Promise((resolveRun, rejectRun) => {
     const child = spawn(
       process.execPath,
       ['--import', join(directory, 'register.mjs'), script, ...args],
@@ -89,12 +89,16 @@ const runGuarded = (args: readonly string[], script = binary): Promise<Ran> => {
         // no key.
         env: { PATH: process.env.PATH ?? '' },
         cwd: packageRoot,
+        timeout: 15_000,
+        killSignal: 'SIGKILL',
       },
     );
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
     child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
+    child.on('error', rejectRun);
+    child.stdin.end();
     child.on('close', (code) => resolveRun({ code, stdout, stderr }));
   });
 };
@@ -143,15 +147,40 @@ describe('help and version need nothing', () => {
     ['server serve --help', ['server', 'serve', '--help']],
   ];
 
-  for (const [label, args] of cases) {
-    it(`answers "${label}" with no backend, no native driver, no configuration`, async () => {
-      const ran = await runGuarded(args);
-      assert.equal(ran.code, 0, `exited ${ran.code}: ${ran.stderr}`);
-      assert.equal(ran.stderr, '', 'help belongs on stdout');
-      assert.ok(ran.stdout.length > 0);
-      assert.equal(ran.stdout.includes('FORBIDDEN_IMPORT'), false);
-    });
-  }
+  it('answers every help and version alias without backend, native driver, or configuration', async () => {
+    // One guarded process checks the alias matrix after loading the dispatcher once. Separate
+    // executable cases below still verify OS exit codes and actual stdout/stderr wiring.
+    const directory = hookDirectory();
+    const probe = join(directory, 'aliases.mjs');
+    writeFileSync(
+      probe,
+      `
+import assert from 'node:assert/strict';
+import { run } from ${JSON.stringify(pathToFileURL(binary).href)};
+for (const [label, args] of ${JSON.stringify(cases)}) {
+  let stdout = '';
+  let stderr = '';
+  const code = await run(args, {
+    streams: { out: (text) => { stdout += text; }, err: (text) => { stderr += text; } },
+    environment: {},
+    platform: process.platform,
+    cwd: process.cwd(),
+    onSignal: () => { throw new Error('Unexpected signal registration'); },
+    exit: () => { throw new Error('Unexpected process exit'); },
+  });
+  assert.equal(code, 0, label + ': ' + stderr);
+  assert.equal(stderr, '', label);
+  assert.ok(stdout.length > 0, label);
+  assert.equal(stdout.includes('FORBIDDEN_IMPORT'), false, label);
+}
+console.log('aliases passed');
+`,
+    );
+    const ran = await runGuarded([], probe);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.equal(ran.stderr, '');
+    assert.equal(ran.stdout.trim(), 'aliases passed');
+  });
 
   it('reports the version in its own manifest, not a literal beside it', async () => {
     // The point of reading the manifest is that an installed copy reports what it actually is. If

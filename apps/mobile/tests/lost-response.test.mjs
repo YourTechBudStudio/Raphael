@@ -135,10 +135,29 @@ const ownerOver = async (base, fetchImpl, localDbFile) => {
   };
 };
 
-const settle = async () => {
-  for (let index = 0; index < 40; index += 1)
-    await new Promise((resolve) => setTimeout(resolve, 5));
-};
+const waitForUncertain = (owner, attemptId) =>
+  new Promise((resolve, reject) => {
+    const matches = (state) =>
+      state.records.some(
+        (record) => record.attemptId === attemptId && record.state === 'uncertain',
+      );
+
+    if (matches(owner.getState())) {
+      resolve();
+      return;
+    }
+
+    const timeout = setTimeout(() => {
+      unsubscribe();
+      reject(new Error(`Attempt ${attemptId} did not become uncertain within 5 seconds`));
+    }, 5_000);
+    const unsubscribe = owner.subscribe((state) => {
+      if (!matches(state)) return;
+      clearTimeout(timeout);
+      unsubscribe();
+      resolve();
+    });
+  });
 
 describe('a creation whose response is lost after the server commits', () => {
   it('is recovered by replaying the frozen request, and reports the same entity', async () => {
@@ -158,7 +177,7 @@ describe('a creation whose response is lost after the server commits', () => {
       });
 
       assert.equal(submitted.kind, 'dispatched');
-      await settle();
+      await waitForUncertain(first.owner, submitted.attemptId);
 
       assert.equal(state.lost, 1, 'the response was actually discarded');
 
@@ -169,8 +188,6 @@ describe('a creation whose response is lost after the server commits', () => {
 
       // The phone is put away and comes back. Everything about the attempt has to survive that,
       // including the key, which is the only thing that can resolve it.
-      await settle();
-
       const second = await ownerOver(base, losingFetch({ lose: false, lost: 0 }), localDb);
       await second.owner.getState().initialize();
 
@@ -182,8 +199,6 @@ describe('a creation whose response is lost after the server commits', () => {
       // An explicit retry. Nothing here is automatic.
       const retried = await second.owner.getState().retry(recovered.attemptId, second.session);
       assert.equal(retried.kind, 'done');
-      await settle();
-
       const resolved = second.owner.getState().records[0];
       assert.equal(resolved.state, 'acknowledged');
       assert.equal(logicalStateOf(resolved), 'created');

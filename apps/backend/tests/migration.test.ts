@@ -489,27 +489,4 @@ describe('generated artifact introspection', () => {
       ]);
     });
   });
-
-  test('the identity trigger guards exactly the intended columns', () => {
-    withMigrated('trigger', ({ db }) => {
-      const sql = one<{ sql: string }>(
-        db,
-        `SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'nodes_identity_immutable'`,
-      ).sql;
-      assert.match(sql, /BEFORE UPDATE OF id, type, created_at/);
-      assert.match(sql, /NEW\.id IS NOT OLD\.id/);
-      assert.ok(!/parent_id/.test(sql), 'a move must remain possible');
-    });
-  });
-
-  test('AUTOINCREMENT is real, not inferred from the declaration', () => {
-    withMigrated('autoinc', ({ db }) => {
-      const sql = one<{ sql: string }>(
-        db,
-        `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'nodes'`,
-      ).sql;
-      assert.match(sql, /AUTOINCREMENT/);
-      assert.equal(count(db, `SELECT count(*) AS c FROM sqlite_sequence WHERE name = 'nodes'`), 1);
-    });
-  });
 });

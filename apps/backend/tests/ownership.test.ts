@@ -207,6 +207,8 @@ describe('process death', () => {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
 
+    const closed = new Promise<void>((resolve) => child.once('close', () => resolve()));
+
     // The holder's own fate is recorded rather than assumed. It announces readiness and then holds
     // ownership until it is killed, so if it dies on its own the competing process will open a
     // database nothing owns - and the assertion below would report "not REFUSED" while saying nothing
@@ -232,13 +234,20 @@ describe('process death', () => {
 
     try {
       await new Promise<void>((resolve) => {
-        const settle = (): void => {
-          if (output.includes('HELD') || ended !== undefined || spawnError !== undefined) resolve();
+        const finish = (): void => {
+          clearTimeout(timer);
+          child.stdout.off('data', settle);
+          child.off('exit', settle);
+          child.off('error', settle);
+          resolve();
         };
+        const settle = (): void => {
+          if (output.includes('HELD') || ended !== undefined || spawnError !== undefined) finish();
+        };
+        const timer = setTimeout(finish, 20_000);
         child.stdout.on('data', settle);
         child.on('exit', settle);
         child.on('error', settle);
-        setTimeout(resolve, 20_000);
         settle();
       });
       assert.match(output, /HELD/, `the holder must acquire ownership (${holderState()})`);
@@ -252,7 +261,7 @@ describe('process death', () => {
 
       // No clean shutdown: the kernel releases the lock, with no stale-lock file to clean up.
       child.kill('SIGKILL');
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      await closed;
 
       const recovered = attemptAccess(temp.file);
       assert.match(
@@ -272,6 +281,7 @@ describe('process death', () => {
       // process - it keeps the whole test run from terminating, which turns one failed assertion
       // into a hung `pnpm check`.
       child.kill('SIGKILL');
+      await closed;
       temp.cleanup();
     }
   });
