@@ -1,4 +1,4 @@
-import { FileText, Layers, Plus } from 'lucide-react-native';
+import { Layers, Plus } from 'lucide-react-native';
 import { useMemo } from 'react';
 import { Text, View } from 'react-native';
 
@@ -38,7 +38,7 @@ import {
   useHierarchy,
 } from '../client/queries';
 import { PendingSummary } from '../creation';
-import { HierarchyError, HierarchyStale } from './HierarchyError';
+import { HierarchyStale } from './HierarchyError';
 import { areaNoteGridItems } from './noteSpans';
 import { ReadOnlyBody } from './ReadOnlyBody';
 import { TileGrid, type TileGridItem } from './TileGrid';
@@ -188,7 +188,14 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
 
   return (
     <View className="flex-1">
-      <Screen header={header}>
+      <Screen
+        header={header}
+        onRefresh={() => {
+          tree.refetch();
+          void areaQuery.refetch();
+        }}
+        refreshing={tree.isFetching || areaQuery.isFetching}
+      >
         <RejectionNotice className="mb-4" />
         <Eyebrow>Area</Eyebrow>
         <Text
@@ -215,6 +222,22 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
               />
               <Text className="font-body text-[15px] text-ink-soft">Favorite</Text>
             </View>
+            <Chip
+              accessibilityHint="Creates an area inside this one"
+              icon={Plus}
+              label="New area"
+              onPress={() => {
+                openNewContainer('area', target.id);
+              }}
+            />
+            <Chip
+              accessibilityHint="Creates a project inside this area"
+              icon={Plus}
+              label="New project"
+              onPress={() => {
+                openNewContainer('project', target.id);
+              }}
+            />
           </View>
         )}
         {favorite.isError ? (
@@ -231,9 +254,12 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
         )}
 
         {tree.isError && tree.hierarchy === undefined ? (
-          <View className="mt-8">
-            <HierarchyError title="What this area holds did not load." tree={tree} />
-          </View>
+          <Text
+            accessibilityLiveRegion="polite"
+            className="mt-8 font-body text-[16px] leading-[22px] text-ink-soft"
+          >
+            Unable to load what this area holds.
+          </Text>
         ) : tree.hierarchy === undefined ? (
           // Until the hierarchy arrives, say so. Empty sections here would claim the area is bare.
           <Text
@@ -266,64 +292,30 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
               </View>
             )}
 
-            <View className="mt-8 gap-4">
-              <SectionHeading>Subareas</SectionHeading>
-              {subareas.length > 0 ? (
+            {/* Subareas and projects appear only when there are some; the actions that make
+                them live beside Favorite, so an empty section has nothing left to say. */}
+            {subareas.length > 0 ? (
+              <View className="mt-8 gap-4">
+                <SectionHeading>Subareas</SectionHeading>
                 <TileGrid items={subareaTiles} />
-              ) : (
-                <EmptyState
-                  description="An area can hold areas of its own when one subject needs dividing."
-                  title="No subareas in this area."
-                />
-              )}
-              {areaId === null ? null : (
-                <View className="flex-row">
-                  <Chip
-                    accessibilityHint="Creates an area inside this one"
-                    icon={Plus}
-                    label="New area"
-                    onPress={() => {
-                      openNewContainer('area', areaId);
-                    }}
-                  />
-                </View>
-              )}
-            </View>
+              </View>
+            ) : null}
 
-            <View className="mt-8 gap-4">
-              <SectionHeading>Projects</SectionHeading>
-              {projectTiles.length > 0 ? (
+            {projectTiles.length > 0 ? (
+              <View className="mt-8 gap-4">
+                <SectionHeading>Projects</SectionHeading>
                 <TileGrid items={projectTiles} />
-              ) : (
-                <EmptyState
-                  description="Projects with an end in sight belong here. This area has none yet."
-                  title="No projects in this area."
-                />
-              )}
-              {areaId === null ? null : (
-                <View className="flex-row">
-                  <Chip
-                    accessibilityHint="Creates a project inside this area"
-                    icon={Plus}
-                    label="New project"
-                    onPress={() => {
-                      openNewContainer('project', areaId);
-                    }}
-                  />
-                </View>
-              )}
-            </View>
+              </View>
+            ) : null}
 
             <View className="mt-8 gap-4">
-              <SectionHeading>Notes in this area</SectionHeading>
+              <SectionHeading>Notes</SectionHeading>
               {resources.length > 0 ? (
                 <ResourceGrid items={areaNoteGridItems(resources)} noteVariant="lilac" />
               ) : (
-                <EmptyState
-                  description="Notes kept here, rather than in one of its projects, show up in this list."
-                  icon={FileText}
-                  title="Nothing kept here yet."
-                />
+                <Text className="font-body text-[16px] leading-[22px] text-ink-soft">
+                  No notes found.
+                </Text>
               )}
             </View>
           </>

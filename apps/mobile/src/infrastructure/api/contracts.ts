@@ -44,6 +44,10 @@ interface ResourceBase {
 
 export interface NoteResource extends ResourceBase {
   kind: 'note';
+  /** THROWAWAY (mock): where the note is filed, as `parent / leaf`, for the card to show. */
+  location?: string | undefined;
+  /** THROWAWAY (mock): a note with no confirmed copy on the server, and why. */
+  status?: 'draft' | 'unconfirmed' | 'refused' | undefined;
 }
 
 export interface VoiceResource extends ResourceBase {

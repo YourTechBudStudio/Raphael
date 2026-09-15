@@ -8,6 +8,7 @@ import {
   type HierarchyNode,
   type HierarchyQuery,
 } from '../../collections';
+import { mockHierarchy, useMockStore } from '../../mock';
 import { useLocalResources } from '../../resources';
 
 /**
@@ -81,8 +82,16 @@ export function useSearch(query: string, scope: ContainerRef | null): SearchStat
   const tree = useHierarchy();
   const notes = useLocalResources();
 
+  // THROWAWAY: Search reads the same mock tree Browse draws while the gallery says so.
+  const mockBrowse = useMockStore((state) => state.mockBrowse);
+  const created = useMockStore((state) => state.created);
+  const mocked = __DEV__ && mockBrowse;
+  const hierarchy = useMemo(
+    () => (mocked ? mockHierarchy(created) : tree.hierarchy),
+    [mocked, created, tree.hierarchy],
+  );
+
   const needle = query.trim().toLowerCase();
-  const hierarchy = tree.hierarchy;
 
   const scopeNode = scope === null ? undefined : hierarchy?.byId.get(scope.id);
   // A scope that is not in a *loaded* hierarchy is genuinely not there. While the hierarchy is
@@ -112,8 +121,8 @@ export function useSearch(query: string, scope: ContainerRef | null): SearchStat
 
   return {
     results,
-    isPending: needle !== '' && (tree.isPending || notes.isPending),
-    containersFailed: tree.isError && hierarchy === undefined,
+    isPending: needle !== '' && ((tree.isPending && !mocked) || notes.isPending),
+    containersFailed: tree.isError && hierarchy === undefined && !mocked,
     tree,
     resourcesFailed: notes.isError,
     isFetching: tree.isFetching || notes.isFetching,

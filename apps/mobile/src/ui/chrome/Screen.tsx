@@ -1,14 +1,24 @@
 import type { ReactNode } from 'react';
-import { ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
+import {
+  RefreshControl,
+  ScrollView,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+  type StyleProp,
+  type ViewStyle,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { gutter } from '../theme';
+import { colors, gutter } from '../theme';
 
 /**
  * Clearance under the scroll content so the floating capture bar never covers the last card:
  * the 56 pill plus the space it floats in.
  */
 const CAPTURE_BAR_CLEARANCE = 120;
+/** How close to the bottom, in logical pixels, counts as reaching the end. */
+const END_THRESHOLD = 480;
 
 export interface ScreenProps {
   children: ReactNode;
@@ -18,6 +28,11 @@ export interface ScreenProps {
   extraBottomPadding?: number | undefined;
   /** Set false on screens with no capture bar, to drop its clearance. */
   captureBar?: boolean | undefined;
+  /** Called as the scroll nears the end, for a body that can load more. */
+  onEndReached?: (() => void) | undefined;
+  /** Pull down to reload what the screen shows. `refreshing` keeps the indicator up meanwhile. */
+  onRefresh?: (() => void) | undefined;
+  refreshing?: boolean | undefined;
   className?: string | undefined;
   contentContainerStyle?: StyleProp<ViewStyle> | undefined;
   testID?: string | undefined;
@@ -33,6 +48,9 @@ export function Screen({
   header,
   extraBottomPadding = 0,
   captureBar = true,
+  onEndReached,
+  onRefresh,
+  refreshing = false,
   className,
   contentContainerStyle,
   testID,
@@ -56,6 +74,30 @@ export function Screen({
         ]}
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
+        onScroll={
+          onEndReached === undefined
+            ? undefined
+            : (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+                const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+                if (
+                  contentOffset.y + layoutMeasurement.height >=
+                  contentSize.height - END_THRESHOLD
+                ) {
+                  onEndReached();
+                }
+              }
+        }
+        refreshControl={
+          onRefresh === undefined ? undefined : (
+            <RefreshControl
+              colors={[colors.primary]}
+              onRefresh={onRefresh}
+              refreshing={refreshing}
+              tintColor={colors.primary}
+            />
+          )
+        }
+        scrollEventThrottle={onEndReached === undefined ? undefined : 64}
         showsVerticalScrollIndicator={false}
       >
         {children}

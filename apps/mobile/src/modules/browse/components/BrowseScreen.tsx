@@ -1,10 +1,10 @@
-import { Layers, Plus, Star } from 'lucide-react-native';
+import { Layers, Star } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
-import { Chip, EmptyState, PressableFeedback, Screen, SearchField, colors } from '../../../ui';
+import { EmptyState, PressableFeedback, Screen, SearchField, colors } from '../../../ui';
 import {
   ancestorsOf,
   HierarchyError,
@@ -15,13 +15,18 @@ import {
   type HierarchyQuery,
 } from '../../collections';
 import { RejectionNotice } from '../../connection';
+import { mockHierarchyRoots, useMockStore } from '../../mock';
 import { goBack, openContainer, openRecovery, TitleTopBar, useSheetsStore } from '../../navigation';
 import { useBrowseStore } from '../state/tree';
+import { AddInsideSheet } from './AddInsideSheet';
 import { BrowseTree } from './BrowseTree';
 import { FavoritesList } from './FavoritesList';
 import { filterTree } from './tree';
 
 type Tab = 'all' | 'favorites';
+
+/** Long enough for the add sheet's exit before the creation sheet's modal takes the window. */
+const CHOICE_CLOSE_MS = 240;
 
 export interface BrowseScreenProps {
   /** The location Browse was opened from, highlighted as current. Null when opened from Home. */
@@ -32,9 +37,8 @@ export interface BrowseScreenProps {
  * Browse: the whole area and project tree, with the location it was opened from marked as current.
  * Tapping a row pushes that location, so back from it returns here.
  *
- * Creating containers is not here. Phase 09 owns it; the plus that used to sit in this title bar is
- * gone rather than disabled, because a control that cannot do anything is a thing someone has to
- * discover is broken.
+ * Creating containers happens from here: a plus on every area row makes an area or a project inside
+ * it, and a dashed "New area" row at the end of the root makes a top-level area.
  *
  * The filter runs over exactly what is loaded, and what is loaded is the complete hierarchy or
  * nothing at all - so "no areas or projects" here is a statement about the server, not about how
@@ -47,6 +51,7 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
 
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<Tab>('all');
+  const [adding, setAdding] = useState<HierarchyNode | null>(null);
   const swipe = useMemo(
     () =>
       Gesture.Pan()
@@ -75,10 +80,15 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
   }, [ancestorIds, expandMany]);
 
   const filtering = query.trim() !== '';
-  const nodes = useMemo(
-    () => filterTree(tree.hierarchy?.roots ?? [], query),
-    [tree.hierarchy, query],
+  // THROWAWAY: the gallery can swap the server's hierarchy for the mock one, so the nesting can
+  // be seen on a server that has little in it.
+  const mockBrowse = useMockStore((state) => state.mockBrowse);
+  const created = useMockStore((state) => state.created);
+  const roots = useMemo(
+    () => (__DEV__ && mockBrowse ? mockHierarchyRoots(created) : (tree.hierarchy?.roots ?? [])),
+    [mockBrowse, created, tree.hierarchy],
   );
+  const nodes = useMemo(() => filterTree(roots, query), [roots, query]);
 
   const select = (node: ContainerRef) => {
     if (current !== null && current.type === node.type && current.id === node.id) {
@@ -121,22 +131,11 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
           testID="browse-screen"
         >
           <RejectionNotice className="mb-3" />
-          {/* The root holds only areas, so this is the one place a top-level area can be made. An
-              attempt aimed at the root belongs to no area, which is why the summary is here too:
+          {/* An attempt aimed at the root belongs to no area, which is why the summary is here:
               Home carries it as well, and between them there is nowhere it can hide. */}
           {tab === 'favorites' ? null : (
-            <View className="mb-4 gap-3">
+            <View className="mb-4">
               <PendingSummary onOpen={openRecovery} parentAreaId={null} />
-              <View className="flex-row">
-                <Chip
-                  accessibilityHint="Creates an area at the top level"
-                  icon={Plus}
-                  label="New area"
-                  onPress={() => {
-                    openNewContainer('area', null);
-                  }}
-                />
-              </View>
             </View>
           )}
           {tab === 'favorites' ? (
@@ -146,15 +145,32 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
               current={current}
               expandedIds={expanded}
               filtering={filtering}
-              hasHierarchy={tree.hierarchy !== undefined}
-              isPending={tree.isPending}
+              hasHierarchy={tree.hierarchy !== undefined || (__DEV__ && mockBrowse)}
+              isPending={tree.isPending && !(__DEV__ && mockBrowse)}
               nodes={nodes}
+              onAdd={setAdding}
+              onAddRoot={() => {
+                openNewContainer('area', null);
+              }}
               onSelect={select}
               onToggle={toggle}
               tree={tree}
             />
           )}
         </Screen>
+        <AddInsideSheet
+          area={adding}
+          onClose={() => {
+            setAdding(null);
+          }}
+          onPick={(type, area) => {
+            setAdding(null);
+            // The creation sheet is its own modal; it opens once this one has left the screen.
+            setTimeout(() => {
+              openNewContainer(type, area.id);
+            }, CHOICE_CLOSE_MS);
+          }}
+        />
       </View>
     </GestureDetector>
   );
@@ -208,6 +224,8 @@ interface TreeBodyProps {
   tree: HierarchyQuery;
   onToggle: (id: number) => void;
   onSelect: (node: HierarchyNode) => void;
+  onAdd: (node: HierarchyNode) => void;
+  onAddRoot: () => void;
 }
 
 /** The tree, or an honest account of why it is not there. */
@@ -221,6 +239,8 @@ function TreeBody({
   tree,
   onToggle,
   onSelect,
+  onAdd,
+  onAddRoot,
 }: TreeBodyProps) {
   // A failed refresh over a hierarchy that did load keeps the tree and says so. Blanking it would
   // throw away a complete reading because the next one was interrupted.
@@ -240,24 +260,20 @@ function TreeBody({
     <View className="gap-3">
       <HierarchyStale tree={tree} />
 
-      {nodes.length === 0 ? (
-        filtering ? (
-          <EmptyState
-            description="Nothing here matches that. Try a shorter word."
-            title="No areas or projects."
-          />
-        ) : (
-          <EmptyState
-            description="Areas and projects live on your server. This one has none yet."
-            title="Nothing to browse yet."
-          />
-        )
+      {nodes.length === 0 && filtering ? (
+        <EmptyState
+          description="Nothing here matches that. Try a shorter word."
+          title="No areas or projects."
+        />
       ) : (
         <BrowseTree
           current={current}
           expandedIds={expandedIds}
           forceExpanded={filtering}
           nodes={nodes}
+          onAdd={onAdd}
+          // The virtual row is a place, not a match: it stays out of a filtered list.
+          onAddRoot={filtering ? undefined : onAddRoot}
           onSelect={onSelect}
           onToggle={onToggle}
         />

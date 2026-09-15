@@ -112,3 +112,23 @@ export function leaveSearchFor(ref: ContainerRef): void {
 
   openContainer(ref);
 }
+
+/** THROWAWAY: opens the temporary UI mock gallery. Remove with `app/mock` and `modules/mock`. */
+export function openMockGallery(): void {
+  router.push('/mock');
+}
+
+/** THROWAWAY: opens a mock note in the editor. */
+export function openMockNote(id: number): void {
+  router.push({ pathname: '/mock/composer', params: { id: String(id) } });
+}
+
+/** THROWAWAY: opens a mock draft in the editor. */
+export function openMockDraft(id: number): void {
+  router.push({ pathname: '/mock/composer', params: { draft: String(id) } });
+}
+
+/** THROWAWAY: opens the mock Unfinished screen. */
+export function openMockUnfinished(): void {
+  router.push('/mock/unfinished');
+}

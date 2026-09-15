@@ -1,8 +1,9 @@
 import clsx from 'clsx';
+import { Plus } from 'lucide-react-native';
 import { Text, View } from 'react-native';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
-import { Emblem, emblemFor, PressableFeedback } from '../../../ui';
+import { colors, Emblem, emblemFor, IconButton, PressableFeedback } from '../../../ui';
 import type { HierarchyNode } from '../../collections';
 import { DisclosureButton } from './DisclosureButton';
 
@@ -24,6 +25,10 @@ export interface BrowseTreeProps {
   forceExpanded: boolean;
   onToggle: (id: number) => void;
   onSelect: (node: HierarchyNode) => void;
+  /** Offered on area rows only: a plus at the trailing edge to create inside that area. */
+  onAdd?: ((node: HierarchyNode) => void) | undefined;
+  /** Draws a virtual last root row that creates a top-level area. */
+  onAddRoot?: (() => void) | undefined;
 }
 
 /** The area and project tree on the Browse screen. */
@@ -34,6 +39,8 @@ export function BrowseTree({
   forceExpanded,
   onToggle,
   onSelect,
+  onAdd,
+  onAddRoot,
 }: BrowseTreeProps) {
   return (
     <View>
@@ -44,10 +51,12 @@ export function BrowseTree({
           forceExpanded={forceExpanded}
           key={node.id}
           node={node}
+          onAdd={onAdd}
           onSelect={onSelect}
           onToggle={onToggle}
         />
       ))}
+      {onAddRoot === undefined ? null : <NewAreaRow onPress={onAddRoot} />}
     </View>
   );
 }
@@ -63,6 +72,7 @@ function BrowseBranch({
   forceExpanded,
   onToggle,
   onSelect,
+  onAdd,
 }: BrowseBranchProps) {
   const hasChildren = node.children.length > 0;
   const expanded = hasChildren && (forceExpanded || expandedIds.has(node.id));
@@ -114,6 +124,21 @@ function BrowseBranch({
             <Text className="font-body-medium text-[14px] text-primary">Current</Text>
           ) : null}
         </PressableFeedback>
+        {/* Only areas hold things, so only area rows get the plus. It sits outside the row's
+            press surface so it is its own 44pt target for touch and its own control for a
+            screen reader. */}
+        {node.type === 'area' && onAdd !== undefined ? (
+          <IconButton
+            accessibilityHint={`Creates an area or a project inside ${node.title}`}
+            color={colors.primary}
+            icon={Plus}
+            iconSize={20}
+            label={`Add inside ${node.title}`}
+            onPress={() => {
+              onAdd(node);
+            }}
+          />
+        ) : null}
       </View>
       {expanded ? (
         <View style={{ paddingLeft: INDENT }}>
@@ -136,6 +161,7 @@ function BrowseBranch({
                 expandedIds={expandedIds}
                 forceExpanded={forceExpanded}
                 node={child}
+                onAdd={onAdd}
                 onSelect={onSelect}
                 onToggle={onToggle}
               />
@@ -143,6 +169,35 @@ function BrowseBranch({
           ))}
         </View>
       ) : null}
+    </View>
+  );
+}
+
+/**
+ * The root's last row is not a container but the place one would go, drawn in the rows' own
+ * grammar: the disclosure slot left empty, a dotted outline with a plus where the emblem sits,
+ * and the title in soft ink. Nothing bordered, nothing pill-shaped - it is a row that is not
+ * there yet, not a button dropped into a list.
+ */
+function NewAreaRow({ onPress }: { onPress: () => void }) {
+  return (
+    <View className="flex-row items-center" style={{ minHeight: ROW }}>
+      <View style={{ width: ROW }} />
+      <PressableFeedback
+        accessibilityHint="Creates an area at the top level"
+        accessibilityLabel="New area"
+        className="flex-row items-center gap-3 rounded-card px-2 py-1.5"
+        onPress={onPress}
+        style={{ flex: 1, justifyContent: 'center', minHeight: ROW }}
+      >
+        <View
+          className="items-center justify-center rounded-full border border-lilac"
+          style={{ borderStyle: 'dotted', height: 26, width: 26 }}
+        >
+          <Plus color={colors.primary} size={15} strokeWidth={2.2} />
+        </View>
+        <Text className="flex-1 font-body text-[16px] text-ink-soft">New area</Text>
+      </PressableFeedback>
     </View>
   );
 }

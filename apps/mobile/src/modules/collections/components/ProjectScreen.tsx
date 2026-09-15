@@ -172,7 +172,14 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
 
   return (
     <View className="flex-1">
-      <Screen header={header}>
+      <Screen
+        header={header}
+        onRefresh={() => {
+          tree.refetch();
+          void project.refetch();
+        }}
+        refreshing={tree.isFetching || project.isFetching}
+      >
         <RejectionNotice className="mb-4" />
         <View>
           <Eyebrow>Project</Eyebrow>
@@ -233,16 +240,8 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
         />
 
         <View className="mt-7 gap-3">
-          <SectionHeading>Project notes</SectionHeading>
-          <ProjectNotes
-            isError={notes.isError}
-            isPending={notes.isPending}
-            onRetry={() => {
-              void notes.refetch();
-            }}
-            resources={resources}
-            retrying={notes.isFetching}
-          />
+          <SectionHeading>Notes</SectionHeading>
+          <ProjectNotes isError={notes.isError} isPending={notes.isPending} resources={resources} />
         </View>
       </Screen>
       <CaptureBar onNewNote={openNewNote} onVoice={openVoiceCapture} />
@@ -255,17 +254,20 @@ function ProjectNotes({
   resources,
   isPending,
   isError,
-  retrying,
-  onRetry,
 }: {
   resources: readonly Resource[];
   isPending: boolean;
   isError: boolean;
-  retrying: boolean;
-  onRetry: () => void;
 }): ReactNode {
   if (isError) {
-    return <SectionError onRetry={onRetry} retrying={retrying} title="These notes did not load." />;
+    return (
+      <Text
+        accessibilityLiveRegion="polite"
+        className="font-body text-[16px] leading-[22px] text-ink-soft"
+      >
+        Unable to load notes.
+      </Text>
+    );
   }
 
   if (isPending) {
@@ -274,10 +276,7 @@ function ProjectNotes({
 
   if (resources.length === 0) {
     return (
-      <EmptyState
-        description="Even a half-finished thought counts."
-        title="No notes in this project yet."
-      />
+      <Text className="font-body text-[16px] leading-[22px] text-ink-soft">No notes found.</Text>
     );
   }
 
