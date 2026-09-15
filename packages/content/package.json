@@ -15,6 +15,10 @@
       "types": "./dist/schema/index.d.ts",
       "default": "./dist/schema/index.js"
     },
+    "./validation": {
+      "types": "./dist/validation/index.d.ts",
+      "default": "./dist/validation/index.js"
+    },
     "./conversion": {
       "types": "./dist/conversion/index.d.ts",
       "default": "./dist/conversion/index.js"
@@ -26,7 +30,7 @@
     "fix": "oxlint . --fix && oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint . --deny-warnings",
-    "test": "node --test \"src/**/*.test.ts\" \"tests/*.test.ts\"",
+    "test": "node --experimental-import-meta-resolve --test \"src/**/*.test.ts\" \"tests/*.test.ts\"",
     "typecheck": "tsc --project tsconfig.json"
   },
   "dependencies": {
@@ -48,11 +52,13 @@
     "@tiptap/extension-text": "catalog:",
     "@tiptap/pm": "catalog:",
     "effect": "catalog:",
-    "markdown-it": "catalog:"
+    "markdown-it": "catalog:",
+    "prosemirror-markdown": "1.13.7"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "@yourtechbudstudio/raphael-typescript-config": "workspace:*",
+    "acorn": "8.18.0",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "typescript": "catalog:"

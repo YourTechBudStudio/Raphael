@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { Schema } from '@tiptap/pm/model';
 import { Either } from 'effect';
 
-import { toMarkdown } from '../src/conversion/export.ts';
+import { markdownSerializer, toMarkdown } from '../src/conversion/export.ts';
 import { fromMarkdown } from '../src/conversion/import.ts';
 import { canonicalizeDocument } from '../src/schema/canonicalize.ts';
 
@@ -472,5 +473,383 @@ describe('known limit: emphasis edged with punctuation beside a word character',
 
   it('expresses the same content at the start and end of a paragraph', () => {
     assertRoundTrip(doc(para(text('.y', [{ type: 'bold' }]))), 'alone in a paragraph');
+  });
+});
+
+describe('the library-backed serializer keeps what the hand-written one protected', () => {
+  /**
+   * These are the cases that decided the configuration in the first place: a serializer that
+   * collapses blank lines inside a fence, writes a fixed three-backtick fence, spells a code span
+   * without its delimiters, or indents a list item under its own marker loses content rather than
+   * spelling. They run against the installed library, which is the only thing that establishes
+   * fidelity — reading the library's source establishes only which seams exist.
+   */
+  const cases: Record<string, unknown> = {
+    'code block with a run of blank lines': doc({
+      type: 'codeBlock',
+      attrs: { language: null },
+      content: [text('a\n\n\nb')],
+    }),
+    'mermaid source with arrows and a blank line': doc({
+      type: 'codeBlock',
+      attrs: { language: 'mermaid' },
+      content: [text('graph TD;\n  A-->B;\n\n  B-->C;')],
+    }),
+    'code block that ends with a blank line': doc({
+      type: 'codeBlock',
+      attrs: { language: null },
+      content: [text('a\n')],
+    }),
+    'code block inside a blockquote': doc({
+      type: 'blockquote',
+      content: [{ type: 'codeBlock', attrs: { language: null }, content: [text('a\n\nb')] }],
+    }),
+    'code block inside a list item': doc({
+      type: 'bulletList',
+      content: [
+        {
+          type: 'listItem',
+          content: [
+            para(text('item')),
+            { type: 'codeBlock', attrs: { language: null }, content: [text('a\n\nb')] },
+          ],
+        },
+      ],
+    }),
+    'paragraph that looks like a heading': doc(para(text('# not a heading'))),
+    'paragraph with four leading spaces': doc(para(text('    four spaces'))),
+    // A literal space cannot reach a canonical href: `isAllowedHref` rejects it, so the encoded
+    // form is the one a stored document can hold. The unbalanced paren is what exercises the
+    // angle-bracket destination branch, since a bare destination ends at the first unbalanced `)`.
+    'link whose destination holds a paren and an encoded space': doc(
+      para(link('x', 'https://example.com/a(b%20c')),
+    ),
+    'bullet list three levels deep': doc({
+      type: 'bulletList',
+      content: [
+        {
+          type: 'listItem',
+          content: [
+            para(text('one')),
+            {
+              type: 'bulletList',
+              content: [
+                {
+                  type: 'listItem',
+                  content: [
+                    para(text('two')),
+                    {
+                      type: 'bulletList',
+                      content: [{ type: 'listItem', content: [para(text('three'))] }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    }),
+    'ordered list spanning a digit width': doc({
+      type: 'orderedList',
+      attrs: { start: 9 },
+      content: [
+        { type: 'listItem', content: [para(text('nine'))] },
+        { type: 'listItem', content: [para(text('ten'))] },
+        { type: 'listItem', content: [para(text('eleven'))] },
+      ],
+    }),
+    'ordered list crossing a digit width with a nested list': doc({
+      type: 'orderedList',
+      attrs: { start: 9 },
+      content: [
+        { type: 'listItem', content: [para(text('nine'))] },
+        {
+          type: 'listItem',
+          content: [
+            para(text('ten')),
+            { type: 'bulletList', content: [{ type: 'listItem', content: [para(text('under'))] }] },
+          ],
+        },
+      ],
+    }),
+    'list item holding several blocks': doc({
+      type: 'bulletList',
+      content: [
+        {
+          type: 'listItem',
+          content: [para(text('first paragraph')), para(text('second paragraph'))],
+        },
+        { type: 'listItem', content: [para(text('other item'))] },
+      ],
+    }),
+    'code span beside a link inside a list item': doc({
+      type: 'bulletList',
+      content: [
+        {
+          type: 'listItem',
+          content: [para(code('x`y'), text(' then '), link('l', 'https://e.com/a(b'))],
+        },
+      ],
+    }),
+  };
+
+  for (const [label, input] of Object.entries(cases)) {
+    it(`survives: ${label}`, () => {
+      assertRoundTrip(input, label);
+    });
+  }
+
+  it('writes code-span delimiters, which the text serializer never sees', () => {
+    // `renderInline` writes a text node whose innermost mark declares `escape: false` itself. A
+    // configuration that put the delimiters in `nodes.text` emits content with no backticks at all,
+    // and every code span silently becomes ordinary text.
+    const markdown = toMarkdown(canonical(doc(para(code('const x = 1;')))) as never);
+    assert.equal(markdown, '`const x = 1;`');
+  });
+
+  it('sizes a code-span fence above the longest run it contains', () => {
+    assert.equal(toMarkdown(canonical(doc(para(code('a``b')))) as never), '```a``b```');
+  });
+
+  it('keeps authored code bytes out of the wrapper indentation inside a list', () => {
+    // The wrapper's indentation is Markdown spelling; the source between the fences is authored
+    // data. A blank line in the source must stay blank, not acquire the list delimiter as content.
+    const document = canonical({
+      type: 'doc',
+      content: [
+        {
+          type: 'bulletList',
+          content: [
+            {
+              type: 'listItem',
+              content: [
+                para(text('item')),
+                { type: 'codeBlock', attrs: { language: null }, content: [text('a\n\nb')] },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const markdown = toMarkdown(document as never);
+    const reimported = fromMarkdown(markdown);
+    assert.ok(Either.isRight(reimported));
+    const source = JSON.stringify(reimported.right);
+    assert.ok(source.includes('a\\n\\nb'), markdown);
+  });
+
+  it('keeps lists compact', () => {
+    // A loose list would put a blank line between every item of every note. The canonical schema has
+    // no per-list `tight` attribute, so the serializer option is what carries the convention.
+    const markdown = toMarkdown(
+      canonical({
+        type: 'doc',
+        content: [
+          {
+            type: 'bulletList',
+            content: [
+              { type: 'listItem', content: [para(text('one'))] },
+              { type: 'listItem', content: [para(text('two'))] },
+            ],
+          },
+        ],
+      }) as never,
+    );
+    assert.equal(markdown, '- one\n- two');
+  });
+
+  it('refuses a document holding a node outside the canonical schema', () => {
+    // This is rejected by `Node.fromJSON` against `contentSchema`, before the serializer is
+    // reached. It says the pipeline refuses unknown content; it says nothing about `strict`.
+    assert.throws(() => toMarkdown({ type: 'doc', content: [{ type: 'image' }] } as never), {
+      message: /Unknown node type: image/u,
+    });
+  });
+
+  it('raises rather than dropping a node the serializer has no configuration for', () => {
+    // `strict: true`, asserted against the configured serializer itself. A future canonical node
+    // added without an exporter must fail loudly; silently vanishing content is the failure mode
+    // this replaces. `toMarkdown` cannot show this, because its input is deserialized against
+    // `contentSchema` first and never reaches the serializer.
+    const foreign = new Schema({
+      nodes: {
+        doc: { content: 'block+' },
+        paragraph: { group: 'block', content: 'text*' },
+        image: { group: 'block' },
+        text: {},
+      },
+      marks: { highlight: {} },
+    });
+
+    const withUnknownNode = foreign.node('doc', null, [foreign.node('image')]);
+    assert.throws(() => markdownSerializer.serialize(withUnknownNode), {
+      message: /Token type `image` not supported by Markdown renderer/u,
+    });
+
+    const withUnknownMark = foreign.node('doc', null, [
+      foreign.node('paragraph', null, [foreign.text('x', [foreign.mark('highlight')])]),
+    ]);
+    assert.throws(() => markdownSerializer.serialize(withUnknownMark), {
+      message: /Mark type `highlight` not supported by Markdown renderer/u,
+    });
+  });
+});
+
+describe('boundary whitespace is encoded at line edges, not at every fragment', () => {
+  /**
+   * `encodeBoundaryWhitespace` defends a line edge. The hand-written exporter applied it once per
+   * assembled block line; serializing a document one text node at a time would widen it to every
+   * fragment, so an ordinary sentence containing a bold word or a link came back with `&#32;` in
+   * place of its spaces — in the default format of the API and the CLI.
+   *
+   * Both halves are asserted here: the spelling stays readable in the middle of a line, and the
+   * edges are still defended. Fidelity is asserted independently by the round-trip cases above,
+   * which cover whitespace at every edge in every block context.
+   */
+  const markdown = (input: unknown): string => toMarkdown(canonical(input) as never);
+
+  it('leaves whitespace in the middle of a line alone', () => {
+    assert.equal(
+      markdown(doc(para(text('Some '), text('bold', [{ type: 'bold' }]), text(' text.')))),
+      'Some **bold** text.',
+    );
+    assert.equal(
+      markdown(doc(para(text('see '), link('the docs', 'https://example.com'), text(' now')))),
+      'see [the docs](https://example.com) now',
+    );
+  });
+
+  it('still encodes whitespace that opens or closes a line', () => {
+    assert.equal(markdown(doc(para(text('    four spaces')))), '&#32;&#32;&#32;&#32;four spaces');
+    assert.equal(markdown(doc(para(text('trailing  ')))), 'trailing&#32;&#32;');
+  });
+
+  it('still encodes whitespace at the edges a hard break creates', () => {
+    assert.equal(
+      markdown(doc(para(text('one  '), { type: 'hardBreak' }, text('  two')))),
+      'one&#32;&#32;\\\n&#32;&#32;two',
+    );
+  });
+
+  /**
+   * Inline text cannot hold a newline, which is what makes the line edges of a block identifiable.
+   * It does not by itself say how a fragment behaves beside a generated delimiter, so the
+   * interactions are exercised rather than reasoned about: a link label brings its own whitespace
+   * inside brackets, an emphasis delimiter sits between two fragments, and a hard break turns a
+   * mark boundary into a line boundary.
+   */
+  it('keeps a whitespace-bearing link label intact wherever it sits', () => {
+    const label = (href: string): unknown => text(' y ', [{ type: 'link', attrs: { href } }]);
+    // Mid-line: the label's spaces are inside the brackets, so nothing strips them and nothing
+    // needs encoding.
+    assert.equal(
+      markdown(doc(para(text('x'), label('https://e.com'), text('z')))),
+      'x[ y ](https://e.com)z',
+    );
+    assertRoundTrip(doc(para(text('x'), label('https://e.com'), text('z'))), 'label mid-line');
+    // At both line edges, and with a hard break making new ones.
+    assertRoundTrip(doc(para(label('https://e.com'))), 'label alone');
+    assertRoundTrip(
+      doc(para(label('https://e.com'), { type: 'hardBreak' }, label('https://e.com/2'))),
+      'labels either side of a hard break',
+    );
+  });
+
+  it('encodes a fragment beside a mark only where the fragment meets a line edge', () => {
+    const bold = (value: string): unknown => text(value, [{ type: 'bold' }]);
+    // Between two marks, mid-line: readable.
+    assert.equal(markdown(doc(para(bold('a'), text('  '), bold('b')))), '**a**  **b**');
+    // The same fragment at the end of the line: encoded, because Markdown would strip it and two
+    // trailing spaces would come back as a hard break.
+    assert.equal(markdown(doc(para(bold('a'), text('  ')))), '**a**&#32;&#32;');
+    // And where a hard break makes the mark boundary a line boundary.
+    assert.equal(
+      markdown(doc(para(bold('a'), text('  '), { type: 'hardBreak' }, text('  '), bold('b')))),
+      '**a**&#32;&#32;\\\n&#32;&#32;**b**',
+    );
+    for (const [label, input] of [
+      ['between marks', doc(para(bold('a'), text('  '), bold('b')))],
+      ['after a mark at the line end', doc(para(bold('a'), text('  ')))],
+      ['before a mark at the line start', doc(para(text('  '), bold('b')))],
+      [
+        'either side of a hard break',
+        doc(para(bold('a'), text('  '), { type: 'hardBreak' }, text('  '), bold('b'))),
+      ],
+    ] as const) {
+      assertRoundTrip(input, label);
+    }
+  });
+});
+
+describe('every hard-break placement survives export and re-import', () => {
+  /**
+   * The corpus above exercised only a break between two runs of paragraph text. The placements it
+   * missed were the ones Markdown cannot encode, and they did not fail loudly: a break ending a
+   * paragraph came back as a literal `\`, and a break inside a heading came back as a heading *and a
+   * separate paragraph*. Canonicalization now normalizes those placements before storage, so the
+   * document that is stored is one Markdown can carry.
+   *
+   * These start from the pre-normalization document, so they assert the property that matters end to
+   * end: whatever a client submits, what is stored and what is read back are the same document.
+   * `src/schema/hard-breaks.test.ts` asserts the other half — which document is stored.
+   */
+  const br = (marks?: unknown[]): unknown =>
+    marks === undefined ? { type: 'hardBreak' } : { type: 'hardBreak', marks };
+  const head = (...content: unknown[]): unknown => ({
+    type: 'heading',
+    attrs: { level: 2 },
+    content,
+  });
+  const item = (...content: unknown[]): unknown => ({
+    type: 'bulletList',
+    content: [{ type: 'listItem', content }],
+  });
+  const LINK = [{ type: 'link', attrs: { href: 'https://example.com' } }];
+  const BOLD = [{ type: 'bold' }];
+
+  const cases: Record<string, unknown> = {
+    'paragraph ending in a break': doc(para(text('a'), br())),
+    'paragraph ending in a run of breaks': doc(para(text('a'), br(), br(), br())),
+    'paragraph of only a break': doc(para(br())),
+    'paragraph opening with a break': doc(para(br(), text('a'))),
+    'break between paragraph text': doc(para(text('a'), br(), text('b'))),
+    'consecutive breaks between paragraph text': doc(para(text('a'), br(), br(), text('b'))),
+    'heading with an interior break': doc(head(text('a'), br(), text('b'))),
+    'heading with consecutive interior breaks': doc(head(text('a'), br(), br(), text('b'))),
+    'heading opening with a break': doc(head(br(), text('a'))),
+    'heading ending in a break': doc(head(text('a'), br())),
+    'heading of only a break': doc(head(br())),
+    'heading break inside a link': doc(head(text('a', LINK), br(LINK), text('b', LINK))),
+    'heading break inside bold': doc(head(text('a', BOLD), br(BOLD), text('b', BOLD))),
+    'list item with an interior break': doc(item(para(text('a'), br(), text('b')))),
+    'list item ending in a break': doc(item(para(text('a'), br()))),
+    'break carrying a mark between unmarked text': doc(para(text('a'), br(BOLD), text('b'))),
+    'link spanning a paragraph break': doc(para(text('a', LINK), br(LINK), text('b', LINK))),
+    'bold spanning a paragraph break': doc(para(text('a', BOLD), br(BOLD), text('b', BOLD))),
+    'marked break followed by plain text': doc(para(text('a', BOLD), br(BOLD), text('c'))),
+    'consecutive marked breaks': doc(para(text('a', BOLD), br(BOLD), br(BOLD), text('b', BOLD))),
+    'marked break in a list item': doc(item(para(text('a', LINK), br(LINK), text('b', LINK)))),
+    'break beside a code span': doc(para(code('x'), br(), code('y'))),
+    'break beside a link': doc(para(link('a', 'https://example.com'), br(), text('b'))),
+    'break in a blockquote': doc({
+      type: 'blockquote',
+      content: [para(text('a'), br(), text('b')), para(text('c'), br())],
+    }),
+  };
+
+  for (const [label, input] of Object.entries(cases)) {
+    it(`survives: ${label}`, () => {
+      assertRoundTrip(input, label);
+    });
+  }
+
+  it('keeps a break that carries meaning and drops only the one that cannot', () => {
+    // The distinction in one assertion: the interior break is still a break in the exported
+    // Markdown, and the terminal one has left no trace behind it.
+    assert.equal(
+      toMarkdown(canonical(doc(para(text('a'), br(), text('b'), br()))) as never),
+      'a\\\nb',
+    );
   });
 });

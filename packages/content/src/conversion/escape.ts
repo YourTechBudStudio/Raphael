@@ -52,14 +52,20 @@ export const escapeText = (text: string): string =>
   text.replace(ESCAPE_INLINE, '\\$1').split('\n').map(escapeLineStart).join('\n');
 
 /**
- * Encodes a code span.
+ * Computes the delimiters of a code span.
  *
  * A code span is delimited by a backtick run longer than any run inside it, and CommonMark strips one
  * leading and one trailing space when the content both begins and ends with a space. Padding is
  * therefore added when the content starts or ends with a backtick or a space, so the reader's
  * stripping rule restores exactly what was stored rather than eating a real character.
+ *
+ * The open and close strings are returned separately because the serializer needs them separately:
+ * `prosemirror-markdown` writes a code span from its mark's `open`/`close` callbacks and never
+ * through the text node serializer. `codeSpan` composes them for callers that want the whole span.
  */
-export const codeSpan = (text: string): string => {
+export const codeSpanDelimiters = (
+  text: string,
+): { readonly open: string; readonly close: string } => {
   let longest = 0;
   for (const run of text.match(/`+/gu) ?? []) longest = Math.max(longest, run.length);
   const fence = '`'.repeat(longest + 1);
@@ -72,7 +78,13 @@ export const codeSpan = (text: string): string => {
     text.endsWith('`') ||
     (text.startsWith(' ') && text.endsWith(' ') && !allSpaces);
   const padding = needsPadding ? ' ' : '';
-  return `${fence}${padding}${text}${padding}${fence}`;
+  return { open: `${fence}${padding}`, close: `${padding}${fence}` };
+};
+
+/** Encodes a code span: the delimiters above wrapped around the stored text. */
+export const codeSpan = (text: string): string => {
+  const { open, close } = codeSpanDelimiters(text);
+  return `${open}${text}${close}`;
 };
 
 /**
@@ -106,14 +118,29 @@ const asReferences = (run: string): string =>
  * emitted here is unambiguous and an author who typed `&#32;` still gets `&#32;` back.
  *
  * This also stops two trailing spaces from being read back as a hard break.
+ *
+ * Only whitespace at a line's edges is at risk, so `edges` says which edges of this text are
+ * actually line edges. A caller holding a whole block line leaves it at the default; a caller
+ * holding one fragment of a line — the serializer, which sees a document one text node at a time —
+ * says so, because encoding a space that sits in the middle of a sentence costs a reader a
+ * `&#32;` and buys nothing. Both are exact: a reference decodes to the character it replaced.
  */
-export const encodeBoundaryWhitespace = (text: string): string =>
+export const encodeBoundaryWhitespace = (
+  text: string,
+  edges: { readonly atLineStart: boolean; readonly atLineEnd: boolean } = {
+    atLineStart: true,
+    atLineEnd: true,
+  },
+): string =>
   text
     .split('\n')
-    .map((line) => {
-      const leading = LEADING_WHITESPACE.exec(line)?.[0] ?? '';
+    .map((line, index, lines) => {
+      // A newline inside the text makes its own line edges, whatever the caller said about the ends.
+      const encodeLeading = edges.atLineStart || index > 0;
+      const encodeTrailing = edges.atLineEnd || index < lines.length - 1;
+      const leading = encodeLeading ? (LEADING_WHITESPACE.exec(line)?.[0] ?? '') : '';
       const withoutLeading = line.slice(leading.length);
-      const trailing = TRAILING_WHITESPACE.exec(withoutLeading)?.[0] ?? '';
+      const trailing = encodeTrailing ? (TRAILING_WHITESPACE.exec(withoutLeading)?.[0] ?? '') : '';
       const middle = withoutLeading.slice(0, withoutLeading.length - trailing.length);
       return `${asReferences(leading)}${middle}${asReferences(trailing)}`;
     })
