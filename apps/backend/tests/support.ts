@@ -57,6 +57,30 @@ export const withMigrated = <T>(tag: string, body: (connection: DatabaseConnecti
 };
 
 /**
+ * The same, for a body that awaits.
+ *
+ * A separate helper rather than making `withMigrated` generic over sync and async: its `finally`
+ * releases the connection as soon as the body *returns*, so handing it an async body closes the
+ * database out from under work that has not finished. That failure arrives as "the database
+ * connection is not open" from whichever statement happened to be next, which points at everything
+ * except the cause.
+ */
+export const withMigratedAsync = async <T>(
+  tag: string,
+  body: (connection: DatabaseConnection) => Promise<T>,
+): Promise<T> => {
+  const temp = tempDatabase(tag);
+  let connection: DatabaseConnection | undefined;
+  try {
+    connection = openMigrated(temp.file);
+    return await body(connection);
+  } finally {
+    connection?.close();
+    temp.cleanup();
+  }
+};
+
+/**
  * Typed query helpers. better-sqlite3 returns `unknown` rows, and the shape a test expects is part of
  * what the test asserts, so each call names it once here instead of casting inline.
  */
@@ -102,6 +126,13 @@ export const insertNode = (
   db: import('better-sqlite3').Database,
   values: {
     type: string;
+    /**
+     * Defaulted from the type, because storage now requires the two to agree: a resource must carry a
+     * kind and a container must not. A fixture that had to spell it out every time would be a fixture
+     * most callers got wrong, and the constraint would read as a test bug rather than as the rule.
+     * Pass it explicitly only to build a row that is deliberately wrong.
+     */
+    kind?: string | null;
     parentId?: number | null;
     parentType?: string | null;
     slug: string;
@@ -115,6 +146,7 @@ export const insertNode = (
 ): void => {
   const columns = [
     'type',
+    'kind',
     'parent_id',
     'parent_type',
     'slug',
@@ -126,6 +158,7 @@ export const insertNode = (
   ];
   const params: unknown[] = [
     values.type,
+    values.kind === undefined ? (values.type === 'resource' ? 'note' : null) : values.kind,
     values.parentId ?? null,
     values.parentType ?? null,
     values.slug,

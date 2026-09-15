@@ -1,6 +1,7 @@
 import { Duration, Effect } from 'effect';
 
 import { Db } from '../../infrastructure/database/layer.ts';
+import { yieldToEventLoop } from './scheduling.ts';
 import { writeTransaction } from './store.ts';
 
 /**
@@ -25,10 +26,8 @@ import { writeTransaction } from './store.ts';
  * thread for as long as it runs and one large delete would stall every in-flight request. Batch size
  * is therefore a responsiveness setting as much as a transaction-size one.
  *
- * **A real scheduling yield between batches.** The yield is a macrotask, not a fiber yield: what has
- * to happen between batches is Node's event loop reaching its poll phase so socket reads and writes
- * progress. A yield that resolved as a microtask would satisfy the shape of this loop and starve the
- * server anyway. This creates the opportunity; it does not promise that any particular request runs.
+ * **A real scheduling yield between batches.** `scheduling.ts` owns it and explains why it is a
+ * macrotask; this loop is one of two callers.
  *
  * The backlog this faces is not bounded by the retention window. Downtime, or a sustained failure
  * here, leaves rows that expired long ago - retention governs when a key stops being replayable, not
@@ -60,17 +59,6 @@ export class SweepFailure {
     this.detail = detail;
   }
 }
-
-/**
- * Hand control back to the event loop.
- *
- * `Effect.async` rather than a detached promise, so an interruption during the pause cancels the
- * pending immediate instead of leaving a timer that fires into a torn-down runtime.
- */
-const yieldToEventLoop: Effect.Effect<void> = Effect.async<void>((resume) => {
-  const handle = setImmediate(() => resume(Effect.void));
-  return Effect.sync(() => clearImmediate(handle));
-});
 
 /**
  * One batch, in its own short transaction.

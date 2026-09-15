@@ -82,7 +82,7 @@ test('the root itself has no path to compute', () => {
   });
 });
 
-test('an unexposed stored type is refused rather than addressed', () => {
+test('a resource path is an ordinary entity path', () => {
   withMigrated('path-resource', (connection) => {
     const { gamma } = nest(connection);
     insertNode(connection.db, {
@@ -97,15 +97,15 @@ test('an unexposed stored type is refused rather than addressed', () => {
       'note',
     ).id;
 
-    const error = toPublicError(
-      expectLeft(runNodes(connection, getNodePath({ target: { id: resource } }))),
-    );
-    assert.equal(error.code, 'invalid_input');
-    assert.deepEqual(error.details, {
-      field: 'target',
-      reason: 'unsupported_node_type',
-      nodeType: 'resource',
-    });
+    // Nothing about addressing is special-cased for a leaf: the ancestor walk is the same walk, and
+    // the answer is a path that can be handed straight back as a selector.
+    const byId = expectRight(runNodes(connection, getNodePath({ target: { id: resource } })));
+    assert.equal(byId.id, resource);
+    assert.match(byId.path, /\/note$/);
+
+    const byPath = expectRight(runNodes(connection, getNodePath({ target: { path: byId.path } })));
+    assert.equal(byPath.id, resource);
+    assert.equal(byPath.path, byId.path);
   });
 });
 

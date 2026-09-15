@@ -7,6 +7,7 @@ import {
   deriveSlug,
   type BodyFormat,
   type CreateRequest,
+  type ResourceKind,
 } from '@raphael/contracts/nodes';
 import { Either } from 'effect';
 
@@ -31,10 +32,14 @@ export type PreparedBody =
 
 export interface PreparedCreate {
   readonly type: NodeType;
+  /** Present exactly when `type` is `resource`. A container has no kind. */
+  readonly kind: ResourceKind | undefined;
   /** The selector *as submitted*: an id and a path are different requests even for the same parent. */
   readonly parent: { readonly id: number } | { readonly path: string };
-  readonly title: string;
-  readonly slug: string;
+  /** Undefined only when a kind permits omission and the caller omitted it. */
+  readonly title: string | undefined;
+  /** Undefined only when neither a title nor a slug was supplied, so the address is not yet knowable. */
+  readonly slug: string | undefined;
   readonly description: string;
   readonly body: PreparedBody;
   readonly tags: readonly string[];
@@ -57,7 +62,7 @@ export interface PreparedCreate {
  * converted content is kept as a separate value - so what is fingerprinted is what is stored.
  */
 export const prepareCreate = (request: CreateRequest): PreparedCreate => {
-  const title = request.title.trim();
+  const title = request.title === undefined ? undefined : request.title.trim();
   const slug = explicitOrDerivedSlug(request.slug, title);
 
   const body: PreparedBody =
@@ -69,6 +74,7 @@ export const prepareCreate = (request: CreateRequest): PreparedCreate => {
 
   return {
     type: request.type,
+    kind: request.type === 'resource' ? request.kind : undefined,
     parent: 'id' in request.parent ? { id: request.parent.id } : { path: request.parent.path },
     title,
     slug,
@@ -85,12 +91,35 @@ export const prepareCreate = (request: CreateRequest): PreparedCreate => {
 /**
  * An explicit slug is taken as given; otherwise one is derived from the trimmed title.
  *
+ * **An explicit slug is always kept, whether or not a title was supplied.** Only the derivation branch
+ * can be deferred, and it is deferred in exactly one case: both the title and the slug were omitted, so
+ * the address cannot be known until the title is resolved - which cannot happen before conversion,
+ * which cannot happen before the replay lookup. `deriveSlugOrRaise` is what finishes the job later.
+ *
+ * This is what makes the CLI's path form fingerprint honestly. `raphael create resource.note
+ * /work/api-design --body @-` splits into a parent path and the explicit slug `api-design`, so two such
+ * requests at different addresses are two different requests under one key rather than one. Mobile is
+ * the case that defers: it submits a parent id with no slug, so both are resolved from content.
+ */
+const explicitOrDerivedSlug = (
+  explicit: string | undefined,
+  title: string | undefined,
+): string | undefined => {
+  if (explicit !== undefined) return explicit;
+  if (title === undefined) return undefined;
+  return deriveSlugOrRaise(title);
+};
+
+/**
+ * Derives an address from a title, or asks for a different title.
+ *
  * A derivation failure is the caller's to fix by changing the title, so it names the title as the field
  * even though the slug is what could not be produced. Reporting the slug instead would ask someone to
- * correct a value they never submitted and, on mobile, cannot submit.
+ * correct a value they never submitted and, on mobile, cannot submit. This holds for a derived title
+ * exactly as it does for an explicit one: if the text the note already carries cannot produce a usable
+ * address, the answer is to ask for a title, never to invent an address the caller never saw.
  */
-const explicitOrDerivedSlug = (explicit: string | undefined, title: string): string => {
-  if (explicit !== undefined) return explicit;
+export const deriveSlugOrRaise = (title: string): string => {
   const derived = deriveSlug(title);
   if (Either.isRight(derived)) return derived.right;
   return raise(
@@ -172,7 +201,11 @@ const refuse = (what: string): never =>
  * The canonical form of a normalized request, and its fingerprint.
  *
  * The idempotency key is excluded - it identifies the attempt, not the request - and no timestamp or
- * generated identity participates, so the same request fingerprints identically whenever it is retried.
+ * generated identity participates. Neither does anything core derives: not the resolved title, not the
+ * canonical document, not the plain-text projection. The request's identity remains the request, so a
+ * retry is judged against what was asked rather than against what the server made of it.
+ *
+ * Nothing else about the canonical form changed, so the same request fingerprints identically whenever it is retried.
  * Applied defaults are materialized before this point, which is what makes an omitted field and an
  * explicitly-default one compare equal. The output format is included on purpose: a replay returns a
  * saved response rather than a fresh rendering, so asking for a different format is a different request.
@@ -182,9 +215,17 @@ export const canonicalRequestJson = (prepared: PreparedCreate): string => {
   writeCanonicalJson(
     {
       type: prepared.type,
+      // Written only when defined, so an existing container fingerprint stays byte-identical rather
+      // than changing spelling for a field containers do not have.
+      ...(prepared.kind === undefined ? {} : { kind: prepared.kind }),
       parent: prepared.parent,
-      title: prepared.title,
-      slug: prepared.slug,
+      // An omitted title and an unresolved slug are written as JSON `null` - a value no caller can
+      // supply, since both are strings when present. That keeps them distinct from any submitted value
+      // while leaving the two existing equalities intact: an explicit title with an omitted slug still
+      // materializes its derived slug before this point, and an omitted title with an explicit slug
+      // fingerprints that slug, so two such requests addressed differently never collide under one key.
+      title: prepared.title ?? null,
+      slug: prepared.slug ?? null,
       description: prepared.description,
       body: prepared.body,
       tags: prepared.tags,

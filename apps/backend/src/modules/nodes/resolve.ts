@@ -6,13 +6,7 @@ import { InternalFailure, InvalidInput, InvalidParent, NodeNotFound } from './er
 import { nodes } from './schema.ts';
 import { raise } from './storage-failures.ts';
 import type { Orm } from './store.ts';
-import {
-  isExposedNodeType,
-  isStoredNodeType,
-  type NodeType,
-  type ResolvedScope,
-  type StoredNode,
-} from './types.ts';
+import { isNodeType, type NodeType, type ResolvedScope, type StoredNode } from './types.ts';
 
 /**
  * One resolution path for both selector forms.
@@ -41,7 +35,7 @@ const storedNode = (
   row: { id: number; type: string; parentId: number | null; slug: string },
   operation: string,
 ): StoredNode => {
-  if (!isStoredNodeType(row.type)) {
+  if (!isNodeType(row.type)) {
     return raise(
       new InternalFailure({ operation, detail: 'a stored node carries an unrecognized type' }),
     );
@@ -125,37 +119,43 @@ export const resolveScope = (
 };
 
 /**
- * Resolves a selector that must name an entity this release can return.
+ * Resolves a selector that must name an entity rather than the root.
  *
- * A stored type the operations do not expose - `resource`, today - is refused as invalid input with a
- * reason saying so, rather than reported as absent. The node exists; what this release cannot do is
- * represent it. Claiming it was not found would be a more convenient answer and a false one.
+ * There is no longer a second check for a type the operations cannot return: every stored type is one
+ * they return, and a string outside that set was already refused as an integrity failure by
+ * `storedNode` on the way out of storage. The refusal that used to live here described a gap between
+ * what storage held and what the API admitted, and that gap is now closed.
  */
 export const resolveEntity = (
   orm: Orm,
   selector: Selector,
   field: 'target' | 'parent',
   operation: string,
-): StoredNode & { readonly type: NodeType } => {
+): StoredNode => {
   const scope = resolveScope(orm, selector, field, operation);
   if (scope.kind === 'root') {
     // Only reachable through an internal caller: the request schemas refuse the root as an entity.
     return raise(new InvalidInput({ field, reason: 'invalid' }));
   }
-  if (!isExposedNodeType(scope.node.type)) {
-    return raise(
-      new InvalidInput({ field, reason: 'unsupported_node_type', nodeType: scope.node.type }),
-    );
-  }
-  return { ...scope.node, type: scope.node.type };
+  return scope.node;
 };
 
 /**
- * The parentage rules for this release, as a product decision rather than a schema accident.
+ * The parentage rules, as a product decision rather than a schema accident.
  *
- * Areas may nest. Projects belong under areas and may not contain areas or projects. The virtual root
- * holds areas only. A resource can be named as a parent - it exists - but cannot contain anything, and
- * saying so is a different answer from pretending the selector found nothing.
+ * ```text
+ * root    -> area only
+ * area    -> area, project, resource
+ * project -> resource
+ * resource -> nothing
+ * ```
+ *
+ * A resource can be named as a parent - it exists - but holds nothing, and saying so is a different
+ * answer from pretending the selector found nothing.
+ *
+ * This is now the full rule rather than the area-only subset it was while resources could not be
+ * created. Storage already permitted every pairing below through `nodes_allowed_parentage`; what
+ * changed is that the operation stopped refusing things the schema was always willing to accept.
  *
  * This runs before the insert, which is not merely tidier: SQLite reports a foreign-key violation
  * without saying which constraint or column failed, so a violation discovered afterwards could not be
@@ -167,8 +167,7 @@ export const validateParentage = (scope: ResolvedScope, childType: NodeType): vo
     return;
   }
   const parentType = scope.node.type;
-  // An area is the only container this release can add to. A project may hold resources, which are not
-  // creatable here, and a resource holds nothing at all.
   if (parentType === 'area') return;
+  if (parentType === 'project' && childType === 'resource') return;
   raise(new InvalidParent({ parentType, childType }));
 };

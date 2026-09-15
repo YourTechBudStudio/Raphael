@@ -1,6 +1,6 @@
 import type { CanonicalDocument } from '@raphael/content';
 import { fromMarkdown } from '@raphael/content/conversion';
-import { canonicalizeDocument } from '@raphael/content/schema';
+import { canonicalizeDocument, deriveText } from '@raphael/content/schema';
 import {
   decodeCreateRequest,
   decodeCreateResponse,
@@ -11,13 +11,15 @@ import { Effect, Either, type Clock } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
 import { CREATE_FIELDS, invalidInputFrom } from './diagnostics.ts';
-import { InternalFailure, UnsupportedContent, type NodeError } from './errors.ts';
+import { InternalFailure, InvalidInput, UnsupportedContent, type NodeError } from './errors.ts';
 import {
+  deriveSlugOrRaise,
   fingerprintOf,
   prepareCreate,
   type PreparedBody,
   type PreparedCreate,
 } from './fingerprint.ts';
+import { allowsOmittedTitle } from './kinds.ts';
 import { bodyProjection, checkedResponse } from './projection.ts';
 import {
   REPLAY_TTL_MS,
@@ -31,11 +33,12 @@ import { resolveScope, validateParentage } from './resolve.ts';
 import { nodes } from './schema.ts';
 import { raise, unwrapFailure } from './storage-failures.ts';
 import { orm, safeRowId, sampleNow, writeTransaction } from './store.ts';
+import { resolveOmittedTitle } from './title.ts';
 
 const OPERATION = 'nodes.create';
 
 /**
- * Creating one container.
+ * Creating one node - a container, or a resource of a supported kind.
  *
  * The order of the pipeline is the design, so it is worth stating plainly:
  *
@@ -43,20 +46,25 @@ const OPERATION = 'nodes.create';
  * decode → normalize and detach → fingerprint
  *   → preliminary replay lookup      (a settled key answers before anything expensive happens)
  *   → convert content                (outside the transaction: it is the slow part, and it can fail)
+ *   → resolve an omitted title       (needs the converted document; must follow the replay lookup)
+ *   → derive plain body text         (mutation-time derivation, ADR 0005)
+ *   → project the response body
  *   → immediate write transaction
  *       resample the clock
  *       authoritative replay recheck
- *       validate the parent, insert the node
+ *       validate the parent, insert the node with its kind and derived text
  *       assemble and validate the response
  *       record the replay result
  *     commit
  * ```
  *
- * Two placements carry real weight. The replay lookup precedes conversion, so a historical success never
- * depends on the current parser still accepting the body that produced it - a document accepted last
- * week replays today even if the vocabulary has since narrowed. And the response is validated *before*
- * the commit, so a projection bug cannot leave a committed entity behind an error telling the caller
- * their request failed.
+ * Three placements carry real weight. The replay lookup precedes conversion, so a historical success
+ * never depends on the current parser still accepting the body that produced it - a document accepted
+ * last week replays today even if the vocabulary has since narrowed. Title resolution sits after
+ * conversion because it reads the canonical document, and after the replay lookup for the same reason
+ * conversion does: a settled key must answer before any content work. And the response is validated
+ * *before* the commit, so a projection bug cannot leave a committed entity behind an error telling the
+ * caller their request failed.
  *
  * The consequence of that first placement is deliberate and observable: a retry whose input differs
  * conflicts on the key even when conversion would also have rejected its body. The key is the more
@@ -102,13 +110,24 @@ export const createNode = (input: unknown): Effect.Effect<CreateResponse, NodeEr
 
       const document = yield* convertBody(prepared.body);
 
+      // Resolving the title can raise `InvalidInput`, so it shares the typed channel with the two
+      // derivations that follow it.
+      const named = yield* Effect.try({
+        try: () => resolveAddress(prepared, document),
+        catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'title resolution' }, cause),
+      });
+
       // Projecting the response body is the expensive part of the operation, so it happens here rather
       // than inside the transaction - and inside a typed channel, so a serializer fault is an internal
       // failure rather than a defect escaping the operation's declared error type.
-      const { body, storedBody } = yield* Effect.try({
+      //
+      // `deriveText` runs on an already-validated document and is total, so a raise from it is an
+      // internal failure rather than something the caller submitted wrongly.
+      const { body, storedBody, derivedText } = yield* Effect.try({
         try: () => ({
           body: bodyProjection(document, prepared.format),
           storedBody: JSON.stringify(document),
+          derivedText: deriveText(document),
         }),
         catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'body projection' }, cause),
       });
@@ -116,10 +135,10 @@ export const createNode = (input: unknown): Effect.Effect<CreateResponse, NodeEr
       return yield* Effect.try({
         try: () =>
           writeTransaction(db, () =>
-            commit(db, { prepared, fingerprint, storedBody, body, clock }),
+            commit(db, { prepared, named, fingerprint, storedBody, body, derivedText, clock }),
           ),
         catch: (cause) =>
-          unwrapFailure({ operation: OPERATION, stage: 'write', slug: prepared.slug }, cause),
+          unwrapFailure({ operation: OPERATION, stage: 'write', slug: named.slug }, cause),
       });
     }),
   );
@@ -149,6 +168,52 @@ const convertBody = (body: PreparedBody): Effect.Effect<CanonicalDocument, NodeE
   );
 
 /**
+ * The name and address this node will be created under.
+ *
+ * A supplied title is already trimmed and its slug already derived, so this is a no-op for every
+ * container and for any note that named itself. Everything below is the omitted-title case.
+ *
+ * The order is deliberate and is not a search for something that works. A candidate is chosen from
+ * the content first, and only then is an address derived from it. If the chosen title cannot produce a
+ * usable address, that is reported against the title - it does **not** fall through to the description
+ * looking for a second candidate that might slug more conveniently. Falling through would mean the
+ * note's name depended on whether its own first line happened to contain sluggable characters, which is
+ * a rule nobody could predict from what they typed.
+ *
+ * An explicit slug with an omitted title keeps the caller's slug: only the name is derived.
+ */
+const resolveAddress = (
+  prepared: PreparedCreate,
+  document: CanonicalDocument,
+): { readonly title: string; readonly slug: string } => {
+  if (prepared.title !== undefined) {
+    if (prepared.slug === undefined) {
+      // Unreachable: a supplied title always derives its slug during preparation.
+      return raise(
+        new InternalFailure({ operation: OPERATION, detail: 'a titled request has no address' }),
+      );
+    }
+    return { title: prepared.title, slug: prepared.slug };
+  }
+
+  // A container is never prepared without a title - `TitleInput` is mandatory in that union member -
+  // so an untitled request here is a resource, and its kind decides whether omission was allowed.
+  if (prepared.kind === undefined || !allowsOmittedTitle(prepared.kind)) {
+    return raise(new InvalidInput({ field: 'title', reason: 'title_required' }));
+  }
+
+  const resolved = resolveOmittedTitle(document, prepared.description);
+  if (resolved === undefined) {
+    return raise(new InvalidInput({ field: 'title', reason: 'title_required' }));
+  }
+
+  return {
+    title: resolved.title,
+    slug: prepared.slug ?? deriveSlugOrRaise(resolved.title),
+  };
+};
+
+/**
  * Everything that must be one atomic fact.
  *
  * The clock is sampled here rather than reused from the preliminary lookup: that reading was taken before
@@ -159,13 +224,15 @@ const commit = (
   db: Database.Database,
   context: {
     readonly prepared: PreparedCreate;
+    readonly named: { readonly title: string; readonly slug: string };
     readonly fingerprint: string;
     readonly storedBody: string;
     readonly body: ReturnType<typeof bodyProjection>;
+    readonly derivedText: string;
     readonly clock: Clock.Clock;
   },
 ): CreateResponse => {
-  const { prepared, fingerprint, storedBody, body } = context;
+  const { prepared, named, fingerprint, storedBody, body, derivedText } = context;
   const handle = orm(db);
   const now = sampleNow(context.clock, OPERATION);
   if (now > Number.MAX_SAFE_INTEGER - REPLAY_TTL_MS) {
@@ -194,13 +261,17 @@ const commit = (
     .insert(nodes)
     .values({
       type: prepared.type,
+      kind: prepared.kind ?? null,
       parentId: parent === undefined ? null : parent.id,
       parentType: parent === undefined ? null : parent.type,
-      slug: prepared.slug,
+      slug: named.slug,
       revision: 1,
-      title: prepared.title,
+      title: named.title,
       description: prepared.description,
       body: storedBody,
+      // Every newly committed node carries a non-null projection, including the empty string for an
+      // empty body. Null is reserved for a row that predates this column.
+      bodyText: derivedText,
       tags: JSON.stringify(prepared.tags),
       metadata: JSON.stringify(prepared.metadata),
       createdAt: now,
@@ -215,10 +286,11 @@ const commit = (
       entity: {
         id,
         type: prepared.type,
+        kind: prepared.kind ?? null,
         parentId: parent === undefined ? null : parent.id,
-        slug: prepared.slug,
+        slug: named.slug,
         revision: 1,
-        title: prepared.title,
+        title: named.title,
         description: prepared.description,
         tags: prepared.tags,
         body,

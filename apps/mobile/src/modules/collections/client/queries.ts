@@ -1,5 +1,5 @@
 import { get as getNode, getPath, list } from '@raphael/client/nodes';
-import type { CreateResponse, GetResponse } from '@raphael/contracts/nodes';
+import { CONTAINER_TYPES, type CreateResponse, type GetResponse } from '@raphael/contracts/nodes';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
@@ -78,9 +78,19 @@ export async function recordCreation(
   activation: number,
 ): Promise<void> {
   const entity = response.entity;
-  const key = keys.entity(activation, { type: entity.type, id: entity.id });
 
-  if (client.getQueryData(key) === undefined) client.setQueryData(key, entity);
+  // The entity cache this seeds is keyed by a container reference, and every screen reading it expects
+  // an area or a project. A resource creation therefore seeds nothing here rather than being filed
+  // under a reference no reader can address - the note screens land in Phase 05 with their own key.
+  // The hierarchy is still invalidated either way: a creation happened, and a stale tree is a stale
+  // tree whatever was added to it.
+  if ((CONTAINER_TYPES as readonly string[]).includes(entity.type)) {
+    const key = keys.entity(activation, {
+      type: entity.type as (typeof CONTAINER_TYPES)[number],
+      id: entity.id,
+    });
+    if (client.getQueryData(key) === undefined) client.setQueryData(key, entity);
+  }
 
   await invalidateHierarchy(client, activation);
 }

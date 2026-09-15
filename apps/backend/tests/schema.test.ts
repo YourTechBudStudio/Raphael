@@ -26,8 +26,7 @@ after(() => {
   temp.cleanup();
 });
 
-// A stable fixture hierarchy. `resource` exists in storage even though this release's public
-// operations expose only areas and projects.
+// A stable fixture hierarchy. Resources are ordinary stored nodes now, distinguished by their kind.
 const WORK = 1;
 let subArea: number;
 let project: number;
@@ -330,5 +329,80 @@ describe('identity allocation', () => {
     insertNode(db, { type: 'resource', parentId: subArea, parentType: 'area', slug: 'successor' });
     const next = one<{ id: number }>(db, 'SELECT id FROM nodes WHERE slug = ?', 'successor').id;
     assert.ok(next > created, `expected a fresh id above ${created}, got ${next}`);
+  });
+});
+
+describe('resource kind', () => {
+  test('a resource must carry a kind and a container must not', () => {
+    // One column-level CHECK carries both halves. Written as an equality between two booleans, so it
+    // can never evaluate to NULL - a NULL CHECK result is treated as satisfied by SQLite, which would
+    // let an unclassified resource through.
+    rejects(
+      () =>
+        insertNode(db, {
+          type: 'resource',
+          kind: null,
+          parentId: project,
+          parentType: 'project',
+          slug: 'unclassified',
+        }),
+      /nodes_kind_valid|CHECK constraint/i,
+    );
+    rejects(
+      () =>
+        insertNode(db, {
+          type: 'area',
+          kind: 'note',
+          parentId: WORK,
+          parentType: 'area',
+          slug: 'kinded',
+        }),
+      /nodes_kind_valid|CHECK constraint/i,
+    );
+  });
+
+  test('the kind vocabulary is closed', () => {
+    rejects(
+      () =>
+        insertNode(db, {
+          type: 'resource',
+          kind: 'sketch',
+          parentId: project,
+          parentType: 'project',
+          slug: 'unsupported-kind',
+        }),
+      /nodes_kind_valid|CHECK constraint/i,
+    );
+  });
+
+  test('the invariant holds on update, not only on insert', () => {
+    // A BEFORE UPDATE OF trigger fires only when its columns are named in the statement. A CHECK is
+    // evaluated on every update, which is why this is a constraint rather than a trigger.
+    rejects(
+      () => db.prepare('UPDATE nodes SET kind = NULL WHERE id = ?').run(resource),
+      /nodes_kind_valid|CHECK constraint/i,
+    );
+    rejects(
+      () => db.prepare('UPDATE nodes SET kind = ? WHERE id = ?').run('sketch', resource),
+      /nodes_kind_valid|CHECK constraint/i,
+    );
+    rejects(
+      () => db.prepare('UPDATE nodes SET kind = ? WHERE id = ?').run('note', project),
+      /nodes_kind_valid|CHECK constraint/i,
+    );
+  });
+
+  test('the seeded root areas have no kind and no projection until one is derived', () => {
+    // Null is "no projection has been derived", which the maintenance pass distinguishes from a body
+    // whose text is genuinely empty. The seeds keep their null until that pass reads them.
+    const seeds = count(
+      db,
+      `SELECT count(*) AS c FROM nodes WHERE parent_id IS NULL AND kind IS NULL AND body_text IS NULL`,
+    );
+    assert.equal(seeds >= 2, true);
+    assert.equal(
+      one<{ body: string }>(db, 'SELECT body FROM nodes WHERE id = ?', WORK).body,
+      EMPTY_BODY,
+    );
   });
 });

@@ -20,6 +20,7 @@ import { InvalidInput, type RequestField } from './errors.ts';
 
 export const CREATE_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
   'type',
+  'kind',
   'parent',
   'title',
   'slug',
@@ -36,6 +37,7 @@ export const LIST_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
   'parent',
   'recursive',
   'types',
+  'orderBy',
   'skip',
   'limit',
 ]);
@@ -63,17 +65,39 @@ const ownDataProperty = (input: unknown, key: string): PropertyReading => {
   return { kind: 'value', value: descriptor.value };
 };
 
-/** The first issue location that names a field this operation actually has. */
+/**
+ * The issue location that names the field this operation should report, out of everything the decoder
+ * complained about.
+ *
+ * Taking the first allowlisted head is not sufficient once a request schema is a union. Every member
+ * whose discriminant did not match reports an issue against `type`, so a container that merely forgot
+ * its title produces issues at `type` *and* `title` - and reporting `type` would tell someone their node
+ * type was wrong when it was the one thing they got right. It would also cost the only specific recovery
+ * copy this capability has, since `title_required` is derived below from a `title` attribution.
+ *
+ * So `type` is reported only when it is the *only* thing named. A genuinely unknown type produces
+ * nothing else, because no member got far enough to check anything else; anything more specific means
+ * some member accepted the discriminant and is telling us what was actually wrong with the request.
+ *
+ * This is about attribution, not about tolerance: the request is refused either way, and nothing from a
+ * decoder message is ever published.
+ */
 const failedField = (
   failure: DecodeFailure,
   allowlist: ReadonlySet<RequestField>,
 ): RequestField | undefined => {
+  let discriminant: RequestField | undefined;
   for (const issue of failure.issues) {
     const [head] = issue.path;
-    if (typeof head === 'string' && allowlist.has(head as RequestField))
-      return head as RequestField;
+    if (typeof head !== 'string' || !allowlist.has(head as RequestField)) continue;
+    const field = head as RequestField;
+    if (field === 'type') {
+      discriminant ??= field;
+      continue;
+    }
+    return field;
   }
-  return undefined;
+  return discriminant;
 };
 
 /**

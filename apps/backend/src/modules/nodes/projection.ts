@@ -4,19 +4,19 @@ import { type CanonicalDocument } from '@raphael/content';
 import { toMarkdown } from '@raphael/content/conversion';
 import { canonicalizeDocument } from '@raphael/content/schema';
 import type { Decoder } from '@raphael/contracts';
-import type { BodyFormat } from '@raphael/contracts/nodes';
+import { RESOURCE_KINDS, type BodyFormat, type ResourceKind } from '@raphael/contracts/nodes';
 import { Either } from 'effect';
 
 import { InternalFailure } from './errors.ts';
 import { raise } from './storage-failures.ts';
-import { isExposedNodeType, type StoredEntity, type StoredSummary } from './types.ts';
+import { isNodeType, type NodeType, type StoredEntity, type StoredSummary } from './types.ts';
 
 /**
  * Building responses, and refusing to publish anything that is not exactly what was intended.
  *
  * Two rules hold everywhere in this module. Public fields are listed one by one, never spread from a
- * row: the stored row carries `created_at`, `updated_at`, and `parent_type`, none of which are part of
- * the wire contract, and response decoding tolerates unrecognized properties - so explicit selection,
+ * row: the stored row carries `created_at`, `updated_at`, `parent_type`, and `body_text`, none of which
+ * are part of the wire contract, and response decoding tolerates unrecognized properties - so explicit selection,
  * not the decoder, is what keeps internal columns internal. And every assembled response then goes
  * through its own shared decoder before it leaves the capability, so a projection bug surfaces here
  * rather than as a client's parse error against data it cannot do anything about.
@@ -97,27 +97,60 @@ export const bodyProjection = (
     ? { format: 'markdown', value: toMarkdown(document) }
     : { format: 'tiptap', value: document };
 
-/** The type of a stored row, as a type the operations may return. */
-const exposedType = (type: string, operation: string): 'area' | 'project' => {
-  if (!isExposedNodeType(type)) {
+/** The type of a stored row, checked rather than assumed. */
+const projectedType = (type: string, operation: string): NodeType => {
+  if (!isNodeType(type)) {
     return raise(
-      new InternalFailure({ operation, detail: 'a projected row carries an unexposed type' }),
+      new InternalFailure({ operation, detail: 'a projected row carries an unrecognized type' }),
     );
   }
   return type;
 };
 
+/**
+ * The kind of a stored row, enforcing the same invariant the storage constraint does - on the way out.
+ *
+ * A resource with a null or unrecognized kind, and a container carrying one, are both integrity
+ * failures rather than responses. The constraint in `0002` is what prevents such a row being written;
+ * this is what prevents one that got there anyway from being handed to a client as though it were
+ * ordinary. A database that bypassed the constraint cannot produce a plausible response.
+ */
+const projectedKind = (
+  type: NodeType,
+  kind: string | null,
+  operation: string,
+): ResourceKind | null => {
+  if (type !== 'resource') {
+    if (kind !== null) {
+      return raise(
+        new InternalFailure({ operation, detail: 'a projected container carries a kind' }),
+      );
+    }
+    return null;
+  }
+  if (kind === null || !(RESOURCE_KINDS as readonly string[]).includes(kind)) {
+    return raise(
+      new InternalFailure({ operation, detail: 'a projected resource carries no supported kind' }),
+    );
+  }
+  return kind as ResourceKind;
+};
+
 /** The summary fields, every one of them named. */
-export const summaryProjection = (row: StoredSummary, operation: string): unknown => ({
-  id: row.id,
-  type: exposedType(row.type, operation),
-  parentId: row.parentId,
-  slug: row.slug,
-  revision: row.revision,
-  title: row.title,
-  description: row.description,
-  tags: parseStored(row.tags, operation, 'tags'),
-});
+export const summaryProjection = (row: StoredSummary, operation: string): unknown => {
+  const type = projectedType(row.type, operation);
+  return {
+    id: row.id,
+    type,
+    kind: projectedKind(type, row.kind, operation),
+    parentId: row.parentId,
+    slug: row.slug,
+    revision: row.revision,
+    title: row.title,
+    description: row.description,
+    tags: parseStored(row.tags, operation, 'tags'),
+  };
+};
 
 /**
  * The entity fields. `tags` and `metadata` are parsed but not otherwise inspected here: SQLite

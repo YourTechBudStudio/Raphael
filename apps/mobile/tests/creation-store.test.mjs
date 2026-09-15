@@ -251,6 +251,43 @@ describe('the attempt store', () => {
     await store.close();
   });
 
+  it('reads a stored row claiming to be a resource as unreadable, not as a container', async () => {
+    const { db, store } = await opened();
+    await store.insertIntent(attempt());
+
+    // Every attempt in this database is a container creation. `resource` is now a real node type on
+    // the server, so a guard written against the wider vocabulary would accept this row and hand a
+    // note onward as a container. A type this subsystem never creates is unreadable.
+    await db.run("UPDATE creation_attempts SET type = 'resource' WHERE attempt_id = 'a1'");
+
+    const { records, unreadable } = await store.list();
+    assert.equal(records.length, 0);
+    assert.equal(unreadable, 1);
+
+    // Unreadable, not reaped: nothing deletes a row it could not understand.
+    const rows = await db.all('SELECT attempt_id FROM creation_attempts');
+    assert.equal(rows.length, 1);
+
+    await store.close();
+  });
+
+  it('reads an acknowledgement naming a resource as unreadable', async () => {
+    const { db, store } = await opened();
+    await store.insertIntent(attempt());
+    await db.run(
+      `UPDATE creation_attempts SET state = 'acknowledged', acknowledged = ? WHERE attempt_id = 'a1'`,
+      [JSON.stringify({ type: 'resource', id: 7, title: 'A note' })],
+    );
+
+    // The acknowledgement is the record of what the server created. One naming something this
+    // subsystem cannot have asked for is not an ordinary success to be shown.
+    const { records, unreadable } = await store.list();
+    assert.equal(records.length, 0);
+    assert.equal(unreadable, 1);
+
+    await store.close();
+  });
+
   it('refuses a database written by a newer build, and closes it', async () => {
     const db = await openNodeDatabase();
     await db.run('PRAGMA user_version = 99');

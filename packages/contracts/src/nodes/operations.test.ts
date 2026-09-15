@@ -47,6 +47,7 @@ const right = <A>(result: Either.Either<A, unknown>): A => {
 const entity = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   id: 42,
   type: 'project',
+  kind: null,
   parentId: 7,
   slug: 'backend',
   revision: 1,
@@ -116,8 +117,22 @@ test('an empty type filter is invalid, so nobody reads an empty page as an empty
     Either.isLeft(decodeListRequest({ parent: { id: 1 }, types: ['area', 'area'] })),
     true,
   );
-  assert.equal(Either.isLeft(decodeListRequest({ parent: { id: 1 }, types: ['resource'] })), true);
   assert.equal(Either.isRight(decodeListRequest({ parent: { id: 1 }, types: ['project'] })), true);
+  // Expressible now that resources are a public type: this is the filter a caller uses to ask for
+  // notes, and the one every container consumer stopped relying on the default for.
+  assert.equal(Either.isRight(decodeListRequest({ parent: { id: 1 }, types: ['resource'] })), true);
+  assert.equal(
+    Either.isRight(
+      decodeListRequest({ parent: { id: 1 }, types: ['area', 'project', 'resource'] }),
+    ),
+    true,
+  );
+  assert.equal(
+    Either.isLeft(
+      decodeListRequest({ parent: { id: 1 }, types: ['area', 'project', 'resource', 'area'] }),
+    ),
+    true,
+  );
 });
 
 test('create defaults the returned body format to Markdown', () => {
@@ -292,7 +307,7 @@ test('a response still fails on a missing field, a bad identity, or an unsupport
   assert.equal(Either.isLeft(decodeCreateResponse({ entity: entity({ id: 0 }) })), true);
   assert.equal(Either.isLeft(decodeCreateResponse({ entity: entity({ revision: 0 }) })), true);
   assert.equal(Either.isLeft(decodeCreateResponse({ entity: entity({ parentId: 0 }) })), true);
-  assert.equal(Either.isLeft(decodeCreateResponse({ entity: entity({ type: 'resource' }) })), true);
+  assert.equal(Either.isLeft(decodeCreateResponse({ entity: entity({ type: 'note' }) })), true);
   assert.equal(Either.isLeft(decodeCreateResponse({ entity: entity({ slug: '' }) })), true);
   assert.equal(
     Either.isLeft(decodeCreateResponse({ entity: entity({ body: { value: 'x' } }) })),
@@ -302,6 +317,64 @@ test('a response still fails on a missing field, a bad identity, or an unsupport
     Either.isLeft(decodeCreateResponse({ entity: entity({ metadata: Number.NaN }) })),
     true,
   );
+});
+
+test('a response carries the kind, and an unknown one is not quietly carried into presentation', () => {
+  // Required and nullable, not optional. A response that omits it is malformed rather than a container:
+  // nothing is defaulted in, because a default would hide a malformed response behind a plausible value.
+  const { kind: _kind, ...withoutKind } = entity();
+  assert.equal(Either.isLeft(decodeCreateResponse({ entity: withoutKind })), true);
+
+  assert.equal(right(decodeCreateResponse({ entity: entity() }))['entity']['kind'], null);
+  assert.equal(
+    right(decodeCreateResponse({ entity: entity({ type: 'resource', kind: 'note' }) }))['entity'][
+      'kind'
+    ],
+    'note',
+  );
+
+  // A closed literal union for the same reason `type` is: an unsupported discriminant is a response
+  // this client cannot represent, and saying so beats carrying an unknown string into a screen.
+  assert.equal(
+    Either.isLeft(decodeCreateResponse({ entity: entity({ type: 'resource', kind: 'sketch' }) })),
+    true,
+  );
+});
+
+test('a response whose kind contradicts its type is refused, not believed', () => {
+  // The backend enforces this on the way out, so these are responses our own server cannot produce.
+  // The decoder is the integration boundary for the ones it does not control: a different, older or
+  // faulty server on the other end. A caller treats "it decoded" as "I can trust it", and the two
+  // combinations below are the ones that would be quietly believed - a kinded area read as an
+  // ordinary container, and a resource with nothing saying what it is.
+  assert.equal(
+    Either.isLeft(decodeCreateResponse({ entity: entity({ type: 'area', kind: 'note' }) })),
+    true,
+    'a container may not carry a kind',
+  );
+  assert.equal(
+    Either.isLeft(decodeCreateResponse({ entity: entity({ type: 'resource', kind: null }) })),
+    true,
+    'a resource must say what it is',
+  );
+
+  // Both legal pairings still decode, so the refinement rejects the relationship rather than the
+  // fields.
+  assert.equal(right(decodeCreateResponse({ entity: entity() }))['entity']['kind'], null);
+  assert.equal(
+    right(decodeCreateResponse({ entity: entity({ type: 'resource', kind: 'note' }) }))['entity'][
+      'type'
+    ],
+    'resource',
+  );
+
+  // The same rule holds for a summary inside a page, which is where a hierarchy consumer would meet
+  // it. One bad item refuses the page rather than being silently carried or dropped.
+  const page = (items: unknown[]) =>
+    decodeListResponse({ items, skip: 0, limit: 10, hasMore: false });
+  assert.equal(Either.isLeft(page([entity({ type: 'area', kind: 'note' })])), true);
+  assert.equal(Either.isLeft(page([entity(), entity({ type: 'resource', kind: null })])), true);
+  assert.equal(Either.isRight(page([entity(), entity({ type: 'resource', kind: 'note' })])), true);
 });
 
 test('an added response property is tolerated without becoming data we claim to understand', () => {
@@ -418,4 +491,152 @@ test('listing order is slug ascending under binary comparison, then id', () => {
     { slug: '\uf8ff', id: 4 },
     { slug: '\u{1f525}', id: 3 },
   ]);
+});
+
+test('a container may not carry a kind, and a resource must', () => {
+  // Enforced by the shape, not by a rule downstream of it. Strict request decoding refuses excess
+  // properties, so the container member rejects `kind` outright and the resource member's type literal
+  // refuses to match an area - there is no reading of this payload that any member accepts.
+  assert.equal(Either.isLeft(decodeCreateRequest(create({ kind: 'note' }))), true);
+  assert.equal(Either.isLeft(decodeCreateRequest(create({ type: 'project', kind: 'note' }))), true);
+
+  // Bare `resource` creation is impossible at the contract, which is where it costs nothing: no
+  // storage rule has to run to discover that nobody said what this resource is.
+  assert.equal(
+    Either.isLeft(decodeCreateRequest({ type: 'resource', parent: { id: 1 }, title: 'A' })),
+    true,
+  );
+  assert.equal(
+    Either.isLeft(
+      decodeCreateRequest({ type: 'resource', kind: 'sketch', parent: { id: 1 }, title: 'A' }),
+    ),
+    true,
+  );
+
+  const note = right(
+    decodeCreateRequest({ type: 'resource', kind: 'note', parent: { id: 1 }, title: 'A' }),
+  );
+  assert.equal(note['kind'], 'note');
+});
+
+test('a note may omit its title; a container may not', () => {
+  // The asymmetry the union exists for. An omitted note title is resolved by core from content, and
+  // there is nothing a contract could put in its place that would not be an invented name.
+  const untitled = right(
+    decodeCreateRequest({ type: 'resource', kind: 'note', parent: { id: 1 } }),
+  );
+  assert.equal('title' in untitled, false);
+
+  // A container without a title still fails on the title itself, so the existing `title_required`
+  // recovery wording is reached by the same route it always was.
+  const { title: _title, ...withoutTitle } = create();
+  assert.equal(Either.isLeft(decodeCreateRequest(withoutTitle)), true);
+
+  // A supplied note title is still authored input and still bounded.
+  assert.equal(
+    Either.isLeft(
+      decodeCreateRequest({ type: 'resource', kind: 'note', parent: { id: 1 }, title: '   ' }),
+    ),
+    true,
+  );
+  assert.equal(
+    Either.isLeft(
+      decodeCreateRequest({
+        type: 'resource',
+        kind: 'note',
+        parent: { id: 1 },
+        title: 'x'.repeat(TITLE_MAX_CODE_POINTS + 1),
+      }),
+    ),
+    true,
+  );
+});
+
+test('the body format default applies to both members of the creation union', () => {
+  assert.equal(right(decodeCreateRequest(create()))['format'], 'markdown');
+  assert.equal(
+    right(decodeCreateRequest({ type: 'resource', kind: 'note', parent: { id: 1 } }))['format'],
+    'markdown',
+  );
+});
+
+const listWith = (orderBy: unknown): Record<string, unknown> => ({
+  parent: { path: '/' },
+  orderBy,
+});
+
+test('ordering clauses are taken in the order they were given, and only from the closed vocabulary', () => {
+  // Array order is priority order, so a decoder that rearranged clauses would silently answer a
+  // different question than the one asked.
+  const decoded = right(
+    decodeListRequest(
+      listWith([
+        { field: 'updatedAt', direction: 'desc' },
+        { field: 'slug', direction: 'asc' },
+      ]),
+    ),
+  );
+  assert.deepEqual(decoded.orderBy, [
+    { field: 'updatedAt', direction: 'desc' },
+    { field: 'slug', direction: 'asc' },
+  ]);
+
+  // Omitted rather than defaulted in. What the default ordering *is* belongs to the server, which is
+  // the only party that can apply it.
+  assert.equal(right(decodeListRequest({ parent: { path: '/' } })).orderBy, undefined);
+});
+
+test('malformed ordering is refused rather than partially honored', () => {
+  for (const bad of [
+    [],
+    null,
+    'slug:asc',
+    [{ field: 'slug' }],
+    [{ direction: 'asc' }],
+    [{ field: 'title', direction: 'asc' }],
+    [{ field: 'slug', direction: 'ascending' }],
+    [{ field: 'slug', direction: 'asc', nulls: 'last' }],
+    [
+      { field: 'slug', direction: 'asc' },
+      { field: 'slug', direction: 'desc' },
+    ],
+    [
+      { field: 'slug', direction: 'asc' },
+      { field: 'updatedAt', direction: 'asc' },
+      { field: 'id', direction: 'asc' },
+      { field: 'slug', direction: 'desc' },
+    ],
+  ]) {
+    assert.equal(
+      Either.isLeft(decodeListRequest(listWith(bad))),
+      true,
+      `must refuse ${JSON.stringify(bad)}`,
+    );
+  }
+});
+
+test('ordering is a List concern and is refused everywhere else', () => {
+  const ordering = [{ field: 'slug', direction: 'asc' }];
+  assert.equal(Either.isLeft(decodeCreateRequest(create({ orderBy: ordering }))), true);
+  assert.equal(Either.isLeft(decodeGetRequest({ target: { id: 1 }, orderBy: ordering })), true);
+  assert.equal(Either.isLeft(decodeGetPathRequest({ target: { id: 1 }, orderBy: ordering })), true);
+});
+
+test('adding ordering left pagination and the response shapes alone', () => {
+  const page = right(decodeListRequest({ parent: { path: '/' } }));
+  assert.equal(page.skip, 0);
+  assert.equal(page.limit, 50);
+  assert.equal(
+    Either.isLeft(decodeListRequest({ parent: { path: '/' }, limit: LIST_LIMIT_MAX + 1 })),
+    true,
+  );
+
+  // Ordering by a timestamp does not put a timestamp in a response. Nothing downstream may start
+  // depending on a clock reading it was never given.
+  const decoded = right(
+    decodeListResponse({ items: [entity()], skip: 0, limit: 10, hasMore: false }),
+  );
+  const item = decoded.items[0] as unknown as Record<string, unknown>;
+  assert.equal('updatedAt' in item, false);
+  assert.equal('createdAt' in item, false);
 });

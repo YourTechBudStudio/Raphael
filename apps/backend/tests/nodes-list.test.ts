@@ -222,8 +222,8 @@ test('the scope node is never one of its own results', () => {
   });
 });
 
-test('unexposed stored types never appear in a page, and are excluded before it is cut', () => {
-  withMigrated('list-hides-resources', (connection) => {
+test('resources are listed alongside containers, and the type filter is what excludes them', () => {
+  withMigrated('list-includes-resources', (connection) => {
     const work = one<{ id: number }>(
       connection.db,
       'SELECT id FROM nodes WHERE parent_id IS NULL AND slug = ?',
@@ -240,21 +240,40 @@ test('unexposed stored types never appear in a page, and are excluded before it 
     }
     make(connection, 'area', { id: work }, 'Visible area');
 
-    const immediate = expectRight(list(connection, { parent: { id: work }, limit: 2 }));
+    // The default filter is every type, so an immediate listing of this area now returns both of its
+    // containers and a recursive one reaches the notes underneath. This is the behaviour change every
+    // container consumer was narrowed for.
+    const immediate = expectRight(list(connection, { parent: { id: work } }));
     assert.deepEqual(slugsOf(immediate), ['holder', 'visible-area']);
-    assert.equal(
-      immediate.hasMore,
-      false,
-      'the restriction is applied in SQL before LIMIT, so hasMore describes rows the caller can receive',
-    );
 
     const recursive = expectRight(list(connection, { parent: { id: work }, recursive: true }));
-    assert.deepEqual(slugsOf(recursive), ['holder', 'visible-area']);
+    assert.deepEqual(slugsOf(recursive), ['holder', 'note-a', 'note-b', 'note-c', 'visible-area']);
+
+    // Asking for containers is now something a caller says rather than something they get by default.
+    const containers = expectRight(
+      list(connection, { parent: { id: work }, recursive: true, types: ['area', 'project'] }),
+    );
+    assert.deepEqual(slugsOf(containers), ['holder', 'visible-area']);
+
+    // And asking for resources reaches them across the containers in between: traversal is never
+    // pruned by the filter, so the notes are not hidden by their non-matching ancestor.
+    const notes = expectRight(
+      list(connection, { parent: { id: work }, recursive: true, types: ['resource'] }),
+    );
+    assert.deepEqual(slugsOf(notes), ['note-a', 'note-b', 'note-c']);
+
+    // Filtering happens in SQL before LIMIT, so hasMore describes rows the caller can actually receive
+    // rather than being an artifact of rows dropped after the page was cut.
+    const firstPage = expectRight(
+      list(connection, { parent: { id: work }, recursive: true, types: ['resource'], limit: 2 }),
+    );
+    assert.deepEqual(slugsOf(firstPage), ['note-a', 'note-b']);
+    assert.equal(firstPage.hasMore, true);
   });
 });
 
-test('a project lists nothing at all in this release, successfully', () => {
-  withMigrated('list-empty-project', (connection) => {
+test('a project lists the resources it holds', () => {
+  withMigrated('list-project-resources', (connection) => {
     const project = make(connection, 'project', { path: '/work' }, 'Holder');
     insertNode(connection.db, {
       type: 'resource',
@@ -264,17 +283,14 @@ test('a project lists nothing at all in this release, successfully', () => {
     });
 
     const response = expectRight(list(connection, { parent: { id: project.id } }));
-    assert.deepEqual(response.items, []);
+    assert.deepEqual(slugsOf(response), ['note']);
+    assert.equal(response.items[0]?.type, 'resource');
+    assert.equal(response.items[0]?.kind, 'note');
     assert.equal(response.hasMore, false);
-    assert.equal(
-      response.skip,
-      0,
-      'a project may only contain resources, so an empty page here is a successful answer',
-    );
   });
 });
 
-test('a scope this release cannot represent is refused rather than listed as empty', () => {
+test('listing a resource is a successful empty page, not a refusal', () => {
   withMigrated('list-resource-scope', (connection) => {
     const project = make(connection, 'project', { path: '/work' }, 'Holder');
     insertNode(connection.db, {
@@ -289,13 +305,15 @@ test('a scope this release cannot represent is refused rather than listed as emp
       'note',
     ).id;
 
-    const error = toPublicError(expectLeft(list(connection, { parent: { id: resource } })));
-    assert.equal(error.code, 'invalid_input');
-    assert.deepEqual(error.details, {
-      field: 'parent',
-      reason: 'unsupported_node_type',
-      nodeType: 'resource',
-    });
+    // A resource holds nothing, and an empty page is the truthful answer for a valid scope. The
+    // refusal this replaces described a type the API could not represent, which is no longer true.
+    const response = expectRight(list(connection, { parent: { id: resource } }));
+    assert.deepEqual(response.items, []);
+    assert.equal(response.hasMore, false);
+    assert.equal(response.skip, 0);
+
+    const recursive = expectRight(list(connection, { parent: { id: resource }, recursive: true }));
+    assert.deepEqual(recursive.items, []);
   });
 });
 
@@ -316,5 +334,269 @@ test('a missing or malformed scope is distinguished from an empty one', () => {
       'invalid_input',
       'asking for nothing must not be readable as an empty hierarchy',
     );
+  });
+});
+
+/* ------------------------------------------------------------------ explicit ordering */
+
+/**
+ * A fixture with deliberate ties.
+ *
+ * Two notes share a timestamp, and two share a slug under different parents, because those are the
+ * cases where an ordering that is not total stops being reproducible - and where a page boundary can
+ * move between two requests that asked the same question.
+ */
+const orderedFixture = (connection: Parameters<typeof runNodes>[0]) => {
+  const work = one<{ id: number }>(
+    connection.db,
+    'SELECT id FROM nodes WHERE parent_id IS NULL AND slug = ?',
+    'work',
+  ).id;
+  const alpha = make(connection, 'project', { id: work }, 'Alpha');
+  const beta = make(connection, 'project', { id: work }, 'Beta');
+
+  const add = (parentId: number, slug: string, updatedAt: number): number => {
+    insertNode(connection.db, {
+      type: 'resource',
+      parentId,
+      parentType: 'project',
+      slug,
+      title: slug,
+      updatedAt,
+      createdAt: updatedAt,
+    });
+    return one<{ id: number }>(
+      connection.db,
+      'SELECT id FROM nodes WHERE parent_id = ? AND slug = ?',
+      parentId,
+      slug,
+    ).id;
+  };
+
+  return {
+    work,
+    // `shared` exists under both projects: equal slugs that only an id can separate.
+    oldest: add(alpha.id, 'aaa', T0 + 1_000),
+    sharedAlpha: add(alpha.id, 'shared', T0 + 2_000),
+    sharedBeta: add(beta.id, 'shared', T0 + 2_000),
+    newest: add(beta.id, 'zzz', T0 + 3_000),
+  };
+};
+
+test('omitted ordering is unchanged: binary slug ascending, then id', () => {
+  withMigrated('order-default', (connection) => {
+    orderedFixture(connection);
+    const response = expectRight(
+      list(connection, { parent: { path: '/work' }, recursive: true, types: ['resource'] }),
+    );
+    assert.deepEqual(slugsOf(response), ['aaa', 'shared', 'shared', 'zzz']);
+
+    // The two equal slugs settle by id, which is the tiebreaker that makes the order total.
+    const ids = response.items.map((item) => item.id);
+    assert.deepEqual(
+      ids,
+      [...ids].sort((a, b) => a - b),
+    );
+  });
+});
+
+test('each field orders in both directions', () => {
+  withMigrated('order-fields', (connection) => {
+    const fixture = orderedFixture(connection);
+    const request = (orderBy: unknown) => ({
+      parent: { path: '/work' },
+      recursive: true,
+      types: ['resource'],
+      orderBy,
+    });
+
+    assert.deepEqual(
+      slugsOf(expectRight(list(connection, request([{ field: 'slug', direction: 'desc' }])))),
+      ['zzz', 'shared', 'shared', 'aaa'],
+    );
+
+    const byRecency = expectRight(
+      list(connection, request([{ field: 'updatedAt', direction: 'desc' }])),
+    );
+    assert.equal(byRecency.items[0]?.id, fixture.newest);
+    assert.equal(byRecency.items[3]?.id, fixture.oldest);
+
+    const oldestFirst = expectRight(
+      list(connection, request([{ field: 'updatedAt', direction: 'asc' }])),
+    );
+    assert.equal(oldestFirst.items[0]?.id, fixture.oldest);
+
+    // An explicit id clause keeps its own direction and is not shadowed by an appended one.
+    const byIdDesc = expectRight(list(connection, request([{ field: 'id', direction: 'desc' }])));
+    const ids = byIdDesc.items.map((item) => item.id);
+    assert.deepEqual(
+      ids,
+      [...ids].sort((a, b) => b - a),
+    );
+  });
+});
+
+test('clause priority is the array order, and ties fall through to the next clause', () => {
+  withMigrated('order-priority', (connection) => {
+    const fixture = orderedFixture(connection);
+    const ordered = expectRight(
+      list(connection, {
+        parent: { path: '/work' },
+        recursive: true,
+        types: ['resource'],
+        orderBy: [
+          { field: 'updatedAt', direction: 'desc' },
+          { field: 'slug', direction: 'asc' },
+        ],
+      }),
+    );
+
+    // The two shared-timestamp rows sit together in the middle, separated by the appended id clause
+    // because their slugs are equal too.
+    assert.deepEqual(
+      ordered.items.map((item) => item.id),
+      [fixture.newest, fixture.sharedAlpha, fixture.sharedBeta, fixture.oldest],
+    );
+
+    // Reversing the clauses reverses the question, which is the whole point of priority order.
+    const slugFirst = expectRight(
+      list(connection, {
+        parent: { path: '/work' },
+        recursive: true,
+        types: ['resource'],
+        orderBy: [
+          { field: 'slug', direction: 'asc' },
+          { field: 'updatedAt', direction: 'desc' },
+        ],
+      }),
+    );
+    assert.deepEqual(slugsOf(slugFirst), ['aaa', 'shared', 'shared', 'zzz']);
+  });
+});
+
+test('ordering is global across the scope, applied before the page is cut', () => {
+  withMigrated('order-global-paging', (connection) => {
+    const fixture = orderedFixture(connection);
+    const page = (skip: number) =>
+      expectRight(
+        list(connection, {
+          parent: { path: '/' },
+          recursive: true,
+          types: ['resource'],
+          orderBy: [{ field: 'updatedAt', direction: 'desc' }],
+          skip,
+          limit: 2,
+        }),
+      );
+
+    // Recursion from the root spans both projects and both areas. If ordering ran per branch, or
+    // after the limit, the second page would not continue the first.
+    const first = page(0);
+    assert.deepEqual(
+      first.items.map((item) => item.id),
+      [fixture.newest, fixture.sharedAlpha],
+    );
+    assert.equal(first.hasMore, true);
+
+    const second = page(2);
+    assert.deepEqual(
+      second.items.map((item) => item.id),
+      [fixture.sharedBeta, fixture.oldest],
+    );
+    assert.equal(second.hasMore, false);
+  });
+});
+
+test('ordering does not prune ancestors that the type filter excludes', () => {
+  withMigrated('order-traversal', (connection) => {
+    const fixture = orderedFixture(connection);
+    const notes = expectRight(
+      list(connection, {
+        parent: { path: '/' },
+        recursive: true,
+        types: ['resource'],
+        orderBy: [{ field: 'updatedAt', direction: 'desc' }],
+      }),
+    );
+    // Every note lives under a project, which the filter excludes. Pruning traversal by the filter
+    // would return nothing at all.
+    assert.equal(notes.items.length, 4);
+    assert.equal(notes.items[0]?.id, fixture.newest);
+  });
+});
+
+test('invalid ordering is refused with a bounded error that names the field and nothing else', () => {
+  withMigrated('order-invalid', (connection) => {
+    for (const orderBy of [
+      [],
+      'slug asc',
+      [{ field: 'title', direction: 'asc' }],
+      [{ field: 'slug', direction: 'sideways' }],
+      [{ field: 'slug' }],
+      [
+        { field: 'slug', direction: 'asc' },
+        { field: 'slug', direction: 'desc' },
+      ],
+      // Injection-shaped input is refused as ordinary invalid input: the vocabulary is closed and the
+      // SQL is assembled from fixed fragments, so this never reaches a query to begin with.
+      [{ field: 'slug; DROP TABLE nodes', direction: 'asc' }],
+      [{ field: 'slug', direction: 'asc --' }],
+    ]) {
+      const error = toPublicError(expectLeft(list(connection, { parent: { path: '/' }, orderBy })));
+      assert.equal(error.code, 'invalid_input', JSON.stringify(orderBy));
+      assert.deepEqual(
+        error.details,
+        { field: 'orderBy', reason: 'invalid' },
+        'never the submitted clause, and never a decoder string',
+      );
+    }
+
+    // The table is still there, which is the part an injection test is actually about.
+    assert.ok(
+      expectRight(list(connection, { parent: { path: '/' } })).items.length > 0,
+      'the refusals above changed nothing',
+    );
+  });
+});
+
+test('ordering by a timestamp does not put a timestamp in the response', () => {
+  withMigrated('order-no-timestamps', (connection) => {
+    orderedFixture(connection);
+    const response = expectRight(
+      list(connection, {
+        parent: { path: '/' },
+        recursive: true,
+        orderBy: [{ field: 'updatedAt', direction: 'desc' }],
+      }),
+    );
+    for (const item of response.items) {
+      const keys = Object.keys(item);
+      assert.equal(keys.includes('updatedAt'), false);
+      assert.equal(keys.includes('createdAt'), false);
+    }
+  });
+});
+
+test('reading and listing never advance a node updated_at', () => {
+  withMigrated('order-recency-stable', (connection) => {
+    orderedFixture(connection);
+    const before = many<{ id: number; updatedAt: number }>(
+      connection.db,
+      'SELECT id, updated_at AS updatedAt FROM nodes ORDER BY id',
+    );
+
+    expectRight(
+      list(connection, {
+        parent: { path: '/' },
+        recursive: true,
+        orderBy: [{ field: 'updatedAt', direction: 'desc' }],
+      }),
+    );
+
+    const after = many<{ id: number; updatedAt: number }>(
+      connection.db,
+      'SELECT id, updated_at AS updatedAt FROM nodes ORDER BY id',
+    );
+    assert.deepEqual(after, before, 'a read is not an edit, so recency is not touched by browsing');
   });
 });

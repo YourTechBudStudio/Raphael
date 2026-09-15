@@ -259,7 +259,11 @@ export const createCreationOwner = (ports: CreationPorts) =>
           created = result.value;
           const entity = result.value.entity;
           const acknowledged: AcknowledgedResult = {
-            type: entity.type,
+            // The attempt's own container type, not the response's node type. Every attempt in this
+            // subsystem is a container creation, and the server echoes the type it was given, so these
+            // agree - but only one of them is guaranteed by construction to be a container, and the
+            // local record of a container attempt should not be able to come back saying otherwise.
+            type: record.type,
             id: entity.id,
             title: entity.title,
           };

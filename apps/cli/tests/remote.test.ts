@@ -218,10 +218,23 @@ describe('creating', () => {
     assert.match(ran.stderr, /not both/);
   });
 
-  it('requires a title', async () => {
-    const ran = await run(['create', 'project', '/work/untitled']);
-    assert.equal(ran.code, 2);
-    assert.match(ran.stderr, /--title is required/);
+  it('requires a title for a container, but not for a note', async () => {
+    const container = await run(['create', 'project', '/work/untitled']);
+    assert.equal(container.code, 2);
+    assert.match(container.stderr, /--title is required/);
+
+    // The CLI does not decide whether a kind may omit a title; it declines to invent one and lets the
+    // server answer. So this reaches the server and succeeds on the strength of its body.
+    const note = await run([
+      'create',
+      'resource.note',
+      '/work/untitled-note',
+      '--body',
+      '# Derived name',
+      '--json',
+    ]);
+    assert.equal(note.code, 0);
+    assert.equal(jsonOf(note).entity.title, 'Derived name');
   });
 
   it('carries description, tags, and metadata', async () => {
@@ -610,5 +623,390 @@ describe('connecting', () => {
     );
     assert.equal(ran.code, 1);
     assert.match(ran.stderr, /not when the key was first used/);
+  });
+});
+
+describe('notes', () => {
+  it('creates, reads, and lists a note with its qualified type', async () => {
+    const created = await run([
+      'create',
+      'resource.note',
+      '/work/api-design',
+      '--title',
+      'API design',
+      '--description',
+      'Request contracts',
+      '--body',
+      '# API design',
+    ]);
+    assert.equal(created.code, 0);
+    assert.match(created.stdout, /Created resource\.note \d+: API design/);
+
+    const got = await run(['get', '/work/api-design']);
+    assert.equal(got.code, 0);
+    assert.match(got.stdout, /^resource\.note \d+ {2}\(revision 1\)/m);
+    assert.match(got.stdout, /title: API design/);
+    assert.match(got.stdout, /# API design/);
+
+    const listed = await run(['list', '/work', '--types', 'resource']);
+    assert.equal(listed.code, 0);
+    assert.match(listed.stdout, /resource\.note {2}api-design/);
+  });
+
+  it('accepts a body from a file, standard input, and TipTap', async () => {
+    const directory = temporary('raphael-cli-note-');
+    const file = join(directory, 'note.md');
+    writeFileSync(file, '# From a file\n', 'utf8');
+
+    const fromFile = await run([
+      'create',
+      'resource.note',
+      '/work/from-file',
+      '--body',
+      `@${file}`,
+      '--json',
+    ]);
+    assert.equal(fromFile.code, 0);
+    assert.equal(jsonOf(fromFile).entity.title, 'From a file');
+    assert.equal(jsonOf(fromFile).entity.kind, 'note');
+
+    const fromStdin = await run(
+      ['create', 'resource.note', '/work/note-from-stdin', '--body', '@-', '--json'],
+      { stdin: '# From standard input\n' },
+    );
+    assert.equal(fromStdin.code, 0, fromStdin.stderr);
+    assert.equal(jsonOf(fromStdin).entity.title, 'From standard input');
+
+    const document = JSON.stringify({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'From TipTap' }] }],
+    });
+    const fromTipTap = await run([
+      'create',
+      'resource.note',
+      '/work/from-tiptap',
+      '--body',
+      document,
+      '--body-format',
+      'tiptap',
+      '--json',
+    ]);
+    assert.equal(fromTipTap.code, 0);
+    assert.equal(jsonOf(fromTipTap).entity.title, 'From TipTap');
+  });
+
+  it('creates a note with no body at all when it is given a title', async () => {
+    const ran = await run([
+      'create',
+      'resource.note',
+      '/work/empty-note',
+      '--title',
+      'Empty note',
+      '--json',
+    ]);
+    assert.equal(ran.code, 0);
+    assert.equal(jsonOf(ran).entity.body.value, '');
+  });
+
+  it('prints the server sentence when no title can be derived', async () => {
+    const ran = await run(['create', 'resource.note', '/work/nameless']);
+    assert.notEqual(ran.code, 0);
+    assert.match(ran.stderr, /title is required/i);
+  });
+
+  it('refuses an unknown type token before any request is made', async () => {
+    for (const token of ['resource', 'resource.bogus', 'resource.note.extra', 'note', 'sketch']) {
+      const ran = await run(['create', token, '/work/whatever', '--title', 'T']);
+      assert.equal(ran.code, 2, token);
+      assert.match(ran.stderr, /area, project, resource\.note/, token);
+    }
+  });
+
+  it('filters by resource, and refuses a kind as a filter value', async () => {
+    const byType = await run(['list', '/work', '--types', 'resource', '--json']);
+    assert.equal(byType.code, 0);
+
+    const byKind = await run(['list', '/work', '--types', 'resource.note']);
+    assert.equal(byKind.code, 2);
+    assert.match(byKind.stderr, /--types must name area or project or resource/);
+  });
+});
+
+describe('ordering', () => {
+  it('defaults to slug order and honours explicit clauses in priority order', async () => {
+    const area = await run(['create', 'area', '/ordering', '--title', 'Ordering', '--json']);
+    assert.equal(area.code, 0);
+
+    for (const slug of ['charlie', 'alpha', 'bravo']) {
+      const made = await run([
+        'create',
+        'resource.note',
+        `/ordering/${slug}`,
+        '--title',
+        slug,
+        '--json',
+      ]);
+      assert.equal(made.code, 0);
+    }
+
+    const byDefault = await run(['list', '/ordering', '--json']);
+    assert.deepEqual(
+      jsonOf(byDefault).items.map((item: { slug: string }) => item.slug),
+      ['alpha', 'bravo', 'charlie'],
+    );
+
+    const descending = await run(['list', '/ordering', '--order-by', 'slug:desc', '--json']);
+    assert.deepEqual(
+      jsonOf(descending).items.map((item: { slug: string }) => item.slug),
+      ['charlie', 'bravo', 'alpha'],
+    );
+
+    // Repeated flags are preserved in occurrence order rather than the last one winning. These were
+    // created in one run, so their timestamps may tie - which is exactly when the second clause is
+    // what decides, and the reason a tie is worth building into the fixture.
+    const tied = await run([
+      'list',
+      '/ordering',
+      '--order-by',
+      'updatedAt:desc',
+      '--order-by',
+      'slug:asc',
+      '--json',
+    ]);
+    assert.equal(tied.code, 0);
+    assert.equal(jsonOf(tied).items.length, 3);
+
+    const byId = await run(['list', '/ordering', '--order-by', 'id:desc', '--json']);
+    const ids = jsonOf(byId).items.map((item: { id: number }) => item.id);
+    assert.deepEqual(
+      ids,
+      [...ids].sort((a: number, b: number) => b - a),
+    );
+  });
+
+  it('pages a recursive root listing as one globally ordered sequence', async () => {
+    // Notes spread across two areas and two projects, so the recursion has to cross container
+    // boundaries to collect them and the ordering has to span those branches rather than run per
+    // branch.
+    for (const [area, project] of [
+      ['paging-one', 'alpha'],
+      ['paging-two', 'beta'],
+    ] as const) {
+      assert.equal((await run(['create', 'area', `/${area}`, '--title', area, '--json'])).code, 0);
+      assert.equal(
+        (await run(['create', 'project', `/${area}/${project}`, '--title', project, '--json']))
+          .code,
+        0,
+      );
+      for (const n of ['1', '2', '3']) {
+        const made = await run([
+          'create',
+          'resource.note',
+          `/${area}/${project}/page-${area}-${n}`,
+          '--title',
+          `note ${area} ${n}`,
+          '--json',
+        ]);
+        assert.equal(made.code, 0);
+      }
+    }
+
+    // The whole ordered sequence, read in one page. Everything below is checked against this rather
+    // than against a hand-written list, so other tests' data cannot make the assertions wrong - and
+    // the property being tested is exactly that a page is a window on this one sequence.
+    const whole = await run([
+      'list',
+      '/',
+      '-r',
+      '--types',
+      'resource',
+      '--order-by',
+      'slug:asc',
+      '--limit',
+      '500',
+      '--json',
+    ]);
+    assert.equal(whole.code, 0);
+    const all = jsonOf(whole).items as { id: number; slug: string; parentId: number }[];
+    assert.equal(all.length > 6, true, 'the fixture notes are in there');
+    assert.equal(
+      new Set(all.filter((i) => i.slug.startsWith('page-')).map((i) => i.parentId)).size,
+      2,
+      'the fixture spans two projects, so recursion really did cross containers',
+    );
+
+    // A page is that sequence, windowed. Ordering before pagination is what makes this hold; sorting
+    // a page after cutting it would reorder within the window and leave the boundaries wrong.
+    const page = await run([
+      'list',
+      '/',
+      '-r',
+      '--types',
+      'resource',
+      '--order-by',
+      'slug:asc',
+      '--skip',
+      '2',
+      '--limit',
+      '3',
+      '--json',
+    ]);
+    assert.equal(page.code, 0);
+    const body = jsonOf(page);
+    assert.deepEqual(
+      (body.items as { id: number }[]).map((i) => i.id),
+      all.slice(2, 5).map((i) => i.id),
+    );
+    assert.deepEqual(
+      (body.items as { slug: string }[]).map((i) => i.slug),
+      all.slice(2, 5).map((i) => i.slug),
+    );
+    assert.equal(body.skip, 2);
+    assert.equal(body.limit, 3);
+    assert.equal(body.hasMore, all.length > 5);
+
+    // The reverse direction is the same sequence read backwards, which a mis-forwarded direction
+    // would not produce.
+    const reversed = await run([
+      'list',
+      '/',
+      '-r',
+      '--types',
+      'resource',
+      '--order-by',
+      'slug:desc',
+      '--limit',
+      '500',
+      '--json',
+    ]);
+    assert.deepEqual(
+      (jsonOf(reversed).items as { id: number }[]).map((i) => i.id),
+      [...all].reverse().map((i) => i.id),
+    );
+  });
+
+  it('breaks a tie by the next clause, and by id when the caller names no other', async () => {
+    // Equal slugs under different parents, which is a tie the test controls exactly. Timestamps are
+    // the other tie the server can produce, but nothing at this layer can set them - two creations
+    // land in whatever milliseconds they land in - so the deliberately-controlled timestamp ties are
+    // exercised against the database in `apps/backend/tests/nodes-list.test.ts`, and this case pins
+    // the part that is the CLI's own job: that clause priority survives the round trip.
+    for (const area of ['tie-one', 'tie-two']) {
+      assert.equal((await run(['create', 'area', `/${area}`, '--title', area, '--json'])).code, 0);
+      const made = await run([
+        'create',
+        'resource.note',
+        `/${area}/shared-slug`,
+        '--title',
+        `shared in ${area}`,
+        '--json',
+      ]);
+      assert.equal(made.code, 0);
+    }
+
+    const idsOf = (ran: Ran): number[] =>
+      (jsonOf(ran).items as { id: number; slug: string }[])
+        .filter((item) => item.slug === 'shared-slug')
+        .map((item) => item.id);
+
+    // Slug alone cannot separate them, so the id clause core appends decides: ascending.
+    const appended = await run([
+      'list',
+      '/',
+      '-r',
+      '--types',
+      'resource',
+      '--order-by',
+      'slug:asc',
+      '--limit',
+      '500',
+      '--json',
+    ]);
+    const ascending = idsOf(appended);
+    assert.equal(ascending.length, 2);
+    assert.deepEqual(
+      ascending,
+      [...ascending].sort((a, b) => a - b),
+    );
+
+    // An explicit id clause keeps its own direction and position instead of being shadowed by an
+    // appended one, so the same tie resolves the other way.
+    const explicit = await run([
+      'list',
+      '/',
+      '-r',
+      '--types',
+      'resource',
+      '--order-by',
+      'slug:asc',
+      '--order-by',
+      'id:desc',
+      '--limit',
+      '500',
+      '--json',
+    ]);
+    assert.deepEqual(idsOf(explicit), [...ascending].reverse());
+
+    // And priority is the order the flags were given: leading with id:desc sorts by id across every
+    // note, so the two tied slugs are no longer adjacent in the way slug-first makes them.
+    const idFirst = await run([
+      'list',
+      '/',
+      '-r',
+      '--types',
+      'resource',
+      '--order-by',
+      'id:desc',
+      '--limit',
+      '500',
+      '--json',
+    ]);
+    const everyId = (jsonOf(idFirst).items as { id: number }[]).map((i) => i.id);
+    assert.deepEqual(
+      everyId,
+      [...everyId].sort((a, b) => b - a),
+    );
+  });
+
+  it('refuses malformed ordering locally, before any request', async () => {
+    for (const value of [
+      'slug',
+      'slug:',
+      ':asc',
+      'slug:asc:extra',
+      'title:asc',
+      'slug:ascending',
+      'slug asc',
+      'slug:asc,id:asc',
+    ]) {
+      const ran = await run(['list', '/work', '--order-by', value]);
+      assert.equal(ran.code, 2, value);
+      assert.match(ran.stderr, /--order-by/, value);
+    }
+
+    const repeated = await run([
+      'list',
+      '/work',
+      '--order-by',
+      'slug:asc',
+      '--order-by',
+      'slug:desc',
+    ]);
+    assert.equal(repeated.code, 2);
+    assert.match(repeated.stderr, /must not repeat/);
+  });
+
+  it('documents both ordering examples in its help', async () => {
+    const ran = await run(['list', '--help']);
+    assert.equal(ran.code, 0);
+    assert.match(ran.stdout, /--order-by updatedAt:desc --limit 4/);
+    assert.match(ran.stdout, /--order-by updatedAt:desc --order-by slug:asc/);
+  });
+
+  it('documents the note token and the optional title in create help', async () => {
+    const ran = await run(['create', '--help']);
+    assert.equal(ran.code, 0);
+    assert.match(ran.stdout, /area, project, resource\.note/);
+    assert.match(ran.stdout, /A note may omit --title/);
   });
 });

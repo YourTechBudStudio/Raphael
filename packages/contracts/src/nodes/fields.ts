@@ -61,6 +61,7 @@ export { SLUG_MAX_CODE_POINTS };
  */
 export const REQUEST_FIELDS = [
   'type',
+  'kind',
   'parent',
   'target',
   'title',
@@ -75,6 +76,7 @@ export const REQUEST_FIELDS = [
   'types',
   'skip',
   'limit',
+  'orderBy',
 ] as const;
 
 export type RequestField = (typeof REQUEST_FIELDS)[number];
@@ -86,9 +88,47 @@ export const NodeId = PositiveSafeInt;
 export const NodeRevision = PositiveSafeInt;
 
 /** The node types this release's operations accept and return. */
-export const NODE_TYPES = ['area', 'project'] as const;
+export const NODE_TYPES = ['area', 'project', 'resource'] as const;
 export type NodeType = (typeof NODE_TYPES)[number];
 export const NodeTypeSchema = Schema.Literal(...NODE_TYPES);
+
+/**
+ * The resource kinds core admits. One built-in kind; this is deliberately not an extension registry.
+ *
+ * A kind is not a node type. It says what a resource *is*, and it exists as its own closed vocabulary
+ * so that widening one never silently widens the other: adding a kind is a content decision, while
+ * adding a node type changes what may contain what.
+ */
+export const RESOURCE_KINDS = ['note'] as const;
+export type ResourceKind = (typeof RESOURCE_KINDS)[number];
+export const ResourceKindSchema = Schema.Literal(...RESOURCE_KINDS);
+
+/**
+ * The node types that may hold children.
+ *
+ * Published because widening `NODE_TYPES` silently widens every consumer that meant "a container".
+ * Those consumers name this instead, so the widening becomes a deliberate edit at each site rather
+ * than an accident that turns a container tree into one holding leaves.
+ */
+export const CONTAINER_TYPES = ['area', 'project'] as const;
+export type ContainerType = (typeof CONTAINER_TYPES)[number];
+export const ContainerTypeSchema = Schema.Literal(...CONTAINER_TYPES);
+
+/**
+ * The fields a listing may be ordered by, and the directions available.
+ *
+ * Closed on purpose. Ordering compiles to SQL, so an open vocabulary would be an open question about
+ * what a caller can ask storage to do; these three are the ones with an index-backed or otherwise
+ * bounded meaning. `updatedAt` orders by a server-owned timestamp that is deliberately not part of any
+ * response: a caller may ask for recency without being handed a clock reading to reason about.
+ */
+export const NODE_ORDER_FIELDS = ['slug', 'updatedAt', 'id'] as const;
+export type NodeOrderField = (typeof NODE_ORDER_FIELDS)[number];
+export const NodeOrderFieldSchema = Schema.Literal(...NODE_ORDER_FIELDS);
+
+export const ORDER_DIRECTIONS = ['asc', 'desc'] as const;
+export type OrderDirection = (typeof ORDER_DIRECTIONS)[number];
+export const OrderDirectionSchema = Schema.Literal(...ORDER_DIRECTIONS);
 
 export const BODY_FORMATS = ['markdown', 'tiptap'] as const;
 export type BodyFormat = (typeof BODY_FORMATS)[number];

@@ -3,7 +3,7 @@ import type { ApiErrorCode, JsonObject } from '@raphael/contracts';
 import type { RequestField } from '@raphael/contracts/nodes';
 import { Data } from 'effect';
 
-import type { NodeType, StoredNodeType } from './types.ts';
+import type { NodeType } from './types.ts';
 
 /**
  * The expected failures of the node operations, and the single place where any of them becomes
@@ -27,8 +27,7 @@ export type InvalidInputReason =
   | 'title_required'
   | 'title_too_long'
   | 'slug_underivable'
-  | 'slug_too_long'
-  | 'unsupported_node_type';
+  | 'slug_too_long';
 
 /**
  * The request fields an operation can name in a failure.
@@ -44,8 +43,6 @@ export class InvalidInput extends Data.TaggedError('InvalidInput')<{
   readonly reason: InvalidInputReason;
   /** The bound that was exceeded, when the reason is a limit. */
   readonly limit?: number;
-  /** The stored type a selector reached, when the reason is `unsupported_node_type`. */
-  readonly nodeType?: StoredNodeType;
 }> {}
 
 export class NodeNotFound extends Data.TaggedError('NodeNotFound')<{
@@ -57,7 +54,7 @@ export class NodeNotFound extends Data.TaggedError('NodeNotFound')<{
  * `parent_type` is the type that cannot hold the requested child; `root` is the virtual root.
  */
 export class InvalidParent extends Data.TaggedError('InvalidParent')<{
-  readonly parentType: StoredNodeType | 'root';
+  readonly parentType: NodeType | 'root';
   readonly childType: NodeType;
 }> {}
 
@@ -123,7 +120,6 @@ const INVALID_INPUT_MESSAGES: Readonly<Record<InvalidInputReason, string>> = {
   title_too_long: 'The title is longer than the limit.',
   slug_underivable: 'No address could be derived from this title.',
   slug_too_long: 'The address derived from this title is longer than the limit.',
-  unsupported_node_type: 'That entity is not one this release can return.',
 };
 
 /**
@@ -140,7 +136,6 @@ export const toPublicError = (error: NodeError): PublicApiError => {
           field: error.field,
           reason: error.reason,
           limit: error.limit,
-          nodeType: error.nodeType,
         }),
       };
     case 'NodeNotFound':
@@ -155,7 +150,9 @@ export const toPublicError = (error: NodeError): PublicApiError => {
         message:
           error.parentType === 'root'
             ? 'Only areas can exist at the root.'
-            : 'That parent cannot contain this kind of entity.',
+            : error.parentType === 'resource'
+              ? 'A note holds nothing, so it cannot be a parent.'
+              : 'That parent cannot contain this kind of entity.',
         details: { field: 'parent', parentType: error.parentType, childType: error.childType },
       };
     case 'SlugConflict':

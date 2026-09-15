@@ -11,7 +11,7 @@
 
 import { readFileSync } from 'node:fs';
 
-import { NODE_TYPES } from '@raphael/contracts/nodes';
+import { CREATE_TARGETS } from './modules/nodes/input.ts';
 
 /**
  * The version this command actually is, read from the manifest it shipped with.
@@ -60,7 +60,7 @@ Addressing:
   Identifiers are how they stay addressable: --id 42
   A path changes when something is renamed or moved. An identifier does not.
 
-Types: ${NODE_TYPES.join(', ')}
+Types: ${CREATE_TARGETS.join(', ')}
 
 Connecting:
   "raphael login" saves an address and key with owner-only permissions.

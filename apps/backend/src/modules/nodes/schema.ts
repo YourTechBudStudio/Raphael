@@ -34,9 +34,9 @@ const safeEpochMillis = (column: string) =>
  * The common node table (ADR 0007): one identity space for every entity type, carrying hierarchy,
  * addressing, and the common authored fields.
  *
- * Storage deliberately permits `resource` even though this release's public operations expose only
- * areas and projects. Identity is common; which types the API returns is a product rule, and adding
- * a type to a response is a separate, compatibility-breaking protocol change.
+ * Every type in this table is a type the public operations accept and return. Identity is common, and
+ * `kind` is what distinguishes one leaf from another without giving each its own table or its own
+ * identity space.
  *
  * Parentage is enforced declaratively rather than by triggers. `parent_type` duplicates the parent's
  * type so that a plain CHECK can decide whether the pairing is legal, and the composite foreign key
@@ -49,6 +49,11 @@ export const nodes = sqliteTable(
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     type: text('type').notNull(),
+    /**
+     * What a resource is. Null for a container, and required for a resource - the pairing is a
+     * constraint, not a convention. See `nodes_kind_valid` below.
+     */
+    kind: text('kind'),
     parentId: integer('parent_id'),
     parentType: text('parent_type'),
     slug: text('slug').notNull(),
@@ -60,6 +65,14 @@ export const nodes = sqliteTable(
     metadata: text('metadata').notNull().default('{}'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
+    /**
+     * The plain-text projection of `body`, derived at mutation time (ADR 0005).
+     *
+     * Nullable, and the null means something specific: no projection has been derived for this row.
+     * That is a different fact from a body whose text is empty, which is stored as the empty string.
+     * Confusing the two would let a maintenance pass declare a row done that it never read.
+     */
+    bodyText: text('body_text'),
   },
   (t) => [
     // Required as the parent key of the composite foreign key below. `id` is already unique on its
@@ -81,6 +94,15 @@ export const nodes = sqliteTable(
       .where(sql`parent_id IS NULL`),
 
     check('nodes_type_supported', sql`type IN ('area', 'project', 'resource')`),
+
+    // A resource has a kind, a container does not, and a present kind is one core admits. Declared
+    // here for parity with `0002`, where it is a column-level CHECK rather than a table-level one -
+    // `ALTER TABLE ... ADD COLUMN` can only attach a constraint to the column it adds. The rule is
+    // identical; only its attachment point differs, and `db:generate` is not the authority on either.
+    check(
+      'nodes_kind_valid',
+      sql`(type = 'resource') = (kind IS NOT NULL) AND (kind IS NULL OR kind IN ('note'))`,
+    ),
     check('nodes_title_present', sql`length(title) > 0`),
     check('nodes_slug_present', sql`length(slug) > 0`),
     check('nodes_id_safe', positiveSafeInteger('id')),

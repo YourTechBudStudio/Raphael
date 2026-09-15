@@ -14,7 +14,7 @@
  * No transaction here spans anything but SQL. Dispatch happens between calls, never inside one.
  */
 
-import { NODE_TYPES, type NodeType } from '@raphael/contracts/nodes';
+import { CONTAINER_TYPES, type ContainerType } from '@raphael/contracts/nodes';
 
 import { migrate } from '../../../infrastructure/sqlite/migrate.ts';
 import type { SqlConnection, SqlTransaction } from '../../../infrastructure/sqlite/port.ts';
@@ -59,12 +59,24 @@ const isOutcome = (value: unknown): value is AttemptOutcome =>
   typeof (value as AttemptOutcome).message === 'string' &&
   typeof (value as AttemptOutcome).at === 'number';
 
+/**
+ * Whether a persisted string still names a container.
+ *
+ * `CONTAINER_TYPES`, not `NODE_TYPES`. Every attempt in this database is a container creation, and the
+ * server's node vocabulary now also contains `resource` - so validating against the wider set would
+ * accept a stored row claiming to be a note and hand it on as a container. A row that names a type this
+ * subsystem never creates is unreadable, which is the answer the reader below already has for a row
+ * whose fields are not what they claim.
+ */
+const isContainerType = (value: unknown): value is ContainerType =>
+  typeof value === 'string' && (CONTAINER_TYPES as readonly string[]).includes(value);
+
 const isAcknowledged = (value: unknown): value is AcknowledgedResult =>
   typeof value === 'object' &&
   value !== null &&
   typeof (value as AcknowledgedResult).id === 'number' &&
   typeof (value as AcknowledgedResult).title === 'string' &&
-  NODE_TYPES.includes((value as AcknowledgedResult).type);
+  isContainerType((value as AcknowledgedResult).type);
 
 /**
  * A row becomes a record only if every field is what it claims to be.
@@ -75,7 +87,7 @@ const isAcknowledged = (value: unknown): value is AcknowledgedResult =>
  */
 const toRecord = (row: AttemptRow): AttemptRecord | null => {
   if (!STATES.includes(row.state as AttemptState)) return null;
-  if (!NODE_TYPES.includes(row.type as NodeType)) return null;
+  if (!isContainerType(row.type)) return null;
   if (row.title === '') return null;
   if (!Number.isSafeInteger(row.first_dispatch_at)) return null;
   if (!Number.isSafeInteger(row.observed_at)) return null;
@@ -93,7 +105,7 @@ const toRecord = (row: AttemptRow): AttemptRecord | null => {
     endpoint: row.endpoint,
     state: row.state as AttemptState,
     request: row.request,
-    type: row.type as NodeType,
+    type: row.type as ContainerType,
     title: row.title,
     parentAreaId: row.parent_area_id,
     firstDispatchAt: row.first_dispatch_at,
@@ -110,7 +122,7 @@ export interface NewAttempt {
   readonly connectionId: string;
   readonly endpoint: string;
   readonly request: string;
-  readonly type: NodeType;
+  readonly type: ContainerType;
   readonly title: string;
   readonly parentAreaId: number | null;
   readonly at: number;

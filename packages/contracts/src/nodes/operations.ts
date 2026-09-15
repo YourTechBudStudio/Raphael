@@ -7,6 +7,7 @@ import {
   BodyFormatSchema,
   BodyInput,
   BodyOutput,
+  ContainerTypeSchema,
   DescriptionInput,
   IdempotencyKeyInput,
   LIST_LIMIT_DEFAULT,
@@ -15,10 +16,16 @@ import {
   ListSkipInput,
   MetadataInput,
   MetadataOutput,
+  NODE_ORDER_FIELDS,
   NODE_TYPES,
   NodeId,
+  NodeOrderFieldSchema,
   NodeRevision,
   NodeTypeSchema,
+  OrderDirectionSchema,
+  ResourceKindSchema,
+  type NodeType,
+  type ResourceKind,
   SlugInput,
   TagsInput,
   TitleInput,
@@ -69,10 +76,9 @@ export const NodeTypeFilter = Schema.Array(NodeTypeSchema).pipe(
   Schema.filter((types) => new Set(types).size === types.length || 'types must not repeat'),
 );
 
-export const CreateRequest = Schema.Struct({
-  type: NodeTypeSchema,
+/** Everything both members of the creation union accept, spelled once. */
+const CreateCommon = {
   parent: ScopeSelector,
-  title: TitleInput,
   slug: Schema.optional(SlugInput),
   description: Schema.optional(DescriptionInput),
   body: Schema.optional(BodyInput),
@@ -84,7 +90,40 @@ export const CreateRequest = Schema.Struct({
     default: () => 'markdown' as const,
     exact: true,
   }),
+};
+
+/** A container. It must be named, and it has no kind: a kind says what a leaf is. */
+export const ContainerCreateRequest = Schema.Struct({
+  type: ContainerTypeSchema,
+  title: TitleInput,
+  ...CreateCommon,
 });
+
+/**
+ * A resource. Its kind is required, and its title is not.
+ *
+ * An omitted title is resolved by core from the submitted content, which is why it is optional here
+ * rather than defaulted: there is nothing a contract could put in its place that would not be an
+ * invented name. A supplied title is still validated as authored input.
+ */
+export const ResourceCreateRequest = Schema.Struct({
+  type: Schema.Literal('resource'),
+  kind: ResourceKindSchema,
+  title: Schema.optional(TitleInput),
+  ...CreateCommon,
+});
+
+/**
+ * Creation, as a discriminated union rather than one struct with an optional kind.
+ *
+ * The shape is what enforces the rules, so no downstream code has to. Strict request decoding
+ * refuses excess properties, so `kind` on an area is rejected by the container member and by the type
+ * literal in the resource member - a container cannot carry a kind. A resource without a kind, or with
+ * an unsupported one, is refused before any storage rule runs, so bare `resource` creation is
+ * impossible at the contract. And a container without a title still fails on `TitleInput`, so existing
+ * `title_required` recovery wording for containers is unchanged.
+ */
+export const CreateRequest = Schema.Union(ContainerCreateRequest, ResourceCreateRequest);
 
 export const GetRequest = Schema.Struct({
   target: EntitySelector,
@@ -94,16 +133,45 @@ export const GetRequest = Schema.Struct({
   }),
 });
 
+/**
+ * One ordering clause. Array order is priority order.
+ *
+ * Omitting `orderBy` means slug ascending then id ascending, which is what listing has always done.
+ * An explicit array replaces that default rather than extending it, and core appends an id clause only
+ * when none was given - so every ordering is total, and a caller that wants id descending gets it in
+ * the position they asked for rather than having a second id clause bolted on behind it.
+ */
+export const NodeOrderClause = Schema.Struct({
+  field: NodeOrderFieldSchema,
+  direction: OrderDirectionSchema,
+});
+
+export const NodeOrderBy = Schema.Array(NodeOrderClause).pipe(
+  Schema.minItems(1),
+  Schema.maxItems(NODE_ORDER_FIELDS.length),
+  Schema.filter(
+    (clauses) =>
+      new Set(clauses.map((clause) => clause.field)).size === clauses.length ||
+      'order fields must not repeat',
+  ),
+);
+
+export type NodeOrderClause = Schema.Schema.Type<typeof NodeOrderClause>;
+export type NodeOrderBy = Schema.Schema.Type<typeof NodeOrderBy>;
+
 export const ListRequest = Schema.Struct({
   parent: ScopeSelector,
   recursive: Schema.optionalWith(Schema.Boolean, { default: () => false, exact: true }),
   types: Schema.optional(NodeTypeFilter),
+  orderBy: Schema.optional(NodeOrderBy),
   skip: Schema.optionalWith(ListSkipInput, { default: () => LIST_SKIP_DEFAULT, exact: true }),
   limit: Schema.optionalWith(ListLimitInput, { default: () => LIST_LIMIT_DEFAULT, exact: true }),
 });
 
 export const GetPathRequest = Schema.Struct({ target: EntitySelector });
 
+export type ContainerCreateRequest = Schema.Schema.Type<typeof ContainerCreateRequest>;
+export type ResourceCreateRequest = Schema.Schema.Type<typeof ResourceCreateRequest>;
 export type CreateRequest = Schema.Schema.Type<typeof CreateRequest>;
 export type GetRequest = Schema.Schema.Type<typeof GetRequest>;
 export type ListRequest = Schema.Schema.Type<typeof ListRequest>;
@@ -119,9 +187,17 @@ export type GetPathRequest = Schema.Schema.Type<typeof GetPathRequest>;
  * checked for canonical shape, because an address that would be refused as a selector cannot honestly
  * describe the entity that was just returned; only its submission length bound is left out.
  */
-export const NodeSummary = Schema.Struct({
+const NodeSummaryFields = {
   id: NodeId,
   type: NodeTypeSchema,
+  /**
+   * The resource kind, or `null` for a container. Always present, never inferred from the type.
+   *
+   * A closed literal union for the same reason `type` is: an unsupported discriminant is a response
+   * this client cannot represent, and saying so is better than carrying an unknown string into
+   * presentation.
+   */
+  kind: Schema.NullOr(ResourceKindSchema),
   parentId: Schema.NullOr(NodeId),
   slug: Schema.String.pipe(
     Schema.filter((value) => isCanonicalSlugShape(value) || 'a slug must be a canonical slug'),
@@ -130,13 +206,37 @@ export const NodeSummary = Schema.Struct({
   title: Schema.String,
   description: Schema.String,
   tags: Schema.Array(Schema.String),
-});
+};
+
+/**
+ * A resource carries a kind and a container does not.
+ *
+ * Checking the two fields independently would let the decoder accept combinations the contract says
+ * cannot exist — `{ type: 'area', kind: 'note' }`, or a resource whose kind is `null`. That matters
+ * precisely because decoding is the integration boundary: a caller treats a response that decoded as
+ * one it can trust, so a malformed or incompatible server would be believed rather than caught. The
+ * CLI would print `area.note`, and a consumer that recognizes containers by `type` alone would take a
+ * kinded area for an ordinary one.
+ *
+ * It is the same argument that makes `kind` a closed literal rather than a string, applied one step
+ * further: a discriminant pairing this client cannot represent is better refused than carried into
+ * presentation. Our own server already enforces this on the way out, so this guards the case that
+ * guarantee does not cover — a different, older, or faulty server on the other end.
+ */
+const kindMatchesType = (value: {
+  readonly type: NodeType;
+  readonly kind: ResourceKind | null;
+}): true | string =>
+  (value.type === 'resource') === (value.kind !== null) ||
+  'a resource must carry a kind and a container must not';
+
+export const NodeSummary = Schema.Struct(NodeSummaryFields).pipe(Schema.filter(kindMatchesType));
 
 export const NodeEntity = Schema.Struct({
-  ...NodeSummary.fields,
+  ...NodeSummaryFields,
   body: BodyOutput,
   metadata: MetadataOutput,
-});
+}).pipe(Schema.filter(kindMatchesType));
 
 export type NodeSummary = Schema.Schema.Type<typeof NodeSummary>;
 export type NodeEntity = Schema.Schema.Type<typeof NodeEntity>;

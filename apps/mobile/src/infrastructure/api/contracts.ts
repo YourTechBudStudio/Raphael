@@ -14,10 +14,17 @@
  * copied server fields would be a second hierarchy that goes stale silently.
  */
 
-import type { NodeType } from '@raphael/contracts/nodes';
+import type { ContainerType } from '@raphael/contracts/nodes';
 
-/** Areas and projects. The server's own vocabulary, not a parallel one. */
-export type ContainerType = NodeType;
+/**
+ * Areas and projects. The server's own container vocabulary, not a parallel one.
+ *
+ * Deliberately `ContainerType` rather than `NodeType`. The server's node vocabulary now includes
+ * `resource`, and everything below means "a container": a thing that can hold a capture, be a
+ * destination, and appear in the hierarchy. Aliasing the wider type would have silently made every one
+ * of those sites accept a note.
+ */
+export type { ContainerType };
 
 /**
  * A reference to a container that exists on the server.
@@ -31,6 +38,13 @@ export interface ContainerRef {
   id: number;
 }
 
+/**
+ * The kinds the session-only mock feed still serves.
+ *
+ * Not the server's `ResourceKind`, which shares the name and means something narrower: the kinds core
+ * actually admits. These are presentation categories for local mock data, and the two must not be
+ * confused while both exist. The note branch here is retired with the rest of the mock feed.
+ */
 export type ResourceKind = 'note' | 'voice' | 'image' | 'github';
 
 interface ResourceBase {

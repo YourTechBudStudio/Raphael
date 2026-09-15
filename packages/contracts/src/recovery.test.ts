@@ -89,9 +89,15 @@ describe('recovery detail projection', () => {
       assert.equal(genuine.reason, SHUTTING_DOWN_REASON);
     });
 
-    it('preserves an unfamiliar stored node type rather than dropping it', () => {
-      // A selector that reached a type this release does not expose is exactly when naming the type
-      // is useful, so validating it against the two known types would discard the informative value.
+    it('preserves a reason this build does not recognize rather than dropping it', () => {
+      // A self-hosted server is upgraded independently of an installed client, so a reason this build
+      // has never heard of is ordinary rather than suspect - and it is exactly when forwarding what
+      // the server said is more useful than saying nothing. Validating against a closed list here
+      // would discard the informative value; the sanitizing above is what keeps it safe to show.
+      //
+      // `unsupported_node_type` used to be this example, back when it was a reason core produced for
+      // a stored type the API could not represent. It is gone now that resources are public, which
+      // makes it a genuine stand-in for a reason that is not in this build's vocabulary.
       assert.deepEqual(
         project('invalid_input', { reason: 'unsupported_node_type', nodeType: 'resource' }),
         { reason: 'unsupported_node_type', nodeType: 'resource' },

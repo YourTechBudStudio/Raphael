@@ -22,12 +22,17 @@
 
 import type { ClientResult } from '@raphael/client';
 import type {
+  ContainerType,
   ListRequestInput,
   ListResponse,
   NodeSummary,
-  NodeType,
 } from '@raphael/contracts/nodes';
-import { LIST_LIMIT_MAX, ROOT_PATH, compareNodeOrder } from '@raphael/contracts/nodes';
+import {
+  CONTAINER_TYPES,
+  LIST_LIMIT_MAX,
+  ROOT_PATH,
+  compareNodeOrder,
+} from '@raphael/contracts/nodes';
 
 import { unwrap } from '../../../infrastructure/query/failure.ts';
 
@@ -61,7 +66,7 @@ export const MAX_CONTAINERS = 20_000;
 
 export interface HierarchyNode {
   readonly id: number;
-  readonly type: NodeType;
+  readonly type: ContainerType;
   readonly parentId: number | null;
   readonly slug: string;
   readonly title: string;
@@ -104,6 +109,10 @@ export type ListFn = (
   signal?: AbortSignal,
 ) => Promise<ClientResult<ListResponse>>;
 
+/** A runtime narrowing, not a cast: the server's answer is checked before it becomes a container. */
+const isContainerType = (value: string): value is ContainerType =>
+  (CONTAINER_TYPES as readonly string[]).includes(value);
+
 const inconsistent = (message: string): never => {
   throw new HierarchyRefusedError(message, true);
 };
@@ -127,6 +136,10 @@ const fetchPages = async (list: ListFn, signal?: AbortSignal): Promise<NodeSumma
     const request: ListRequestInput = {
       parent: { path: ROOT_PATH },
       recursive: true,
+      // Asked for explicitly rather than left to the default. The server's default is now every node
+      // type, which includes notes, and a hierarchy built from a list containing leaves would be a tree
+      // this app cannot hold. Naming the filter is what keeps the widened vocabulary from reaching here.
+      types: [...CONTAINER_TYPES],
       skip,
       limit: PAGE_LIMIT,
     };
@@ -156,9 +169,18 @@ const fetchPages = async (list: ListFn, signal?: AbortSignal): Promise<NodeSumma
   }
 };
 
+/**
+ * A summary already checked to be a container.
+ *
+ * A distinct type rather than a comment, so the check in `assemble` is carried by the value rather than
+ * remembered by the reader: everything downstream of it takes this, and nothing can reach `build` with
+ * a row whose type was never examined.
+ */
+type ContainerSummary = Omit<NodeSummary, 'type'> & { readonly type: ContainerType };
+
 interface Building {
-  readonly summary: NodeSummary;
-  readonly children: NodeSummary[];
+  readonly summary: ContainerSummary;
+  readonly children: ContainerSummary[];
 }
 
 /**
@@ -177,10 +199,18 @@ const assemble = (items: readonly NodeSummary[]): Hierarchy => {
       return inconsistent('The same container arrived twice while the hierarchy was being read.');
     }
 
-    building.set(summary.id, { summary, children: [] });
+    // The request asked for containers only, so a resource here means the answer did not match the
+    // question. Refused rather than filtered out: silently dropping rows would turn a server that is
+    // answering the wrong question into a hierarchy that merely looks a little short, and the children
+    // of a dropped row would then read as orphans against a cause nobody could see.
+    if (!isContainerType(summary.type)) {
+      return inconsistent('Something that is not an area or a project arrived in the hierarchy.');
+    }
+
+    building.set(summary.id, { summary: { ...summary, type: summary.type }, children: [] });
   }
 
-  const roots: NodeSummary[] = [];
+  const roots: ContainerSummary[] = [];
 
   for (const { summary } of building.values()) {
     if (summary.parentId === null) {
@@ -221,7 +251,7 @@ const assemble = (items: readonly NodeSummary[]): Hierarchy => {
 
   const byId = new Map<number, HierarchyNode>();
 
-  const build = (summary: NodeSummary): HierarchyNode => {
+  const build = (summary: ContainerSummary): HierarchyNode => {
     const entry = building.get(summary.id);
     const children = (entry?.children ?? []).slice().sort(compareNodeOrder).map(build);
     const node: HierarchyNode = {

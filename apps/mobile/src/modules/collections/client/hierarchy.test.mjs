@@ -26,6 +26,8 @@ import {
 const node = (id, type, parentId, title, slug = title.toLowerCase()) => ({
   id,
   type,
+  // Containers have no kind. A summary always carries the field, so the fixtures do too.
+  kind: type === 'resource' ? 'note' : null,
   parentId,
   slug,
   revision: 1,
@@ -280,5 +282,37 @@ describe('the assembled tree', () => {
     );
     // The filter matches what is on screen, both halves of it.
     assert.equal(options.filter((option) => option.haystack.includes('work')).length, 2);
+  });
+});
+
+describe('the widened server vocabulary', () => {
+  it('asks for containers explicitly rather than relying on the default', async () => {
+    const backing = server([node(1, 'area', null, 'Work')]);
+    await fetchHierarchy(backing.list);
+
+    // The server's default filter is now every node type, which includes notes. A hierarchy built
+    // from a list containing leaves would be a tree this app cannot hold, so the filter is named.
+    assert.ok(backing.calls.length > 0);
+    for (const request of backing.calls) {
+      assert.deepEqual([...request.types].sort(), ['area', 'project']);
+      assert.equal(request.recursive, true);
+    }
+  });
+
+  it('refuses a resource in the answer rather than quietly dropping it', async () => {
+    const backing = server([
+      node(1, 'area', null, 'Work'),
+      node(2, 'resource', 1, 'A note', 'a-note'),
+    ]);
+
+    // Filtering it out would turn a server answering the wrong question into a hierarchy that merely
+    // looks a little short - and the children of a dropped row would then read as orphans against a
+    // cause nobody could see.
+    await assert.rejects(() => fetchHierarchy(backing.list), HierarchyRefusedError);
+  });
+
+  it('still refuses a resource that arrives at the top level', async () => {
+    const backing = server([node(1, 'resource', null, 'Loose note', 'loose-note')]);
+    await assert.rejects(() => fetchHierarchy(backing.list), HierarchyRefusedError);
   });
 });

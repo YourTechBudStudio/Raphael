@@ -45,10 +45,19 @@ import type { Transport } from '../shared/transport.ts';
  * the caller's to generate rather than this package's, because `crypto.randomUUID` does not exist on
  * every runtime this code runs on, and a transport that silently produced a weaker identifier on one
  * platform would be worse than one that asks.
+ *
+ * The conditional is what makes the rewrite *distributive*. `CreateRequestInput` is a union of a
+ * container request and a resource request, and a bare `Omit` over a union collapses it to the
+ * properties its members share - which would silently erase `kind`, discard the discriminant, and make
+ * a container's mandatory title optional. Distributing rewrites each member separately, so a container
+ * still requires a title, a note still requires a kind and may omit its title, and a container still
+ * cannot carry one.
  */
-export type CreateInput = Omit<CreateRequestInput, 'idempotencyKey'> & {
-  readonly idempotencyKey: string;
-};
+type WithRequiredKey<T> = T extends unknown
+  ? Omit<T, 'idempotencyKey'> & { readonly idempotencyKey: string }
+  : never;
+
+export type CreateInput = WithRequiredKey<CreateRequestInput>;
 
 const run = async <A>(
   transport: Transport,
@@ -83,8 +92,9 @@ const run = async <A>(
 };
 
 /**
- * Create one container. Answers 201, including when the answer is a replay of an earlier attempt with
- * the same key - a replay is a success reporting the entity that exists, not a different outcome.
+ * Create one node - a container or a resource. Answers 201, including when the answer is a replay of an
+ * earlier attempt with the same key: a replay is a success reporting the entity that exists, not a
+ * different outcome.
  */
 export const create = (
   transport: Transport,

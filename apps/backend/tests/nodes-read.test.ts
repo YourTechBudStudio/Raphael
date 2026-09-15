@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createNode, getNode, toPublicError } from '../src/modules/nodes/index.ts';
+import { createNode, getNode, listNodes, toPublicError } from '../src/modules/nodes/index.ts';
 import {
   clockAt,
   expectLeft,
@@ -87,7 +87,7 @@ test('the root is a scope, not an entity, and saying so is an input problem', ()
   });
 });
 
-test('a stored type this release cannot return is refused, not reported as absent', () => {
+test('a resource is read like any other node, and carries its kind', () => {
   withMigrated('read-resource', (connection) => {
     const created = seed(connection);
     insertNode(connection.db, {
@@ -103,14 +103,14 @@ test('a stored type this release cannot return is refused, not reported as absen
       'a-note',
     ).id;
 
+    // Both selector forms reach it, and neither is a special path: a resource resolves and projects
+    // exactly as a container does, with `kind` as the one field that tells them apart.
     for (const target of [{ id: resource }, { path: '/work/quarterly-plan/a-note' }]) {
-      const error = toPublicError(expectLeft(runNodes(connection, getNode({ target }))));
-      assert.equal(error.code, 'invalid_input');
-      assert.deepEqual(
-        error.details,
-        { field: 'target', reason: 'unsupported_node_type', nodeType: 'resource' },
-        'the node exists; what this release cannot do is represent it',
-      );
+      const { entity } = expectRight(runNodes(connection, getNode({ target })));
+      assert.equal(entity.id, resource);
+      assert.equal(entity.type, 'resource');
+      assert.equal(entity.kind, 'note');
+      assert.equal(entity.title, 'A note');
     }
   });
 });
@@ -207,5 +207,97 @@ test('stored fields SQLite cannot constrain are still validated before they are 
       'internal_error',
       'a stored slug that could not be handed back as a selector is corrupt by core rules',
     );
+  });
+});
+
+test('a stored kind that contradicts its type is an integrity failure on read and on list', () => {
+  withMigrated('read-corrupt-kind', (connection) => {
+    const project = seed(connection);
+    const note = expectRight(
+      runNodes(
+        connection,
+        createNode({
+          type: 'resource',
+          kind: 'note',
+          parent: { id: project.id },
+          title: 'A note',
+        }),
+        clockAt(T0),
+      ),
+    ).entity;
+
+    // The `0002` constraint is what stops these rows being written, so constructing one means turning
+    // it off. That is the whole point: this projection defends the case where something bypassed the
+    // constraint, and without a bypass there is no way to find out whether it actually does.
+    //
+    // Enforcement is restored before any read, so the operations run against a database whose rules
+    // are the real ones - only its contents are wrong.
+    const corrupt = (sql: string, ...params: unknown[]): void => {
+      connection.db.pragma('ignore_check_constraints = ON');
+      try {
+        connection.db.prepare(sql).run(...params);
+      } finally {
+        connection.db.pragma('ignore_check_constraints = OFF');
+      }
+    };
+
+    const cases = [
+      {
+        what: 'a resource with no kind at all',
+        apply: () => corrupt('UPDATE nodes SET kind = NULL WHERE id = ?', note.id),
+        id: note.id,
+      },
+      {
+        what: 'a resource carrying a kind core does not admit',
+        apply: () => corrupt('UPDATE nodes SET kind = ? WHERE id = ?', 'sketch', note.id),
+        id: note.id,
+      },
+      {
+        what: 'a container carrying a kind',
+        apply: () => corrupt('UPDATE nodes SET kind = ? WHERE id = ?', 'note', project.id),
+        id: project.id,
+      },
+    ];
+
+    for (const scenario of cases) {
+      scenario.apply();
+
+      // Get refuses rather than answering with a plausible entity.
+      const read = toPublicError(
+        expectLeft(runNodes(connection, getNode({ target: { id: scenario.id } }))),
+      );
+      assert.equal(read.code, 'internal_error', scenario.what);
+      assert.deepEqual(read.details, {}, 'nothing about the malformed row reaches the caller');
+
+      // List refuses too, rather than silently dropping the row or returning a partial page. The
+      // scope is chosen so the malformed row is inside the page being projected - a listing that
+      // never selected it would pass this assertion without exercising anything.
+      const scope = scenario.id === project.id ? { path: '/work' } : { id: project.id };
+      const page = runNodes(connection, listNodes({ parent: scope }));
+      const listed = toPublicError(expectLeft(page));
+      assert.equal(listed.code, 'internal_error', scenario.what);
+      assert.deepEqual(listed.details, {});
+
+      // And nothing was repaired on the way past.
+      const after = one<{ kind: string | null }>(
+        connection.db,
+        'SELECT kind FROM nodes WHERE id = ?',
+        scenario.id,
+      );
+      const expected =
+        scenario.what === 'a resource with no kind at all'
+          ? null
+          : scenario.what === 'a container carrying a kind'
+            ? 'note'
+            : 'sketch';
+      assert.equal(after.kind, expected, `${scenario.what}: a read must not rewrite what it found`);
+    }
+
+    // Restoring the row restores the operation, which is what shows the refusals above were about
+    // this row's contents rather than something sticky in the connection.
+    corrupt('UPDATE nodes SET kind = ? WHERE id = ?', 'note', note.id);
+    corrupt('UPDATE nodes SET kind = NULL WHERE id = ?', project.id);
+    const recovered = expectRight(runNodes(connection, getNode({ target: { id: note.id } })));
+    assert.equal(recovered.entity.kind, 'note');
   });
 });
