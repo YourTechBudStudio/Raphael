@@ -170,3 +170,56 @@ test('the credential does not leak out of the connection capability', () => {
     );
   }
 });
+
+/**
+ * The editor is two execution graphs, and only one of them is a phone.
+ *
+ * Hermes must never meet a browser-oriented module. The rule is stated as import edges rather than
+ * as a promise about bundling, because Metro walks what it finds: one ordinary import of the TipTap
+ * schema from a native file is all it takes to pull ProseMirror into the app bundle, and the failure
+ * would show up on a device rather than here.
+ */
+test('the browser half of the editor stays inside the browser half', () => {
+  const webview = path.join('modules', 'editor', 'webview') + path.sep;
+
+  for (const file of files) {
+    if (file.startsWith(webview)) continue;
+    for (const specifier of imports(file)) {
+      assert.ok(
+        !specifier.startsWith('@tiptap/'),
+        `${file}: imports ${specifier}, which belongs to the WebView bundle`,
+      );
+      assert.ok(
+        specifier !== '@raphael/content/schema',
+        `${file}: imports the ProseMirror schema, which native must never hold`,
+      );
+    }
+  }
+});
+
+/**
+ * The browser source and its build output are the editor's own business.
+ *
+ * `generated/` is git-ignored build output and `webview/` is compiled by esbuild rather than Metro.
+ * A capability that could import either would be one import away from a second schema and a graph
+ * shaped for a browser.
+ */
+test('nothing outside the editor reaches its browser source or its generated document', () => {
+  const editor = path.join('modules', 'editor') + path.sep;
+
+  for (const file of files) {
+    if (file.startsWith(editor)) continue;
+    for (const specifier of imports(file)) {
+      if (!specifier.startsWith('.')) continue;
+      const resolved = resolveImport(file, specifier);
+      if (resolved === undefined) continue;
+      const target = path.relative(root, resolved);
+      for (const half of ['generated', 'webview']) {
+        assert.ok(
+          !target.startsWith(path.join('modules', 'editor', half) + path.sep),
+          `${file}: reaches into the editor's ${half} directory`,
+        );
+      }
+    }
+  }
+});

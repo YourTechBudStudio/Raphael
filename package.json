@@ -6,7 +6,7 @@
   "author": "YourTechBud",
   "type": "module",
   "scripts": {
-    "build": "pnpm -r --if-present build",
+    "build": "pnpm -r --workspace-concurrency=1 --if-present build",
     "check": "pnpm lint && pnpm typecheck && pnpm test && pnpm format:check",
     "fix": "pnpm lint:fix && pnpm format",
     "format": "oxfmt --write .",
@@ -15,8 +15,8 @@
     "lint:fix": "oxlint . --threads=8 --fix --no-error-on-unmatched-pattern",
     "mobile:start": "pnpm --filter @raphael/mobile start",
     "server:dev": "pnpm --filter @raphael/backend build && node apps/cli/src/main.ts server serve",
-    "test": "pnpm -r --no-sort --workspace-concurrency=8 --if-present test",
-    "typecheck": "pnpm -r --if-present typecheck"
+    "test": "pnpm -r --workspace-concurrency=1 --if-present test",
+    "typecheck": "pnpm -r --workspace-concurrency=1 --if-present typecheck"
   },
   "devDependencies": {
     "@types/node": "catalog:",
