@@ -65,7 +65,6 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const tree = useHierarchy();
   const notes = useLocalResources();
 
-  const openNewNote = useSheetsStore((state) => state.openNewNote);
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
 
   const entity = project.data;
@@ -244,7 +243,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
           <ProjectNotes isError={notes.isError} isPending={notes.isPending} resources={resources} />
         </View>
       </Screen>
-      <CaptureBar onNewNote={openNewNote} onVoice={openVoiceCapture} />
+      <CaptureBar onVoice={openVoiceCapture} />
     </View>
   );
 }

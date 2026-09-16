@@ -15,7 +15,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import '../../global.css';
 import { queryClient, startAppStateBridge } from '../infrastructure/query/query-client';
-import { NewNoteSheet, VoiceCaptureSheet } from '../modules/capture';
+import { VoiceCaptureSheet } from '../modules/capture';
 import { ContainerCreationHost, PendingAttempts, useCreationStore } from '../modules/collections';
 import { ConnectionGate } from '../modules/connection';
 import { colors } from '../ui/theme';
@@ -79,7 +79,6 @@ export default function RootLayout() {
               <Stack.Screen name="change-server" />
               <Stack.Screen name="search" options={{ presentation: 'modal' }} />
             </Stack>
-            <NewNoteSheet />
             <VoiceCaptureSheet />
             <ContainerCreationHost />
           </ConnectionGate>

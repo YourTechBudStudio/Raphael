@@ -5,10 +5,14 @@ import type { ContainerType } from '../../../infrastructure/api/contracts';
 /**
  * Which overlay is open, and - for the ones that act on something - what it is acting on.
  *
- * The capture sheets carry nothing. They used to be told where to write when they were opened, and
- * from Home that meant an invisible inbox area; a note's destination is now chosen inside the sheet,
- * explicitly, every time, so there is no destination to carry and no way to open one that quietly
- * writes somewhere nobody picked.
+ * The voice sheet carries nothing. It used to be told where to write when it was opened, and from
+ * Home that meant an invisible inbox area; a destination is now chosen inside the sheet, explicitly,
+ * every time, so there is nothing to carry and no way to open one that quietly writes somewhere
+ * nobody picked.
+ *
+ * **There is no text-capture sheet any more.** Writing a note is a route over a durable draft, not
+ * an overlay whose state dies with it, so Phase 06 adds it to `routes.ts` rather than here. The
+ * retired `new-note` sheet is not waiting to come back.
  *
  * **Container creation does carry a destination, and that is not the same bug.** The note default
  * was silent - nobody chose it and nothing said what it was. A creation destination is the thing
@@ -22,7 +26,6 @@ import type { ContainerType } from '../../../infrastructure/api/contracts';
  */
 
 export type OpenSheet =
-  | { readonly kind: 'new-note' }
   | { readonly kind: 'voice-capture' }
   | {
       readonly kind: 'new-container';
@@ -41,7 +44,6 @@ interface SheetsState {
    * fresh form.
    */
   session: number;
-  openNewNote: () => void;
   openVoiceCapture: () => void;
   openNewContainer: (containerType: ContainerType, parentAreaId: number | null) => void;
   resumeContainer: (attemptId: string) => void;
@@ -56,9 +58,6 @@ export const useSheetsStore = create<SheetsState>((set) => {
   return {
     open: null,
     session: 0,
-    openNewNote: () => {
-      show({ kind: 'new-note' });
-    },
     openVoiceCapture: () => {
       show({ kind: 'voice-capture' });
     },

@@ -6,35 +6,16 @@ import { useConnectionSession } from '../../connection';
 import { invalidateResources } from '../../resources';
 
 /**
- * Writing a note.
+ * Writing a voice note.
  *
- * Session-only, against the connection it was captured under. The destination is always an explicit
- * `ContainerRef` the person chose: there is no default target left to resolve, which is why there is
- * no location query beside this any more.
+ * Session-only, against the connection it was captured under, and honestly presented as such. The
+ * destination is always an explicit `ContainerRef` the person chose: there is no default target.
+ *
+ * Text capture used to live here too, as a session-only mock beside this one. It is gone: Phase 04
+ * retired it rather than leave something that looks like saving a note but writes only to memory,
+ * and the durable owner in `owner.ts` is what replaces it. Voice has no server operation yet and is
+ * unchanged.
  */
-
-export interface CreateNoteInput {
-  parent: ContainerRef;
-  title: string;
-  body: string;
-}
-
-export function useCreateNote() {
-  const client = useQueryClient();
-  const session = useConnectionSession();
-  const connectionId = session?.connection.connectionId ?? null;
-
-  return useMutation({
-    mutationFn: ({ parent, title, body }: CreateNoteInput) => {
-      if (connectionId === null) throw new Error('No connection');
-
-      return localContent.createNote(connectionId, parent, title, body);
-    },
-    onSuccess: () => {
-      void invalidateResources(client);
-    },
-  });
-}
 
 export interface CreateVoiceNoteInput {
   parent: ContainerRef;

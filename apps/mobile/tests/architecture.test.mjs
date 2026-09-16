@@ -223,3 +223,50 @@ test('nothing outside the editor reaches its browser source or its generated doc
     }
   }
 });
+
+/**
+ * The capture database is declared, tested, and not yet opened by the app.
+ *
+ * Phase 04 builds the durable owner behind ports and stops there deliberately: mounting it needs the
+ * storage gate, the composer route and the recovery surfaces that Phase 06 owns, and a database
+ * opened by a build that has nowhere to show its contents is a file someone's work can disappear
+ * into. This is that boundary written down, and Phase 06 is what removes it.
+ */
+test('nothing in the app opens the capture database yet', () => {
+  // The two files that declare and open it. Everything else - including anything capture later adds
+  // under `client/` - is composition, and composition is what Phase 06 adds. The capability's own
+  // public interface is deliberately not on this list: publishing the database from there would put
+  // it one import away from every other module.
+  const declared = new Set([
+    path.join('modules', 'capture', 'schema.ts'),
+    path.join('modules', 'capture', 'store.ts'),
+  ]);
+
+  for (const file of files) {
+    if (declared.has(file)) continue;
+
+    const source = readFileSync(path.join(root, file), 'utf8');
+    assert.ok(
+      !/CAPTURE_DATABASE|openCaptureStore/.test(source),
+      `${file}: opens the capture database, which no screen can yet show the contents of`,
+    );
+  }
+});
+
+/**
+ * Text capture is absent rather than pretending.
+ *
+ * The sheet that used to write a note wrote a session-only mock, and Phase 05 removes the feed that
+ * could show one. Leaving a control that looks like saving a note would be worse than an honest gap,
+ * so the entry points are gone structurally - not disabled, not redirected, and not kept behind a
+ * flag that could be turned back on before there is anything real behind it.
+ */
+test('no text-capture entry point survives while the durable one is unmounted', () => {
+  for (const file of files) {
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    for (const name of ['NewNoteSheet', 'openNewNote', 'useCreateNote']) {
+      assert.ok(!source.includes(name), `${file}: still reaches the retired note writer ${name}`);
+    }
+  }
+});

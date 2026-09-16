@@ -13,6 +13,8 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
 import { migrate } from '../src/infrastructure/sqlite/migrate.ts';
+import { CAPTURE_MIGRATIONS } from '../src/modules/capture/schema.ts';
+import { CREATION_MIGRATIONS } from '../src/modules/collections/creation/schema.ts';
 import { openNodeDatabase } from './support/node-sqlite.mjs';
 
 const STEP_ONE = {
@@ -196,6 +198,71 @@ describe('transactions', () => {
 
     await assert.rejects(() => failing);
     assert.equal(await following, 'done');
+
+    await db.close();
+  });
+});
+
+/**
+ * The two capability schemas, applied by the same runner.
+ *
+ * What is checked here is not that the tables exist - their own tests do that by using them - but
+ * that each declared step list is one this runner will accept, that a file written by a newer build
+ * is refused rather than downgraded, and that a step which fails leaves the database exactly where
+ * it was. These are the properties that decide whether someone's unsent work is still there after a
+ * bad upgrade.
+ */
+describe('the capability schemas', () => {
+  for (const [name, migrations] of [
+    ['capture', CAPTURE_MIGRATIONS],
+    ['container creation', CREATION_MIGRATIONS],
+  ]) {
+    it(`brings a fresh ${name} database up, and is safe to repeat`, async () => {
+      const db = await openNodeDatabase();
+      const supported = migrations.at(-1).version;
+
+      assert.deepEqual(await migrate(db, migrations), { kind: 'ready', version: supported });
+      assert.deepEqual(await migrate(db, migrations), { kind: 'ready', version: supported });
+
+      await db.close();
+    });
+
+    it(`refuses a ${name} database written by a newer build rather than downgrading it`, async () => {
+      const db = await openNodeDatabase();
+      const supported = migrations.at(-1).version;
+      await migrate(db, migrations);
+      await db.run(`PRAGMA user_version = ${String(supported + 7)}`);
+
+      assert.deepEqual(await migrate(db, migrations), {
+        kind: 'unsupported_version',
+        found: supported + 7,
+        supported,
+      });
+      // Nothing is deleted, recreated, or repaired: a build older than the file it opens cannot know
+      // what the newer schema means, and a downgrade would be a guess about someone's unsent work.
+      assert.equal(await version(db), supported + 7);
+
+      await db.close();
+    });
+  }
+
+  it('rolls a failed capture step back to the version before it', async () => {
+    const db = await openNodeDatabase();
+    const broken = [
+      ...CAPTURE_MIGRATIONS,
+      {
+        version: CAPTURE_MIGRATIONS.length + 1,
+        statements: ['ALTER TABLE note_drafts ADD COLUMN a TEXT', 'NOT SQL'],
+      },
+    ];
+
+    const outcome = await migrate(db, broken);
+
+    assert.equal(outcome.kind, 'failed');
+    assert.equal(outcome.version, CAPTURE_MIGRATIONS.length);
+    assert.equal(await version(db), CAPTURE_MIGRATIONS.length);
+    // The half of the step that did succeed went with the transaction that carried it.
+    await assert.rejects(() => db.all('SELECT a FROM note_drafts'));
 
     await db.close();
   });

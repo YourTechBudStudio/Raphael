@@ -77,7 +77,6 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   const tree = useHierarchy();
   const notes = useLocalResources();
 
-  const openNewNote = useSheetsStore((state) => state.openNewNote);
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
   const openNewContainer = useSheetsStore((state) => state.openNewContainer);
 
@@ -321,7 +320,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
           </>
         )}
       </Screen>
-      <CaptureBar onNewNote={openNewNote} onVoice={openVoiceCapture} />
+      <CaptureBar onVoice={openVoiceCapture} />
     </View>
   );
 }

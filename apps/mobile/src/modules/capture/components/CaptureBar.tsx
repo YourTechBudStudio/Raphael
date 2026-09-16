@@ -1,26 +1,31 @@
-import { Mic, Plus } from 'lucide-react-native';
-import { Text, View } from 'react-native';
+import { Mic } from 'lucide-react-native';
+import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { AnimatedSurface, PressableFeedback, captureShadow, colors } from '../../../ui';
+import { PressableFeedback, captureShadow, colors } from '../../../ui';
 
 /** Capture control height and the mic circle diameter. */
 const CONTROL_SIZE = 56;
 
 export interface CaptureBarProps {
-  onNewNote: () => void;
   onVoice: () => void;
   testID?: string | undefined;
 }
 
 /**
- * The floating capture pair: a New note pill and a mic circle, pinned above the safe area.
+ * The floating capture control, pinned above the safe area.
  *
- * It used to name where a capture would land. It cannot any more, and should not: the destination
- * is chosen inside the sheet, so a bar that promised one before the sheet opened would be naming a
- * place nobody had picked yet.
+ * It used to name where a capture would land. It cannot and should not: a destination is chosen
+ * while writing, so a bar that promised one beforehand would be naming a place nobody had picked.
+ *
+ * **The New note pill is temporarily absent.** Text capture used to open a sheet that wrote a
+ * session-only mock note, and Phase 04 retired that rather than leave a control that looks like
+ * saving a note and is not. It comes back in Phase 06, over the durable capture owner and its own
+ * route, with the paired layout the design specifies. A disabled or no-op pill in the meantime would
+ * be a worse answer than an honest absence, which is why `onNewNote` is gone from these props rather
+ * than accepting a callback that does nothing.
  */
-export function CaptureBar({ onNewNote, onVoice, testID }: CaptureBarProps) {
+export function CaptureBar({ onVoice, testID }: CaptureBarProps) {
   const insets = useSafeAreaInsets();
 
   return (
@@ -30,43 +35,22 @@ export function CaptureBar({ onNewNote, onVoice, testID }: CaptureBarProps) {
       style={{ paddingBottom: insets.bottom + 16 }}
       testID={testID}
     >
-      <View className="flex-row items-center gap-3">
-        <PressableFeedback
-          accessibilityHint="Opens a sheet to write a note and choose where it goes"
-          accessibilityLabel="New note"
-          className="flex-row items-center justify-center gap-2 rounded-full bg-primary px-7"
-          onPress={onNewNote}
-          treatment="button"
-          stateLayerColor={colors.onPrimary}
-          style={{ borderRadius: CONTROL_SIZE / 2, boxShadow: captureShadow }}
+      <PressableFeedback
+        accessibilityHint="Starts recording a voice note"
+        accessibilityLabel="Record a voice note"
+        className="items-center justify-center rounded-full bg-primary"
+        onPress={onVoice}
+        treatment="button"
+        stateLayerColor={colors.onPrimary}
+        style={{ borderRadius: CONTROL_SIZE / 2, boxShadow: captureShadow }}
+      >
+        <View
+          className="items-center justify-center"
+          style={{ height: CONTROL_SIZE, width: CONTROL_SIZE }}
         >
-          {(stableContentStyle) => (
-            <AnimatedSurface
-              className="flex-row items-center gap-2"
-              style={[{ height: CONTROL_SIZE }, stableContentStyle]}
-            >
-              <Plus color={colors.onPrimary} size={24} strokeWidth={2.2} />
-              <Text className="font-body-semibold text-[18px] text-on-primary">New note</Text>
-            </AnimatedSurface>
-          )}
-        </PressableFeedback>
-        <PressableFeedback
-          accessibilityHint="Starts recording a voice note"
-          accessibilityLabel="Record a voice note"
-          className="items-center justify-center rounded-full bg-primary"
-          onPress={onVoice}
-          treatment="button"
-          stateLayerColor={colors.onPrimary}
-          style={{ borderRadius: CONTROL_SIZE / 2, boxShadow: captureShadow }}
-        >
-          <View
-            className="items-center justify-center"
-            style={{ height: CONTROL_SIZE, width: CONTROL_SIZE }}
-          >
-            <Mic color={colors.onPrimary} size={24} strokeWidth={2} />
-          </View>
-        </PressableFeedback>
-      </View>
+          <Mic color={colors.onPrimary} size={24} strokeWidth={2} />
+        </View>
+      </PressableFeedback>
     </View>
   );
 }

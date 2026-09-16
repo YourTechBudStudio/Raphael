@@ -61,7 +61,6 @@ export function HomeScreen() {
   const tree = useHierarchy();
   const active = useProjectActive();
   const feed = useHomeFeed();
-  const openNewNote = useSheetsStore((state) => state.openNewNote);
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
   const showMore = useMockStore((state) => state.showMore);
   const refreshing = useMockStore((state) => state.refreshing);
@@ -180,7 +179,7 @@ export function HomeScreen() {
       </Screen>
       {/* THROWAWAY: the wrapper lets the mock snackbar lift the capture pair. */}
       <MockCaptureLift>
-        <CaptureBar onNewNote={openNewNote} onVoice={openVoiceCapture} />
+        <CaptureBar onVoice={openVoiceCapture} />
       </MockCaptureLift>
       {__DEV__ ? <MockHomeSnackbar /> : null}
     </View>
