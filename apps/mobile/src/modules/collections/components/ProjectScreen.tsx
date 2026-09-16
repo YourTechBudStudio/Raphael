@@ -14,7 +14,6 @@ import {
   SectionError,
   ActiveButton,
 } from '../../../ui';
-import { CaptureBar } from '../../capture';
 import { RejectionNotice } from '../../connection';
 import {
   goBack,
@@ -22,7 +21,6 @@ import {
   openHome,
   openResource,
   openSearch,
-  useSheetsStore,
   LocationTopBar,
 } from '../../navigation';
 import {
@@ -78,8 +76,6 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const tree = useHierarchy();
   const notes = useNotePages(target);
   const media = useSessionMedia();
-
-  const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
 
   const entity = project.data;
   const wrongType = entity !== undefined && entity.type !== 'project';
@@ -264,7 +260,6 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
 
         <SessionMediaSection className="mt-7" items={sessionMedia} testID="project-session-media" />
       </Screen>
-      <CaptureBar onVoice={openVoiceCapture} />
     </View>
   );
 }

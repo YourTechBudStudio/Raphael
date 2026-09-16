@@ -185,13 +185,14 @@ describe('the Notes section, state by state', () => {
 });
 
 describe('Home and a container say different things', () => {
-  it('Home invites, and does not name a control that is not on the screen', () => {
+  it('Home invites, now that the control it names is on the screen', () => {
     const view = section(deriveNoteFeed(observation({ pages: [page([])] })), HOME_NOTES_COPY);
 
+    // Phase 05 held the second half of the frozen sentence back because New note was absent, and
+    // pointing someone at a control that was not there would have been a lie. Phase 06 restored the
+    // control, so the sentence comes back with it.
     assert.ok(view.text().includes('No notes yet.'));
-    // New note is absent until Phase 06 restores it; the frozen sentence that names it comes back
-    // with the control, not before.
-    assert.ok(!view.text().includes('New note'));
+    assert.ok(view.text().includes('New note'));
     view.unmount();
   });
 
@@ -250,15 +251,38 @@ describe('the leading cards Phase 06 will pass', () => {
     view.unmount();
   });
 
-  it('keep an empty server feed from reading as an empty section', () => {
+  it('lead an empty server feed rather than replacing what it says', () => {
     const view = section(deriveNoteFeed(observation({ pages: [page([])] })), HOME_NOTES_COPY, {
       leading: [{ key: 'draft:9', card: createElement('span', null, 'Unfinished') }],
     });
 
-    // Something unfinished is on this phone whatever the server holds, so "no notes yet" would be
-    // false while it is on screen.
-    assert.ok(!view.text().includes('No notes yet.'));
-    assert.ok(view.text().includes('Unfinished'));
+    // Both are said, in that order, because they report different facts: what is on this phone, and
+    // what the server holds. Phase 05 suppressed the line here on the reading that it would be
+    // false; the frozen decision is that the cards lead *either* line, and suppressing it would
+    // leave a person unable to tell an empty account from one that had not answered.
+    const text = view.text();
+
+    assert.ok(text.includes('Unfinished'));
+    assert.ok(text.includes('No notes yet.'));
+    assert.ok(
+      text.indexOf('Unfinished') < text.indexOf('No notes yet.'),
+      'local writing is never preceded by a statement about the server',
+    );
+    view.unmount();
+  });
+
+  it('stay above a server failure, which can never hide protected local writing', () => {
+    const view = section(
+      deriveNoteFeed(observation({ isPending: true, isError: true })),
+      HOME_NOTES_COPY,
+      { leading: [{ key: 'draft:9', card: createElement('span', null, 'Unfinished') }] },
+    );
+
+    const text = view.text();
+
+    assert.ok(text.includes('Unfinished'));
+    assert.ok(text.includes('Unable to load notes.'));
+    assert.ok(text.indexOf('Unfinished') < text.indexOf('Unable to load notes.'));
     view.unmount();
   });
 });

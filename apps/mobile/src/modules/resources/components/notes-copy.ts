@@ -14,10 +14,11 @@ export interface NoteSectionCopy {
 
 /** Home: everything on the server, and what an account with nothing in it is told. */
 export const HOME_NOTES_COPY: NoteSectionCopy = {
-  // The frozen sentence for this line names New note, which Phase 06 restores along with the
-  // control. Until the control is on the screen, pointing someone at it would be a lie of the exact
-  // kind this section exists to avoid.
-  empty: 'No notes yet.',
+  // The frozen sentence, restored with the control it names. Phase 05 held the second half back
+  // because New note was absent and pointing someone at a control that was not on the screen would
+  // have been the exact lie this section exists to avoid.
+  empty:
+    'No notes yet. Whatever is on your mind goes in with New note, and can find its place later.',
   failed: 'Unable to load notes. Pull down to try again.',
 };
 

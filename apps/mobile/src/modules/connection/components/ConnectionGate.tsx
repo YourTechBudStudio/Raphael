@@ -13,15 +13,6 @@ import { UnsupportedPlatform } from './UnsupportedPlatform';
 
 export interface ConnectionGateProps {
   children: ReactNode;
-  /**
-   * Rendered on the screens that stand in for the app when there is no usable connection.
-   *
-   * Those screens replace the whole router, so anything that must stay reachable without a server
-   * cannot be a route and cannot be reached from Settings either. Composition passes it in rather
-   * than this capability importing it, which would be a cycle and a boundary this module does not
-   * need to cross.
-   */
-  unconnected?: ReactNode | undefined;
 }
 
 /**
@@ -40,8 +31,14 @@ export interface ConnectionGateProps {
  * things - one is a spinner, the other is setup - and a keychain that cannot be read is not an
  * empty keychain, so it gets a screen that says so rather than being swept into first-run setup
  * where it would look like the connection had simply never existed.
+ *
+ * **Nothing is shown underneath these screens.** Setup is a prerequisite for using the app, not a
+ * cover over it: there is no unfinished-note list beneath the form and no route to one. Drafts and
+ * attempts stay exactly where they are on disk, and become readable - and copyable, and
+ * discardable - once a connection exists. Nothing is ever rebound to a new connection by matching
+ * an endpoint, so making them reachable without one would only offer actions that cannot be honest.
  */
-export function ConnectionGate({ children, unconnected }: ConnectionGateProps) {
+export function ConnectionGate({ children }: ConnectionGateProps) {
   const phase = useConnectionStore((state) => state.phase);
   const hydrate = useConnectionStore((state) => state.hydrate);
 
@@ -74,8 +71,8 @@ export function ConnectionGate({ children, unconnected }: ConnectionGateProps) {
   if (!SECURE_STORAGE_SUPPORTED) return <UnsupportedPlatform />;
 
   if (phase.kind === 'unreadable') {
-    return <StoredConnectionProblem footer={unconnected} message={phase.message} />;
+    return <StoredConnectionProblem message={phase.message} />;
   }
 
-  return phase.kind === 'active' ? <>{children}</> : <SetupScreen footer={unconnected} />;
+  return phase.kind === 'active' ? <>{children}</> : <SetupScreen />;
 }

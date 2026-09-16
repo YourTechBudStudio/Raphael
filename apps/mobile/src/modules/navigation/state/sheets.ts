@@ -20,9 +20,9 @@ import type { ContainerType } from '../../../infrastructure/api/contracts';
  * again for something already chosen, or inferring it from the current route, which is the inference
  * that was removed.
  *
- * Resuming carries a durable attempt id and nothing else. Copying a stored payload into navigation
- * state would make an immutable record into something a route could hold a stale copy of; the owner
- * loads and validates the record instead.
+ * **There is no resume sheet any more.** Container creation has no durable record to resume: it is
+ * one request from the sheet that asked for it, and closing the sheet forgets the key. What used to
+ * be resumed was an attempt record, and that whole subsystem is gone.
  */
 
 export type OpenSheet =
@@ -32,8 +32,7 @@ export type OpenSheet =
       readonly containerType: ContainerType;
       /** Null creates at the root, which holds only areas. */
       readonly parentAreaId: number | null;
-    }
-  | { readonly kind: 'resume-container'; readonly attemptId: string };
+    };
 
 interface SheetsState {
   /** Which sheet is open, or null when none is. One at a time, always. */
@@ -46,7 +45,6 @@ interface SheetsState {
   session: number;
   openVoiceCapture: () => void;
   openNewContainer: (containerType: ContainerType, parentAreaId: number | null) => void;
-  resumeContainer: (attemptId: string) => void;
   close: () => void;
 }
 
@@ -63,9 +61,6 @@ export const useSheetsStore = create<SheetsState>((set) => {
     },
     openNewContainer: (containerType, parentAreaId) => {
       show({ kind: 'new-container', containerType, parentAreaId });
-    },
-    resumeContainer: (attemptId) => {
-      show({ kind: 'resume-container', attemptId });
     },
     close: () => {
       set({ open: null });

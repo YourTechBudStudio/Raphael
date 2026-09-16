@@ -21,6 +21,7 @@ import {
 } from '@raphael/contracts/nodes';
 import { Either } from 'effect';
 
+import { hasLineBreak } from './title.ts';
 import type { Destination } from './types.ts';
 
 export interface FreezeInput {
@@ -62,6 +63,8 @@ export const canonicalJson = (value: unknown): string => {
 };
 
 export const TITLE_TOO_LONG_PROBLEM = 'That title is too long. Shorten it and save again.';
+export const MULTILINE_TITLE_PROBLEM =
+  'A note title is one line. Remove the line break from the title and save again.';
 export const UNPREPARABLE_PROBLEM =
   'Raphael could not prepare that request, so nothing was sent. Your note is kept on this phone.';
 
@@ -84,9 +87,19 @@ export const UNPREPARABLE_PROBLEM =
  *
  * **The parent is always `{ id }`**, never a path. Mobile holds a stable reference, and a path would
  * be a second address that can go stale.
+ *
+ * And one refusal: **a title carrying a line break is declined, not repaired.** The composer
+ * normalizes one to a space as it is typed or pasted, which is where a person can still see it
+ * happen. Anything that reaches here with a break came from somewhere else - a recovered draft
+ * written by an older build, or a caller bypassing the field - and rewriting it at this boundary
+ * would mean the frozen bytes are not the ones anyone approved, under a key the server may replay.
  */
 export const freezeNoteRequest = (input: FreezeInput): FreezeResult => {
   const titled = input.title.trim().length > 0;
+
+  // Asked before the contract's own checks, because those would accept it: `TitleInput` bounds the
+  // length and refuses an empty title, and says nothing about lines.
+  if (hasLineBreak(input.title)) return { ok: false, problem: MULTILINE_TITLE_PROBLEM };
 
   if (titled) {
     const rejection = inspectTitleInput(input.title);

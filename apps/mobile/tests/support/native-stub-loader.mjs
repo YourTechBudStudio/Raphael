@@ -35,6 +35,9 @@ const SUBSTITUTES = new Map(
     'expo-router',
     'react-native-gesture-handler',
     'expo-secure-store',
+    'expo-sqlite',
+    'expo-crypto',
+    'expo-image',
   ]
     .map((specifier) => [specifier, new URL(`./stubs/${specifier}.mjs`, import.meta.url).href])
     // Subpath specifiers cannot name a file directly, so they are listed with their own file.

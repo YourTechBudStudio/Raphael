@@ -17,11 +17,15 @@ export {
   type HierarchyNode,
   type HierarchyQuery,
 } from './hierarchy';
-export { useCreationStore } from './client/creation';
+export {
+  useContainerCreationSession,
+  type ContainerCreationInput,
+  type ContainerCreationOutcome,
+  type ContainerCreationSession,
+} from './client/container-creation';
 export { AreaScreen } from './components/AreaScreen';
 export { ContainerCreationHost } from './components/ContainerCreationHost';
-export { RecoveryScreen } from './components/RecoveryScreen';
-export { PendingAttempts, PendingSummary } from './creation';
+export { NewContainerSheet, type NewContainerSheetProps } from './components/NewContainerSheet';
 export { HierarchyError, HierarchyStale } from './components/HierarchyError';
 export { CollectionTile } from './components/CollectionTile';
 export { ProjectScreen } from './components/ProjectScreen';

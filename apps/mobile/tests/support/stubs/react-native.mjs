@@ -51,6 +51,8 @@ const NATIVE_ONLY = new Set([
   'placeholderTextColor',
   'multiline',
   'blurOnSubmit',
+  'submitBehavior',
+  'onSubmitEditing',
   'returnKeyType',
   'autoFocus',
   'editable',
@@ -112,7 +114,49 @@ const passThrough = (tag, marker) =>
 export const View = passThrough('div', 'data-view');
 export const Text = passThrough('span', 'data-text');
 export const ScrollView = passThrough('div', 'data-scrollview');
-export const TextInput = passThrough('input', 'data-textinput');
+/**
+ * A text field a test can actually type into.
+ *
+ * `onChangeText` is React Native's, and the DOM has no such event, so it is translated the way the
+ * accessibility props are: a real `change` carries its value through. `onSubmitEditing` becomes
+ * Enter, which is what the platform does with the return key.
+ *
+ * Its measured cap is surfaced as `data-max-height` because `style` is otherwise dropped, and a
+ * field whose height follows the text scale has nothing else a test could observe. Only that one
+ * value is exposed; the rest of the style stays off the DOM, where it would mean nothing.
+ */
+export const TextInput = function TextInput({
+  children,
+  multiline,
+  onChangeText,
+  onSubmitEditing,
+  style,
+  value,
+  ...rest
+}) {
+  const flattened = StyleSheet.flatten(style) ?? {};
+
+  // A multiline field is a textarea, because a single-line `input` silently strips the line breaks
+  // out of its own value - which would hide exactly the input the title's normalization exists for.
+  return createElement(
+    multiline === true ? 'textarea' : 'input',
+    {
+      'data-textinput': true,
+      ...toDomProps(rest),
+      ...(flattened.maxHeight === undefined ? {} : { 'data-max-height': flattened.maxHeight }),
+      value: value ?? '',
+      onChange:
+        onChangeText === undefined ? undefined : (event) => onChangeText(event.target.value),
+      onKeyDown:
+        onSubmitEditing === undefined
+          ? undefined
+          : (event) => {
+              if (event.key === 'Enter') onSubmitEditing();
+            },
+    },
+    children,
+  );
+};
 export const KeyboardAvoidingView = passThrough('div', 'data-kav');
 export const ActivityIndicator = passThrough('div', 'data-activity');
 export const RefreshControl = passThrough('div', 'data-refresh');
@@ -165,9 +209,59 @@ export const AccessibilityInfo = {
   },
 };
 
+/**
+ * Foreground and background, driven by a test.
+ *
+ * Real enough to prove a listener is registered and removed with its screen. What a phone actually
+ * does between `inactive` and a killed process is device evidence and is not claimed here.
+ */
+const appStateListeners = new Set();
+
+export const setAppState = (next) => {
+  AppState.currentState = next;
+  for (const listener of appStateListeners) listener(next);
+};
+
 export const AppState = {
   currentState: 'active',
-  addEventListener: () => ({ remove: () => undefined }),
+  addEventListener: (event, listener) => {
+    if (event === 'change') appStateListeners.add(listener);
+
+    return {
+      remove: () => {
+        appStateListeners.delete(listener);
+      },
+    };
+  },
+};
+
+/**
+ * Android's system Back, as a listener a test can fire.
+ *
+ * Real enough to prove the composer intercepts it and gives it up with the screen. What a device
+ * does with the gesture, and what a swipe-back does on iOS, is device evidence.
+ */
+const backListeners = new Set();
+
+export const pressSystemBack = () => {
+  // Newest first, which is how Android delivers it: the topmost handler gets the first refusal.
+  for (const listener of [...backListeners].reverse()) {
+    if (listener() === true) return true;
+  }
+
+  return false;
+};
+
+export const BackHandler = {
+  addEventListener: (event, listener) => {
+    if (event === 'hardwareBackPress') backListeners.add(listener);
+
+    return {
+      remove: () => {
+        backListeners.delete(listener);
+      },
+    };
+  },
 };
 
 /** Overridden per test to drive the column-collapse threshold. */
@@ -178,6 +272,44 @@ export const setWindowDimensions = (next) => {
 };
 
 export const useWindowDimensions = () => dimensions;
+
+/**
+ * Enough of `Animated` to let a timed notice run under Node.
+ *
+ * Values are plain holders and `timing` completes on the next turn rather than over its duration:
+ * these tests are about what a component *says* and *calls back*, and a fake clock driving a real
+ * animation would be testing the substitute. What a transition looks like is device evidence.
+ */
+class AnimatedValue {
+  constructor(value) {
+    this.value = value;
+  }
+
+  interpolate() {
+    return this;
+  }
+}
+
+const timing = (value, config) => ({
+  start: (done) => {
+    value.value = config.toValue;
+    if (typeof done === 'function') done({ finished: true });
+  },
+});
+
+export const Animated = {
+  Value: AnimatedValue,
+  View: passThrough('div', 'data-animated'),
+  Text: passThrough('span', 'data-animated-text'),
+  timing,
+  multiply: (value) => value,
+};
+
+export const Easing = {
+  in: (fn) => fn,
+  out: (fn) => fn,
+  ease: (value) => value,
+};
 
 export const StyleSheet = {
   create: (styles) => styles,

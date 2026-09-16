@@ -76,14 +76,10 @@ export function NoteSection({
           they are here whatever the server is doing. */}
       {view.isLoading && !hasCards ? <NotesSkeleton /> : null}
 
-      {/* The read failed. Beside cards this says what is not known about an earlier reading;
-          with no cards it is the whole answer. Either way it is the same sentence, because the
-          thing that went wrong is the same thing. */}
-      {view.isUnavailable || view.isStale ? <Line live>{copy.failed}</Line> : null}
-
-      {/* Read successfully, and there is nothing filed here. */}
-      {view.isEmpty && leadingCards.length === 0 ? <Line>{copy.empty}</Line> : null}
-
+      {/* Cards first, always, and that order is the point rather than a layout preference.
+          What leads this grid is writing that is on this phone and is not on the server, and a
+          server that is empty or unreachable must never be allowed to precede it - let alone hide
+          it. Everything below this is a statement about the server's half of the section. */}
       {hasCards ? (
         <NoteGrid
           items={view.items}
@@ -92,6 +88,17 @@ export function NoteSection({
           onOpen={onOpen}
         />
       ) : null}
+
+      {/* The read failed. Beside cards this says what is not known about an earlier reading;
+          with no cards it is the whole answer. Either way it is the same sentence, because the
+          thing that went wrong is the same thing. */}
+      {view.isUnavailable || view.isStale ? <Line live>{copy.failed}</Line> : null}
+
+      {/* Read successfully, and the server holds nothing here.
+          It is said even while unfinished cards are on screen, because the two report different
+          facts: what is on this phone, and what is filed on the server. Suppressing it would leave
+          a person unable to tell an empty account from one that had not answered. */}
+      {view.isEmpty ? <Line>{copy.empty}</Line> : null}
 
       {/* The only statement of incompleteness. Nothing implies the list has ended while another
           page is on its way. */}

@@ -14,7 +14,6 @@ import {
   Screen,
   SectionError,
 } from '../../../ui';
-import { CaptureBar } from '../../capture';
 import { RejectionNotice } from '../../connection';
 import {
   goBack,
@@ -22,7 +21,6 @@ import {
   openBrowse,
   openHome,
   openProject,
-  openRecovery,
   openResource,
   openSearch,
   useSheetsStore,
@@ -45,7 +43,6 @@ import {
   useContainerPath,
   useHierarchy,
 } from '../client/queries';
-import { PendingSummary } from '../creation';
 import { HierarchyStale } from './HierarchyError';
 import { ReadOnlyBody } from './ReadOnlyBody';
 import { TileGrid, type TileGridItem } from './TileGrid';
@@ -87,7 +84,6 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   const notes = useNotePages(target);
   const media = useSessionMedia();
 
-  const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
   const openNewContainer = useSheetsStore((state) => state.openNewContainer);
 
   const entity = areaQuery.data;
@@ -297,14 +293,6 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
           <>
             <HierarchyStale className="mt-8" tree={tree} />
 
-            {/* Drawn from the local record, so it survives a hierarchy that will not load - which
-                is exactly when someone most needs to know a creation was left in the air. */}
-            {areaId === null ? null : (
-              <View className="mt-8">
-                <PendingSummary onOpen={openRecovery} parentAreaId={areaId} />
-              </View>
-            )}
-
             {/* Subareas and projects appear only when there are some; the actions that make
                 them live beside Favorite, so an empty section has nothing left to say. */}
             {subareas.length > 0 ? (
@@ -337,7 +325,6 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
 
         <SessionMediaSection className="mt-8" items={sessionMedia} testID="area-session-media" />
       </Screen>
-      <CaptureBar onVoice={openVoiceCapture} />
     </View>
   );
 }

@@ -14,7 +14,6 @@ import { after, describe, it } from 'node:test';
 
 import { migrate } from '../src/infrastructure/sqlite/migrate.ts';
 import { CAPTURE_MIGRATIONS } from '../src/modules/capture/schema.ts';
-import { CREATION_MIGRATIONS } from '../src/modules/collections/creation/schema.ts';
 import { openNodeDatabase } from './support/node-sqlite.mjs';
 
 const STEP_ONE = {
@@ -213,10 +212,7 @@ describe('transactions', () => {
  * bad upgrade.
  */
 describe('the capability schemas', () => {
-  for (const [name, migrations] of [
-    ['capture', CAPTURE_MIGRATIONS],
-    ['container creation', CREATION_MIGRATIONS],
-  ]) {
+  for (const [name, migrations] of [['capture', CAPTURE_MIGRATIONS]]) {
     it(`brings a fresh ${name} database up, and is safe to repeat`, async () => {
       const db = await openNodeDatabase();
       const supported = migrations.at(-1).version;

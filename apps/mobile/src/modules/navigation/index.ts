@@ -4,6 +4,7 @@ export {
   leaveSearchFor,
   openArea,
   openBrowse,
+  openCapture,
   openChangeServer,
   openContainer,
   openHome,

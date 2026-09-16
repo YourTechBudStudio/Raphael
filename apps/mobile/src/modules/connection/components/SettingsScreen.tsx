@@ -62,13 +62,13 @@ export function SettingsScreen() {
         <View className="gap-3">
           <SectionHeading>On this phone</SectionHeading>
           <Text className="font-body text-[15px] leading-[22px] text-ink-soft">
-            Creations Raphael has not been able to finish are kept here until you resolve them,
-            including any made against a server you have since left.
+            Notes Raphael has not been able to finish are kept here until you resolve them,
+            including any written against a server you have since left.
           </Text>
           <View className="flex-row">
             <Chip
-              accessibilityHint="Opens everything left unfinished on this phone"
-              label="Unfinished creations"
+              accessibilityHint="Opens every note left unfinished on this phone"
+              label="Unfinished notes"
               onPress={openRecovery}
             />
           </View>

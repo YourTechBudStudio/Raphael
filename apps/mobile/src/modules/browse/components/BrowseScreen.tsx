@@ -9,13 +9,12 @@ import {
   ancestorsOf,
   HierarchyError,
   HierarchyStale,
-  PendingSummary,
   useHierarchy,
   type HierarchyNode,
   type HierarchyQuery,
 } from '../../collections';
 import { RejectionNotice } from '../../connection';
-import { goBack, openContainer, openRecovery, TitleTopBar, useSheetsStore } from '../../navigation';
+import { goBack, openContainer, TitleTopBar, useSheetsStore } from '../../navigation';
 import { useBrowseStore } from '../state/tree';
 import { AddInsideSheet } from './AddInsideSheet';
 import { BrowseTree } from './BrowseTree';
@@ -123,13 +122,6 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
           testID="browse-screen"
         >
           <RejectionNotice className="mb-3" />
-          {/* An attempt aimed at the root belongs to no area, which is why the summary is here:
-              Home carries it as well, and between them there is nowhere it can hide. */}
-          {tab === 'favorites' ? null : (
-            <View className="mb-4">
-              <PendingSummary onOpen={openRecovery} parentAreaId={null} />
-            </View>
-          )}
           {tab === 'favorites' ? (
             <FavoritesList onSelect={select} query={query} />
           ) : (

@@ -48,6 +48,19 @@ describe('freezing a note request', () => {
     assert.equal(request.idempotencyKey, 'key-1');
   });
 
+  it('refuses a title carrying a line break rather than repairing it', () => {
+    // The composer turns a pasted break into a space where a person can still see it happen. A
+    // title that reaches this boundary with one came from somewhere else - a draft written by an
+    // older build, or a caller bypassing the field - and rewriting it here would mean the frozen
+    // bytes are not the ones anyone approved, under a key the server may replay.
+    for (const title of ['Field\nnotes', 'Field\r\nnotes', 'Field\u2028notes']) {
+      const result = frozen({ title });
+
+      assert.equal(result.ok, false);
+      assert.match(result.problem, /one line/);
+    }
+  });
+
   it('omits a whitespace-only title instead of trimming one into existence', () => {
     const result = frozen({ title: '   ' });
     const request = sent(result);

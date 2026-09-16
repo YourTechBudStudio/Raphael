@@ -16,7 +16,11 @@ const passThrough = (marker) =>
   };
 
 export const GestureHandlerRootView = passThrough('data-gesture-root');
-export const GestureDetector = passThrough('data-gesture-detector');
+
+/** The gesture descriptor is dropped: it is an opaque builder, and the DOM has nowhere to put it. */
+export const GestureDetector = function GestureDetector({ children, gesture: _gesture, ...rest }) {
+  return createElement('div', { 'data-gesture-detector': true, ...toDomProps(rest) }, children);
+};
 export const ScrollView = passThrough('data-gesture-scroll');
 
 const builder = () => {

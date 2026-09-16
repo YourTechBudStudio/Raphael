@@ -1,26 +1,43 @@
 /**
  * The capture capability's public interface.
  *
- * One thing is published: the owner, and the vocabulary a screen needs to render what it holds. The
- * store, the schema, the SQL, the frozen-request mechanics and the certainty policy are all private,
- * because the whole point of the owner is that exactly one thing decides what is protected, what may
- * be sent and what may be cleared. A consumer that could open the database, write a row, or re-derive
- * a standing from an attempt's fields would be a second authority on the question that decides
- * whether someone's writing is duplicated or destroyed.
+ * What it publishes is the *composition* - the screens, the gate, the cards and the hooks a host
+ * needs to put them somewhere - plus the owner for the tests that drive it. What it does not publish
+ * is the store, the schema, the SQL, the frozen-request mechanics or the certainty policy, because
+ * the whole point of the owner is that exactly one thing decides what is protected, what may be sent
+ * and what may be cleared. A consumer that could open the database, write a row, or re-derive a
+ * standing from an attempt's fields would be a second authority on the question that decides whether
+ * someone's writing is duplicated or destroyed.
  *
- * That is why the policy functions are absent even though screens plainly care about their answers.
- * `standingFor` answers instead, from the owner, over records it holds — so there is no way to ask
- * the question against a stale projection or a record assembled somewhere else.
+ * That is why `standingFor` is reached only through the owner, and why Home and recovery draw from
+ * `useUnfinishedNotes` rather than from `drafts` and `attempts`: the projection is derived in one
+ * place, from the owner's own answers, so no screen can disagree with another about what a record
+ * means.
  *
- * The owner is not composed here. `createCaptureOwner` takes ports, and Phase 06 is what binds them
- * to Expo SQLite, `@raphael/client` and the app's caches, mounts one instance for the process, closes
- * it on teardown, and adds the storage gate. That composition lives inside this capability and
- * reaches `store.ts` and `schema.ts` directly; nothing outside it can. Until then this is tested code
- * with no production wiring, which is the phase's declared debt.
+ * Capture is also the only capability that opens a local operational database through
+ * `infrastructure/sqlite`, and `tests/architecture.test.mjs` holds that line.
  */
 
 export { VoiceCaptureSheet } from './components/VoiceCaptureSheet';
-export { CaptureBar } from './components/CaptureBar';
+// The pair itself is private: what a host mounts is the dock, which owns the one rule that matters -
+// a draft exists before a composer opens over it - so no screen can wire New note a second way.
+export { CaptureDock, type CaptureDockProps } from './components/CaptureDock';
+export { CaptureScreen, type CaptureScreenProps } from './components/CaptureScreen';
+export { RecoveryScreen } from './components/RecoveryScreen';
+export { StorageGate } from './components/StorageGate';
+export { UnfinishedGridCard, type UnfinishedGridCardProps } from './components/UnfinishedGridCard';
+
+/** The app-lifetime composition. Opened once, above the connection gate. */
+export { useCaptureLifetime, useCaptureSession } from './client/owner.ts';
+export { useNewNote, type NewNote } from './client/new-note.ts';
+export {
+  useHomeUnfinishedNotes,
+  useSaveNotice,
+  useUnfinishedActions,
+  useUnfinishedNotes,
+} from './client/notes.ts';
+export { useDestinationName, type DestinationName } from './client/destinations.ts';
+
 export {
   createCaptureOwner,
   type ActionOutcome,
@@ -43,6 +60,14 @@ export type { StoreFailure } from './store.ts';
 export type { BlockedReason, Standing, UnsendableCause } from './policy.ts';
 /** Reading an attempt's submitted content back for recovery. Never rewrites the stored bytes. */
 export { recoverNoteInput, type RecoveredNote } from './freeze.ts';
+/** What Home and recovery draw. Derived from the owner's answers, never re-derived from rows. */
+export type {
+  SaveReceipt,
+  UnfinishedAction,
+  UnfinishedNote,
+  UnfinishedStatus,
+  WithdrawnReason,
+} from './unfinished.ts';
 export type {
   AcknowledgedNote,
   AttemptOutcome,

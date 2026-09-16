@@ -1,20 +1,11 @@
-import clsx from 'clsx';
 import { Plus } from 'lucide-react-native';
 import { Text, View } from 'react-native';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
-import { colors, Emblem, emblemFor, IconButton, PressableFeedback } from '../../../ui';
+import { colors, IconButton, PressableFeedback } from '../../../ui';
 import type { HierarchyNode } from '../../collections';
-import { DisclosureButton } from './DisclosureButton';
-
-/** Each level steps in by this much, per the navigation boards. */
-const INDENT = 28;
-/** Where the connector line sits inside a level: under the centre of the parent's chevron. */
-const CONNECTOR_X = 22;
-/** Half a row, so the line stops at the last child instead of running past it. */
-const HALF_ROW = 22;
-/** Row height and disclosure slot: also the minimum tap target for a row. */
-const ROW = 44;
+import { TREE_ROW } from './tree-metrics';
+import { TreeRows, type TreeRowState } from './TreeRows';
 
 export interface BrowseTreeProps {
   nodes: readonly HierarchyNode[];
@@ -31,7 +22,13 @@ export interface BrowseTreeProps {
   onAddRoot?: (() => void) | undefined;
 }
 
-/** The area and project tree on the Browse screen. */
+/**
+ * The tree on the Browse screen: one you walk, with somewhere to add things.
+ *
+ * A wrapper over the shared renderer rather than a tree of its own. What Browse adds is the current
+ * highlight, the per-area plus and the ghost row; the grammar underneath is the same one the note
+ * destination picker draws, and keeping it one implementation is what stops the two drifting.
+ */
 export function BrowseTree({
   nodes,
   current,
@@ -42,92 +39,20 @@ export function BrowseTree({
   onAdd,
   onAddRoot,
 }: BrowseTreeProps) {
-  return (
-    <View>
-      {nodes.map((node) => (
-        <BrowseBranch
-          current={current}
-          expandedIds={expandedIds}
-          forceExpanded={forceExpanded}
-          key={node.id}
-          node={node}
-          onAdd={onAdd}
-          onSelect={onSelect}
-          onToggle={onToggle}
-        />
-      ))}
-      {onAddRoot === undefined ? null : <NewAreaRow onPress={onAddRoot} />}
-    </View>
-  );
-}
+  const stateFor = (node: HierarchyNode): TreeRowState => {
+    const isCurrent = current !== null && current.type === node.type && current.id === node.id;
 
-interface BrowseBranchProps extends Omit<BrowseTreeProps, 'nodes'> {
-  node: HierarchyNode;
-}
-
-function BrowseBranch({
-  node,
-  current,
-  expandedIds,
-  forceExpanded,
-  onToggle,
-  onSelect,
-  onAdd,
-}: BrowseBranchProps) {
-  const hasChildren = node.children.length > 0;
-  const expanded = hasChildren && (forceExpanded || expandedIds.has(node.id));
-  const isCurrent = current !== null && current.type === node.type && current.id === node.id;
-
-  return (
-    <View>
-      <View className="flex-row items-center" style={{ minHeight: ROW }}>
-        {hasChildren ? (
-          <DisclosureButton
-            expanded={expanded}
-            interactive={!forceExpanded}
-            name={node.title}
-            onPress={() => {
-              onToggle(node.id);
-            }}
-          />
-        ) : (
-          <View style={{ width: ROW }} />
-        )}
-        <PressableFeedback
-          accessibilityHint={isCurrent ? 'Closes Browse' : `Opens ${node.title}`}
-          accessibilityLabel={isCurrent ? `${node.title}, current` : node.title}
-          accessibilityState={{ selected: isCurrent }}
-          className={clsx(
-            'flex-row items-center gap-3 rounded-card px-2 py-1.5',
-            isCurrent && 'bg-wave',
-          )}
-          onPress={() => {
-            onSelect(node);
-          }}
-          style={{ flex: 1, justifyContent: 'center', minHeight: ROW }}
-        >
-          {/* The navigation boards draw the tree with petals for every project and a bare
-              violet layers mark for every area, so the rows read as one list on the sheet
-              surface rather than as tiles. */}
-          <Emblem background={false} name={emblemFor(node.type, node.id)} size={26} />
-          <Text
-            className={clsx(
-              'flex-1 font-body text-[16px]',
-              isCurrent ? 'text-primary' : 'text-ink',
-            )}
-            // Long titles wrap once rather than vanish behind an ellipsis; a third line is cut.
-            numberOfLines={2}
-          >
-            {node.title}
-          </Text>
-          {isCurrent ? (
-            <Text className="font-body-medium text-[14px] text-primary">Current</Text>
-          ) : null}
-        </PressableFeedback>
-        {/* Only areas hold things, so only area rows get the plus. It sits outside the row's
-            press surface so it is its own 44pt target for touch and its own control for a
-            screen reader. */}
-        {node.type === 'area' && onAdd !== undefined ? (
+    return {
+      selected: isCurrent,
+      label: isCurrent ? `${node.title}, current` : node.title,
+      hint: isCurrent ? 'Closes Browse' : `Opens ${node.title}`,
+      trailing: isCurrent ? (
+        <Text className="font-body-medium text-[14px] text-primary">Current</Text>
+      ) : undefined,
+      // Only areas hold things, so only area rows get the plus. It sits outside the row's press
+      // surface so it is its own 44pt target for touch and its own control for a screen reader.
+      accessory:
+        node.type === 'area' && onAdd !== undefined ? (
           <IconButton
             accessibilityHint={`Creates an area or a project inside ${node.title}`}
             color={colors.primary}
@@ -138,38 +63,20 @@ function BrowseBranch({
               onAdd(node);
             }}
           />
-        ) : null}
-      </View>
-      {expanded ? (
-        <View style={{ paddingLeft: INDENT }}>
-          <View
-            className="absolute w-px bg-line"
-            style={{ bottom: HALF_ROW, left: CONNECTOR_X, top: 0 }}
-          />
-          {node.children.map((child) => (
-            <View key={child.id}>
-              <View
-                className="absolute h-px bg-line"
-                style={{
-                  left: CONNECTOR_X - INDENT,
-                  top: HALF_ROW,
-                  width: INDENT - CONNECTOR_X + 4,
-                }}
-              />
-              <BrowseBranch
-                current={current}
-                expandedIds={expandedIds}
-                forceExpanded={forceExpanded}
-                node={child}
-                onAdd={onAdd}
-                onSelect={onSelect}
-                onToggle={onToggle}
-              />
-            </View>
-          ))}
-        </View>
-      ) : null}
-    </View>
+        ) : undefined,
+    };
+  };
+
+  return (
+    <TreeRows
+      expandedIds={expandedIds}
+      footer={onAddRoot === undefined ? undefined : <NewAreaRow onPress={onAddRoot} />}
+      forceExpanded={forceExpanded}
+      nodes={nodes}
+      onSelect={onSelect}
+      onToggle={onToggle}
+      stateFor={stateFor}
+    />
   );
 }
 
@@ -181,14 +88,14 @@ function BrowseBranch({
  */
 function NewAreaRow({ onPress }: { onPress: () => void }) {
   return (
-    <View className="flex-row items-center" style={{ minHeight: ROW }}>
-      <View style={{ width: ROW }} />
+    <View className="flex-row items-center" style={{ minHeight: TREE_ROW }}>
+      <View style={{ width: TREE_ROW }} />
       <PressableFeedback
         accessibilityHint="Creates an area at the top level"
         accessibilityLabel="New area"
         className="flex-row items-center gap-3 rounded-card px-2 py-1.5"
         onPress={onPress}
-        style={{ flex: 1, justifyContent: 'center', minHeight: ROW }}
+        style={{ flex: 1, justifyContent: 'center', minHeight: TREE_ROW }}
       >
         <View
           className="items-center justify-center rounded-full border border-lilac"

@@ -60,6 +60,27 @@ function imports(file) {
   return specifiers;
 }
 
+/** Every file reachable from one entry point, following relative imports only. */
+const reachable = (entry) => {
+  const seen = new Set();
+  const queue = [entry];
+
+  while (queue.length > 0) {
+    const current = queue.pop();
+    if (seen.has(current)) continue;
+    seen.add(current);
+
+    for (const specifier of imports(current)) {
+      if (!specifier.startsWith('.')) continue;
+      const resolved = resolveImport(current, specifier);
+      if (resolved === undefined) continue;
+      queue.push(path.relative(root, resolved));
+    }
+  }
+
+  return seen;
+};
+
 test('capabilities use public interfaces and UI stays independent of product code', () => {
   for (const file of files) {
     for (const specifier of imports(file)) {
@@ -245,43 +266,116 @@ test('nothing outside the editor reaches its browser source or its generated doc
 });
 
 /**
- * The capture database is declared, tested, and not yet opened by the app.
+ * One capability opens a local operational database, and it is capture.
  *
- * Phase 04 builds the durable owner behind ports and stops there deliberately: mounting it needs the
- * storage gate, the composer route and the recovery surfaces that Phase 06 owns, and a database
- * opened by a build that has nowhere to show its contents is a file someone's work can disappear
- * into. This is that boundary written down, and Phase 06 is what removes it.
+ * Two databases used to be opened here: notes, and container creation attempts. The second is gone -
+ * an area is a title and a parent, and losing one in flight costs a title - so the rule is now a
+ * boundary rather than a count. A second capability with its own store would be a second thing
+ * deciding what survives a process, and the whole reason the note owner exists is that exactly one
+ * thing gets to decide that.
+ *
+ * `infrastructure/sqlite` is the port and may be reached only by the capability that owns a database.
  */
-test('nothing in the app opens the capture database yet', () => {
-  // The two files that declare and open it. Everything else - including anything capture later adds
-  // under `client/` - is composition, and composition is what Phase 06 adds. The capability's own
-  // public interface is deliberately not on this list: publishing the database from there would put
-  // it one import away from every other module.
-  const declared = new Set([
-    path.join('modules', 'capture', 'schema.ts'),
-    path.join('modules', 'capture', 'store.ts'),
-  ]);
+test('only capture opens a database through the sqlite infrastructure', () => {
+  const capture = path.join('modules', 'capture') + path.sep;
 
   for (const file of files) {
-    if (declared.has(file)) continue;
+    if (file.startsWith('infrastructure' + path.sep) || file.startsWith(capture)) continue;
+
+    for (const specifier of imports(file)) {
+      if (!specifier.startsWith('.')) continue;
+      const resolved = resolveImport(file, specifier);
+      if (resolved === undefined) continue;
+      assert.ok(
+        !path.relative(root, resolved).startsWith(path.join('infrastructure', 'sqlite')),
+        `${file}: opens a local database, which only capture may do`,
+      );
+    }
 
     const source = readFileSync(path.join(root, file), 'utf8');
     assert.ok(
       !/CAPTURE_DATABASE|openCaptureStore/.test(source),
-      `${file}: opens the capture database, which no screen can yet show the contents of`,
+      `${file}: names the capture database outside the capability that owns it`,
     );
+  }
+
+  // Published from the capability's own interface, the database would be one import away from every
+  // other module. The composition lives inside capture and reaches `store.ts` and `schema.ts`.
+  const published = readFileSync(path.join(root, 'modules', 'capture', 'index.ts'), 'utf8');
+  assert.ok(
+    !/CAPTURE_DATABASE|openCaptureStore/.test(published),
+    'capture publishes its database, which puts it one import away from everything',
+  );
+});
+
+/**
+ * Container creation is a plain request, and its durable subsystem is gone rather than disabled.
+ *
+ * The attempt records, their database, their recovery surfaces and their summary cards were deleted
+ * in one sweep: a second dispatcher kept behind a flag is a second thing that can resend, and the
+ * recovery screen is about notes only now. **The old database file on a device is never opened and
+ * never deleted** - this codebase does not remove a local database on its own - so the rule is that
+ * nothing names it, not that something removes it.
+ */
+test('no container-attempt surface survives', () => {
+  assert.ok(
+    !existsSync(path.join(root, 'modules', 'collections', 'creation')),
+    'the container attempt subsystem is gone',
+  );
+
+  for (const file of files) {
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    for (const name of [
+      'ATTEMPTS_DATABASE',
+      'raphael-creation.db',
+      'useCreationOwner',
+      'useCreationStore',
+      'PendingAttempts',
+      'PendingSummary',
+      'AttemptCard',
+      'resumeContainer',
+    ]) {
+      assert.ok(
+        !source.includes(name),
+        `${file}: still reaches the retired container attempt ${name}`,
+      );
+    }
   }
 });
 
 /**
- * Text capture is absent rather than pretending.
+ * Capture draws Browse's tree, and the edge points one way.
  *
- * The sheet that used to write a note wrote a session-only mock, and Phase 05 removes the feed that
- * could show one. Leaving a control that looks like saving a note would be worse than an honest gap,
- * so the entry points are gone structurally - not disabled, not redirected, and not kept behind a
- * flag that could be turned back on before there is anything real behind it.
+ * The destination picker has to be the same tree as Browse - the same indentation, connectors,
+ * disclosure and targets - so capture imports the selectable surface `browse` publishes rather than
+ * growing a second one. That only works while the dependency is acyclic: if anything browse or
+ * collections reached were to reach back into capture, the two public surfaces would each finish
+ * evaluating only after the other's, which works until a refactor reorders it.
+ *
+ * It is stated as reachability rather than as a promise, because the edge that would break it is one
+ * ordinary import in a screen nobody thinks of as shared.
  */
-test('no text-capture entry point survives while the durable one is unmounted', () => {
+test('the capabilities capture depends on do not depend on capture', () => {
+  for (const module of ['browse', 'collections', 'resources', 'editor']) {
+    const entry = path.join('modules', module, 'index.ts');
+    const reached = [...reachable(entry)].filter((file) =>
+      file.startsWith(path.join('modules', 'capture') + path.sep),
+    );
+
+    assert.deepEqual(reached, [], `${entry} reaches capture, so the dependency is a cycle`);
+  }
+});
+
+/**
+ * The session-only note writer is gone for good.
+ *
+ * New note is back and it is real: it asks the owner for a durable draft and opens a route over it.
+ * What must never come back is the sheet that wrote a note into memory and a feed that displayed it
+ * beside nothing - so the retired names stay gone structurally, not behind a flag that could be
+ * turned on in front of a feed that is now the server's.
+ */
+test('nothing can write a note into memory again', () => {
   for (const file of files) {
     const source = readFileSync(path.join(root, file), 'utf8');
 
@@ -340,31 +434,9 @@ test('nothing can create a note that exists only in this process', () => {
  * public. So the whole graph under each declared entry point is walked, and reaching the capability
  * that depends on it is a failure.
  *
- * `capture` and `collections` do import one another today, through their indexes. That pair is not
- * covered here and is not a precedent: Phase 06 deletes the container-attempt subsystem that creates
- * it, and this rule is about the permanent surfaces that survive it.
+ * The capture edges are covered separately, by the acyclicity rule above.
  */
 test('a declared second entry point does not reach the capability that depends on it', () => {
-  const reachable = (entry) => {
-    const seen = new Set();
-    const queue = [entry];
-
-    while (queue.length > 0) {
-      const current = queue.pop();
-      if (seen.has(current)) continue;
-      seen.add(current);
-
-      for (const specifier of imports(current)) {
-        if (!specifier.startsWith('.')) continue;
-        const resolved = resolveImport(current, specifier);
-        if (resolved === undefined) continue;
-        queue.push(path.relative(root, resolved));
-      }
-    }
-
-    return seen;
-  };
-
   const hierarchy = path.join('modules', 'collections', 'hierarchy.ts');
   const reached = [...reachable(hierarchy)].filter((file) =>
     file.startsWith(path.join('modules', 'resources') + path.sep),

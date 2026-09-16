@@ -22,6 +22,8 @@ export { PressableFeedback, type PressableFeedbackProps } from './PressableFeedb
 export { PrimaryButton, type PrimaryButtonProps } from './PrimaryButton';
 export { SavePill, type SavePillProps } from './SavePill';
 export { SectionError, type SectionErrorProps } from './SectionError';
+export { Snackbar, type SnackbarProps } from './Snackbar';
+export { SNACKBAR_GAP, SNACKBAR_HOLD_MS, SNACKBAR_IN_MS, SNACKBAR_OUT_MS } from './snackbar-motion';
 export {
   Eyebrow,
   SectionHeading,
