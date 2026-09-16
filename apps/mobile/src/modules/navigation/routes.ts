@@ -23,6 +23,17 @@ export function openProject(id: number): void {
   router.push({ pathname: '/project/[id]', params: { id: String(id) } });
 }
 
+/**
+ * Opens one saved note, read-only.
+ *
+ * By the server's numeric id, which is the only identity a note has. There is no draft route here:
+ * a note that exists only on this phone is not addressable by a server id and is opened from the
+ * record that holds it.
+ */
+export function openResource(id: number): void {
+  router.push({ pathname: '/resource/[id]', params: { id: String(id) } });
+}
+
 /** Opens an area or a project without the caller having to branch on its type. */
 export function openContainer(ref: ContainerRef): void {
   if (ref.type === 'area') {
@@ -111,24 +122,4 @@ export function leaveSearchFor(ref: ContainerRef): void {
   if (router.canDismiss()) router.dismissTo('/');
 
   openContainer(ref);
-}
-
-/** THROWAWAY: opens the temporary UI mock gallery. Remove with `app/mock` and `modules/mock`. */
-export function openMockGallery(): void {
-  router.push('/mock');
-}
-
-/** THROWAWAY: opens a mock note in the editor. */
-export function openMockNote(id: number): void {
-  router.push({ pathname: '/mock/composer', params: { id: String(id) } });
-}
-
-/** THROWAWAY: opens a mock draft in the editor. */
-export function openMockDraft(id: number): void {
-  router.push({ pathname: '/mock/composer', params: { draft: String(id) } });
-}
-
-/** THROWAWAY: opens the mock Unfinished screen. */
-export function openMockUnfinished(): void {
-  router.push('/mock/unfinished');
 }

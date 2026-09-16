@@ -1,9 +1,9 @@
 import { Text, View } from 'react-native';
 
-import type { Resource } from '../../../infrastructure/api/contracts';
-import { EmptyState, Screen, SectionError, SectionHeading, Chip } from '../../../ui';
+import { Screen, SectionHeading } from '../../../ui';
 import { CaptureBar } from '../../capture';
 import {
+  containerTitleLookup,
   HierarchyStale,
   PendingSummary,
   useActiveProjectIds,
@@ -12,59 +12,47 @@ import {
   type HierarchyNode,
 } from '../../collections';
 import { RejectionNotice } from '../../connection';
-import { MockCaptureLift, MockHomeSnackbar, MockRecentNotes, useMockStore } from '../../mock';
 import {
   openBrowse,
-  openMockDraft,
-  openMockGallery,
-  openMockNote,
   openRecovery,
+  openResource,
   openSearch,
   openSettings,
   useSheetsStore,
   HomeTopBar,
 } from '../../navigation';
-import { ResourceGrid, type ResourceGridItem } from '../../resources';
-import { useHomeFeed } from '../client/queries';
+import {
+  HOME_NOTES_COPY,
+  NoteSection,
+  SessionMediaSection,
+  useNoteFeed,
+  useSessionMedia,
+} from '../../resources';
 import { ActiveProjectCard } from './ActiveProjectCard';
-import { ActiveSkeleton, NotesSkeleton } from './Skeletons';
+import { ActiveSkeleton } from './Skeletons';
 
 /**
- * The feed reads as the board does: the first voice note takes the full width so its waveform
- * and play button have room, and everything after it pairs up into columns.
- */
-function toGridItems(feed: readonly Resource[]): ResourceGridItem[] {
-  let voiceSpanned = false;
-
-  return feed.map((resource) => {
-    if (resource.kind === 'voice' && !voiceSpanned) {
-      voiceSpanned = true;
-
-      return { resource, span: 'full' };
-    }
-
-    return { resource };
-  });
-}
-
-/**
- * Home orients first: deliberately active projects together, then recent captures.
+ * Home orients first: deliberately active projects together, then every note on the server.
  *
  * An active project is stored as an id, so the card's title and description are read out of the
  * hierarchy. That makes this section depend on the hierarchy loading, and it reports that
  * dependency honestly rather than showing an empty list when the server could not be reached.
  *
- * The notes here are kept on this device for the session.
+ * The Notes feed is the server's, newest edit first, paged as the scroll reaches its end. It is not
+ * a list of recent activity on this phone: nothing local is mixed into it, nothing is sorted here,
+ * and no body is fetched to draw a card. Media recorded in this session keeps its own section below,
+ * because it has no server operation and saying otherwise by putting it under the same heading would
+ * be the one thing this screen must not do.
+ *
+ * New note is deliberately absent until the durable capture owner is wired to it.
  */
 export function HomeScreen() {
   const selected = useActiveProjectIds();
   const tree = useHierarchy();
   const active = useProjectActive();
-  const feed = useHomeFeed();
+  const feed = useNoteFeed();
+  const media = useSessionMedia();
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
-  const showMore = useMockStore((state) => state.showMore);
-  const refreshing = useMockStore((state) => state.refreshing);
-  const refreshFeed = useMockStore((state) => state.refresh);
 
   const hierarchy = tree.hierarchy;
   const projects: readonly HierarchyNode[] | undefined =
@@ -78,16 +66,17 @@ export function HomeScreen() {
   return (
     <View className="flex-1">
       <Screen
-        onEndReached={showMore}
+        onEndReached={feed.loadMore}
         // Pull down reloads everything Home shows: the hierarchy the project cards are named from,
-        // the active list, and the notes. The mock only pretends for the notes.
+        // the active list, and the notes - the notes from their first page, not by re-reading every
+        // page that happens to be held.
         onRefresh={() => {
           tree.refetch();
           void selected.refetch();
-          void feed.refetch();
-          refreshFeed();
+          feed.refresh();
+          void media.refetch();
         }}
-        refreshing={refreshing || tree.isFetching}
+        refreshing={feed.isRefreshing || tree.isFetching}
         header={
           <HomeTopBar
             onBrowse={openBrowse}
@@ -100,12 +89,6 @@ export function HomeScreen() {
       >
         <View className="gap-7">
           <RejectionNotice />
-          {/* THROWAWAY: temporary entry to the UI mocks. Remove with `modules/mock`. */}
-          {__DEV__ ? (
-            <View className="flex-row">
-              <Chip label="UI mocks (temporary)" onPress={openMockGallery} />
-            </View>
-          ) : null}
           {/* Every unfinished creation, including the root-targeted ones that belong to no area and
               would otherwise be discoverable nowhere. Read from the local record, so it is here
               whether or not the server can be reached. */}
@@ -149,39 +132,18 @@ export function HomeScreen() {
             ) : null}
           </View>
 
-          {/* THROWAWAY: the mock Recent notes section stands in for the session-only feed. */}
-          {__DEV__ ? (
-            <MockRecentNotes onOpen={openMockNote} onOpenDraft={openMockDraft} />
-          ) : (
-            <View className="gap-3">
-              <SectionHeading>Notes</SectionHeading>
-              {feed.isError ? (
-                <SectionError
-                  onRetry={() => {
-                    void feed.refetch();
-                  }}
-                  retrying={feed.isFetching}
-                  title="Notes did not load."
-                />
-              ) : feed.data === undefined ? (
-                <NotesSkeleton />
-              ) : feed.data.length === 0 ? (
-                <EmptyState
-                  description="Start one with New note, or hold the thought with the mic."
-                  title="No notes yet."
-                />
-              ) : (
-                <ResourceGrid items={toGridItems(feed.data)} />
-              )}
-            </View>
-          )}
+          <NoteSection
+            copy={HOME_NOTES_COPY}
+            locationFor={containerTitleLookup(tree)}
+            onOpen={openResource}
+            testID="home-notes"
+            view={feed.view}
+          />
+
+          <SessionMediaSection items={media.data ?? []} testID="home-session-media" />
         </View>
       </Screen>
-      {/* THROWAWAY: the wrapper lets the mock snackbar lift the capture pair. */}
-      <MockCaptureLift>
-        <CaptureBar onVoice={openVoiceCapture} />
-      </MockCaptureLift>
-      {__DEV__ ? <MockHomeSnackbar /> : null}
+      <CaptureBar onVoice={openVoiceCapture} />
     </View>
   );
 }

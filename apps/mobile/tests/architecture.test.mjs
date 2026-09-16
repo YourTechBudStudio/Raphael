@@ -16,6 +16,24 @@ function resolveImport(source, specifier) {
   );
 }
 
+/**
+ * The files a module publishes. `index.ts` everywhere, plus the declared exceptions below.
+ *
+ * A second entry point exists for exactly one reason: to break an import cycle that a single door
+ * would force. `collections/index.ts` publishes the Area and Project screens, and those screens
+ * render the resources capability's note sections. A note screen reaching the hierarchy through that
+ * index would make the two modules mutually dependent, where each public surface can only finish
+ * evaluating after the other's - an edge that works until a refactor reorders it and then fails as
+ * an undefined component at startup.
+ *
+ * The exception is narrow by construction and is checked below: a declared entry point must not
+ * reach the capability that depends on it. Adding one for convenience, rather than to break a cycle,
+ * is what this list exists to make visible.
+ */
+const ENTRY_POINTS = new Map([['collections', ['index.ts', 'hierarchy.ts']]]);
+
+const entryPointsOf = (module) => ENTRY_POINTS.get(module) ?? ['index.ts'];
+
 const importsByFile = new Map();
 
 function imports(file) {
@@ -53,10 +71,12 @@ test('capabilities use public interfaces and UI stays independent of product cod
       const [targetLayer, targetModule] = target.split(path.sep);
 
       if (targetLayer === 'modules' && (layer !== 'modules' || module !== targetModule)) {
-        assert.equal(
-          target,
-          path.join('modules', targetModule, 'index.ts'),
-          `${file}: private module import ${specifier}`,
+        const allowed = entryPointsOf(targetModule).map((entry) =>
+          path.join('modules', targetModule, entry),
+        );
+        assert.ok(
+          allowed.includes(target),
+          `${file}: private module import ${specifier}; ${targetModule} publishes ${allowed.join(', ')}`,
         );
       }
       if (layer === 'ui') {
@@ -269,4 +289,90 @@ test('no text-capture entry point survives while the durable one is unmounted', 
       assert.ok(!source.includes(name), `${file}: still reaches the retired note writer ${name}`);
     }
   }
+});
+
+/**
+ * The throwaway UI is gone, not disabled.
+ *
+ * Every mock route, module, helper and re-export was deleted in one sweep rather than left behind a
+ * flag. A gallery that can be switched back on is a second set of screens to keep compiling, and a
+ * fake note one import away from a real feed is exactly the confusion the sweep existed to end. The
+ * original source stays inspectable in Git, which is where a reference belongs.
+ */
+test('no throwaway mock surface survives', () => {
+  for (const file of files) {
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    for (const name of ['THROWAWAY', 'openMock', 'modules/mock', 'MockGallery', 'useMockStore']) {
+      assert.ok(!source.includes(name), `${file}: still reaches the retired mock surface ${name}`);
+    }
+  }
+
+  assert.ok(!existsSync(path.join(root, 'app', 'mock')), 'the mock routes are gone');
+  assert.ok(!existsSync(path.join(root, 'modules', 'mock')), 'the mock module is gone');
+});
+
+/**
+ * A note is server data, and there is no second kind of note.
+ *
+ * `NoteResource` and `localContent.createNote` wrote a note that existed only in this process and
+ * that a feed then displayed beside nothing. Both are deleted: the session-only store keeps the
+ * media kinds that genuinely have no server operation, and nothing can manufacture a note again.
+ */
+test('nothing can create a note that exists only in this process', () => {
+  for (const file of files) {
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    // The call form, not the bare word: `local.ts` names the deleted operation in the comment that
+    // explains why it is gone, and that explanation is worth keeping.
+    for (const name of ['NoteResource', 'createNote(', 'useLocalResources']) {
+      assert.ok(!source.includes(name), `${file}: still reaches the retired session note ${name}`);
+    }
+  }
+});
+
+/**
+ * A second entry point has to be a leaf, or it has not broken the cycle it exists for.
+ *
+ * `collections/hierarchy.ts` is imported by `resources` so that a note screen can name where a note
+ * is filed. If anything it reaches were to reach back into `resources`, the cycle would be exactly
+ * where it was - only harder to see, because the edge would run through a file nobody thinks of as
+ * public. So the whole graph under each declared entry point is walked, and reaching the capability
+ * that depends on it is a failure.
+ *
+ * `capture` and `collections` do import one another today, through their indexes. That pair is not
+ * covered here and is not a precedent: Phase 06 deletes the container-attempt subsystem that creates
+ * it, and this rule is about the permanent surfaces that survive it.
+ */
+test('a declared second entry point does not reach the capability that depends on it', () => {
+  const reachable = (entry) => {
+    const seen = new Set();
+    const queue = [entry];
+
+    while (queue.length > 0) {
+      const current = queue.pop();
+      if (seen.has(current)) continue;
+      seen.add(current);
+
+      for (const specifier of imports(current)) {
+        if (!specifier.startsWith('.')) continue;
+        const resolved = resolveImport(current, specifier);
+        if (resolved === undefined) continue;
+        queue.push(path.relative(root, resolved));
+      }
+    }
+
+    return seen;
+  };
+
+  const hierarchy = path.join('modules', 'collections', 'hierarchy.ts');
+  const reached = [...reachable(hierarchy)].filter((file) =>
+    file.startsWith(path.join('modules', 'resources') + path.sep),
+  );
+
+  assert.deepEqual(
+    reached,
+    [],
+    `${hierarchy} reaches resources, so the cycle it exists to break is still there`,
+  );
 });

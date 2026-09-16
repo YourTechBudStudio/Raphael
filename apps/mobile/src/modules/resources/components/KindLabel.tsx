@@ -1,9 +1,8 @@
 import { Text, View } from 'react-native';
 
-import type { ResourceKind } from '../../../infrastructure/api/contracts';
-import { KindBadge } from './KindBadge';
+import { KindBadge, type CardKind } from './KindBadge';
 
-const KIND_LABELS: Record<ResourceKind, string> = {
+const KIND_LABELS: Record<CardKind, string> = {
   note: 'Note',
   voice: 'Voice',
   image: 'Image',
@@ -11,7 +10,7 @@ const KIND_LABELS: Record<ResourceKind, string> = {
 };
 
 export interface KindLabelProps {
-  kind: ResourceKind;
+  kind: CardKind;
   /** Badge size in logical pixels. */
   size?: number | undefined;
   /** Set false for a bare icon next to the label, as the image and note cards use. */

@@ -1,14 +1,13 @@
 import { ChevronLeft, Search } from 'lucide-react-native';
-import { useMemo, type ReactNode } from 'react';
+import { useMemo } from 'react';
 import { Text, View } from 'react-native';
 
-import type { ContainerRef, Resource } from '../../../infrastructure/api/contracts';
+import type { ContainerRef } from '../../../infrastructure/api/contracts';
 import { asClientFailure, isNotFound } from '../../../infrastructure/query/failure';
 import {
   Chip,
   EmptyState,
   Eyebrow,
-  SectionHeading,
   FavoriteButton,
   IconButton,
   Screen,
@@ -21,16 +20,29 @@ import {
   goBack,
   openBrowse,
   openHome,
+  openResource,
   openSearch,
   useSheetsStore,
   LocationTopBar,
 } from '../../navigation';
-import { ResourceGrid, useLocalResources, type ResourceGridItem } from '../../resources';
+import {
+  CONTAINER_NOTES_COPY,
+  NoteSection,
+  SessionMediaSection,
+  useNotePages,
+  useSessionMedia,
+} from '../../resources';
 import { useProjectActive } from '../client/active';
 import { useFavoriteToggle } from '../client/favorites';
 import { pathSegments } from '../client/hierarchy';
-import { ancestorsOf, useContainer, useContainerPath, useHierarchy } from '../client/queries';
-import { ProjectHeaderSkeleton, ProjectNotesSkeleton } from './ProjectSkeleton';
+import {
+  ancestorsOf,
+  containerTitleLookup,
+  useContainer,
+  useContainerPath,
+  useHierarchy,
+} from '../client/queries';
+import { ProjectHeaderSkeleton } from './ProjectSkeleton';
 import { ReadOnlyBody } from './ReadOnlyBody';
 
 /** Stands in when there is no client failure to inspect, so the not-found check stays total. */
@@ -49,9 +61,10 @@ export interface ProjectScreenProps {
 }
 
 /**
- * A project: where it sits, what it is, and every note captured into it.
+ * A project: where it sits, what it is, and every note filed in it.
  *
- * Notes here are kept on this device for the session; the project itself comes from the server.
+ * The notes are the server's, in its default order, paged as the scroll reaches the end. Media
+ * recorded in this session has no server operation at all and keeps its own heading below them.
  */
 export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const target = useMemo<ContainerRef | null>(
@@ -63,7 +76,8 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const active = useProjectActive();
   const project = useContainer(target);
   const tree = useHierarchy();
-  const notes = useLocalResources();
+  const notes = useNotePages(target);
+  const media = useSessionMedia();
 
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
 
@@ -156,16 +170,13 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   if (entity === undefined) {
     return (
       <Screen captureBar={false} header={header}>
-        <View className="gap-7">
-          <ProjectHeaderSkeleton />
-          <ProjectNotesSkeleton />
-        </View>
+        <ProjectHeaderSkeleton />
       </Screen>
     );
   }
 
   const { title, description } = entity;
-  const resources = (notes.data ?? []).filter(
+  const sessionMedia = (media.data ?? []).filter(
     (resource) => resource.parent.type === 'project' && resource.parent.id === projectId,
   );
 
@@ -173,11 +184,15 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
     <View className="flex-1">
       <Screen
         header={header}
+        onEndReached={notes.loadMore}
+        // Everything this screen shows, reloaded together; the notes from their first page.
         onRefresh={() => {
           tree.refetch();
           void project.refetch();
+          notes.refresh();
+          void media.refetch();
         }}
-        refreshing={tree.isFetching || project.isFetching}
+        refreshing={tree.isFetching || project.isFetching || notes.isRefreshing}
       >
         <RejectionNotice className="mb-4" />
         <View>
@@ -238,52 +253,18 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
           kind="project"
         />
 
-        <View className="mt-7 gap-3">
-          <SectionHeading>Notes</SectionHeading>
-          <ProjectNotes isError={notes.isError} isPending={notes.isPending} resources={resources} />
-        </View>
+        <NoteSection
+          className="mt-7"
+          copy={CONTAINER_NOTES_COPY}
+          locationFor={containerTitleLookup(tree)}
+          onOpen={openResource}
+          testID="project-notes"
+          view={notes.view}
+        />
+
+        <SessionMediaSection className="mt-7" items={sessionMedia} testID="project-session-media" />
       </Screen>
       <CaptureBar onVoice={openVoiceCapture} />
     </View>
   );
-}
-
-/** The grid, its loading shape, and the line that stands in for an empty project. */
-function ProjectNotes({
-  resources,
-  isPending,
-  isError,
-}: {
-  resources: readonly Resource[];
-  isPending: boolean;
-  isError: boolean;
-}): ReactNode {
-  if (isError) {
-    return (
-      <Text
-        accessibilityLiveRegion="polite"
-        className="font-body text-[16px] leading-[22px] text-ink-soft"
-      >
-        Unable to load notes.
-      </Text>
-    );
-  }
-
-  if (isPending) {
-    return <ProjectNotesSkeleton />;
-  }
-
-  if (resources.length === 0) {
-    return (
-      <Text className="font-body text-[16px] leading-[22px] text-ink-soft">No notes found.</Text>
-    );
-  }
-
-  // The newest note leads at full width, the way the board opens the section; the rest pair up.
-  const items: ResourceGridItem[] = resources.map((resource, index) => ({
-    resource,
-    ...(index === 0 ? { span: 'full' as const } : {}),
-  }));
-
-  return <ResourceGrid items={items} noteVariant="lilac" />;
 }

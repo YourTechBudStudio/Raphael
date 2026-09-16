@@ -7,11 +7,14 @@
  * `@raphael/contracts/nodes` already owns it, and a second declaration here would be a second
  * authority that could drift.
  *
- * Notes, favorites, and active-project selections are **session-only local data**. There is no
- * server operation for any of them in this release. What is declared here is their shape, and the
- * one rule that keeps them honest: they hold a `ContainerRef` - a numeric reference to a real
- * container - and never a copy of a container's title, description, or parent. A local record that
- * copied server fields would be a second hierarchy that goes stale silently.
+ * Media captured in this session, favorites, and active-project selections are **session-only local
+ * data**. There is no server operation for any of them in this release. What is declared here is
+ * their shape, and the one rule that keeps them honest: they hold a `ContainerRef` - a numeric
+ * reference to a real container - and never a copy of a container's title, description, or parent. A
+ * local record that copied server fields would be a second hierarchy that goes stale silently.
+ *
+ * Notes used to be here too. They are server data now: `@raphael/contracts/nodes` owns their shape,
+ * and `modules/resources` reads them from the connected Raphael.
  */
 
 import type { ContainerType } from '@raphael/contracts/nodes';
@@ -39,13 +42,15 @@ export interface ContainerRef {
 }
 
 /**
- * The kinds the session-only mock feed still serves.
+ * The kinds of session-only media this app still holds in memory.
  *
  * Not the server's `ResourceKind`, which shares the name and means something narrower: the kinds core
- * actually admits. These are presentation categories for local mock data, and the two must not be
- * confused while both exist. The note branch here is retired with the rest of the mock feed.
+ * actually admits. These are presentation categories for media captured in this session and never
+ * sent anywhere. Notes are gone from this union: a note is server data now, described by
+ * `NodeSummary`, and `modules/resources` renders it from that shape rather than adapting it into
+ * this one.
  */
-export type ResourceKind = 'note' | 'voice' | 'image' | 'github';
+export type ResourceKind = 'voice' | 'image' | 'github';
 
 interface ResourceBase {
   id: string;
@@ -54,14 +59,6 @@ interface ResourceBase {
   /** The container this was captured into. Always an area or project the server knows about. */
   parent: ContainerRef;
   createdAt: string;
-}
-
-export interface NoteResource extends ResourceBase {
-  kind: 'note';
-  /** THROWAWAY (mock): where the note is filed, as `parent / leaf`, for the card to show. */
-  location?: string | undefined;
-  /** THROWAWAY (mock): a note with no confirmed copy on the server, and why. */
-  status?: 'draft' | 'unconfirmed' | 'refused' | undefined;
 }
 
 export interface VoiceResource extends ResourceBase {
@@ -80,4 +77,4 @@ export interface GithubResource extends ResourceBase {
   kind: 'github';
 }
 
-export type Resource = NoteResource | VoiceResource | ImageResource | GithubResource;
+export type Resource = VoiceResource | ImageResource | GithubResource;

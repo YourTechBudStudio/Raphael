@@ -236,3 +236,26 @@ export const ancestorsOf = (
   id: number | null,
 ): readonly HierarchyNode[] =>
   hierarchy === undefined || id === null ? [] : pathTo(hierarchy, id);
+
+/**
+ * Names a container for display, or declines to.
+ *
+ * The rule is the one the Area screen already follows, factored so every card and chip applies it
+ * identically. A title is offered only from a hierarchy that has loaded *and* is current. A
+ * hierarchy that has not arrived cannot be asked. A hierarchy retained after a failed refresh can be
+ * asked and must not be: its titles were true when they were read and may not be now, and a card
+ * with one line above the title has nowhere to say which of those it is showing. A plausible name is
+ * worse than an honest fallback, because nothing marks it as a guess.
+ *
+ * Callers fall back to something that is true regardless - a kind label on a card, the server's
+ * canonical path on a screen that can afford the request.
+ */
+export const containerTitleLookup = (
+  tree: HierarchyQuery,
+): ((id: number) => string | undefined) => {
+  const hierarchy = tree.hierarchy;
+
+  if (hierarchy === undefined || tree.isStale) return () => undefined;
+
+  return (id: number) => hierarchy.byId.get(id)?.title;
+};

@@ -15,7 +15,6 @@ import {
   type HierarchyQuery,
 } from '../../collections';
 import { RejectionNotice } from '../../connection';
-import { mockHierarchyRoots, useMockStore } from '../../mock';
 import { goBack, openContainer, openRecovery, TitleTopBar, useSheetsStore } from '../../navigation';
 import { useBrowseStore } from '../state/tree';
 import { AddInsideSheet } from './AddInsideSheet';
@@ -80,14 +79,7 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
   }, [ancestorIds, expandMany]);
 
   const filtering = query.trim() !== '';
-  // THROWAWAY: the gallery can swap the server's hierarchy for the mock one, so the nesting can
-  // be seen on a server that has little in it.
-  const mockBrowse = useMockStore((state) => state.mockBrowse);
-  const created = useMockStore((state) => state.created);
-  const roots = useMemo(
-    () => (__DEV__ && mockBrowse ? mockHierarchyRoots(created) : (tree.hierarchy?.roots ?? [])),
-    [mockBrowse, created, tree.hierarchy],
-  );
+  const roots = tree.hierarchy?.roots ?? [];
   const nodes = useMemo(() => filterTree(roots, query), [roots, query]);
 
   const select = (node: ContainerRef) => {
@@ -145,8 +137,8 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
               current={current}
               expandedIds={expanded}
               filtering={filtering}
-              hasHierarchy={tree.hierarchy !== undefined || (__DEV__ && mockBrowse)}
-              isPending={tree.isPending && !(__DEV__ && mockBrowse)}
+              hasHierarchy={tree.hierarchy !== undefined}
+              isPending={tree.isPending}
               nodes={nodes}
               onAdd={setAdding}
               onAddRoot={() => {

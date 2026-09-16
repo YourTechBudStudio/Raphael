@@ -150,9 +150,12 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
 
           <HierarchyStale className="mt-5" tree={search.tree} />
 
+          {/* A failed hierarchy shows nothing below its error. Falling through to the results group
+              would put an "Areas & projects" heading with nothing under it directly beneath the
+              error, which reads as a completed search that found none. */}
           {search.isPending ? (
             <Line className="mt-5">Searching…</Line>
-          ) : empty && !search.containersFailed ? (
+          ) : search.containersFailed ? null : empty ? (
             <Line className="mt-5">{`No area or project matches “${query}”. ${NOTES_LINE}`}</Line>
           ) : (
             <ResultGroups onOpenContainer={leaveSearchFor} results={results} />

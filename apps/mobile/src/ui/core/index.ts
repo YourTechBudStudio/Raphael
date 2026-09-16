@@ -34,5 +34,6 @@ export {
   type SkeletonBlockProps,
   type SkeletonGroupProps,
 } from './Skeleton';
+export { useScreenReader } from './useScreenReader';
 export { useThemeColor } from './useThemeColor';
 export { Wave, type WaveProps, type WaveVariant } from './Wave';

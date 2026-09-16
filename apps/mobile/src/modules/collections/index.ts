@@ -1,25 +1,22 @@
 export { useActiveProjectIds, useProjectActive } from './client/active';
 export { useFavorites, useFavoriteToggle } from './client/favorites';
-export {
-  allAreas,
-  areaOptions,
-  pathSegments,
-  pathTo,
-  subtreeIds,
-  type AreaOption,
-  type Hierarchy,
-  type HierarchyNode,
-} from './client/hierarchy';
+export { allAreas, areaOptions, pathTo, subtreeIds, type AreaOption } from './client/hierarchy';
+export { invalidateHierarchy, useContainer } from './client/queries';
+// The read-only hierarchy is published by `hierarchy.ts` as well, so a capability that needs only
+// that much can take it without depending on the screens this file also publishes. Re-exported here
+// rather than declared twice: one definition, two doors.
 export {
   ancestorsOf,
   childrenOf,
-  invalidateHierarchy,
-  useContainer,
+  containerTitleLookup,
+  pathSegments,
   useContainerPath,
   useHierarchy,
   type ContainerChildren,
+  type Hierarchy,
+  type HierarchyNode,
   type HierarchyQuery,
-} from './client/queries';
+} from './hierarchy';
 export { useCreationStore } from './client/creation';
 export { AreaScreen } from './components/AreaScreen';
 export { ContainerCreationHost } from './components/ContainerCreationHost';

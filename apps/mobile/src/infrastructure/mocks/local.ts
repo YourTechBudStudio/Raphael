@@ -1,12 +1,15 @@
-import type { ContainerRef, NoteResource, Resource, VoiceResource } from '../api/contracts';
+import type { ContainerRef, Resource, VoiceResource } from '../api/contracts';
 
 /**
  * Session-only local content, kept per connection.
  *
- * Notes, favorites, and active-project selections have no server operation in this release, so
- * they live here, in memory, for as long as the process does. Phase 08 changed what they *point
- * at* - real numeric container ids instead of fixture strings - and nothing about how long they
- * last. Nothing in this module may be presented as saved to Raphael.
+ * Media captured in this session, favorites, and active-project selections have no server operation
+ * in this release, so they live here, in memory, for as long as the process does. Nothing in this
+ * module may be presented as saved to Raphael.
+ *
+ * Notes are no longer among them. `createNote` wrote a note that existed only in this map, and the
+ * feed that displayed it is gone; a note is created against the server now, by capture, and read
+ * back by `modules/resources`. What is left here is media with no server operation yet.
  *
  * Everything is keyed by connection id. Two servers can mint the same numeric id for different
  * containers, so a single flat store would show one server's notes under the other's areas. The
@@ -50,29 +53,9 @@ const nextId = (prefix: string): string => {
 };
 
 export const localContent = {
-  /** Everything captured against this connection, newest first. */
+  /** Every piece of session media captured against this connection, newest first. */
   async getResources(connectionId: string): Promise<Resource[]> {
     return [...read(connectionId).resources].sort(byNewest);
-  },
-
-  async createNote(
-    connectionId: string,
-    parent: ContainerRef,
-    title: string,
-    body: string,
-  ): Promise<NoteResource> {
-    const note: NoteResource = {
-      id: nextId('note'),
-      kind: 'note',
-      title: title.trim() === '' ? 'Untitled note' : title.trim(),
-      summary: body.trim(),
-      parent,
-      createdAt: new Date().toISOString(),
-    };
-    const bucket = read(connectionId);
-    write(connectionId, { ...bucket, resources: [note, ...bucket.resources] });
-
-    return note;
   },
 
   async createVoiceNote(

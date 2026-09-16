@@ -1,18 +1,32 @@
 import clsx from 'clsx';
 import { View } from 'react-native';
 
-import type { Resource } from '../../../infrastructure/api/contracts';
-import type { CardVariant } from '../../../ui';
-import { buildResourceGrid, type ResourceGridItem } from './layout';
+import type { Resource, ResourceKind } from '../../../infrastructure/api/contracts';
+import { buildColumnGrid, type GridItem } from './layout';
 import { ResourceCard } from './ResourceCard';
+
+/**
+ * Relative heights, used only to decide which column a card joins. Images are tall, a repository
+ * link is short; the numbers are ratios, not pixels. The `note` entry is gone with the session-only
+ * note: a note is server data drawn by `NoteGrid` now.
+ */
+const ESTIMATED_HEIGHT: Record<ResourceKind, number> = {
+  image: 1.6,
+  voice: 1,
+  github: 0.8,
+};
+
+/** One entry in a media grid. `span: 'full'` forces a full-width row. */
+export interface ResourceGridItem {
+  resource: Resource;
+  span?: 'full' | undefined;
+}
 
 export interface ResourceGridProps {
   items: readonly ResourceGridItem[];
-  /** The surface written notes sit on in this grid. Home keeps them warm; a collection uses lilac. */
-  noteVariant?: CardVariant | undefined;
   /**
    * What a tap on a card does. Left out, the cards are plain surfaces rather than buttons —
-   * there is no resource detail screen in this build, so no board passes this yet.
+   * there is no detail screen for session media, so no board passes this.
    */
   onPressResource?: ((resource: Resource) => void) | undefined;
   className?: string | undefined;
@@ -20,18 +34,21 @@ export interface ResourceGridProps {
 }
 
 /**
- * The mixed grid the boards use: full-width rows for cards that need the room, and pairs
- * of columns for the rest, each card joining whichever column is shorter so the two sides
- * stay level without a masonry library.
+ * The mixed grid the media sections use: full-width rows for cards that need the room, and pairs
+ * of columns for the rest.
+ *
+ * This now serves session-only media alone. Its arrangement comes from the shared helper, which
+ * `NoteGrid` uses too, so the two grids cannot drift into two different ideas of how cards pair up.
  */
-export function ResourceGrid({
-  items,
-  noteVariant = 'warm',
-  onPressResource,
-  className,
-  testID,
-}: ResourceGridProps) {
-  const blocks = buildResourceGrid(items);
+export function ResourceGrid({ items, onPressResource, className, testID }: ResourceGridProps) {
+  const blocks = buildColumnGrid(
+    items.map((item): GridItem<Resource> => ({
+      key: `media:${item.resource.id}`,
+      height: ESTIMATED_HEIGHT[item.resource.kind],
+      ...(item.span === undefined ? {} : { span: item.span }),
+      value: item.resource,
+    })),
+  );
   let seed = 0;
 
   // A card becomes a button only where the tap has somewhere to go. Manufacturing a handler
@@ -52,11 +69,10 @@ export function ResourceGrid({
 
           return (
             <ResourceCard
-              key={block.resource.id}
+              key={block.item.key}
               layout="full"
-              noteVariant={noteVariant}
-              onPress={pressHandler?.(block.resource)}
-              resource={block.resource}
+              onPress={pressHandler?.(block.item.value)}
+              resource={block.item.value}
               waveSeed={seed}
             />
           );
@@ -70,16 +86,15 @@ export function ResourceGrid({
           >
             {[block.left, block.right].map((column, columnIndex) => (
               <View className="flex-1 gap-4" key={columnIndex === 0 ? 'left' : 'right'}>
-                {column.map((resource) => {
+                {column.map((item) => {
                   seed += 1;
 
                   return (
                     <ResourceCard
-                      key={resource.id}
+                      key={item.key}
                       layout="column"
-                      noteVariant={noteVariant}
-                      onPress={pressHandler?.(resource)}
-                      resource={resource}
+                      onPress={pressHandler?.(item.value)}
+                      resource={item.value}
                       waveSeed={seed}
                     />
                   );

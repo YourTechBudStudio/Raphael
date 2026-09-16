@@ -1,75 +1,44 @@
-import { CircleAlert, CircleHelp, Layers, PenLine } from 'lucide-react-native';
+import { Layers } from 'lucide-react-native';
 import { Text, View } from 'react-native';
 
-import type { NoteResource } from '../../../infrastructure/api/contracts';
-import { Card, type CardVariant, colors } from '../../../ui';
-import { CardSummary, CardTitle } from './card-text';
+import { colors } from '../../../ui';
+import type { NoteSummaryItem } from '../client/summary';
 import { KindLabel } from './KindLabel';
-import type { ResourceCardLayout } from './layout';
+import { NoteCardShell } from './NoteCardShell';
 
 export interface NoteCardProps {
-  resource: NoteResource;
-  layout?: ResourceCardLayout | undefined;
-  variant?: CardVariant | undefined;
-  onPress?: (() => void) | undefined;
-  waveSeed?: number | undefined;
+  note: NoteSummaryItem;
+  /**
+   * The title of the container this note sits in, or undefined when it is not known right now.
+   *
+   * Presentation only. It is read from the hierarchy the screen already loaded and is never stored,
+   * because a title copied onto a note is a second copy of something the server owns, and it goes
+   * wrong silently the moment someone renames the container.
+   */
+  location?: string | undefined;
+  onOpen?: (() => void) | undefined;
   testID?: string | undefined;
 }
 
 /**
- * THROWAWAY (mock): how a note with no confirmed server copy announces itself. A draft is quiet;
- * a save the server has not answered, or refused, is said in the error colour because it asks
- * for a decision.
+ * A note the server holds, on the lilac surface, no wave.
+ *
+ * Where it is filed stands as the eyebrow: on a board of notes the kind is already known, and where
+ * a note lives is the more useful thing to read first. When the location is not known the kind label
+ * takes its place rather than an empty row or a guess - and "not known" genuinely means not known,
+ * including a hierarchy that has been read but is no longer current. A plausible title is not an
+ * authoritative one, and a card has no room to say which it is showing.
  */
-const STATUS = {
-  draft: {
-    icon: PenLine,
-    label: 'Draft · on this phone',
-    color: colors.inkSoft,
-    text: 'text-ink-soft',
-  },
-  unconfirmed: {
-    icon: CircleHelp,
-    label: 'Save not confirmed',
-    color: colors.danger,
-    text: 'text-danger',
-  },
-  refused: { icon: CircleAlert, label: 'Not saved', color: colors.danger, text: 'text-danger' },
-} as const;
-
-/**
- * A written note on the lilac surface, no wave. Where it is filed stands as the eyebrow: on a
- * board of notes the kind is known, and where a note lives is the more useful thing to read
- * first. A note with no location falls back to the kind label. Without `onPress` it is a plain
- * surface.
- */
-export function NoteCard({ resource, variant = 'lilac', onPress, testID }: NoteCardProps) {
-  const location = resource.location;
-  const status = resource.status === undefined ? undefined : STATUS[resource.status];
-  const Icon = status?.icon;
+export function NoteCard({ note, location, onOpen, testID }: NoteCardProps) {
+  const spokenLocation = location === undefined ? '' : `. In ${location}`;
+  const spokenDescription = note.description === '' ? '' : `. ${note.description}`;
 
   return (
-    <Card
-      accessibilityLabel={`${status?.label ?? 'Note'}. ${resource.title}. ${resource.summary}${location === undefined ? '' : `. In ${location}`}`}
-      // A draft is drawn with the dotted edge the ghost "New area" row uses: present, not yet
-      // settled.
-      className={resource.status === 'draft' ? 'border-dotted border-lilac' : undefined}
-      onPress={onPress}
-      testID={testID}
-      variant={variant}
-    >
-      <View className="p-4">
-        {status !== undefined && Icon !== undefined ? (
-          <View className="flex-row items-center gap-1.5">
-            <Icon color={status.color} size={16} strokeWidth={2} />
-            <Text
-              className={`flex-1 font-body-medium text-[14px] ${status.text}`}
-              numberOfLines={1}
-            >
-              {status.label}
-            </Text>
-          </View>
-        ) : location === undefined ? (
+    <NoteCardShell
+      accessibilityLabel={`Note. ${note.title}${spokenDescription}${spokenLocation}`}
+      description={note.description}
+      eyebrow={
+        location === undefined ? (
           <KindLabel background={false} kind="note" size={22} />
         ) : (
           <View className="flex-row items-center gap-1.5">
@@ -78,12 +47,11 @@ export function NoteCard({ resource, variant = 'lilac', onPress, testID }: NoteC
               {location}
             </Text>
           </View>
-        )}
-        <CardTitle className="mt-3">{resource.title}</CardTitle>
-        {resource.summary === '' ? null : (
-          <CardSummary className="mt-1">{resource.summary}</CardSummary>
-        )}
-      </View>
-    </Card>
+        )
+      }
+      onPress={onOpen}
+      testID={testID}
+      title={note.title}
+    />
   );
 }

@@ -23,23 +23,30 @@ import {
   openHome,
   openProject,
   openRecovery,
+  openResource,
   openSearch,
   useSheetsStore,
   LocationTopBar,
 } from '../../navigation';
-import { ResourceGrid, useLocalResources } from '../../resources';
+import {
+  CONTAINER_NOTES_COPY,
+  NoteSection,
+  SessionMediaSection,
+  useNotePages,
+  useSessionMedia,
+} from '../../resources';
 import { useFavoriteToggle } from '../client/favorites';
 import { pathSegments } from '../client/hierarchy';
 import {
   ancestorsOf,
   childrenOf,
+  containerTitleLookup,
   useContainer,
   useContainerPath,
   useHierarchy,
 } from '../client/queries';
 import { PendingSummary } from '../creation';
 import { HierarchyStale } from './HierarchyError';
-import { areaNoteGridItems } from './noteSpans';
 import { ReadOnlyBody } from './ReadOnlyBody';
 import { TileGrid, type TileGridItem } from './TileGrid';
 
@@ -63,8 +70,10 @@ export interface AreaScreenProps {
  * List of its own: two reads of the same fact can disagree, and someone with the tree and this
  * screen both in front of them would see the disagreement.
  *
- * Notes here are kept on this device for the session. They sit under the same heading as before and
- * are not marked as different, which is a condition the owner accepted rather than an oversight.
+ * Notes are the server's: the ones filed directly in this area, in its default order, paged as the
+ * scroll reaches the end. Not everything underneath it - a project's notes belong to the project.
+ * Media recorded in this session has no server operation and sits under its own heading, so one
+ * word never covers two different promises.
  */
 export function AreaScreen({ areaId }: AreaScreenProps) {
   const target = useMemo<ContainerRef | null>(
@@ -75,7 +84,8 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   const favorite = useFavoriteToggle();
   const areaQuery = useContainer(target);
   const tree = useHierarchy();
-  const notes = useLocalResources();
+  const notes = useNotePages(target);
+  const media = useSessionMedia();
 
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
   const openNewContainer = useSheetsStore((state) => state.openNewContainer);
@@ -160,7 +170,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   const children = childrenOf(tree.hierarchy, areaId);
   const subareas = children?.subareas ?? [];
   const projects = children?.projects ?? [];
-  const resources = (notes.data ?? []).filter(
+  const sessionMedia = (media.data ?? []).filter(
     (resource) => resource.parent.type === 'area' && resource.parent.id === areaId,
   );
   // The boards give a project tile its description only when subareas are not using the space.
@@ -189,11 +199,15 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
     <View className="flex-1">
       <Screen
         header={header}
+        onEndReached={notes.loadMore}
+        // Everything this screen shows, reloaded together; the notes from their first page.
         onRefresh={() => {
           tree.refetch();
           void areaQuery.refetch();
+          notes.refresh();
+          void media.refetch();
         }}
-        refreshing={tree.isFetching || areaQuery.isFetching}
+        refreshing={tree.isFetching || areaQuery.isFetching || notes.isRefreshing}
       >
         <RejectionNotice className="mb-4" />
         <Eyebrow>Area</Eyebrow>
@@ -306,19 +320,22 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
                 <TileGrid items={projectTiles} />
               </View>
             ) : null}
-
-            <View className="mt-8 gap-4">
-              <SectionHeading>Notes</SectionHeading>
-              {resources.length > 0 ? (
-                <ResourceGrid items={areaNoteGridItems(resources)} noteVariant="lilac" />
-              ) : (
-                <Text className="font-body text-[16px] leading-[22px] text-ink-soft">
-                  No notes found.
-                </Text>
-              )}
-            </View>
           </>
         )}
+
+        {/* Notes are always here, whatever the hierarchy is doing. They are their own read: a tree
+            that will not load says nothing about what this area holds, and hiding the section
+            behind it would turn one failure into two. */}
+        <NoteSection
+          className="mt-8"
+          copy={CONTAINER_NOTES_COPY}
+          locationFor={containerTitleLookup(tree)}
+          onOpen={openResource}
+          testID="area-notes"
+          view={notes.view}
+        />
+
+        <SessionMediaSection className="mt-8" items={sessionMedia} testID="area-session-media" />
       </Screen>
       <CaptureBar onVoice={openVoiceCapture} />
     </View>
