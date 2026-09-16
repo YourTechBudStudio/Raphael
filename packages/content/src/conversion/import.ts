@@ -4,8 +4,7 @@ import type { Token } from 'markdown-it';
 import { contentFailure, type ContentFailure } from '../failures.ts';
 import type { CanonicalDocument } from '../index.ts';
 import { canonicalizeDocument } from '../schema/canonicalize.ts';
-import { isAllowedHref } from '../schema/url.ts';
-import { CODE_LANGUAGE } from '../schema/validate.ts';
+import { CODE_LANGUAGE, isAllowedHref } from '../validation/index.ts';
 import { linkDestination } from './escape.ts';
 import { tokenizeMarkdown } from './parser.ts';
 

@@ -3,5 +3,6 @@
   "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
   "compilerOptions": {
     "allowImportingTsExtensions": true
-  }
+  },
+  "exclude": ["src/modules/editor/webview/**"]
 }

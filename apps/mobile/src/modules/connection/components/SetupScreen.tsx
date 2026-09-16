@@ -1,5 +1,5 @@
 import { ChevronLeft, Eye, EyeOff } from 'lucide-react-native';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -24,13 +24,6 @@ export interface SetupScreenProps {
   replacing?: Connection | undefined;
   /** Leaving without replacing anything. Only meaningful alongside `replacing`. */
   onCancel?: (() => void) | undefined;
-  /**
-   * Anything the app wants shown below the form while there is no connection.
-   *
-   * A slot rather than an import, because what goes here belongs to another capability and this one
-   * has no business knowing about it. Composition fills it; the connection capability stays unaware.
-   */
-  footer?: ReactNode | undefined;
 }
 
 /**
@@ -44,7 +37,7 @@ export interface SetupScreenProps {
  * Connect is always pressable. The checks underneath report what is known; they do not stand
  * between the person and the button, and pressing with an unusable field is how you find out why.
  */
-export function SetupScreen({ replacing, onCancel, footer }: SetupScreenProps = {}) {
+export function SetupScreen({ replacing, onCancel }: SetupScreenProps = {}) {
   const [endpoint, setEndpoint] = useState('');
   const [key, setKey] = useState('');
   const [revealed, setRevealed] = useState(false);
@@ -292,8 +285,6 @@ export function SetupScreen({ replacing, onCancel, footer }: SetupScreenProps = 
           </View>
 
           <Handshake rows={rows} />
-
-          {footer === undefined ? null : <View className="pt-2">{footer}</View>}
         </View>
       </ScrollView>
 

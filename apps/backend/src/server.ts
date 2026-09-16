@@ -15,6 +15,7 @@ import { DEFAULT_DEADLINES, type Deadlines } from './infrastructure/http/deadlin
 import { consoleLogger, type Logger } from './infrastructure/http/log.ts';
 import type { OperationRoute } from './infrastructure/http/operation.ts';
 import { connectionRoutes } from './modules/connection/index.ts';
+import { DERIVED_TEXT_BATCH_SIZE, backfillDerivedText } from './modules/nodes/derived-text.ts';
 import { collectExpiredReplays } from './modules/nodes/gc.ts';
 import { nodeRoutes } from './modules/nodes/routes.ts';
 
@@ -162,12 +163,12 @@ export const serve = (
     server.timeout = deadlines.socketIdleMs;
     const connections = bindConnections(server, deadlines);
 
-    // The listener and the collector are acquired together, and released together.
+    // The listener and the two background passes are acquired together, and released together.
     //
     // They are one resource on purpose. Forking the collector before the listener was acquired left
     // it running when `listen` failed - the scope released the database, the orphaned fiber kept its
     // schedule timer alive, and the process never exited. Forking inside the acquire means a startup
-    // that never listened never started a collector either.
+    // that never listened never started maintenance either.
     const started = yield* Effect.acquireRelease(
       Effect.tryPromise({
         try: async () => {
@@ -193,11 +194,37 @@ export const serve = (
                 }),
             }),
           );
-          return { address, collector };
+          // The derived-text pass runs once per start and is forked, never awaited: a cold start must
+          // accept requests while it fills in missing projections, not afterwards. It ends on its own
+          // when nothing is left to find.
+          const derivedText = Runtime.runFork(runtime)(
+            backfillDerivedText({
+              batchSize: DERIVED_TEXT_BATCH_SIZE,
+              onRowSkipped: (detail) =>
+                logger.log('warn', 'nodes.derived_text_skipped', {
+                  // Identity and stage only. The body is what could not be read; printing it is
+                  // exactly the thing a diagnostic must not do.
+                  nodeId: detail.nodeId,
+                  stage: detail.stage,
+                }),
+              onComplete: (outcome) => {
+                // A pass that found nothing is the ordinary case on every start after the first.
+                if (outcome.examined > 0) {
+                  logger.log('info', 'nodes.derived_text_filled', {
+                    examined: outcome.examined,
+                    written: outcome.written,
+                    skipped: outcome.skipped,
+                  });
+                }
+              },
+              onFailure: (detail) => logger.log('warn', 'nodes.derived_text_failed', { detail }),
+            }),
+          );
+          return { address, collector, derivedText };
         },
         catch: (cause) => cause as Error,
       }),
-      ({ collector }) =>
+      ({ collector, derivedText }) =>
         Effect.promise(async () => {
           admitting = false;
           logger.log('info', 'server.stopping', {
@@ -206,8 +233,12 @@ export const serve = (
             requests: inFlight.size,
           });
 
-          // Collection stops before the drain, so a sweep cannot start work the drain would wait on.
-          // Interruption is awaited: a fiber asked to stop is not stopped until it says so.
+          // Maintenance stops before the drain, so neither pass can start work the drain would wait
+          // on, and neither can still be writing when the database is released. Interruption is
+          // awaited rather than merely requested: a fiber asked to stop is not stopped until it says
+          // so. The backfill goes first because it is the one that holds write transactions for rows
+          // nobody is waiting for.
+          await Runtime.runPromise(runtime)(Fiber.interrupt(derivedText));
           await Runtime.runPromise(runtime)(Fiber.interrupt(collector));
 
           const closed = stopAccepting(server);

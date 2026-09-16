@@ -65,11 +65,15 @@ test('internal timestamps are stored but never returned', () => {
     assert.equal(stored.createdAt, at, 'both timestamps take the one sampled instant');
     assert.equal(stored.updatedAt, at);
 
+    // The complete published surface, named exhaustively. `kind` joined it; `body_text` did not, and
+    // must not - it is storage for a search story that has not shipped, and a column that leaks into a
+    // response becomes a field someone depends on before anyone decided it was one.
     const keys = Object.keys(response.entity).sort();
     assert.deepEqual(keys, [
       'body',
       'description',
       'id',
+      'kind',
       'metadata',
       'parentId',
       'revision',
@@ -479,5 +483,258 @@ test('an unusable clock reading fails before anything is written', () => {
     );
     assert.equal(error.code, 'internal_error');
     assert.equal(count(connection.db, 'SELECT count(*) AS c FROM nodes'), before);
+  });
+});
+
+/* ------------------------------------------------------------------ resources and their kinds */
+
+const note = (
+  connection: Parameters<typeof runNodes>[0],
+  overrides: Record<string, unknown> = {},
+) =>
+  create(connection, {
+    type: 'resource',
+    kind: 'note',
+    parent: { path: '/work' },
+    ...overrides,
+  });
+
+test('a note is created under an area and under a project, and carries its kind', () => {
+  withMigrated('create-note-parents', (connection) => {
+    const underArea = expectRight(note(connection, { title: 'Under area' }));
+    assert.equal(underArea.entity.type, 'resource');
+    assert.equal(underArea.entity.kind, 'note');
+    assert.equal(underArea.entity.slug, 'under-area');
+
+    const project = expectRight(
+      create(connection, { type: 'project', parent: { path: '/work' }, title: 'Holder' }),
+    );
+    const underProject = expectRight(
+      note(connection, { parent: { id: project.entity.id }, title: 'Under project' }),
+    );
+    assert.equal(underProject.entity.kind, 'note');
+    assert.equal(underProject.entity.parentId, project.entity.id);
+
+    // The kind reaches storage, not just the response - the response is assembled from the request,
+    // so a test that only read the response would pass with nothing written.
+    const stored = one<{ kind: string | null }>(
+      connection.db,
+      'SELECT kind FROM nodes WHERE id = ?',
+      underProject.entity.id,
+    );
+    assert.equal(stored.kind, 'note');
+  });
+});
+
+test('the parentage matrix is the full rule now that resources can be created', () => {
+  withMigrated('create-note-parentage', (connection) => {
+    // Only areas at the root. A note there has no home.
+    const atRoot = publicOf(expectLeft(note(connection, { parent: { path: '/' }, title: 'N' })));
+    assert.equal(atRoot.code, 'invalid_parent');
+    assert.deepEqual(atRoot.details, {
+      field: 'parent',
+      parentType: 'root',
+      childType: 'resource',
+    });
+
+    // A resource holds nothing at all, and saying so is a different answer from "not found".
+    const parent = expectRight(note(connection, { title: 'A note' }));
+    const underNote = publicOf(
+      expectLeft(note(connection, { parent: { id: parent.entity.id }, title: 'Child' })),
+    );
+    assert.equal(underNote.code, 'invalid_parent');
+    assert.deepEqual(underNote.details, {
+      field: 'parent',
+      parentType: 'resource',
+      childType: 'resource',
+    });
+
+    // A project still cannot hold a container.
+    const project = expectRight(
+      create(connection, { type: 'project', parent: { path: '/work' }, title: 'Holder' }),
+    );
+    const areaUnderProject = publicOf(
+      expectLeft(
+        create(connection, { type: 'area', parent: { id: project.entity.id }, title: 'Nope' }),
+      ),
+    );
+    assert.equal(areaUnderProject.code, 'invalid_parent');
+  });
+});
+
+test('a bare resource and a kinded container are both refused at the contract', () => {
+  withMigrated('create-kind-shape', (connection) => {
+    const bare = publicOf(
+      expectLeft(create(connection, { type: 'resource', parent: { path: '/work' }, title: 'N' })),
+    );
+    assert.equal(bare.code, 'invalid_input');
+    assert.equal(bare.details['reason'], 'invalid');
+    assert.equal(bare.details['field'], 'kind');
+
+    const unsupported = publicOf(expectLeft(note(connection, { kind: 'sketch', title: 'N' })));
+    assert.equal(unsupported.code, 'invalid_input');
+    assert.equal(unsupported.details['field'], 'kind');
+
+    // A kind on a container is refused too, and is attributed to the kind rather than to the type -
+    // the type is the one thing that request got right.
+    const kinded = publicOf(
+      expectLeft(
+        create(connection, {
+          type: 'area',
+          kind: 'note',
+          parent: { path: '/' },
+          title: 'Kinded area',
+        }),
+      ),
+    );
+    assert.equal(kinded.code, 'invalid_input');
+    assert.equal(kinded.details['field'], 'kind');
+
+    assert.equal(count(connection.db, `SELECT count(*) AS c FROM nodes WHERE kind IS NOT NULL`), 0);
+  });
+});
+
+test('a container missing its title still gets title_required, not a discriminant complaint', () => {
+  withMigrated('create-union-title', (connection) => {
+    // The union made every non-matching member report the type. This is the regression that would
+    // have silently replaced mobile's only specific recovery copy with "the type was wrong".
+    const error = publicOf(expectLeft(create(connection, { type: 'area', parent: { path: '/' } })));
+    assert.equal(error.code, 'invalid_input');
+    assert.deepEqual(error.details, { field: 'title', reason: 'title_required' });
+
+    const tooLong = publicOf(
+      expectLeft(
+        create(connection, {
+          type: 'area',
+          parent: { path: '/' },
+          title: 'x'.repeat(TITLE_MAX_CODE_POINTS + 1),
+        }),
+      ),
+    );
+    assert.deepEqual(tooLong.details, {
+      field: 'title',
+      reason: 'title_too_long',
+      limit: TITLE_MAX_CODE_POINTS,
+    });
+
+    // A genuinely unknown type is still reported as the type, because nothing more specific is known.
+    const unknown = publicOf(
+      expectLeft(create(connection, { type: 'sketch', parent: { path: '/' }, title: 'A' })),
+    );
+    assert.equal(unknown.details['field'], 'type');
+  });
+});
+
+/* ------------------------------------------------------------------ derived titles */
+
+test('an omitted note title is derived from the first usable line of the body', () => {
+  withMigrated('create-title-from-body', (connection) => {
+    const heading = expectRight(
+      note(connection, { body: { value: '# API design\n\nRequest contracts' } }),
+    );
+    assert.equal(heading.entity.title, 'API design');
+    assert.equal(heading.entity.slug, 'api-design');
+
+    const sentence = expectRight(
+      note(connection, { body: { value: 'Just a sentence.' }, slug: 'sentence' }),
+    );
+    assert.equal(sentence.entity.title, 'Just a sentence.');
+
+    // Leading blank lines are skipped rather than read as an empty title.
+    const padded = expectRight(
+      note(connection, { body: { value: '\n\n   \nAfter the gap' }, slug: 'padded' }),
+    );
+    assert.equal(padded.entity.title, 'After the gap');
+
+    // Code and Mermaid source contribute their text: someone who wrote only a diagram expects to see
+    // its first line as the name.
+    const mermaid = expectRight(
+      note(connection, { body: { value: '```mermaid\ngraph TD\n  a-->b\n```' }, slug: 'diagram' }),
+    );
+    assert.equal(mermaid.entity.title, 'graph TD');
+  });
+});
+
+test('the description is the second source, and is only reached when the body has no text', () => {
+  withMigrated('create-title-from-description', (connection) => {
+    const fromDescription = expectRight(note(connection, { description: 'Weekly review' }));
+    assert.equal(fromDescription.entity.title, 'Weekly review');
+    assert.equal(fromDescription.entity.slug, 'weekly-review');
+
+    // The body wins when it has anything at all, even with a description present.
+    const bodyWins = expectRight(
+      note(connection, { body: { value: 'From the body' }, description: 'From the description' }),
+    );
+    assert.equal(bodyWins.entity.title, 'From the body');
+  });
+});
+
+test('a note with no usable text anywhere is asked for a title rather than given one', () => {
+  withMigrated('create-title-none', (connection) => {
+    for (const request of [{}, { body: { value: '' } }, { body: { value: '   \n\n  ' } }]) {
+      const error = publicOf(expectLeft(note(connection, request)));
+      assert.equal(error.code, 'invalid_input');
+      assert.deepEqual(
+        error.details,
+        { field: 'title', reason: 'title_required' },
+        'no generic fallback: an invented name is worse than a prompt',
+      );
+    }
+    assert.equal(
+      count(connection.db, `SELECT count(*) AS c FROM nodes WHERE type = 'resource'`),
+      0,
+    );
+  });
+});
+
+test('a derived title that cannot produce an address asks for a title, and never invents one', () => {
+  withMigrated('create-title-unaddressable', (connection) => {
+    // Nothing sluggable in the chosen candidate. `...` is a paragraph of punctuation, so it *is* a
+    // candidate - unlike `***`, which is a thematic break and contributes no text at all. The two
+    // reach different answers on purpose: one has a name that cannot be addressed, the other has no
+    // name to address.
+    const underivable = publicOf(expectLeft(note(connection, { body: { value: '...' } })));
+    assert.equal(underivable.code, 'invalid_input');
+    assert.deepEqual(underivable.details, { field: 'title', reason: 'slug_underivable' });
+
+    const noText = publicOf(expectLeft(note(connection, { body: { value: '***' } })));
+    assert.deepEqual(noText.details, { field: 'title', reason: 'title_required' });
+
+    // A 200-code-point title derives a slug past the address limit. Truncating an address the caller
+    // never saw would be the convenient answer and the wrong one.
+    const long = publicOf(expectLeft(note(connection, { body: { value: 'a'.repeat(250) } })));
+    assert.deepEqual(long.details, {
+      field: 'title',
+      reason: 'slug_too_long',
+      limit: SLUG_MAX_CODE_POINTS,
+    });
+
+    // It does not fall through to the description looking for a candidate that slugs more
+    // conveniently: the note's name must not depend on whether its own first line happens to contain
+    // sluggable characters.
+    const noFallthrough = publicOf(
+      expectLeft(note(connection, { body: { value: '...' }, description: 'Perfectly fine' })),
+    );
+    assert.deepEqual(noFallthrough.details, { field: 'title', reason: 'slug_underivable' });
+  });
+});
+
+test('an explicit slug with an omitted title keeps the slug and derives only the name', () => {
+  withMigrated('create-explicit-slug', (connection) => {
+    const response = expectRight(
+      note(connection, { slug: 'chosen-address', body: { value: '# A different name' } }),
+    );
+    assert.equal(response.entity.slug, 'chosen-address');
+    assert.equal(response.entity.title, 'A different name');
+  });
+});
+
+test('a title is truncated at the limit by code points, not by UTF-16 units', () => {
+  withMigrated('create-title-truncation', (connection) => {
+    // Astral characters are one code point each and two UTF-16 units. Measuring units would cut this
+    // title in half - and could split a surrogate pair into an unpaired one.
+    const emoji = '😀'.repeat(TITLE_MAX_CODE_POINTS + 50);
+    const response = expectRight(note(connection, { body: { value: emoji }, slug: 'emoji' }));
+    assert.equal([...response.entity.title].length, TITLE_MAX_CODE_POINTS);
   });
 });

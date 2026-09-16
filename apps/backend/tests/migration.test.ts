@@ -34,10 +34,10 @@ describe('migration assets', () => {
 
   test('the journal and its files agree', () => {
     const bundled = readBundledMigrations(migrationsFolder);
-    assert.equal(bundled.length, 2);
+    assert.equal(bundled.length, 3);
     assert.deepEqual(
       bundled.map((m) => m.tag),
-      ['0000_init', '0001_identity_trigger_and_root_areas'],
+      ['0000_init', '0001_identity_trigger_and_root_areas', '0002_resource_kind_and_body_text'],
     );
     for (const migration of bundled) assert.match(migration.hash, /^[0-9a-f]{64}$/);
   });
@@ -122,7 +122,7 @@ describe('initialization', () => {
           inspectMigrationHistory(second.db, readBundledMigrations(migrationsFolder)),
           {
             state: 'current',
-            applied: 2,
+            applied: 3,
           },
         );
       } finally {
@@ -378,15 +378,15 @@ describe('migration failure', () => {
       const journalPath = join(broken, 'meta', '_journal.json');
       const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
       journal.entries.push({
-        idx: 2,
+        idx: 3,
         version: '6',
         when: Date.now(),
-        tag: '0002_broken',
+        tag: '0003_broken',
         breakpoints: true,
       });
       writeFileSync(journalPath, JSON.stringify(journal));
       writeFileSync(
-        join(broken, '0002_broken.sql'),
+        join(broken, '0003_broken.sql'),
         'ALTER TABLE nodes ADD COLUMN experiment TEXT;\n--> statement-breakpoint\nTHIS IS NOT VALID SQL;',
       );
 
@@ -397,7 +397,7 @@ describe('migration failure', () => {
       );
       assert.ok(!columns.includes('experiment'), 'partial DDL must not survive');
       assert.equal(count(connection.db, `SELECT count(*) AS c FROM nodes WHERE slug = 'live'`), 1);
-      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 2);
+      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 3);
     } finally {
       connection.close();
       temp.cleanup();
@@ -428,6 +428,10 @@ describe('generated artifact introspection', () => {
         'metadata:1',
         'created_at:1',
         'updated_at:1',
+        // Both nullable, and both deliberately so. A container has no kind; a null projection means
+        // no text has been derived for that row yet, which is not the same as text that is empty.
+        'kind:0',
+        'body_text:0',
       ]);
     });
   });

@@ -7,17 +7,27 @@
  * `@raphael/contracts/nodes` already owns it, and a second declaration here would be a second
  * authority that could drift.
  *
- * Notes, favorites, and active-project selections are **session-only local data**. There is no
- * server operation for any of them in this release. What is declared here is their shape, and the
- * one rule that keeps them honest: they hold a `ContainerRef` - a numeric reference to a real
- * container - and never a copy of a container's title, description, or parent. A local record that
- * copied server fields would be a second hierarchy that goes stale silently.
+ * Media captured in this session, favorites, and active-project selections are **session-only local
+ * data**. There is no server operation for any of them in this release. What is declared here is
+ * their shape, and the one rule that keeps them honest: they hold a `ContainerRef` - a numeric
+ * reference to a real container - and never a copy of a container's title, description, or parent. A
+ * local record that copied server fields would be a second hierarchy that goes stale silently.
+ *
+ * Notes used to be here too. They are server data now: `@raphael/contracts/nodes` owns their shape,
+ * and `modules/resources` reads them from the connected Raphael.
  */
 
-import type { NodeType } from '@raphael/contracts/nodes';
+import type { ContainerType } from '@raphael/contracts/nodes';
 
-/** Areas and projects. The server's own vocabulary, not a parallel one. */
-export type ContainerType = NodeType;
+/**
+ * Areas and projects. The server's own container vocabulary, not a parallel one.
+ *
+ * Deliberately `ContainerType` rather than `NodeType`. The server's node vocabulary now includes
+ * `resource`, and everything below means "a container": a thing that can hold a capture, be a
+ * destination, and appear in the hierarchy. Aliasing the wider type would have silently made every one
+ * of those sites accept a note.
+ */
+export type { ContainerType };
 
 /**
  * A reference to a container that exists on the server.
@@ -31,7 +41,16 @@ export interface ContainerRef {
   id: number;
 }
 
-export type ResourceKind = 'note' | 'voice' | 'image' | 'github';
+/**
+ * The kinds of session-only media this app still holds in memory.
+ *
+ * Not the server's `ResourceKind`, which shares the name and means something narrower: the kinds core
+ * actually admits. These are presentation categories for media captured in this session and never
+ * sent anywhere. Notes are gone from this union: a note is server data now, described by
+ * `NodeSummary`, and `modules/resources` renders it from that shape rather than adapting it into
+ * this one.
+ */
+export type ResourceKind = 'voice' | 'image' | 'github';
 
 interface ResourceBase {
   id: string;
@@ -40,10 +59,6 @@ interface ResourceBase {
   /** The container this was captured into. Always an area or project the server knows about. */
   parent: ContainerRef;
   createdAt: string;
-}
-
-export interface NoteResource extends ResourceBase {
-  kind: 'note';
 }
 
 export interface VoiceResource extends ResourceBase {
@@ -62,4 +77,4 @@ export interface GithubResource extends ResourceBase {
   kind: 'github';
 }
 
-export type Resource = NoteResource | VoiceResource | ImageResource | GithubResource;
+export type Resource = VoiceResource | ImageResource | GithubResource;

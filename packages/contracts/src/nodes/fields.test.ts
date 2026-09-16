@@ -5,14 +5,21 @@ import { Either, Schema } from 'effect';
 
 import { JSON_SAFETY_MAX_DEPTH } from '../shared/limits.ts';
 import {
+  CONTAINER_TYPES,
   METADATA_MAX_DEPTH,
   METADATA_MAX_KEY_CODE_POINTS,
   METADATA_MAX_SERIALIZED_BYTES,
   METADATA_MAX_TOP_LEVEL_KEYS,
+  NODE_ORDER_FIELDS,
+  NODE_TYPES,
+  ORDER_DIRECTIONS,
+  REQUEST_FIELDS,
+  RESOURCE_KINDS,
   TITLE_MAX_CODE_POINTS,
   TitleInput,
   inspectMetadataInput,
   inspectTitleInput,
+  isRequestField,
 } from './fields.ts';
 
 test('metadata rejections name the limit that was actually exceeded', () => {
@@ -91,4 +98,40 @@ test('the refinement and the helper cannot disagree about a title', () => {
       `disagreement over ${JSON.stringify(candidate)}`,
     );
   }
+});
+
+test('containers are a strict subset of the node types, and kinds are their own vocabulary', () => {
+  // The relationship that makes `CONTAINER_TYPES` worth publishing: it is the narrower set, so a
+  // consumer that means "a container" cannot be widened by a type being added to `NODE_TYPES`.
+  for (const type of CONTAINER_TYPES) {
+    assert.ok((NODE_TYPES as readonly string[]).includes(type), `${type} must be a node type`);
+  }
+  assert.ok(
+    CONTAINER_TYPES.length < NODE_TYPES.length,
+    'a strict subset: something must be a leaf, or the distinction says nothing',
+  );
+  assert.ok(!(CONTAINER_TYPES as readonly string[]).includes('resource'));
+
+  // A kind is not a node type. Nothing in one vocabulary may appear in the other, or the two would be
+  // one vocabulary with two names and every consumer would have to guess which it was handed.
+  assert.ok(RESOURCE_KINDS.length > 0);
+  for (const kind of RESOURCE_KINDS) {
+    assert.ok(!(NODE_TYPES as readonly string[]).includes(kind), `${kind} must not be a node type`);
+  }
+});
+
+test('the failure vocabulary can name the fields the new request shapes added', () => {
+  // Both sides need the same list: the backend produces these names, a client validates a received
+  // field against them. A field the server can fail on but a client cannot recognize reads as an
+  // unexplained refusal.
+  assert.ok(isRequestField('kind'));
+  assert.ok(isRequestField('orderBy'));
+  assert.ok(!isRequestField('body_text'));
+  assert.equal(new Set(REQUEST_FIELDS).size, REQUEST_FIELDS.length, 'no duplicate field names');
+});
+
+test('the ordering vocabulary is closed and has no implicit direction', () => {
+  assert.deepEqual([...NODE_ORDER_FIELDS], ['slug', 'updatedAt', 'id']);
+  assert.deepEqual([...ORDER_DIRECTIONS], ['asc', 'desc']);
+  assert.equal(new Set(NODE_ORDER_FIELDS).size, NODE_ORDER_FIELDS.length);
 });

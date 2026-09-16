@@ -179,3 +179,73 @@ test('preparation detaches the values the decoder hands through by reference', (
     'the prepared request is the one that was fingerprinted',
   );
 });
+
+/* ------------------------------------------------------------------ resources in the fingerprint */
+
+/** A note, decoded and normalized the same way, so the kind travels through the real union. */
+const prepareNote = (request: Record<string, unknown>) => {
+  const decoded = decodeCreateRequest({
+    type: 'resource',
+    kind: 'note',
+    parent: { id: 1 },
+    ...request,
+  });
+  if (Either.isLeft(decoded))
+    throw new Error(`the fixture did not decode: ${decoded.left.message}`);
+  return prepareCreate(decoded.right);
+};
+
+const noteFingerprint = (request: Record<string, unknown> = {}) =>
+  fingerprintOf(prepareNote(request));
+
+test('a container fingerprints byte-identically to the pinned canonical form', () => {
+  // Pinned as a literal, not recomputed. The point is that adding resources to the vocabulary did not
+  // change the spelling of a request that has nothing to do with them - `kind` is written only when it
+  // is defined, so a container's canonical JSON is the string it always was.
+  assert.equal(
+    canonicalRequestJson(prepare({})),
+    '{"body":{"format":"markdown","value":""},"description":"","format":"markdown","metadata":{},' +
+      '"parent":{"path":"/work"},"slug":"quarterly-plan","tags":[],"title":"Quarterly plan","type":"project"}',
+  );
+});
+
+test('the kind appears only for resources, and distinguishes them', () => {
+  const json = canonicalRequestJson(prepareNote({ title: 'A note' }));
+  assert.match(json, /"kind":"note"/);
+  assert.doesNotMatch(canonicalRequestJson(prepare({})), /"kind"/);
+});
+
+test('an omitted title and an unresolved slug are written as null, not as a guess', () => {
+  // Both null: nothing was supplied and the address cannot be known until the title is resolved. A
+  // sentinel no caller can submit, since both fields are strings when present.
+  const json = canonicalRequestJson(prepareNote({}));
+  assert.match(json, /"title":null/);
+  assert.match(json, /"slug":null/);
+});
+
+test('an omitted title with an explicit slug fingerprints that slug', () => {
+  const json = canonicalRequestJson(prepareNote({ slug: 'here' }));
+  assert.match(json, /"slug":"here"/);
+  assert.match(json, /"title":null/);
+
+  // Two untitled notes addressed differently are two requests, not one. This is the CLI's path form:
+  // without it, one key could cover creations at two different addresses.
+  assert.notEqual(noteFingerprint({ slug: 'here' }), noteFingerprint({ slug: 'there' }));
+});
+
+test('an explicit title with an omitted slug still materializes its derived slug', () => {
+  // The existing equality, preserved: only the *derivation* branch defers, never an explicit slug.
+  assert.equal(
+    noteFingerprint({ title: 'A note' }),
+    noteFingerprint({ title: 'A note', slug: 'a-note' }),
+  );
+});
+
+test('the request is fingerprinted, never what the server derives from it', () => {
+  // Two untitled notes with different bodies are different requests - the body differs. But the
+  // fingerprint must reflect the *submitted* body, not the title or canonical document derived from
+  // it: otherwise a key's identity would depend on work that happens after the replay lookup.
+  const json = canonicalRequestJson(prepareNote({ body: { value: '# A name' } }));
+  assert.match(json, /"value":"# A name"/, 'the submitted Markdown, not a canonical document');
+  assert.match(json, /"title":null/, 'the derived title never enters the fingerprint');
+});

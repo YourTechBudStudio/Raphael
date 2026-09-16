@@ -1,36 +1,47 @@
 import { ChevronLeft, Search } from 'lucide-react-native';
-import { useMemo, type ReactNode } from 'react';
+import { useMemo } from 'react';
 import { Text, View } from 'react-native';
 
-import type { ContainerRef, Resource } from '../../../infrastructure/api/contracts';
+import type { ContainerRef } from '../../../infrastructure/api/contracts';
 import { asClientFailure, isNotFound } from '../../../infrastructure/query/failure';
 import {
+  ACTIVE_MARK,
   Chip,
   EmptyState,
-  Eyebrow,
-  SectionHeading,
-  FavoriteButton,
+  FAVORITE_MARK,
   IconButton,
   Screen,
   SectionError,
-  ActiveButton,
+  ToggleLabel,
 } from '../../../ui';
-import { CaptureBar } from '../../capture';
 import { RejectionNotice } from '../../connection';
 import {
   goBack,
   openBrowse,
   openHome,
+  openResource,
   openSearch,
-  useSheetsStore,
   LocationTopBar,
 } from '../../navigation';
-import { ResourceGrid, useLocalResources, type ResourceGridItem } from '../../resources';
+import {
+  CONTAINER_NOTES_COPY,
+  NoteSection,
+  SessionMediaSection,
+  useNotePages,
+  useSessionMedia,
+} from '../../resources';
 import { useProjectActive } from '../client/active';
 import { useFavoriteToggle } from '../client/favorites';
 import { pathSegments } from '../client/hierarchy';
-import { ancestorsOf, useContainer, useContainerPath, useHierarchy } from '../client/queries';
-import { ProjectHeaderSkeleton, ProjectNotesSkeleton } from './ProjectSkeleton';
+import {
+  ancestorsOf,
+  containerTitleLookup,
+  useContainer,
+  useContainerPath,
+  useHierarchy,
+} from '../client/queries';
+import { ContainerHeader } from './ContainerHeader';
+import { ProjectHeaderSkeleton } from './ProjectSkeleton';
 import { ReadOnlyBody } from './ReadOnlyBody';
 
 /** Stands in when there is no client failure to inspect, so the not-found check stays total. */
@@ -40,18 +51,16 @@ const NO_FAILURE = {
   message: '',
 } as const;
 
-/** The star beside the 40px title, sized to sit level with its cap height as on the board. */
-const TITLE_STAR_SIZE = 22;
-
 export interface ProjectScreenProps {
   /** Null when the route parameter did not name a container. */
   projectId: number | null;
 }
 
 /**
- * A project: where it sits, what it is, and every note captured into it.
+ * A project: where it sits, what it is, and every note filed in it.
  *
- * Notes here are kept on this device for the session; the project itself comes from the server.
+ * The notes are the server's, in its default order, paged as the scroll reaches the end. Media
+ * recorded in this session has no server operation at all and keeps its own heading below them.
  */
 export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const target = useMemo<ContainerRef | null>(
@@ -63,10 +72,8 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const active = useProjectActive();
   const project = useContainer(target);
   const tree = useHierarchy();
-  const notes = useLocalResources();
-
-  const openNewNote = useSheetsStore((state) => state.openNewNote);
-  const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
+  const notes = useNotePages(target);
+  const media = useSessionMedia();
 
   const entity = project.data;
   const wrongType = entity !== undefined && entity.type !== 'project';
@@ -157,58 +164,67 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   if (entity === undefined) {
     return (
       <Screen captureBar={false} header={header}>
-        <View className="gap-7">
-          <ProjectHeaderSkeleton />
-          <ProjectNotesSkeleton />
-        </View>
+        <ProjectHeaderSkeleton />
       </Screen>
     );
   }
 
   const { title, description } = entity;
-  const resources = (notes.data ?? []).filter(
+  const sessionMedia = (media.data ?? []).filter(
     (resource) => resource.parent.type === 'project' && resource.parent.id === projectId,
   );
 
   return (
     <View className="flex-1">
-      <Screen header={header}>
+      <Screen
+        header={header}
+        onEndReached={notes.loadMore}
+        // Everything this screen shows, reloaded together; the notes from their first page.
+        onRefresh={() => {
+          tree.refetch();
+          void project.refetch();
+          notes.refresh();
+          void media.refetch();
+        }}
+        refreshing={tree.isFetching || project.isFetching || notes.isRefreshing}
+      >
         <RejectionNotice className="mb-4" />
         <View>
-          <Eyebrow>Project</Eyebrow>
-          <View className="mt-1 flex-row items-center gap-3">
-            <Text
-              accessibilityRole="header"
-              className="shrink font-heading text-[40px] leading-[48px] text-ink"
-            >
-              {title}
-            </Text>
-          </View>
-          <Text className="mt-2 font-body text-[16px] leading-[22px] text-ink">{description}</Text>
-          <View className="mt-3 flex-row flex-wrap items-center gap-x-5 gap-y-2">
-            <View className="flex-row items-center gap-1">
-              <ActiveButton
-                active={active.isActive(projectId)}
-                disabled={active.isDisabled(projectId)}
-                label={title}
-                onToggle={() => {
-                  active.toggle(projectId);
-                }}
-              />
-              <Text className="font-body text-[15px] text-ink-soft">Active</Text>
-            </View>
-            <View className="flex-row items-center gap-1">
-              <FavoriteButton
-                favorited={target !== null && favorite.isFavorite(target)}
-                label={title}
-                onToggle={() => {
-                  if (target !== null) favorite.toggle(target);
-                }}
-                size={TITLE_STAR_SIZE}
-              />
-              <Text className="font-body text-[15px] text-ink-soft">Favorite</Text>
-            </View>
-          </View>
+          <ContainerHeader
+            kind="project"
+            title={title}
+            toggles={
+              <>
+                <ToggleLabel
+                  accessibilityLabel={
+                    active.isActive(projectId)
+                      ? `Mark ${title} as inactive`
+                      : `Mark ${title} as active`
+                  }
+                  disabled={active.isDisabled(projectId)}
+                  label="Active"
+                  mark={ACTIVE_MARK}
+                  onToggle={() => {
+                    active.toggle(projectId);
+                  }}
+                  selected={active.isActive(projectId)}
+                />
+                <ToggleLabel
+                  accessibilityLabel={
+                    target !== null && favorite.isFavorite(target)
+                      ? `Remove ${title} from favorites`
+                      : `Add ${title} to favorites`
+                  }
+                  label="Favorite"
+                  mark={FAVORITE_MARK}
+                  onToggle={() => {
+                    if (target !== null) favorite.toggle(target);
+                  }}
+                  selected={target !== null && favorite.isFavorite(target)}
+                />
+              </>
+            }
+          />
           {active.isError ? (
             <Text
               accessibilityLiveRegion="polite"
@@ -229,63 +245,21 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
 
         <ReadOnlyBody
           body={entity.body.format === 'markdown' ? entity.body.value : ''}
+          description={description}
           kind="project"
         />
 
-        <View className="mt-7 gap-3">
-          <SectionHeading>Project notes</SectionHeading>
-          <ProjectNotes
-            isError={notes.isError}
-            isPending={notes.isPending}
-            onRetry={() => {
-              void notes.refetch();
-            }}
-            resources={resources}
-            retrying={notes.isFetching}
-          />
-        </View>
+        <NoteSection
+          className="mt-7"
+          copy={CONTAINER_NOTES_COPY}
+          locationFor={containerTitleLookup(tree)}
+          onOpen={openResource}
+          testID="project-notes"
+          view={notes.view}
+        />
+
+        <SessionMediaSection className="mt-7" items={sessionMedia} testID="project-session-media" />
       </Screen>
-      <CaptureBar onNewNote={openNewNote} onVoice={openVoiceCapture} />
     </View>
   );
-}
-
-/** The grid, its loading shape, and the line that stands in for an empty project. */
-function ProjectNotes({
-  resources,
-  isPending,
-  isError,
-  retrying,
-  onRetry,
-}: {
-  resources: readonly Resource[];
-  isPending: boolean;
-  isError: boolean;
-  retrying: boolean;
-  onRetry: () => void;
-}): ReactNode {
-  if (isError) {
-    return <SectionError onRetry={onRetry} retrying={retrying} title="These notes did not load." />;
-  }
-
-  if (isPending) {
-    return <ProjectNotesSkeleton />;
-  }
-
-  if (resources.length === 0) {
-    return (
-      <EmptyState
-        description="Even a half-finished thought counts."
-        title="No notes in this project yet."
-      />
-    );
-  }
-
-  // The newest note leads at full width, the way the board opens the section; the rest pair up.
-  const items: ResourceGridItem[] = resources.map((resource, index) => ({
-    resource,
-    ...(index === 0 ? { span: 'full' as const } : {}),
-  }));
-
-  return <ResourceGrid items={items} noteVariant="lilac" />;
 }

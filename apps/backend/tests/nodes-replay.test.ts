@@ -377,3 +377,124 @@ test('the clock is sampled again inside the write, not reused from the lookup', 
     );
   });
 });
+
+/* ------------------------------------------------------------------ notes and their receipts */
+
+const noteRequest = (overrides: Record<string, unknown> = {}) => ({
+  type: 'resource',
+  kind: 'note',
+  parent: { path: '/work' },
+  idempotencyKey: 'note-attempt-1',
+  ...overrides,
+});
+
+test('an untitled note replays its receipt, including the title the server resolved', () => {
+  withMigrated('replay-note', (connection) => {
+    const body = { value: '# API design\n\nRequest contracts' };
+    const first = expectRight(runNodes(connection, createNode(noteRequest({ body })), clockAt(T0)));
+    assert.equal(first.entity.title, 'API design');
+    assert.equal(first.entity.kind, 'note');
+
+    const second = expectRight(
+      runNodes(connection, createNode(noteRequest({ body })), clockAt(T0 + 60_000)),
+    );
+
+    // The receipt answers with the resolved title even though the request never carried one, which is
+    // the property a lost-response retry depends on: the second attempt must learn what was created.
+    assert.deepEqual(second, first);
+    assert.equal(
+      count(connection.db, `SELECT count(*) AS c FROM nodes WHERE type = 'resource'`),
+      1,
+    );
+  });
+});
+
+test('a saved receipt carries the kind, so a replay is decodable by a conforming client', () => {
+  withMigrated('replay-note-receipt', (connection) => {
+    expectRight(
+      runNodes(connection, createNode(noteRequest({ body: { value: 'Text' } })), clockAt(T0)),
+    );
+    const saved = one<{ resultJson: string }>(
+      connection.db,
+      'SELECT result_json AS resultJson FROM creation_replays WHERE key = ?',
+      'note-attempt-1',
+    );
+    const parsed = JSON.parse(saved.resultJson) as { entity: Record<string, unknown> };
+    assert.equal(parsed.entity['kind'], 'note');
+
+    // Containers record a null kind rather than omitting the field: every response field is always
+    // present, and a receipt is a response.
+    expectRight(runNodes(connection, createNode(request({ idempotencyKey: 'c' })), clockAt(T0)));
+    const container = one<{ resultJson: string }>(
+      connection.db,
+      'SELECT result_json AS resultJson FROM creation_replays WHERE key = ?',
+      'c',
+    );
+    const containerParsed = JSON.parse(container.resultJson) as {
+      entity: Record<string, unknown>;
+    };
+    assert.equal('kind' in containerParsed.entity, true);
+    assert.equal(containerParsed.entity['kind'], null);
+  });
+});
+
+test('two untitled notes at different addresses are two requests under one key', () => {
+  withMigrated('replay-note-addresses', (connection) => {
+    const body = { value: 'Shared text' };
+    expectRight(runNodes(connection, createNode(noteRequest({ body, slug: 'here' })), clockAt(T0)));
+
+    // Same key, same body, different address. Without the explicit slug in the fingerprint these
+    // would collide and the second creation would silently replay the first.
+    const conflict = toPublicError(
+      expectLeft(
+        runNodes(connection, createNode(noteRequest({ body, slug: 'there' })), clockAt(T0 + 1)),
+      ),
+    );
+    assert.equal(conflict.code, 'idempotency_conflict');
+  });
+});
+
+test('changing only the body of an untitled note conflicts on the key', () => {
+  withMigrated('replay-note-body', (connection) => {
+    expectRight(
+      runNodes(connection, createNode(noteRequest({ body: { value: 'First' } })), clockAt(T0)),
+    );
+    const conflict = toPublicError(
+      expectLeft(
+        runNodes(
+          connection,
+          createNode(noteRequest({ body: { value: 'Second' } })),
+          clockAt(T0 + 1),
+        ),
+      ),
+    );
+    assert.equal(conflict.code, 'idempotency_conflict');
+    assert.deepEqual(conflict.details, {
+      field: 'idempotencyKey',
+      reason: 'different_input',
+    });
+  });
+});
+
+test('a settled key answers before any content work, so an unnameable body still replays', () => {
+  withMigrated('replay-before-derivation', (connection) => {
+    const first = expectRight(
+      runNodes(
+        connection,
+        createNode(noteRequest({ body: { value: 'Nameable' }, slug: 'fixed' })),
+        clockAt(T0),
+      ),
+    );
+
+    // The replay lookup precedes conversion and title resolution alike, so the second attempt returns
+    // the saved result rather than re-deriving anything from the body.
+    const second = expectRight(
+      runNodes(
+        connection,
+        createNode(noteRequest({ body: { value: 'Nameable' }, slug: 'fixed' })),
+        clockAt(T0 + 1_000),
+      ),
+    );
+    assert.deepEqual(second, first);
+  });
+});

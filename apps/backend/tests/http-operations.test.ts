@@ -139,6 +139,140 @@ describe('operations over HTTP', () => {
     });
   });
 
+  test('a refused kind is a bounded 400 that creates nothing and settles no key', async () => {
+    await withServer('http-kind-refusals', async (server) => {
+      // Every shape the creation union refuses, over the wire rather than against the decoder
+      // directly. The union changed which member reports what, and this is the whole path that
+      // turns that into a public answer: JSON parsing, strict decoding, diagnostic selection, and
+      // the error mapping that assigns the status.
+      const refusals = [
+        {
+          what: 'a resource that does not say what it is',
+          body: { type: 'resource', parent: { path: '/work' }, title: 'Nameless kind' },
+          field: 'kind',
+        },
+        {
+          what: 'a resource kind core does not admit',
+          body: { type: 'resource', kind: 'sketch', parent: { path: '/work' }, title: 'Sketch' },
+          field: 'kind',
+        },
+        {
+          what: 'a container carrying a kind',
+          body: { type: 'area', kind: 'note', parent: { path: '/' }, title: 'Kinded area' },
+          field: 'kind',
+        },
+      ];
+
+      for (const refusal of refusals) {
+        const response = await call(server, '/api/nodes/create', {
+          body: JSON.stringify({ ...refusal.body, idempotencyKey: `key-${refusal.field}` }),
+        });
+        assert.equal(response.status, 400, refusal.what);
+        const error = envelope(response.json);
+        assert.equal(error.code, 'invalid_input', refusal.what);
+        assert.equal(error.details.field, refusal.field, refusal.what);
+        assert.equal(error.details.reason, 'invalid', refusal.what);
+
+        // Nothing from the decoder escapes. Its formatted messages can carry the submitted value and
+        // arbitrary property names, so the published details are only our own closed vocabulary.
+        assert.deepEqual(Object.keys(error.details).sort(), ['field', 'reason'], refusal.what);
+        assert.doesNotMatch(JSON.stringify(response.json), /sketch|Kinded area|Nameless kind/u);
+      }
+
+      // Nothing was created. The database still holds exactly what the bootstrap migration seeded, so
+      // a refusal that had partially applied would show up here as an extra row.
+      const listed = await call(server, '/api/nodes/list', {
+        body: JSON.stringify({ parent: { path: '/' }, recursive: true }),
+      });
+      assert.equal(listed.status, 200);
+      const remaining = (listed.json as { items: { slug: string; type: string }[] }).items;
+      assert.deepEqual(
+        remaining.map((item) => item.slug),
+        ['personal', 'work'],
+      );
+      assert.equal(
+        remaining.every((item) => item.type === 'area'),
+        true,
+        'the two seeded root areas, and nothing the refusals left behind',
+      );
+
+      // And no key was settled. A receipt written for a refused request would make this reuse replay
+      // the failure instead of creating, so a 201 here is what proves the ledger stayed clean.
+      const reused = await call(server, '/api/nodes/create', {
+        body: JSON.stringify({
+          type: 'resource',
+          kind: 'note',
+          parent: { path: '/work' },
+          title: 'Now valid',
+          idempotencyKey: 'key-kind',
+        }),
+      });
+      assert.equal(reused.status, 201);
+      const entity = (reused.json as { entity: { kind: string; type: string } }).entity;
+      assert.equal(entity.type, 'resource');
+      assert.equal(entity.kind, 'note');
+    });
+  });
+
+  test('a note that cannot be named is refused with the title reason, over HTTP', async () => {
+    await withServer('http-untitled-note', async (server) => {
+      // The union made every non-matching member report `type`, which would have replaced this
+      // reason with a complaint about the one field the caller got right.
+      const response = await call(server, '/api/nodes/create', {
+        body: JSON.stringify({ type: 'resource', kind: 'note', parent: { path: '/work' } }),
+      });
+      assert.equal(response.status, 400);
+      const error = envelope(response.json);
+      assert.equal(error.code, 'invalid_input');
+      assert.equal(error.details.field, 'title');
+      assert.equal(error.details.reason, 'title_required');
+
+      // A container missing its title still reaches the same reason by the same route.
+      const container = await call(server, '/api/nodes/create', {
+        body: JSON.stringify({ type: 'area', parent: { path: '/' } }),
+      });
+      assert.equal(container.status, 400);
+      assert.equal(envelope(container.json).details.reason, 'title_required');
+    });
+  });
+
+  test('a note created over HTTP carries its kind, and a container carries null', async () => {
+    await withServer('http-note-kind', async (server) => {
+      const note = await call(server, '/api/nodes/create', {
+        body: JSON.stringify({
+          type: 'resource',
+          kind: 'note',
+          parent: { path: '/work' },
+          body: { value: '# Derived over the wire' },
+        }),
+      });
+      assert.equal(note.status, 201);
+      const created = (note.json as { entity: { id: number; kind: string; title: string } }).entity;
+      assert.equal(created.kind, 'note');
+      assert.equal(created.title, 'Derived over the wire');
+
+      const read = await call(server, '/api/nodes/get', {
+        body: JSON.stringify({ target: { id: created.id } }),
+      });
+      assert.equal(read.status, 200);
+      const entity = (read.json as { entity: Record<string, unknown> }).entity;
+      assert.equal(entity['kind'], 'note');
+
+      // The response surface is exactly what the contract publishes: `kind` joined it, and the
+      // derived-text column did not.
+      assert.equal('body_text' in entity, false);
+      assert.equal('bodyText' in entity, false);
+      assert.equal('updatedAt' in entity, false);
+
+      const containerRead = await call(server, '/api/nodes/get', {
+        body: JSON.stringify({ target: { path: '/work' } }),
+      });
+      const container = (containerRead.json as { entity: Record<string, unknown> }).entity;
+      assert.equal('kind' in container, true, 'always present, never inferred from the type');
+      assert.equal(container['kind'], null);
+    });
+  });
+
   test('an invalid title carries the capability’s structured reason and its limit', async () => {
     await withServer('http-invalid-title', async (server) => {
       const response = await call(server, '/api/nodes/create', {

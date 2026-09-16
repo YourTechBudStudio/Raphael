@@ -4,8 +4,18 @@ import { View } from 'react-native';
 import type { ResourceKind } from '../../../infrastructure/api/contracts';
 import { colors, GithubMark } from '../../../ui';
 
+/**
+ * The kinds a *card* can be drawn as.
+ *
+ * Wider than `ResourceKind`, deliberately. Session media is three kinds and a note is server data
+ * with its own shape, but both are drawn as cards and both want the same icon-and-word pair, so the
+ * presentation vocabulary is one union rather than two that could disagree about what a note looks
+ * like.
+ */
+export type CardKind = ResourceKind | 'note';
+
 export interface KindBadgeProps {
-  kind: ResourceKind;
+  kind: CardKind;
   size?: number | undefined;
   /** Set false for the bare icon, with no pale square behind it. */
   background?: boolean | undefined;

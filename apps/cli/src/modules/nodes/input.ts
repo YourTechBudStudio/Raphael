@@ -11,13 +11,116 @@ import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 
 import { REQUEST_MAX_BYTES, isJsonObject, type JsonObject } from '@raphael/contracts';
 import {
+  CONTAINER_TYPES,
+  NODE_ORDER_FIELDS,
   NODE_TYPES,
+  NodeOrderBy,
+  ORDER_DIRECTIONS,
+  RESOURCE_KINDS,
   ROOT_PATH,
+  type ContainerType,
+  type NodeOrderBy as NodeOrderByType,
   type NodeType,
+  type ResourceKind,
   type TipTapDocumentTransport,
 } from '@raphael/contracts/nodes';
+import { Schema } from 'effect';
 
 import { UsageError } from '../../shared/args.ts';
+
+/** What `raphael create <type>` was asked to make. */
+export type CreateTarget =
+  | { readonly type: ContainerType }
+  | { readonly type: 'resource'; readonly kind: ResourceKind };
+
+/** Every token the create command accepts, in the order the help lists them. */
+export const CREATE_TARGETS: readonly string[] = [
+  ...CONTAINER_TYPES,
+  ...RESOURCE_KINDS.map((kind) => `resource.${kind}`),
+];
+
+/**
+ * Parse the positional type token: `area`, `project`, or `resource.note`.
+ *
+ * The dotted form is kind selection data in a fixed command, not a plugin namespace. Both halves are
+ * checked against the contract's own vocabularies, and no unknown base is accepted on the assumption
+ * that a server might know it - a token this build cannot describe is a usage error here rather than a
+ * round trip that fails with a less specific message.
+ *
+ * A second dot is refused rather than split, so `resource.note.extra` is an error instead of a silently
+ * accepted prefix that would create something other than what was typed.
+ */
+export const parseCreateTarget = (token: string, command: string): CreateTarget => {
+  const refuse = (): never => {
+    throw new UsageError(
+      `"${token}" is not something Raphael can create. Give ${CREATE_TARGETS.join(', ')}.`,
+      command,
+    );
+  };
+
+  const parts = token.split('.');
+  const [base, kind] = parts;
+
+  if (parts.length === 1) {
+    if (base === undefined || !(CONTAINER_TYPES as readonly string[]).includes(base))
+      return refuse();
+    return { type: base as ContainerType };
+  }
+  if (parts.length !== 2) return refuse();
+  if (base !== 'resource') return refuse();
+  if (kind === undefined || !(RESOURCE_KINDS as readonly string[]).includes(kind)) return refuse();
+  return { type: 'resource', kind: kind as ResourceKind };
+};
+
+/**
+ * Parse repeatable `--order-by field:direction` into the shared ordering array.
+ *
+ * Occurrence order is priority order, so repeated flags are preserved in sequence rather than the last
+ * one winning. The grammar is deliberately strict: exactly one colon, a case-sensitive field, and an
+ * explicit direction. No implicit direction, no comma-separated form, no whitespace tolerance - each
+ * would be a second spelling of the same request, and the one thing a sort order must be is
+ * unambiguous.
+ *
+ * The assembled array is then validated with the shared schema rather than by hand, so the duplicate,
+ * size, and vocabulary rules cannot drift from the ones the server applies. No raw SQL, and nothing
+ * beyond a validated clause list, ever leaves here.
+ */
+export const parseOrderBy = (
+  values: readonly string[],
+  command: string,
+): NodeOrderByType | undefined => {
+  if (values.length === 0) return undefined;
+
+  const clauses = values.map((value) => {
+    const parts = value.split(':');
+    if (parts.length !== 2) {
+      throw new UsageError(`--order-by takes "field:direction". Got "${value}".`, command);
+    }
+    const [field, direction] = parts;
+    if (field === undefined || !(NODE_ORDER_FIELDS as readonly string[]).includes(field)) {
+      throw new UsageError(
+        `--order-by must name ${NODE_ORDER_FIELDS.join(', ')}. Got "${field ?? ''}".`,
+        command,
+      );
+    }
+    if (direction === undefined || !(ORDER_DIRECTIONS as readonly string[]).includes(direction)) {
+      throw new UsageError(
+        `--order-by direction must be ${ORDER_DIRECTIONS.join(' or ')}. Got "${direction ?? ''}".`,
+        command,
+      );
+    }
+    return { field, direction };
+  });
+
+  const decoded = Schema.decodeUnknownEither(NodeOrderBy)(clauses);
+  if (decoded._tag === 'Left') {
+    throw new UsageError(
+      `--order-by must name at most ${NODE_ORDER_FIELDS.length} fields and must not repeat one.`,
+      command,
+    );
+  }
+  return decoded.right;
+};
 
 /** An entity selector: exactly one of an id or a path. */
 export type Selector = { readonly id: number } | { readonly path: string };

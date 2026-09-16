@@ -23,6 +23,28 @@ export function openProject(id: number): void {
   router.push({ pathname: '/project/[id]', params: { id: String(id) } });
 }
 
+/**
+ * Opens one saved note, read-only.
+ *
+ * By the server's numeric id, which is the only identity a note has. There is no draft route here:
+ * a note that exists only on this phone is not addressable by a server id and is opened from the
+ * record that holds it.
+ */
+export function openResource(id: number): void {
+  router.push({ pathname: '/resource/[id]', params: { id: String(id) } });
+}
+
+/**
+ * Opens the composer over one durable draft.
+ *
+ * By the draft's own identifier, which is the only identity writing that is not on a server has.
+ * The route carries nothing else: no title, no destination and no payload, because a copy of a
+ * record in navigation state is a copy that goes stale, and the owner holds the record.
+ */
+export function openCapture(draftId: string): void {
+  router.push({ pathname: '/capture/[draftId]', params: { draftId } });
+}
+
 /** Opens an area or a project without the caller having to branch on its type. */
 export function openContainer(ref: ContainerRef): void {
   if (ref.type === 'area') {
@@ -52,7 +74,7 @@ export function openSettings(): void {
   router.push('/settings');
 }
 
-/** Opens the list of creations left unfinished on this phone. */
+/** Opens the list of notes left unfinished on this phone. */
 export function openRecovery(): void {
   router.push('/recovery');
 }

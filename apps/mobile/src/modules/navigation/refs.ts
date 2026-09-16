@@ -1,3 +1,5 @@
+import { CONTAINER_TYPES } from '@raphael/contracts/nodes';
+
 import type { ContainerRef, ContainerType } from '../../infrastructure/api/contracts';
 
 /**
@@ -21,8 +23,16 @@ export function parseNodeId(value: string | undefined): number | null {
   return Number.isSafeInteger(id) ? id : null;
 }
 
+/**
+ * Whether a route parameter names a container.
+ *
+ * Checked against the contract's container set rather than a hand-written pair, so widening the node
+ * vocabulary cannot quietly let a note id through a route that means "a container": a link to
+ * `/resource/5` reads as no reference at all, which is what the callers below already do with anything
+ * they cannot resolve.
+ */
 const isContainerType = (value: string | undefined): value is ContainerType =>
-  value === 'area' || value === 'project';
+  value !== undefined && (CONTAINER_TYPES as readonly string[]).includes(value);
 
 /**
  * A container reference out of route params, for the routes that take one as context: a search

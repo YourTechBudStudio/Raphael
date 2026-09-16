@@ -1,4 +1,3 @@
-import type { ReactNode } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 
 import { Chip } from '../../../ui';
@@ -7,11 +6,6 @@ import { useConnectionStore } from '../state/connection';
 
 export interface StoredConnectionProblemProps {
   message: string;
-  /**
-   * Shown below the explanation. A keychain that cannot be read says nothing about records this app
-   * keeps for itself, so anything unfinished stays reachable from here.
-   */
-  footer?: ReactNode | undefined;
 }
 
 /**
@@ -26,7 +20,7 @@ export interface StoredConnectionProblemProps {
  * The way out deletes the stored record, so it says that plainly rather than calling itself
  * "start again". Nothing on the server is touched, and the address and key can be entered again.
  */
-export function StoredConnectionProblem({ message, footer }: StoredConnectionProblemProps) {
+export function StoredConnectionProblem({ message }: StoredConnectionProblemProps) {
   const disconnect = useConnectionStore((state) => state.disconnect);
 
   return (
@@ -60,7 +54,6 @@ export function StoredConnectionProblem({ message, footer }: StoredConnectionPro
             }}
           />
         </View>
-        {footer === undefined ? null : <View className="pt-4">{footer}</View>}
       </View>
     </ScrollView>
   );

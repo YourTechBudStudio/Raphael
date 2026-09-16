@@ -43,4 +43,4 @@ export {
  * storage behavior import it directly; nothing outside this capability needs to name its tables, and a
  * runtime that could would be able to write past every rule enforced here.
  */
-export { type StoredNodeType } from './types.ts';
+export { type NodeType, type ResourceKind } from './types.ts';

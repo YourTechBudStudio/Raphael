@@ -1,19 +1,11 @@
-import clsx from 'clsx';
+import { Plus } from 'lucide-react-native';
 import { Text, View } from 'react-native';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
-import { Emblem, emblemFor, PressableFeedback } from '../../../ui';
+import { colors, IconButton, PressableFeedback } from '../../../ui';
 import type { HierarchyNode } from '../../collections';
-import { DisclosureButton } from './DisclosureButton';
-
-/** Each level steps in by this much, per the navigation boards. */
-const INDENT = 28;
-/** Where the connector line sits inside a level: under the centre of the parent's chevron. */
-const CONNECTOR_X = 22;
-/** Half a row, so the line stops at the last child instead of running past it. */
-const HALF_ROW = 22;
-/** Row height and disclosure slot: also the minimum tap target for a row. */
-const ROW = 44;
+import { TREE_ROW } from './tree-metrics';
+import { TreeRows, type TreeRowState } from './TreeRows';
 
 export interface BrowseTreeProps {
   nodes: readonly HierarchyNode[];
@@ -24,9 +16,19 @@ export interface BrowseTreeProps {
   forceExpanded: boolean;
   onToggle: (id: number) => void;
   onSelect: (node: HierarchyNode) => void;
+  /** Offered on area rows only: a plus at the trailing edge to create inside that area. */
+  onAdd?: ((node: HierarchyNode) => void) | undefined;
+  /** Draws a virtual last root row that creates a top-level area. */
+  onAddRoot?: (() => void) | undefined;
 }
 
-/** The area and project tree on the Browse screen. */
+/**
+ * The tree on the Browse screen: one you walk, with somewhere to add things.
+ *
+ * A wrapper over the shared renderer rather than a tree of its own. What Browse adds is the current
+ * highlight, the per-area plus and the ghost row; the grammar underneath is the same one the note
+ * destination picker draws, and keeping it one implementation is what stops the two drifting.
+ */
 export function BrowseTree({
   nodes,
   current,
@@ -34,115 +36,75 @@ export function BrowseTree({
   forceExpanded,
   onToggle,
   onSelect,
+  onAdd,
+  onAddRoot,
 }: BrowseTreeProps) {
+  const stateFor = (node: HierarchyNode): TreeRowState => {
+    const isCurrent = current !== null && current.type === node.type && current.id === node.id;
+
+    return {
+      selected: isCurrent,
+      label: isCurrent ? `${node.title}, current` : node.title,
+      hint: isCurrent ? 'Closes Browse' : `Opens ${node.title}`,
+      trailing: isCurrent ? (
+        <Text className="font-body-medium text-[14px] text-primary">Current</Text>
+      ) : undefined,
+      // Only areas hold things, so only area rows get the plus. It sits outside the row's press
+      // surface so it is its own 44pt target for touch and its own control for a screen reader.
+      accessory:
+        node.type === 'area' && onAdd !== undefined ? (
+          <IconButton
+            accessibilityHint={`Creates an area or a project inside ${node.title}`}
+            color={colors.primary}
+            icon={Plus}
+            iconSize={20}
+            label={`Add inside ${node.title}`}
+            onPress={() => {
+              onAdd(node);
+            }}
+          />
+        ) : undefined,
+    };
+  };
+
   return (
-    <View>
-      {nodes.map((node) => (
-        <BrowseBranch
-          current={current}
-          expandedIds={expandedIds}
-          forceExpanded={forceExpanded}
-          key={node.id}
-          node={node}
-          onSelect={onSelect}
-          onToggle={onToggle}
-        />
-      ))}
-    </View>
+    <TreeRows
+      expandedIds={expandedIds}
+      footer={onAddRoot === undefined ? undefined : <NewAreaRow onPress={onAddRoot} />}
+      forceExpanded={forceExpanded}
+      nodes={nodes}
+      onSelect={onSelect}
+      onToggle={onToggle}
+      stateFor={stateFor}
+    />
   );
 }
 
-interface BrowseBranchProps extends Omit<BrowseTreeProps, 'nodes'> {
-  node: HierarchyNode;
-}
-
-function BrowseBranch({
-  node,
-  current,
-  expandedIds,
-  forceExpanded,
-  onToggle,
-  onSelect,
-}: BrowseBranchProps) {
-  const hasChildren = node.children.length > 0;
-  const expanded = hasChildren && (forceExpanded || expandedIds.has(node.id));
-  const isCurrent = current !== null && current.type === node.type && current.id === node.id;
-
+/**
+ * The root's last row is not a container but the place one would go, drawn in the rows' own
+ * grammar: the disclosure slot left empty, a dotted outline with a plus where the emblem sits,
+ * and the title in soft ink. Nothing bordered, nothing pill-shaped - it is a row that is not
+ * there yet, not a button dropped into a list.
+ */
+function NewAreaRow({ onPress }: { onPress: () => void }) {
   return (
-    <View>
-      <View className="flex-row items-center" style={{ minHeight: ROW }}>
-        {hasChildren ? (
-          <DisclosureButton
-            expanded={expanded}
-            interactive={!forceExpanded}
-            name={node.title}
-            onPress={() => {
-              onToggle(node.id);
-            }}
-          />
-        ) : (
-          <View style={{ width: ROW }} />
-        )}
-        <PressableFeedback
-          accessibilityHint={isCurrent ? 'Closes Browse' : `Opens ${node.title}`}
-          accessibilityLabel={isCurrent ? `${node.title}, current` : node.title}
-          accessibilityState={{ selected: isCurrent }}
-          className={clsx(
-            'flex-row items-center gap-3 rounded-card px-2 py-1.5',
-            isCurrent && 'bg-wave',
-          )}
-          onPress={() => {
-            onSelect(node);
-          }}
-          style={{ flex: 1, justifyContent: 'center', minHeight: ROW }}
+    <View className="flex-row items-center" style={{ minHeight: TREE_ROW }}>
+      <View style={{ width: TREE_ROW }} />
+      <PressableFeedback
+        accessibilityHint="Creates an area at the top level"
+        accessibilityLabel="New area"
+        className="flex-row items-center gap-3 rounded-card px-2 py-1.5"
+        onPress={onPress}
+        style={{ flex: 1, justifyContent: 'center', minHeight: TREE_ROW }}
+      >
+        <View
+          className="items-center justify-center rounded-full border border-lilac"
+          style={{ borderStyle: 'dotted', height: 26, width: 26 }}
         >
-          {/* The navigation boards draw the tree with petals for every project and a bare
-              violet layers mark for every area, so the rows read as one list on the sheet
-              surface rather than as tiles. */}
-          <Emblem background={false} name={emblemFor(node.type, node.id)} size={26} />
-          <Text
-            className={clsx(
-              'flex-1 font-body text-[16px]',
-              isCurrent ? 'text-primary' : 'text-ink',
-            )}
-            // Long titles wrap once rather than vanish behind an ellipsis; a third line is cut.
-            numberOfLines={2}
-          >
-            {node.title}
-          </Text>
-          {isCurrent ? (
-            <Text className="font-body-medium text-[14px] text-primary">Current</Text>
-          ) : null}
-        </PressableFeedback>
-      </View>
-      {expanded ? (
-        <View style={{ paddingLeft: INDENT }}>
-          <View
-            className="absolute w-px bg-line"
-            style={{ bottom: HALF_ROW, left: CONNECTOR_X, top: 0 }}
-          />
-          {node.children.map((child) => (
-            <View key={child.id}>
-              <View
-                className="absolute h-px bg-line"
-                style={{
-                  left: CONNECTOR_X - INDENT,
-                  top: HALF_ROW,
-                  width: INDENT - CONNECTOR_X + 4,
-                }}
-              />
-              <BrowseBranch
-                current={current}
-                expandedIds={expandedIds}
-                forceExpanded={forceExpanded}
-                node={child}
-                onSelect={onSelect}
-                onToggle={onToggle}
-              />
-            </View>
-          ))}
+          <Plus color={colors.primary} size={15} strokeWidth={2.2} />
         </View>
-      ) : null}
+        <Text className="flex-1 font-body text-[16px] text-ink-soft">New area</Text>
+      </PressableFeedback>
     </View>
   );
 }

@@ -9,9 +9,9 @@ export interface SkeletonBlockProps {
 }
 
 /**
- * A placeholder for the ~120 ms the mock repository takes. It is the size and shape of the
- * content that replaces it, and it does not animate: a spinner that comes and goes within a
- * blink is noise, and a shimmer would break "calm at rest".
+ * A placeholder for a read that has not come back yet. It is the size and shape of the content
+ * that replaces it, and it does not animate: a spinner that comes and goes within a blink is
+ * noise, and a shimmer would break "calm at rest".
  */
 export function SkeletonBlock({ height, width }: SkeletonBlockProps) {
   return (

@@ -1,5 +1,5 @@
 import { get as getNode, getPath, list } from '@raphael/client/nodes';
-import type { CreateResponse, GetResponse } from '@raphael/contracts/nodes';
+import { CONTAINER_TYPES, type CreateResponse, type GetResponse } from '@raphael/contracts/nodes';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
@@ -78,9 +78,19 @@ export async function recordCreation(
   activation: number,
 ): Promise<void> {
   const entity = response.entity;
-  const key = keys.entity(activation, { type: entity.type, id: entity.id });
 
-  if (client.getQueryData(key) === undefined) client.setQueryData(key, entity);
+  // The entity cache this seeds is keyed by a container reference, and every screen reading it expects
+  // an area or a project. A resource creation therefore seeds nothing here rather than being filed
+  // under a reference no reader can address - the note screens land in Phase 05 with their own key.
+  // The hierarchy is still invalidated either way: a creation happened, and a stale tree is a stale
+  // tree whatever was added to it.
+  if ((CONTAINER_TYPES as readonly string[]).includes(entity.type)) {
+    const key = keys.entity(activation, {
+      type: entity.type as (typeof CONTAINER_TYPES)[number],
+      id: entity.id,
+    });
+    if (client.getQueryData(key) === undefined) client.setQueryData(key, entity);
+  }
 
   await invalidateHierarchy(client, activation);
 }
@@ -226,3 +236,26 @@ export const ancestorsOf = (
   id: number | null,
 ): readonly HierarchyNode[] =>
   hierarchy === undefined || id === null ? [] : pathTo(hierarchy, id);
+
+/**
+ * Names a container for display, or declines to.
+ *
+ * The rule is the one the Area screen already follows, factored so every card and chip applies it
+ * identically. A title is offered only from a hierarchy that has loaded *and* is current. A
+ * hierarchy that has not arrived cannot be asked. A hierarchy retained after a failed refresh can be
+ * asked and must not be: its titles were true when they were read and may not be now, and a card
+ * with one line above the title has nowhere to say which of those it is showing. A plausible name is
+ * worse than an honest fallback, because nothing marks it as a guess.
+ *
+ * Callers fall back to something that is true regardless - a kind label on a card, the server's
+ * canonical path on a screen that can afford the request.
+ */
+export const containerTitleLookup = (
+  tree: HierarchyQuery,
+): ((id: number) => string | undefined) => {
+  const hierarchy = tree.hierarchy;
+
+  if (hierarchy === undefined || tree.isStale) return () => undefined;
+
+  return (id: number) => hierarchy.byId.get(id)?.title;
+};

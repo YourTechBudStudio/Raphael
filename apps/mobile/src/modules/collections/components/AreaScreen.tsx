@@ -1,5 +1,5 @@
-import { FileText, Layers, Plus } from 'lucide-react-native';
-import { useMemo } from 'react';
+import { Layers } from 'lucide-react-native';
+import { useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
@@ -8,13 +8,12 @@ import {
   Chip,
   emblemFor,
   EmptyState,
-  Eyebrow,
+  FAVORITE_MARK,
   SectionHeading,
-  FavoriteButton,
   Screen,
   SectionError,
+  ToggleLabel,
 } from '../../../ui';
-import { CaptureBar } from '../../capture';
 import { RejectionNotice } from '../../connection';
 import {
   goBack,
@@ -22,24 +21,30 @@ import {
   openBrowse,
   openHome,
   openProject,
-  openRecovery,
+  openResource,
   openSearch,
-  useSheetsStore,
   LocationTopBar,
 } from '../../navigation';
-import { ResourceGrid, useLocalResources } from '../../resources';
+import {
+  CONTAINER_NOTES_COPY,
+  NoteSection,
+  SessionMediaSection,
+  useNotePages,
+  useSessionMedia,
+} from '../../resources';
 import { useFavoriteToggle } from '../client/favorites';
 import { pathSegments } from '../client/hierarchy';
 import {
   ancestorsOf,
   childrenOf,
+  containerTitleLookup,
   useContainer,
   useContainerPath,
   useHierarchy,
 } from '../client/queries';
-import { PendingSummary } from '../creation';
-import { HierarchyError, HierarchyStale } from './HierarchyError';
-import { areaNoteGridItems } from './noteSpans';
+import { AddInsideSheet, type AddInsideTarget } from './AddInsideSheet';
+import { ContainerHeader } from './ContainerHeader';
+import { HierarchyStale } from './HierarchyError';
 import { ReadOnlyBody } from './ReadOnlyBody';
 import { TileGrid, type TileGridItem } from './TileGrid';
 
@@ -63,8 +68,10 @@ export interface AreaScreenProps {
  * List of its own: two reads of the same fact can disagree, and someone with the tree and this
  * screen both in front of them would see the disagreement.
  *
- * Notes here are kept on this device for the session. They sit under the same heading as before and
- * are not marked as different, which is a condition the owner accepted rather than an oversight.
+ * Notes are the server's: the ones filed directly in this area, in its default order, paged as the
+ * scroll reaches the end. Not everything underneath it - a project's notes belong to the project.
+ * Media recorded in this session has no server operation and sits under its own heading, so one
+ * word never covers two different promises.
  */
 export function AreaScreen({ areaId }: AreaScreenProps) {
   const target = useMemo<ContainerRef | null>(
@@ -75,11 +82,12 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   const favorite = useFavoriteToggle();
   const areaQuery = useContainer(target);
   const tree = useHierarchy();
-  const notes = useLocalResources();
+  const notes = useNotePages(target);
+  const media = useSessionMedia();
 
-  const openNewNote = useSheetsStore((state) => state.openNewNote);
-  const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
-  const openNewContainer = useSheetsStore((state) => state.openNewContainer);
+  // The add sheet is opened from this screen and belongs to it while it is up; the creation sheet
+  // it leads to is the app's, and the sheet store owns that one.
+  const [adding, setAdding] = useState<AddInsideTarget | null>(null);
 
   const entity = areaQuery.data;
   // A route can name a real container of the wrong kind. Rendering a project as an area would
@@ -101,16 +109,28 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   // rather than titles, which is less friendly and entirely true.
   const canonical = useContainerPath(namedHere || notFound ? null : areaId);
   const names = ancestors.map((step) => step.title);
-  // A root area has only itself in the path, so the chip names the collection it belongs to.
-  const chipPath = namedHere
-    ? names.length > 1
-      ? names
-      : ['Areas', ...names]
-    : pathSegments(canonical.data);
+  // The chip is the way back up, so it ends at the parent - the way the Project screen's already
+  // does. It used to end at this area, which is the one thing the screen does not need telling:
+  // the title says it directly underneath in 40px Sora. A root area's parent is the collection
+  // itself, and that is worth saying; a location nobody could name is not, so it stays empty and
+  // the chip falls back to naming what pressing it does.
+  const parents = namedHere
+    ? names.slice(0, -1)
+    : canonical.data === undefined
+      ? undefined
+      : pathSegments(canonical.data).slice(0, -1);
+  const chipPath = parents === undefined ? [] : parents.length > 0 ? parents : ['Areas'];
   const scope = notFound || failed ? null : target;
 
   const header = (
     <LocationTopBar
+      onAdd={
+        notFound || failed || entity === undefined || target === null
+          ? undefined
+          : () => {
+              setAdding({ id: target.id, title: entity.title });
+            }
+      }
       onBack={goBack}
       onOpenBrowse={() => {
         openBrowse(scope);
@@ -161,7 +181,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   const children = childrenOf(tree.hierarchy, areaId);
   const subareas = children?.subareas ?? [];
   const projects = children?.projects ?? [];
-  const resources = (notes.data ?? []).filter(
+  const sessionMedia = (media.data ?? []).filter(
     (resource) => resource.parent.type === 'area' && resource.parent.id === areaId,
   );
   // The boards give a project tile its description only when subareas are not using the space.
@@ -188,35 +208,40 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
 
   return (
     <View className="flex-1">
-      <Screen header={header}>
+      <Screen
+        header={header}
+        onEndReached={notes.loadMore}
+        // Everything this screen shows, reloaded together; the notes from their first page.
+        onRefresh={() => {
+          tree.refetch();
+          void areaQuery.refetch();
+          notes.refresh();
+          void media.refetch();
+        }}
+        refreshing={tree.isFetching || areaQuery.isFetching || notes.isRefreshing}
+      >
         <RejectionNotice className="mb-4" />
-        <Eyebrow>Area</Eyebrow>
-        <Text
-          accessibilityRole="header"
-          className="mt-1 font-heading text-[40px] leading-[48px] text-ink"
-        >
-          {entity === undefined ? 'Loading…' : entity.title}
-        </Text>
-        {entity === undefined ? null : (
-          <Text className="mt-2 font-body text-[16px] leading-[22px] text-ink">
-            {entity.description}
-          </Text>
-        )}
-
-        {entity === undefined || target === null ? null : (
-          <View className="mt-3 flex-row flex-wrap items-center gap-x-3 gap-y-2">
-            <View className="flex-row items-center gap-1">
-              <FavoriteButton
-                favorited={favorite.isFavorite(target)}
-                label={entity.title}
+        <ContainerHeader
+          kind="area"
+          title={entity === undefined ? 'Loading…' : entity.title}
+          toggles={
+            entity === undefined || target === null ? undefined : (
+              <ToggleLabel
+                accessibilityLabel={
+                  favorite.isFavorite(target)
+                    ? `Remove ${entity.title} from favorites`
+                    : `Add ${entity.title} to favorites`
+                }
+                label="Favorite"
+                mark={FAVORITE_MARK}
                 onToggle={() => {
                   favorite.toggle(target);
                 }}
+                selected={favorite.isFavorite(target)}
               />
-              <Text className="font-body text-[15px] text-ink-soft">Favorite</Text>
-            </View>
-          </View>
-        )}
+            )
+          }
+        />
         {favorite.isError ? (
           <Text accessibilityLiveRegion="polite" className="mt-2 font-body text-[15px] text-danger">
             Favorite did not update. Try again.
@@ -226,14 +251,18 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
         {entity === undefined ? null : (
           <ReadOnlyBody
             body={entity.body.format === 'markdown' ? entity.body.value : ''}
+            description={entity.description}
             kind="area"
           />
         )}
 
         {tree.isError && tree.hierarchy === undefined ? (
-          <View className="mt-8">
-            <HierarchyError title="What this area holds did not load." tree={tree} />
-          </View>
+          <Text
+            accessibilityLiveRegion="polite"
+            className="mt-8 font-body text-[16px] leading-[22px] text-ink-soft"
+          >
+            Unable to load what this area holds.
+          </Text>
         ) : tree.hierarchy === undefined ? (
           // Until the hierarchy arrives, say so. Empty sections here would claim the area is bare.
           <Text
@@ -258,78 +287,44 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
           <>
             <HierarchyStale className="mt-8" tree={tree} />
 
-            {/* Drawn from the local record, so it survives a hierarchy that will not load - which
-                is exactly when someone most needs to know a creation was left in the air. */}
-            {areaId === null ? null : (
-              <View className="mt-8">
-                <PendingSummary onOpen={openRecovery} parentAreaId={areaId} />
-              </View>
-            )}
-
-            <View className="mt-8 gap-4">
-              <SectionHeading>Subareas</SectionHeading>
-              {subareas.length > 0 ? (
+            {/* Subareas and projects appear only when there are some; the actions that make
+                them live beside Favorite, so an empty section has nothing left to say. */}
+            {subareas.length > 0 ? (
+              <View className="mt-8 gap-4">
+                <SectionHeading>Subareas</SectionHeading>
                 <TileGrid items={subareaTiles} />
-              ) : (
-                <EmptyState
-                  description="An area can hold areas of its own when one subject needs dividing."
-                  title="No subareas in this area."
-                />
-              )}
-              {areaId === null ? null : (
-                <View className="flex-row">
-                  <Chip
-                    accessibilityHint="Creates an area inside this one"
-                    icon={Plus}
-                    label="New area"
-                    onPress={() => {
-                      openNewContainer('area', areaId);
-                    }}
-                  />
-                </View>
-              )}
-            </View>
+              </View>
+            ) : null}
 
-            <View className="mt-8 gap-4">
-              <SectionHeading>Projects</SectionHeading>
-              {projectTiles.length > 0 ? (
+            {projectTiles.length > 0 ? (
+              <View className="mt-8 gap-4">
+                <SectionHeading>Projects</SectionHeading>
                 <TileGrid items={projectTiles} />
-              ) : (
-                <EmptyState
-                  description="Projects with an end in sight belong here. This area has none yet."
-                  title="No projects in this area."
-                />
-              )}
-              {areaId === null ? null : (
-                <View className="flex-row">
-                  <Chip
-                    accessibilityHint="Creates a project inside this area"
-                    icon={Plus}
-                    label="New project"
-                    onPress={() => {
-                      openNewContainer('project', areaId);
-                    }}
-                  />
-                </View>
-              )}
-            </View>
-
-            <View className="mt-8 gap-4">
-              <SectionHeading>Notes in this area</SectionHeading>
-              {resources.length > 0 ? (
-                <ResourceGrid items={areaNoteGridItems(resources)} noteVariant="lilac" />
-              ) : (
-                <EmptyState
-                  description="Notes kept here, rather than in one of its projects, show up in this list."
-                  icon={FileText}
-                  title="Nothing kept here yet."
-                />
-              )}
-            </View>
+              </View>
+            ) : null}
           </>
         )}
+
+        {/* Notes are always here, whatever the hierarchy is doing. They are their own read: a tree
+            that will not load says nothing about what this area holds, and hiding the section
+            behind it would turn one failure into two. */}
+        <NoteSection
+          className="mt-8"
+          copy={CONTAINER_NOTES_COPY}
+          locationFor={containerTitleLookup(tree)}
+          onOpen={openResource}
+          testID="area-notes"
+          view={notes.view}
+        />
+
+        <SessionMediaSection className="mt-8" items={sessionMedia} testID="area-session-media" />
       </Screen>
-      <CaptureBar onNewNote={openNewNote} onVoice={openVoiceCapture} />
+      <AddInsideSheet
+        area={adding}
+        onClose={() => {
+          setAdding(null);
+        }}
+      />
     </View>
   );
 }

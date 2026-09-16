@@ -11,7 +11,16 @@ import { randomUUID } from 'node:crypto';
 
 import type { Transport } from '@raphael/client';
 import { create, get, getPath, list } from '@raphael/client/nodes';
-import { BODY_FORMATS, LIST_LIMIT_MAX, LIST_LIMIT_MIN, NODE_TYPES } from '@raphael/contracts/nodes';
+import {
+  BODY_FORMATS,
+  LIST_LIMIT_MAX,
+  LIST_LIMIT_MIN,
+  NODE_ORDER_FIELDS,
+  NODE_TYPES,
+  ORDER_DIRECTIONS,
+  type NodeEntity,
+  type NodeSummary,
+} from '@raphael/contracts/nodes';
 
 import {
   UsageError,
@@ -32,8 +41,10 @@ import {
 } from '../../shared/output.ts';
 import { reportFailure } from '../../shared/report.ts';
 import {
-  isNodeType,
+  CREATE_TARGETS,
+  parseCreateTarget,
   parseId,
+  parseOrderBy,
   parseTypes,
   resolveBody,
   resolveMetadata,
@@ -41,22 +52,41 @@ import {
   splitCreatePath,
 } from './input.ts';
 
+/**
+ * How a node's type reads in output: `area`, `project`, or `resource.note`.
+ *
+ * One helper rather than a spelling per command, so create, get, and list cannot come to describe the
+ * same node differently. The qualified form is what the create command accepts, so what is printed back
+ * is a token that could be typed again.
+ */
+const qualifiedType = (entity: Pick<NodeEntity | NodeSummary, 'type' | 'kind'>): string =>
+  entity.kind === null ? entity.type : `${entity.type}.${entity.kind}`;
+
 export interface CommandContext {
   readonly streams: Streams;
   readonly transport: () => Transport;
 }
 
-export const CREATE_HELP = `Usage: raphael create <type> <path> --title <title> [options]
-       raphael create <type> --parent-id <id> --slug <slug> --title <title> [options]
+export const CREATE_HELP = `Usage: raphael create <type> <path> [--title <title>] [options]
+       raphael create <type> --parent-id <id> --slug <slug> [--title <title>] [options]
 
-Create an area or a project. The path form splits a complete absolute path into the parent it
-goes under and the slug it will occupy, so "/work/raphael/backend" creates "backend" under
-"/work/raphael". The id form addresses the parent by its durable identifier instead.
+Create an area, a project, or a note. The path form splits a complete absolute path into the
+parent it goes under and the slug it will occupy, so "/work/raphael/backend" creates "backend"
+under "/work/raphael". The id form addresses the parent by its durable identifier instead.
 
-Types: ${NODE_TYPES.join(', ')}
+Types: ${CREATE_TARGETS.join(', ')}
+
+A note may omit --title, in which case the server names it from the first line of its body, or
+from its description. A note with no usable text in either is refused rather than named for you.
+
+Examples:
+  raphael create resource.note /work/api-design --title "API design" --body '# API design'
+  raphael create resource.note /work/api-design --body @./note.md
+  raphael create resource.note /work/api-design --body @-
+  raphael get /work/api-design
 
 Options:
-      --title <text>         Required. The human name.
+      --title <text>         The human name. Required for an area or a project.
       --parent-id <id>       Parent by identifier. Use instead of a path.
       --slug <slug>          Address within the parent. Required with --parent-id.
       --description <text>   Plain description.
@@ -94,24 +124,20 @@ export const runCreate = async (
     'create',
   );
 
-  const [type, path, ...extra] = parsed.positionals;
-  if (type === undefined) {
-    throw new UsageError(`Give a type to create: ${NODE_TYPES.join(' or ')}.`, 'create');
+  const [typeToken, path, ...extra] = parsed.positionals;
+  if (typeToken === undefined) {
+    throw new UsageError(`Give a type to create: ${CREATE_TARGETS.join(', ')}.`, 'create');
   }
-  if (!isNodeType(type)) {
-    throw new UsageError(
-      `"${type}" is not something Raphael can create. Give ${NODE_TYPES.join(' or ')}.`,
-      'create',
-    );
-  }
+  const target = parseCreateTarget(typeToken, 'create');
   if (extra.length > 0) {
     throw new UsageError(`Unexpected argument "${extra[0]}".`, 'create');
   }
 
+  // A container must be named here; a resource need not be. The CLI does not decide whether a kind may
+  // omit a title - it declines to invent one, omits the field, and lets the server answer. A refusal
+  // comes back as the server's own `title_required` sentence, which the recovery projection already
+  // carries.
   const title = stringOption(parsed, 'title', 'create');
-  if (title === undefined) {
-    throw new UsageError('--title is required. Every container has a name.', 'create');
-  }
 
   const parentId = stringOption(parsed, 'parent-id', 'create');
   const slugFlag = stringOption(parsed, 'slug', 'create');
@@ -155,11 +181,9 @@ export const runCreate = async (
   const suppliedKey = stringOption(parsed, 'idempotency-key', 'create');
   const idempotencyKey = suppliedKey ?? randomUUID();
 
-  const request = {
-    type,
+  const common = {
     parent,
     slug,
-    title,
     idempotencyKey,
     ...(description === undefined ? {} : { description }),
     ...(tags.length === 0 ? {} : { tags }),
@@ -167,6 +191,26 @@ export const runCreate = async (
     ...(body === undefined ? {} : { body }),
     ...(format === undefined ? {} : { format }),
   };
+
+  // Assembled per branch rather than by spreading the target over one object. A container request and a
+  // note request are genuinely different requests - one must carry a title and cannot carry a kind, the
+  // other the reverse - and the shared request type says so. The container branch is where the title
+  // becomes mandatory, so the usage error and the type narrowing are the same check rather than two that
+  // could drift apart.
+  let request;
+  if (target.type === 'resource') {
+    request = {
+      ...common,
+      type: target.type,
+      kind: target.kind,
+      ...(title === undefined ? {} : { title }),
+    };
+  } else {
+    if (title === undefined) {
+      throw new UsageError('--title is required. Every container has a name.', 'create');
+    }
+    request = { ...common, type: target.type, title };
+  }
 
   const dispatchedAt = new Date();
   const result = await create(context.transport(), request);
@@ -185,7 +229,7 @@ export const runCreate = async (
     const { entity } = result.value;
     writeLine(
       context.streams.out,
-      `Created ${entity.type} ${entity.id}: ${forTerminal(entity.title)}`,
+      `Created ${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
     );
     writeLine(context.streams.out, `  slug: ${forTerminal(entity.slug)}`);
   }
@@ -195,7 +239,7 @@ export const runCreate = async (
 export const GET_HELP = `Usage: raphael get <path> [options]
        raphael get --id <id> [options]
 
-Read one area or project.
+Read one area, project, or note.
 
 Options:
       --id <id>       Address by identifier instead of by path.
@@ -236,7 +280,7 @@ export const runGet = async (
 
   const { entity } = result.value;
   const { out } = context.streams;
-  writeLine(out, `${entity.type} ${entity.id}  (revision ${entity.revision})`);
+  writeLine(out, `${qualifiedType(entity)} ${entity.id}  (revision ${entity.revision})`);
   writeLine(out, `title: ${forTerminal(entity.title)}`);
   writeLine(out, `slug:  ${forTerminal(entity.slug)}`);
   if (entity.description !== '') writeLine(out, `description: ${forTerminal(entity.description)}`);
@@ -256,7 +300,7 @@ export const runGet = async (
 export const PATH_HELP = `Usage: raphael path <path> [options]
        raphael path --id <id> [options]
 
-Print the current full path of an area or project. Paths change when things are renamed
+Print the current full path of an area, project, or note. Paths change when things are renamed
 or moved; identifiers do not.
 
 Options:
@@ -288,12 +332,22 @@ export const runPath = async (
 export const LIST_HELP = `Usage: raphael list <path> [options]
        raphael list --id <id> [options]
 
-List what is inside an area or project. Use "/" for the root.
+List what is inside an area or project. Use "/" for the root. A note holds nothing, so listing
+one is an empty page rather than an error.
+
+Ordering applies to everything in scope before the page is cut, so paging through a sorted
+listing is paging through one order rather than sorting each page on its own.
+
+Examples:
+  raphael list / -r --types resource --order-by updatedAt:desc --limit 4
+  raphael list /work -r --types resource --order-by updatedAt:desc --order-by slug:asc
 
 Options:
       --id <id>       Address by identifier instead of by path.
   -r, --recursive     Include everything underneath, not just direct children.
       --types <list>  Comma-separated: ${NODE_TYPES.join(',')}. Omit for every type.
+      --order-by <f:d>  Repeatable, in priority order. Fields: ${NODE_ORDER_FIELDS.join(', ')}.
+                      Directions: ${ORDER_DIRECTIONS.join(', ')}. Default slug:asc then id:asc.
       --skip <n>      How many to skip. Default 0.
       --limit <n>     How many to return, ${LIST_LIMIT_MIN} to ${LIST_LIMIT_MAX}.
       --json          Print the result as JSON.
@@ -309,6 +363,7 @@ export const runList = async (
       id: { type: 'string' },
       recursive: { type: 'boolean', short: 'r' },
       types: { type: 'string' },
+      'order-by': { type: 'string', multiple: true },
       skip: { type: 'string' },
       limit: { type: 'string' },
       json: { type: 'boolean' },
@@ -322,6 +377,7 @@ export const runList = async (
   const parent = selectorFrom(path, stringOption(parsed, 'id', 'list'), 'list');
   const recursive = booleanOption(parsed, 'recursive');
   const types = parseTypes(stringOption(parsed, 'types', 'list'), 'list');
+  const orderBy = parseOrderBy(stringListOption(parsed, 'order-by'), 'list');
   const skip = integerOption(parsed, 'skip', 'list', { min: 0, max: Number.MAX_SAFE_INTEGER });
   const limit = integerOption(parsed, 'limit', 'list', {
     min: LIST_LIMIT_MIN,
@@ -332,6 +388,7 @@ export const runList = async (
     parent,
     ...(recursive ? { recursive } : {}),
     ...(types === undefined ? {} : { types }),
+    ...(orderBy === undefined ? {} : { orderBy }),
     ...(skip === undefined ? {} : { skip }),
     ...(limit === undefined ? {} : { limit }),
   });
@@ -347,7 +404,7 @@ export const runList = async (
   for (const item of page.items) {
     writeLine(
       out,
-      `${String(item.id).padStart(6)}  ${item.type.padEnd(7)}  ${forTerminal(item.slug)}`,
+      `${String(item.id).padStart(6)}  ${qualifiedType(item).padEnd(13)}  ${forTerminal(item.slug)}`,
     );
   }
   // Never implies completeness. A page that ends is not the same as a hierarchy that ends, and the

@@ -1,0 +1,141 @@
+/*
+ * The writing surface inside the WebView.
+ *
+ * System fonts only: no font file is embedded and nothing is fetched, so the editor starts with no
+ * network of any kind. Native typography keeps Raphael's Sora and Source Sans; the body text here is
+ * the platform's own reading face, which is also what a person's text-size setting scales.
+ *
+ * Token values mirror `apps/mobile/global.css`. That file is the source of truth.
+ */
+
+:root {
+  --ink: #24134f;
+  --ink-soft: #635580;
+  --primary: #5b3fc8;
+  --line: #ded5ef;
+  --wave: #e9e1f5;
+  color-scheme: light;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  /* Native owns the page background; the document must not paint a second one over it. */
+  background: transparent;
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font-size: 17px;
+  line-height: 26px;
+  -webkit-text-size-adjust: 100%;
+}
+
+#editor {
+  padding: 0 20px 24px;
+}
+
+.ProseMirror {
+  outline: none;
+  caret-color: var(--primary);
+  min-height: 200px;
+  /* Long unbroken input - a URL, a code identifier - must not widen the document sideways. */
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+.ProseMirror > :first-child {
+  margin-top: 0;
+}
+
+.ProseMirror p {
+  margin: 0 0 12px;
+}
+
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3 {
+  margin: 20px 0 8px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.ProseMirror h1 {
+  font-size: 26px;
+}
+
+.ProseMirror h2 {
+  font-size: 22px;
+}
+
+.ProseMirror h3 {
+  font-size: 19px;
+}
+
+.ProseMirror ul,
+.ProseMirror ol {
+  margin: 0 0 12px;
+  padding-left: 24px;
+}
+
+.ProseMirror li {
+  margin: 2px 0;
+}
+
+.ProseMirror li > p {
+  margin: 0;
+}
+
+.ProseMirror blockquote {
+  margin: 0 0 12px;
+  padding-left: 14px;
+  border-left: 3px solid var(--line);
+  color: var(--ink-soft);
+}
+
+/*
+ * Code and Mermaid are source. A fenced block is a language-labelled code block and stays exactly
+ * that: nothing here renders a diagram, and no authored markup gains rendering authority.
+ */
+.ProseMirror pre {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--wave);
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+  line-height: 22px;
+  white-space: pre;
+  tab-size: 2;
+}
+
+.ProseMirror code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 15px;
+}
+
+.ProseMirror :not(pre) > code {
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--wave);
+}
+
+.ProseMirror hr {
+  margin: 18px 0;
+  border: none;
+  border-top: 1px solid var(--line);
+}
+
+.ProseMirror a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+
+/* The empty-document placeholder is native's; the WebView shows nothing of its own. */
+.ProseMirror ::selection {
+  background: var(--wave);
+}

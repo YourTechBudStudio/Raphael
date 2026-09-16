@@ -15,6 +15,13 @@
       "when": 1789100504294,
       "tag": "0001_identity_trigger_and_root_areas",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789100510000,
+      "tag": "0002_resource_kind_and_body_text",
+      "breakpoints": true
     }
   ]
 }

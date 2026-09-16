@@ -1,11 +1,7 @@
 import { Pressable } from 'react-native';
 
-import { colors } from '../theme';
 import { BloomIcon } from './BloomIcon';
-
-/** Lucide Zap: a fillable energy cue for a project currently being worked on. */
-const ACTIVE_PATH =
-  'M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z';
+import { ACTIVE_MARK } from './toggle-marks';
 
 interface ActiveButtonProps {
   active: boolean;
@@ -14,7 +10,13 @@ interface ActiveButtonProps {
   onToggle: () => void;
 }
 
-/** Shares the favorite's quick bloom, with violet drops instead of gold. */
+/**
+ * Shares the favorite's quick bloom, with violet drops instead of gold.
+ *
+ * The bare mark, for the Home card that already names the project beside it. Where the bolt needs
+ * its own word - and on the Project screen it does, because nobody reads a lightning bolt cold -
+ * use `ToggleLabel` with the same mark.
+ */
 export function ActiveButton({ active, disabled = false, label, onToggle }: ActiveButtonProps) {
   return (
     <Pressable
@@ -26,9 +28,9 @@ export function ActiveButton({ active, disabled = false, label, onToggle }: Acti
       onPress={onToggle}
     >
       <BloomIcon
-        dropColor={colors.primary}
-        inactiveColor={colors.inkSoft}
-        path={ACTIVE_PATH}
+        dropColor={ACTIVE_MARK.dropColor}
+        inactiveColor={ACTIVE_MARK.inactiveColor}
+        path={ACTIVE_MARK.path}
         selected={active}
       />
     </Pressable>

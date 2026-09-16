@@ -1,5 +1,7 @@
 import { useLocalSearchParams } from 'expo-router';
+import { View } from 'react-native';
 
+import { CaptureDock } from '../../modules/capture';
 import { ProjectScreen } from '../../modules/collections';
 import { parseNodeId } from '../../modules/navigation';
 
@@ -7,5 +9,10 @@ import { parseNodeId } from '../../modules/navigation';
 export default function ProjectRoute() {
   const { id } = useLocalSearchParams<{ id?: string }>();
 
-  return <ProjectScreen projectId={parseNodeId(id)} />;
+  return (
+    <View className="flex-1">
+      <ProjectScreen projectId={parseNodeId(id)} />
+      <CaptureDock />
+    </View>
+  );
 }

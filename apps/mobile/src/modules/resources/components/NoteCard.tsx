@@ -1,50 +1,57 @@
-import { View } from 'react-native';
+import { Layers } from 'lucide-react-native';
+import { Text, View } from 'react-native';
 
-import type { NoteResource } from '../../../infrastructure/api/contracts';
-import { Card, type CardVariant, Wave } from '../../../ui';
-import { CardSummary, CardTitle } from './card-text';
+import { colors } from '../../../ui';
+import type { NoteSummaryItem } from '../client/summary';
 import { KindLabel } from './KindLabel';
-import type { ResourceCardLayout } from './layout';
+import { NoteCardShell } from './NoteCardShell';
 
 export interface NoteCardProps {
-  resource: NoteResource;
-  layout?: ResourceCardLayout | undefined;
+  note: NoteSummaryItem;
   /**
-   * Which surface the note sits on. Home draws notes on the warm card; the Area and Project
-   * boards draw them on the lilac one, beside the other cards in the section.
+   * The title of the container this note sits in, or undefined when it is not known right now.
+   *
+   * Presentation only. It is read from the hierarchy the screen already loaded and is never stored,
+   * because a title copied onto a note is a second copy of something the server owns, and it goes
+   * wrong silently the moment someone renames the container.
    */
-  variant?: CardVariant | undefined;
-  onPress?: (() => void) | undefined;
-  waveSeed?: number | undefined;
+  location?: string | undefined;
+  onOpen?: (() => void) | undefined;
   testID?: string | undefined;
 }
 
 /**
- * A written note with the lilac wave the boards give it, on the warm surface by default and
- * on the lilac one where a section asks for it. Without `onPress` it is a plain surface: there
- * is no note detail screen in this build, so nothing passes one yet.
+ * A note the server holds, on the lilac surface, no wave.
+ *
+ * Where it is filed stands as the eyebrow: on a board of notes the kind is already known, and where
+ * a note lives is the more useful thing to read first. When the location is not known the kind label
+ * takes its place rather than an empty row or a guess - and "not known" genuinely means not known,
+ * including a hierarchy that has been read but is no longer current. A plausible title is not an
+ * authoritative one, and a card has no room to say which it is showing.
  */
-export function NoteCard({
-  resource,
-  layout = 'column',
-  variant = 'warm',
-  onPress,
-  waveSeed = 0,
-  testID,
-}: NoteCardProps) {
+export function NoteCard({ note, location, onOpen, testID }: NoteCardProps) {
+  const spokenLocation = location === undefined ? '' : `. In ${location}`;
+  const spokenDescription = note.description === '' ? '' : `. ${note.description}`;
+
   return (
-    <Card
-      accessibilityLabel={`Note. ${resource.title}. ${resource.summary}`}
-      onPress={onPress}
+    <NoteCardShell
+      accessibilityLabel={`Note. ${note.title}${spokenDescription}${spokenLocation}`}
+      description={note.description}
+      eyebrow={
+        location === undefined ? (
+          <KindLabel background={false} kind="note" size={22} />
+        ) : (
+          <View className="flex-row items-center gap-1.5">
+            <Layers color={colors.primary} size={16} strokeWidth={2} />
+            <Text className="flex-1 font-body-medium text-[14px] text-primary" numberOfLines={1}>
+              {location}
+            </Text>
+          </View>
+        )
+      }
+      onPress={onOpen}
       testID={testID}
-      variant={variant}
-    >
-      <Wave height={layout === 'full' ? 64 : 72} seed={waveSeed} variant="lilac" />
-      <View className="p-4">
-        <KindLabel background={false} kind="note" size={22} />
-        <CardTitle className="mt-3">{resource.title}</CardTitle>
-        <CardSummary className="mt-1">{resource.summary}</CardSummary>
-      </View>
-    </Card>
+      title={note.title}
+    />
   );
 }

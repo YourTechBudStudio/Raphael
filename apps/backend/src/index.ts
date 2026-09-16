@@ -77,6 +77,7 @@ export {
   type NodeError,
   type PublicApiError,
   type RequestField,
-  type StoredNodeType,
+  type NodeType,
+  type ResourceKind,
 } from './modules/nodes/index.ts';
 export { serve, type RunningServer, type ServeConfiguration } from './server.ts';

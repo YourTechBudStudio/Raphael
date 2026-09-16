@@ -14,18 +14,3 @@ export function ActiveSkeleton() {
     </SkeletonGroup>
   );
 }
-
-/** The feed shape: one full-width voice card over a pair of columns. */
-export function NotesSkeleton() {
-  return (
-    <SkeletonGroup label="Loading notes">
-      <View className="gap-4">
-        <SkeletonBlock height={172} />
-        <View className="flex-row gap-4">
-          <SkeletonBlock height={260} />
-          <SkeletonBlock height={200} />
-        </View>
-      </View>
-    </SkeletonGroup>
-  );
-}

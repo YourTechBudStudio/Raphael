@@ -132,3 +132,69 @@ test("mutating the caller's TipTap body after fingerprinting cannot change what 
     );
   });
 });
+
+test("a note's derived name and text come from the snapshot, not the caller's live body", () => {
+  withMigrated('detach-note-derivation', (connection) => {
+    // An untitled note widens what detachment protects. The body no longer only becomes stored
+    // content: it also decides the title, the address derived from that title, and the plain-text
+    // projection. All three are computed *after* the fingerprint, so a body that could still change
+    // underneath would let one idempotency key describe a request and create a differently named
+    // node at a different address.
+    const value: { type: string; content: Record<string, unknown>[] } = {
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Original heading' }] }],
+    };
+    const clock = controlledClock(() => {
+      // Unshifted, so the mutation would capture the *first* line - the one the title comes from.
+      // Appending would prove only that content was copied, which the case above already covers.
+      value.content.unshift({
+        type: 'paragraph',
+        content: [{ type: 'text', text: 'Smuggled heading' }],
+      });
+      return T0;
+    });
+
+    const response = expectRight(
+      runNodes(
+        connection,
+        createNode({
+          type: 'resource',
+          kind: 'note',
+          parent: { path: '/work' },
+          body: { format: 'tiptap', value },
+          // Same seam as above: the key makes the preliminary replay lookup sample the clock, which
+          // is the one point between fingerprinting and conversion. Mutating after conversion would
+          // miss the window entirely and the test would pass without proving anything.
+          idempotencyKey: 'detached-note',
+        }),
+        clock,
+      ),
+    );
+
+    assert.ok(
+      value.content.length > 1,
+      "the caller's own object was in fact mutated mid-operation",
+    );
+
+    // Every derived result reflects the snapshot.
+    assert.equal(response.entity.title, 'Original heading');
+    assert.equal(response.entity.slug, 'original-heading');
+    assert.equal(response.entity.kind, 'note');
+
+    const stored = one<{ body: string; bodyText: string | null }>(
+      connection.db,
+      'SELECT body, body_text AS bodyText FROM nodes WHERE id = ?',
+      response.entity.id,
+    );
+    assert.equal(
+      stored.body.includes('Smuggled'),
+      false,
+      "content converted from the snapshot, not from the caller's live object",
+    );
+    assert.equal(
+      stored.bodyText,
+      'Original heading',
+      'the plain-text projection is derived from the same snapshot as the title',
+    );
+  });
+});

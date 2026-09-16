@@ -12,7 +12,8 @@
     "**/tests/fixtures/**",
     "**/drizzle/**",
     ".agents",
-    ".pi"
+    ".pi",
+    "apps/mobile/src/modules/editor/generated"
   ],
   "semi": true,
   "singleQuote": true,

@@ -48,6 +48,7 @@ export const getNode = (input: unknown): Effect.Effect<GetResponse, NodeError, D
             .select({
               id: nodes.id,
               type: nodes.type,
+              kind: nodes.kind,
               parentId: nodes.parentId,
               slug: nodes.slug,
               revision: nodes.revision,

@@ -25,3 +25,5 @@ Raphael is a second brain for agents. It combines PARA and CODE to organize info
 - Never start persistent processes such as servers, `pnpm run dev`, or `pnpm run start`. Instead, suggest that the user run those commands. Finite automated tests and probes may start temporary listeners they own, and must tear them down before finishing.
 - Do not run state-changing Git commands unless the user explicitly asks. Read-only Git commands such as diffs, status, and commit history are allowed.
 - We have not launched yet, so prefer bold refactors for better maintainability and correctness over backwards compatibility.
+- Never modify docs or AGENTS.md files unless explicitly instructed to by a human.
+- Implementation plan must never worry about production packaged builds unless the human explicitly asks for it.
