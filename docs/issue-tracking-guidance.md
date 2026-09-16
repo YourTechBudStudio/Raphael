@@ -27,7 +27,7 @@ Before work, read the issue, parent, relevant comments, and dependencies. Keep b
 
 - **Open:** unfinished, not necessarily implementation-ready.
 - **Completed:** the outcome is fulfilled. An epic must meet its completion condition, not merely have all current stories closed.
-- **Not planned:** abandoned or superseded; record the rationale.
+- **Not planned:** abandoned or superseded; record the rationale and add the `wontfix` label.
 
 Labels remain independent of open/closed state.
 
