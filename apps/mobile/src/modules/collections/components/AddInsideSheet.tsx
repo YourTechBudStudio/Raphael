@@ -3,21 +3,46 @@ import { Text, View } from 'react-native';
 
 import type { ContainerType } from '../../../infrastructure/api/contracts';
 import { Emblem, IconButton, PressableFeedback, Sheet, SheetHeader } from '../../../ui';
-import type { HierarchyNode } from '../../collections';
+import { useSheetsStore } from '../../navigation';
+
+/** Long enough for this sheet's exit before the creation sheet's modal takes the window. */
+const CHOICE_CLOSE_MS = 240;
+
+/** Everything the sheet needs about the area it is adding into. */
+export interface AddInsideTarget {
+  readonly id: number;
+  readonly title: string;
+}
 
 export interface AddInsideSheetProps {
-  /** The area the plus was tapped on, or null while the sheet is closed. */
-  area: HierarchyNode | null;
-  onPick: (type: ContainerType, area: HierarchyNode) => void;
+  /** The area the plus was pressed on, or null while the sheet is closed. */
+  area: AddInsideTarget | null;
   onClose: () => void;
 }
 
 /**
- * The plus on an area row asks one question: an area inside it, or a project inside it. Two
- * rows, said in full, because "area" and "project" are the two nouns the whole product turns on
- * and a bare icon pair would make someone guess.
+ * The one question a plus on an area asks: an area inside it, or a project inside it.
+ *
+ * Two rows, said in full, because "area" and "project" are the two nouns the whole product turns on
+ * and a bare icon pair would make someone guess. The same two sentences answer it wherever the
+ * question is asked - the plus on a Browse row, and the plus in an area's top bar - so the sheet
+ * lives with the capability that owns containers rather than with either screen.
+ *
+ * Picking is the sheet's own business, down to opening the creation sheet afterwards. Every caller
+ * was doing the identical three steps, including the delay, and a caller that got the delay wrong
+ * would open a modal into a window the outgoing sheet still holds.
  */
-export function AddInsideSheet({ area, onPick, onClose }: AddInsideSheetProps) {
+export function AddInsideSheet({ area, onClose }: AddInsideSheetProps) {
+  const openNewContainer = useSheetsStore((state) => state.openNewContainer);
+
+  const pick = (type: ContainerType, parentAreaId: number) => {
+    onClose();
+    // The creation sheet is its own modal; it opens once this one has left the screen.
+    setTimeout(() => {
+      openNewContainer(type, parentAreaId);
+    }, CHOICE_CLOSE_MS);
+  };
+
   return (
     <Sheet className="px-5 pb-2" label="the add sheet" onClose={onClose} visible={area !== null}>
       <SheetHeader
@@ -36,7 +61,7 @@ export function AddInsideSheet({ area, onPick, onClose }: AddInsideSheetProps) {
             className="flex-row items-center gap-3 rounded-card px-3"
             key={type}
             onPress={() => {
-              if (area !== null) onPick(type, area);
+              if (area !== null) pick(type, area.id);
             }}
             style={{ minHeight: 56 }}
           >

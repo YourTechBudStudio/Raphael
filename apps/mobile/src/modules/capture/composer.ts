@@ -68,6 +68,7 @@ export const UNCONFIRMED_STATUS = 'Last save not confirmed · Retry to check';
 export const WITHDRAWN_STATUS = 'Save not confirmed · kept on this phone';
 export const REFUSED_STATUS = 'Your server refused the last save · kept on this phone';
 export const UNRECORDED_STATUS = 'On your server · not yet recorded on this phone';
+/** Said for any request in the air, a first Save and a Retry alike; both are a save being sent. */
 export const SAVING_STATUS = 'Saving to your server…';
 export const KEPT_STATUS = 'Kept on this phone as you write';
 export const INCONSISTENT_STATUS =
@@ -139,7 +140,10 @@ export const composerView = (input: ComposerInput): ComposerView => {
       case 'retry':
         return {
           kind: 'retry',
-          label: input.saving ? 'Sending…' : 'Retry',
+          // `Saving…` rather than `Sending…`, because this is also what a first Save looks like
+          // while it is in the air: the attempt is recorded before the request goes out, so the
+          // standing is already `retry` by the time the pill is drawn.
+          label: input.saving ? 'Saving…' : 'Retry',
           enabled: !input.saving,
           hint: 'Sends exactly the same request again',
         };
@@ -159,7 +163,13 @@ export const composerView = (input: ComposerInput): ComposerView => {
     // Protection first, always. Everything below it is a statement about a server, and none of them
     // is worth saying over "what you have written is not safe here".
     if (problem !== null) return { text: PROTECTION_COPY[problem], tone: 'alert' };
-    if (input.saving && standing?.kind === 'save') return { text: SAVING_STATUS, tone: 'quiet' };
+    // A request this process is sending right now outranks every sentence about an unfinished one.
+    // An attempt is written down before it is dispatched, so the standing is `retry` - unresolved -
+    // from the moment Save is pressed until the answer lands. That reading is right for admission,
+    // which must refuse a second send, and wrong for the person, who would be told their save was
+    // not confirmed while it is still in the air. `saving` is only ever true for an attempt this
+    // process is dispatching; an interrupted one comes back with it false and keeps its alert.
+    if (input.saving) return { text: SAVING_STATUS, tone: 'quiet' };
     if (standing === null) return { text: KEPT_STATUS, tone: 'quiet' };
 
     switch (standing.kind) {

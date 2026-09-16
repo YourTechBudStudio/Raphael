@@ -13,6 +13,11 @@ interface ActiveProjectCardProps {
 
 /** Sibling controls keep opening a project and changing active status independently accessible. */
 export function ActiveProjectCard({ project, active, disabled, onToggle }: ActiveProjectCardProps) {
+  // A project without a description is the ordinary case, not a tile missing a line. An empty
+  // `Text` still occupies a line on Android, so rendering one would hold a gap the card then
+  // centres its name against - which reads as a name sitting above the middle of its own card.
+  const hasDescription = project.description !== '';
+
   return (
     <Card className="flex-row items-center gap-2 px-3 py-2" wave waveHeight={24}>
       <PressableFeedback
@@ -26,11 +31,13 @@ export function ActiveProjectCard({ project, active, disabled, onToggle }: Activ
         style={{ flex: 1 }}
       >
         <Emblem name={emblemFor('project', project.id)} size={32} />
-        <View className="flex-1 gap-1">
+        <View className="flex-1">
           <Text className="font-heading text-[18px] leading-[24px] text-ink">{project.title}</Text>
-          <Text className="font-body text-[15px] leading-[20px] text-ink-soft">
-            {project.description}
-          </Text>
+          {hasDescription ? (
+            <Text className="mt-1 font-body text-[15px] leading-[20px] text-ink-soft">
+              {project.description}
+            </Text>
+          ) : null}
         </View>
       </PressableFeedback>
       <ActiveButton disabled={disabled} active={active} label={project.title} onToggle={onToggle} />

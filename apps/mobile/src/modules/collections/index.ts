@@ -24,6 +24,11 @@ export {
   type ContainerCreationSession,
 } from './client/container-creation';
 export { AreaScreen } from './components/AreaScreen';
+export {
+  AddInsideSheet,
+  type AddInsideSheetProps,
+  type AddInsideTarget,
+} from './components/AddInsideSheet';
 export { ContainerCreationHost } from './components/ContainerCreationHost';
 export { NewContainerSheet, type NewContainerSheetProps } from './components/NewContainerSheet';
 export { HierarchyError, HierarchyStale } from './components/HierarchyError';

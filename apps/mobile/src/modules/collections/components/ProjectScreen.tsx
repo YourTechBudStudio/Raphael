@@ -5,14 +5,14 @@ import { Text, View } from 'react-native';
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
 import { asClientFailure, isNotFound } from '../../../infrastructure/query/failure';
 import {
+  ACTIVE_MARK,
   Chip,
   EmptyState,
-  Eyebrow,
-  FavoriteButton,
+  FAVORITE_MARK,
   IconButton,
   Screen,
   SectionError,
-  ActiveButton,
+  ToggleLabel,
 } from '../../../ui';
 import { RejectionNotice } from '../../connection';
 import {
@@ -40,6 +40,7 @@ import {
   useContainerPath,
   useHierarchy,
 } from '../client/queries';
+import { ContainerHeader } from './ContainerHeader';
 import { ProjectHeaderSkeleton } from './ProjectSkeleton';
 import { ReadOnlyBody } from './ReadOnlyBody';
 
@@ -49,9 +50,6 @@ const NO_FAILURE = {
   mutationOutcome: 'not_applicable',
   message: '',
 } as const;
-
-/** The star beside the 40px title, sized to sit level with its cap height as on the board. */
-const TITLE_STAR_SIZE = 22;
 
 export interface ProjectScreenProps {
   /** Null when the route parameter did not name a container. */
@@ -192,40 +190,41 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
       >
         <RejectionNotice className="mb-4" />
         <View>
-          <Eyebrow>Project</Eyebrow>
-          <View className="mt-1 flex-row items-center gap-3">
-            <Text
-              accessibilityRole="header"
-              className="shrink font-heading text-[40px] leading-[48px] text-ink"
-            >
-              {title}
-            </Text>
-          </View>
-          <Text className="mt-2 font-body text-[16px] leading-[22px] text-ink">{description}</Text>
-          <View className="mt-3 flex-row flex-wrap items-center gap-x-5 gap-y-2">
-            <View className="flex-row items-center gap-1">
-              <ActiveButton
-                active={active.isActive(projectId)}
-                disabled={active.isDisabled(projectId)}
-                label={title}
-                onToggle={() => {
-                  active.toggle(projectId);
-                }}
-              />
-              <Text className="font-body text-[15px] text-ink-soft">Active</Text>
-            </View>
-            <View className="flex-row items-center gap-1">
-              <FavoriteButton
-                favorited={target !== null && favorite.isFavorite(target)}
-                label={title}
-                onToggle={() => {
-                  if (target !== null) favorite.toggle(target);
-                }}
-                size={TITLE_STAR_SIZE}
-              />
-              <Text className="font-body text-[15px] text-ink-soft">Favorite</Text>
-            </View>
-          </View>
+          <ContainerHeader
+            kind="project"
+            title={title}
+            toggles={
+              <>
+                <ToggleLabel
+                  accessibilityLabel={
+                    active.isActive(projectId)
+                      ? `Mark ${title} as inactive`
+                      : `Mark ${title} as active`
+                  }
+                  disabled={active.isDisabled(projectId)}
+                  label="Active"
+                  mark={ACTIVE_MARK}
+                  onToggle={() => {
+                    active.toggle(projectId);
+                  }}
+                  selected={active.isActive(projectId)}
+                />
+                <ToggleLabel
+                  accessibilityLabel={
+                    target !== null && favorite.isFavorite(target)
+                      ? `Remove ${title} from favorites`
+                      : `Add ${title} to favorites`
+                  }
+                  label="Favorite"
+                  mark={FAVORITE_MARK}
+                  onToggle={() => {
+                    if (target !== null) favorite.toggle(target);
+                  }}
+                  selected={target !== null && favorite.isFavorite(target)}
+                />
+              </>
+            }
+          />
           {active.isError ? (
             <Text
               accessibilityLiveRegion="polite"
@@ -246,6 +245,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
 
         <ReadOnlyBody
           body={entity.body.format === 'markdown' ? entity.body.value : ''}
+          description={description}
           kind="project"
         />
 

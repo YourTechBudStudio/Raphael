@@ -1,5 +1,5 @@
-import { Layers, Plus } from 'lucide-react-native';
-import { useMemo } from 'react';
+import { Layers } from 'lucide-react-native';
+import { useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
@@ -8,11 +8,11 @@ import {
   Chip,
   emblemFor,
   EmptyState,
-  Eyebrow,
+  FAVORITE_MARK,
   SectionHeading,
-  FavoriteButton,
   Screen,
   SectionError,
+  ToggleLabel,
 } from '../../../ui';
 import { RejectionNotice } from '../../connection';
 import {
@@ -23,7 +23,6 @@ import {
   openProject,
   openResource,
   openSearch,
-  useSheetsStore,
   LocationTopBar,
 } from '../../navigation';
 import {
@@ -43,6 +42,8 @@ import {
   useContainerPath,
   useHierarchy,
 } from '../client/queries';
+import { AddInsideSheet, type AddInsideTarget } from './AddInsideSheet';
+import { ContainerHeader } from './ContainerHeader';
 import { HierarchyStale } from './HierarchyError';
 import { ReadOnlyBody } from './ReadOnlyBody';
 import { TileGrid, type TileGridItem } from './TileGrid';
@@ -84,7 +85,9 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   const notes = useNotePages(target);
   const media = useSessionMedia();
 
-  const openNewContainer = useSheetsStore((state) => state.openNewContainer);
+  // The add sheet is opened from this screen and belongs to it while it is up; the creation sheet
+  // it leads to is the app's, and the sheet store owns that one.
+  const [adding, setAdding] = useState<AddInsideTarget | null>(null);
 
   const entity = areaQuery.data;
   // A route can name a real container of the wrong kind. Rendering a project as an area would
@@ -106,16 +109,28 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   // rather than titles, which is less friendly and entirely true.
   const canonical = useContainerPath(namedHere || notFound ? null : areaId);
   const names = ancestors.map((step) => step.title);
-  // A root area has only itself in the path, so the chip names the collection it belongs to.
-  const chipPath = namedHere
-    ? names.length > 1
-      ? names
-      : ['Areas', ...names]
-    : pathSegments(canonical.data);
+  // The chip is the way back up, so it ends at the parent - the way the Project screen's already
+  // does. It used to end at this area, which is the one thing the screen does not need telling:
+  // the title says it directly underneath in 40px Sora. A root area's parent is the collection
+  // itself, and that is worth saying; a location nobody could name is not, so it stays empty and
+  // the chip falls back to naming what pressing it does.
+  const parents = namedHere
+    ? names.slice(0, -1)
+    : canonical.data === undefined
+      ? undefined
+      : pathSegments(canonical.data).slice(0, -1);
+  const chipPath = parents === undefined ? [] : parents.length > 0 ? parents : ['Areas'];
   const scope = notFound || failed ? null : target;
 
   const header = (
     <LocationTopBar
+      onAdd={
+        notFound || failed || entity === undefined || target === null
+          ? undefined
+          : () => {
+              setAdding({ id: target.id, title: entity.title });
+            }
+      }
       onBack={goBack}
       onOpenBrowse={() => {
         openBrowse(scope);
@@ -206,49 +221,27 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
         refreshing={tree.isFetching || areaQuery.isFetching || notes.isRefreshing}
       >
         <RejectionNotice className="mb-4" />
-        <Eyebrow>Area</Eyebrow>
-        <Text
-          accessibilityRole="header"
-          className="mt-1 font-heading text-[40px] leading-[48px] text-ink"
-        >
-          {entity === undefined ? 'Loading…' : entity.title}
-        </Text>
-        {entity === undefined ? null : (
-          <Text className="mt-2 font-body text-[16px] leading-[22px] text-ink">
-            {entity.description}
-          </Text>
-        )}
-
-        {entity === undefined || target === null ? null : (
-          <View className="mt-3 flex-row flex-wrap items-center gap-x-3 gap-y-2">
-            <View className="flex-row items-center gap-1">
-              <FavoriteButton
-                favorited={favorite.isFavorite(target)}
-                label={entity.title}
+        <ContainerHeader
+          kind="area"
+          title={entity === undefined ? 'Loading…' : entity.title}
+          toggles={
+            entity === undefined || target === null ? undefined : (
+              <ToggleLabel
+                accessibilityLabel={
+                  favorite.isFavorite(target)
+                    ? `Remove ${entity.title} from favorites`
+                    : `Add ${entity.title} to favorites`
+                }
+                label="Favorite"
+                mark={FAVORITE_MARK}
                 onToggle={() => {
                   favorite.toggle(target);
                 }}
+                selected={favorite.isFavorite(target)}
               />
-              <Text className="font-body text-[15px] text-ink-soft">Favorite</Text>
-            </View>
-            <Chip
-              accessibilityHint="Creates an area inside this one"
-              icon={Plus}
-              label="New area"
-              onPress={() => {
-                openNewContainer('area', target.id);
-              }}
-            />
-            <Chip
-              accessibilityHint="Creates a project inside this area"
-              icon={Plus}
-              label="New project"
-              onPress={() => {
-                openNewContainer('project', target.id);
-              }}
-            />
-          </View>
-        )}
+            )
+          }
+        />
         {favorite.isError ? (
           <Text accessibilityLiveRegion="polite" className="mt-2 font-body text-[15px] text-danger">
             Favorite did not update. Try again.
@@ -258,6 +251,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
         {entity === undefined ? null : (
           <ReadOnlyBody
             body={entity.body.format === 'markdown' ? entity.body.value : ''}
+            description={entity.description}
             kind="area"
           />
         )}
@@ -325,6 +319,12 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
 
         <SessionMediaSection className="mt-8" items={sessionMedia} testID="area-session-media" />
       </Screen>
+      <AddInsideSheet
+        area={adding}
+        onClose={() => {
+          setAdding(null);
+        }}
+      />
     </View>
   );
 }

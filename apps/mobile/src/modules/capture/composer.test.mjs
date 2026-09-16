@@ -176,6 +176,27 @@ test('a save in flight locks the screen and says so', () => {
   assert.equal(view.action.enabled, false);
 });
 
+test('a first save in the air is not reported as unconfirmed', () => {
+  // What the screen actually holds a moment after Save is pressed: the attempt is written down
+  // before the request goes out, so the standing is already `retry`. Saying the save was not
+  // confirmed while it is still in the air alarms someone about nothing having gone wrong yet.
+  const view = composerView(input({ standing: { kind: 'retry', attempt }, saving: true }));
+
+  assert.equal(view.status.text, SAVING_STATUS);
+  assert.equal(view.status.tone, 'quiet');
+  assert.equal(view.action.label, 'Saving…');
+  assert.equal(view.action.enabled, false);
+});
+
+test('an unresolved save no process is sending keeps its alert', () => {
+  // The same standing with `saving` false is the interrupted one - a request nothing is waiting on
+  // - and that is the case the alert exists for.
+  const view = composerView(input({ standing: { kind: 'retry', attempt } }));
+
+  assert.equal(view.status.text, UNCONFIRMED_STATUS);
+  assert.equal(view.status.tone, 'alert');
+});
+
 test('contradictory records refuse to guess', () => {
   const view = composerView(
     input({ standing: { kind: 'blocked', reason: 'inconsistent', attempt } }),

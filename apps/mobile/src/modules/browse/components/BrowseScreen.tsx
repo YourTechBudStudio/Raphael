@@ -6,6 +6,7 @@ import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
 import { EmptyState, PressableFeedback, Screen, SearchField, colors } from '../../../ui';
 import {
+  AddInsideSheet,
   ancestorsOf,
   HierarchyError,
   HierarchyStale,
@@ -16,15 +17,11 @@ import {
 import { RejectionNotice } from '../../connection';
 import { goBack, openContainer, TitleTopBar, useSheetsStore } from '../../navigation';
 import { useBrowseStore } from '../state/tree';
-import { AddInsideSheet } from './AddInsideSheet';
 import { BrowseTree } from './BrowseTree';
 import { FavoritesList } from './FavoritesList';
 import { filterTree } from './tree';
 
 type Tab = 'all' | 'favorites';
-
-/** Long enough for the add sheet's exit before the creation sheet's modal takes the window. */
-const CHOICE_CLOSE_MS = 240;
 
 export interface BrowseScreenProps {
   /** The location Browse was opened from, highlighted as current. Null when opened from Home. */
@@ -146,13 +143,6 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
           area={adding}
           onClose={() => {
             setAdding(null);
-          }}
-          onPick={(type, area) => {
-            setAdding(null);
-            // The creation sheet is its own modal; it opens once this one has left the screen.
-            setTimeout(() => {
-              openNewContainer(type, area.id);
-            }, CHOICE_CLOSE_MS);
           }}
         />
       </View>

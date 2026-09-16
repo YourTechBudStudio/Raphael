@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronLeft, Layers, Search, Settings } from 'lucide-react-native';
+import { ChevronDown, ChevronLeft, Layers, Plus, Search, Settings } from 'lucide-react-native';
 import type { ReactNode } from 'react';
 import { Text, View } from 'react-native';
 
@@ -91,20 +91,34 @@ export function TitleTopBar({ title, onBack, trailing, testID }: TitleTopBarProp
 }
 
 export interface LocationTopBarProps {
-  /** The path from the root area down to this screen, e.g. `['Creative work', 'Design']`. */
+  /** Where this screen sits, ending at its parent: `['Creative work']` for the area "Design". */
   path: readonly string[];
   onBack: () => void;
   onOpenBrowse: () => void;
   onSearch: () => void;
+  /**
+   * Adds something inside this container. Omitted where there is nothing to add: a project holds
+   * no containers, so a plus on one would open a sheet with nothing to offer, and the only thing
+   * left to suggest - a note - is what the capture pair on the same screen already does.
+   */
+  onAdd?: (() => void) | undefined;
   testID?: string | undefined;
 }
 
-/** Area and Project: back, the location path chip that opens Browse, and search. */
+/**
+ * Area and Project: back, the location chip that opens Browse, search, and - where there is
+ * something to add - a plus.
+ *
+ * The chip loses its chevron when the plus is there. Four controls leave it around 144px, and the
+ * chevron is the one part that can go without losing a word: what it promised, that pressing opens
+ * something, the chip's own hint already says.
+ */
 export function LocationTopBar({
   path,
   onBack,
   onOpenBrowse,
   onSearch,
+  onAdd,
   testID,
 }: LocationTopBarProps) {
   const label = formatPath(path);
@@ -123,9 +137,18 @@ export function LocationTopBar({
         label={label}
         onPress={onOpenBrowse}
         style={{ flex: 1 }}
-        trailingIcon={ChevronDown}
+        trailingIcon={onAdd === undefined ? ChevronDown : undefined}
       />
       <IconButton icon={Search} label="Search" onPress={onSearch} />
+      {onAdd === undefined ? null : (
+        <IconButton
+          accessibilityHint="Adds an area or a project inside this one"
+          className="bg-primary-soft"
+          icon={Plus}
+          label="Add"
+          onPress={onAdd}
+        />
+      )}
     </View>
   );
 }
