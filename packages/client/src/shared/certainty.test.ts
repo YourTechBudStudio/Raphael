@@ -85,6 +85,9 @@ describe('a server that states it refused', () => {
     'unsupported_media_type',
     'invalid_parent',
     'unsupported_content',
+    // An update's compare-and-set changed zero rows. The server read the row, found a different
+    // revision, and wrote nothing - which is a refusal it can state with certainty.
+    'revision_conflict',
   ];
 
   for (const code of definiteCodes) {

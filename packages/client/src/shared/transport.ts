@@ -101,7 +101,7 @@ export interface OperationCall<A> {
   readonly decode: Decoder<A>;
   /** The status a successful answer must carry. Anything else is not a success. */
   readonly successStatus: number;
-  /** Whether this operation creates something, which decides how uncertainty is reported. */
+  /** Whether this operation creates or changes something, which decides how uncertainty is reported. */
   readonly mutating: boolean;
   readonly signal?: AbortSignal;
 }
@@ -487,7 +487,7 @@ const readResponse = async <A>(
  * Turn a non-success response into a failure, and decide what it establishes about a mutation.
  *
  * The rule: a *decoded, status-consistent* envelope carrying a known code is the server stating it
- * refused, and nothing was created. Two exceptions, both deliberate and both conservative:
+ * refused, and nothing was created or changed. Two exceptions, both deliberate and both conservative:
  *
  * - `internal_error` is `unknown`. Today's create operation does its response self-check and its
  *   replay recording inside the same write transaction, so an internal failure provably rolls back.
@@ -531,7 +531,7 @@ const classifyErrorResponse = (
 
   const details = projectRecoveryDetails(classified.code, classified.details);
   const outcome: MutationOutcome =
-    classified.kind === 'known' && establishesNonCreation(classified.code, details.reason)
+    classified.kind === 'known' && establishesNonApplication(classified.code, details.reason)
       ? definite(mutating)
       : uncertainty(mutating);
 
@@ -553,7 +553,7 @@ const classifyErrorResponse = (
   };
 };
 
-const establishesNonCreation = (code: ApiErrorCode, reason: string | undefined): boolean => {
+const establishesNonApplication = (code: ApiErrorCode, reason: string | undefined): boolean => {
   if (!isApiErrorCode(code)) return false;
   switch (code) {
     case 'internal_error':

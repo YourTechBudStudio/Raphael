@@ -19,6 +19,29 @@ import { EXIT_FAILURE, EXIT_USAGE, type ExitCode } from './exit.ts';
 import { forTerminal, writeLine, type Streams } from './output.ts';
 
 export interface AttemptContext {
+  /**
+   * Which mutating operation this was, named explicitly by both call sites.
+   *
+   * Explicit rather than defaulted, because the alternative is that a report reads as a creation by
+   * omission. The wording for an uncertain creation and an uncertain update is genuinely different -
+   * a creation has a key to replay, an update has only a revision to re-read - and the difference is
+   * not something a reader of this file should have to infer from which fields happen to be set.
+   *
+   * Names the mutation that was being attempted, including when the failure belongs to a read taken
+   * on its behalf - see `beforeDispatch`. Absent only for a plain read command, whose outcome is
+   * never `unknown` and which therefore never reaches the wording at all.
+   */
+  readonly operation?: 'create' | 'update';
+  /**
+   * Set when this failure happened while *preparing* the mutation, so the mutation itself never left.
+   *
+   * The convenience revision read is the only such step today. Its failure carries
+   * `mutationOutcome: 'not_applicable'` - correctly, because it is a read - and without this flag the
+   * report would fall silent at the outcome gate below. That is the wrong way round: this is the one
+   * case where the CLI knows with certainty that nothing was changed, and certainty is worth more to
+   * the person than the uncertain case that gets a full paragraph.
+   */
+  readonly beforeDispatch?: boolean;
   /** Present for creations. The key this invocation used. */
   readonly idempotencyKey?: string;
   /** When this invocation handed the request to the network. */
@@ -98,16 +121,51 @@ const detailLines = (details: object): string[] =>
   );
 
 /**
- * Recovery guidance, chosen by outcome.
+ * Recovery guidance, chosen by outcome and by which operation was attempted.
  *
  * Deliberately non-assertive for `unknown`: it says what could not be established and what to do, and
  * it does not say the work failed. "Check the destination" is the honest instruction, because it is
  * the only thing that actually settles the question.
+ *
+ * The conflict branch is first, and it has to be. A `revision_conflict` classifies as `'rejected'` -
+ * the server's compare-and-set matched no row, so nothing was written and it can say so - which means
+ * the `unknown` gate below would swallow the one sentence that tells someone how to recover from it.
  */
 const guidanceFor = (failure: ClientFailure, context: AttemptContext): string[] => {
+  if (failure.kind === 'api_error' && failure.error.code === 'revision_conflict') {
+    const current = failure.details.currentRevision;
+    return [
+      '',
+      current === undefined
+        ? 'Re-read it, apply your change to the current version, and send it again.'
+        : `Re-read it, apply your change to the current version, and send it with --revision ${current}.`,
+    ];
+  }
+
+  if (context.beforeDispatch === true) {
+    const prepared = ['', 'The change was not sent.'];
+    if (failure.kind === 'transport') {
+      prepared.push('Check the server address and that the server is running.');
+    }
+    return prepared;
+  }
+
   if (failure.mutationOutcome !== 'unknown') return [];
 
-  const lines = ['', 'Could not confirm whether this was created.'];
+  const lines =
+    context.operation === 'update'
+      ? [
+          '',
+          'Could not confirm whether this change was applied.',
+          'Read it again with "raphael get" and compare the revision before sending the change again. Raphael does not retry a change on its own.',
+        ]
+      : context.operation === 'create'
+        ? ['', 'Could not confirm whether this was created.']
+        : ['', 'Could not confirm whether this was applied.'];
+
+  // Kept under its existing guard rather than broadened to every `unknown`. An `internal_error` or a
+  // non-shutdown `storage_busy` is also `unknown`, and there the server answered and failed inside
+  // itself - telling someone to check the address would send them to look in the wrong place.
   if (failure.kind === 'transport') {
     lines.push('Check the server address and that the server is running.');
   }

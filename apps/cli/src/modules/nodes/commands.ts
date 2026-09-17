@@ -1,5 +1,5 @@
 /**
- * The four hierarchy commands.
+ * The five hierarchy commands.
  *
  * Each one assembles a request, sends it, and renders the answer. No hierarchy rule is implemented
  * here and none may be: slug derivation, parentage, conflict detection, and content conversion all
@@ -9,8 +9,8 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { Transport } from '@raphael/client';
-import { create, get, getPath, list } from '@raphael/client/nodes';
+import type { ClientFailure, Transport } from '@raphael/client';
+import { create, get, getPath, list, update } from '@raphael/client/nodes';
 import {
   BODY_FORMATS,
   LIST_LIMIT_MAX,
@@ -30,6 +30,7 @@ import {
   parseArgs,
   stringListOption,
   stringOption,
+  type ParsedArgs,
 } from '../../shared/args.ts';
 import { EXIT_OK, type ExitCode } from '../../shared/exit.ts';
 import {
@@ -50,6 +51,7 @@ import {
   resolveMetadata,
   selectorFrom,
   splitCreatePath,
+  type Selector,
 } from './input.ts';
 
 /**
@@ -217,6 +219,7 @@ export const runCreate = async (
 
   if (!result.ok) {
     return reportFailure(context.streams, result.failure, {
+      operation: 'create',
       idempotencyKey,
       dispatchedAt,
       keyWasSupplied: suppliedKey !== undefined,
@@ -231,6 +234,205 @@ export const runCreate = async (
       context.streams.out,
       `Created ${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
     );
+    writeLine(context.streams.out, `  slug: ${forTerminal(entity.slug)}`);
+  }
+  return EXIT_OK;
+};
+
+export const UPDATE_HELP = `Usage: raphael update <path> [changes] [--revision <n>] [options]
+       raphael update --id <id> [changes] [--revision <n>] [options]
+
+Change an area, a project, or a note. An update names the revision it was written against, so a
+newer version on the server is refused rather than overwritten. Raphael does not retry a change
+on its own.
+
+Examples:
+  raphael update /work/contracts --body @./contracts.md --revision 8
+  raphael update /work/contracts --add-tag reviewed --remove-tag draft
+  raphael update --id 42 --title "Contract review" --description ""
+
+Changes (at least one):
+      --title <text>          Replace the name. The address does not follow it.
+      --description <text>    Replace the description. "" clears it.
+      --slug <slug>           Replace the address within the parent.
+      --body <text|@file|@->  Replace the body. "" clears it. Requires --revision.
+      --body-literal <text>   Body text that starts with "@" and is not a path. Requires --revision.
+      --body-format <fmt>     Format of the submitted body: ${BODY_FORMATS.join(' or ')}. Default markdown.
+      --add-tag <tag>         Repeatable.
+      --remove-tag <tag>      Repeatable.
+
+Options:
+      --id <id>               Address by identifier instead of by path.
+      --revision <n>          The revision you read. Without it, and without a body change, the
+                              current revision is read for you just before the update is sent.
+      --format <fmt>          Format of the returned body: ${BODY_FORMATS.join(' or ')}. Default markdown.
+      --json                  Print the result as JSON.
+  -h, --help                  Show this help.`;
+
+/** Every flag that asks for something to change. Presence is the rule; an empty value still changes. */
+const CHANGE_FLAGS = [
+  'title',
+  'description',
+  'slug',
+  'body',
+  'body-literal',
+  'add-tag',
+  'remove-tag',
+] as const;
+
+/** Whether a flag was given at all, whatever it was given as. */
+const wasGiven = (parsed: ParsedArgs, name: string): boolean => parsed.values[name] !== undefined;
+
+/** What the convenience read establishes: which entity, at which version. */
+interface PinnedTarget {
+  /** By identifier, whatever the caller typed. See `pinTarget`. */
+  readonly target: { readonly id: number };
+  readonly revision: number;
+}
+
+/**
+ * Read the current revision for an update that did not name one, and pin the entity it belongs to.
+ *
+ * The identifier is carried forward deliberately, and it is the whole reason this returns a target
+ * rather than a number. The server's guard answers "is this the version of entity 7 that I read?" -
+ * it cannot answer "is /work/contracts still entity 7?". Sending the caller's path again would
+ * resolve that name a second time, so a slug freed and reoccupied between the two calls could land
+ * the change on an entity nobody looked at, with a revision that happens to match and therefore no
+ * conflict. Resolving once and comparing-and-setting on that exact row removes the second question.
+ *
+ * Returns the failure rather than reporting it, so the caller reports it through the one path every
+ * other failure takes.
+ *
+ * The projected body is discarded. There is no revision-only read in the contract, so this pays for a
+ * full body projection to learn one integer; see the decision log. It is affordable because a person
+ * updates one entity at a time.
+ */
+const pinTarget = async (
+  transport: Transport,
+  target: Selector,
+): Promise<PinnedTarget | { readonly failure: ClientFailure }> => {
+  const result = await get(transport, { target });
+  return result.ok
+    ? { target: { id: result.value.entity.id }, revision: result.value.entity.revision }
+    : { failure: result.failure };
+};
+
+export const runUpdate = async (
+  argv: readonly string[],
+  context: CommandContext,
+): Promise<ExitCode> => {
+  const parsed = parseArgs(
+    argv,
+    {
+      id: { type: 'string' },
+      title: { type: 'string' },
+      description: { type: 'string' },
+      slug: { type: 'string' },
+      body: { type: 'string' },
+      'body-literal': { type: 'string' },
+      'body-format': { type: 'string' },
+      'add-tag': { type: 'string', multiple: true },
+      'remove-tag': { type: 'string', multiple: true },
+      revision: { type: 'string' },
+      format: { type: 'string' },
+      json: { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+    },
+    'update',
+  );
+
+  const [path, ...extra] = parsed.positionals;
+  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'update');
+
+  const target = selectorFrom(path, stringOption(parsed, 'id', 'update'), 'update');
+  const revisionFlag = integerOption(parsed, 'revision', 'update', {
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+  });
+
+  // Both usage refusals are decided from flag *presence*, and both come before anything is read or
+  // sent. Presence is not an approximation of the resolved value: `--description ""` and `--body ""`
+  // are changes precisely because presence is the rule. Deciding them here is what stops
+  // `--body @-` with no --revision from making someone type a whole document into a terminal before
+  // being told the command was wrong.
+  if (!CHANGE_FLAGS.some((flag) => wasGiven(parsed, flag))) {
+    throw new UsageError(
+      'Give at least one change: --title, --description, --slug, --body, --add-tag or --remove-tag.',
+      'update',
+    );
+  }
+  if (
+    (wasGiven(parsed, 'body') || wasGiven(parsed, 'body-literal')) &&
+    revisionFlag === undefined
+  ) {
+    throw new UsageError(
+      'A body change needs --revision: pass the revision you read the body at, so a newer version on the server is not overwritten.',
+      'update',
+    );
+  }
+
+  const body = await resolveBody(
+    stringOption(parsed, 'body', 'update'),
+    stringOption(parsed, 'body-literal', 'update'),
+    choiceOption(parsed, 'body-format', 'update', BODY_FORMATS),
+    'update',
+  );
+  const title = stringOption(parsed, 'title', 'update');
+  const description = stringOption(parsed, 'description', 'update');
+  const slug = stringOption(parsed, 'slug', 'update');
+  const addTags = stringListOption(parsed, 'add-tag');
+  const removeTags = stringListOption(parsed, 'remove-tag');
+  const format = choiceOption(parsed, 'format', 'update', BODY_FORMATS);
+
+  const transport = context.transport();
+
+  // One Get, immediately before the update, and only when no body is being replaced. It is a
+  // convenience, not a blessing: a change that lands between this read and the update is caught by
+  // the server's guard and reported as a conflict, exactly as a stale explicit --revision would be.
+  // What it reads is then addressed by identifier, so the guard is comparing versions of one entity
+  // rather than of whatever the path names by the time the update arrives.
+  let sendTo: Selector = target;
+  let revision: number;
+  if (revisionFlag !== undefined) {
+    revision = revisionFlag;
+  } else {
+    const pinned = await pinTarget(transport, target);
+    if ('failure' in pinned) {
+      return reportFailure(context.streams, pinned.failure, {
+        operation: 'update',
+        beforeDispatch: true,
+      });
+    }
+    sendTo = pinned.target;
+    revision = pinned.revision;
+  }
+
+  const dispatchedAt = new Date();
+  const result = await update(transport, {
+    target: sendTo,
+    revision,
+    ...(title === undefined ? {} : { title }),
+    ...(description === undefined ? {} : { description }),
+    ...(slug === undefined ? {} : { slug }),
+    ...(body === undefined ? {} : { body }),
+    ...(addTags.length === 0 ? {} : { addTags }),
+    ...(removeTags.length === 0 ? {} : { removeTags }),
+    ...(format === undefined ? {} : { format }),
+  });
+
+  if (!result.ok) {
+    return reportFailure(context.streams, result.failure, { operation: 'update', dispatchedAt });
+  }
+
+  if (booleanOption(parsed, 'json')) {
+    writeJson(context.streams.out, result.value);
+  } else {
+    const { entity } = result.value;
+    writeLine(
+      context.streams.out,
+      `Updated ${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
+    );
+    writeLine(context.streams.out, `  revision: ${entity.revision}`);
     writeLine(context.streams.out, `  slug: ${forTerminal(entity.slug)}`);
   }
   return EXIT_OK;

@@ -226,7 +226,7 @@ const decodeUtf8 = (bytes: Uint8Array, label: string, command: string): string =
   }
 };
 
-const readStdin = async (): Promise<string> => {
+const readStdin = async (command: string): Promise<string> => {
   const chunks: Buffer[] = [];
   let total = 0;
   for await (const chunk of process.stdin) {
@@ -237,12 +237,12 @@ const readStdin = async (): Promise<string> => {
     if (total > REQUEST_MAX_BYTES) {
       throw new UsageError(
         `The body on standard input is larger than the ${REQUEST_MAX_BYTES}-byte request limit.`,
-        'create',
+        command,
       );
     }
     chunks.push(buffer);
   }
-  return decodeUtf8(Buffer.concat(chunks), 'The body on standard input', 'create');
+  return decodeUtf8(Buffer.concat(chunks), 'The body on standard input', command);
 };
 
 /**
@@ -310,7 +310,7 @@ export const resolveBody = async (
   if (bodyLiteral !== undefined) {
     text = bodyLiteral;
   } else if (body !== undefined) {
-    if (body === '@-') text = await readStdin();
+    if (body === '@-') text = await readStdin(command);
     else if (body.startsWith('@')) text = readLocalFile(body.slice(1), 'the body file', command);
     else text = body;
   }

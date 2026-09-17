@@ -7,9 +7,13 @@ import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
-import { Effect, Exit, Scope } from 'effect';
+import { createTransport, type FetchLike, type Transport } from '@raphael/client';
+import { update as updateDirect } from '@raphael/client/nodes';
+import { decodeUpdateResponse } from '@raphael/contracts/nodes';
+import { Effect, Either, Exit, Scope } from 'effect';
 
 import { run as runCli } from '../src/main.ts';
+import { buildFailureReport } from '../src/shared/report.ts';
 
 /**
  * The CLI against a real server.
@@ -79,9 +83,14 @@ interface Ran {
   readonly stderr: string;
 }
 
+/**
+ * `holdStdin` leaves the child's standard input open and empty, so a command that reads it blocks
+ * until the spawn timeout. That is how "this refusal did not touch stdin" is asserted: a prompt
+ * exit 2 with the pipe still open proves nothing was read from it.
+ */
 const runProcess = (
   args: readonly string[],
-  options: { env?: Record<string, string>; stdin?: string } = {},
+  options: { env?: Record<string, string>; stdin?: string; holdStdin?: boolean } = {},
 ): Promise<Ran> =>
   new Promise((resolveRun, rejectRun) => {
     const child = spawn(process.execPath, [binary, ...args], {
@@ -102,7 +111,7 @@ const runProcess = (
     child.on('error', rejectRun);
     child.on('close', (code) => resolveRun({ code, stdout, stderr }));
     if (options.stdin !== undefined) child.stdin.end(options.stdin);
-    else child.stdin.end();
+    else if (options.holdStdin !== true) child.stdin.end();
   });
 
 const run = async (
@@ -1008,5 +1017,350 @@ describe('ordering', () => {
     assert.equal(ran.code, 0);
     assert.match(ran.stdout, /area, project, resource\.note/);
     assert.match(ran.stdout, /A note may omit --title/);
+  });
+});
+
+describe('updating', () => {
+  /** Make a note under /work with its own slug, and hand back what the server says it is. */
+  const seedNote = async (slug: string, body = '# Original\n'): Promise<any> => {
+    const ran = await run([
+      'create',
+      'resource.note',
+      `/work/${slug}`,
+      '--title',
+      'Original',
+      '--body',
+      body,
+      '--json',
+    ]);
+    assert.equal(ran.code, 0, ran.stderr);
+    return jsonOf(ran).entity;
+  };
+
+  const entityAt = async (path: string): Promise<any> =>
+    jsonOf(await run(['get', path, '--json'])).entity;
+
+  it('changes an entity by path, and the answer decodes as an UpdateResponse', async () => {
+    const note = await seedNote('update-by-path');
+    const ran = await run([
+      'update',
+      '/work/update-by-path',
+      '--title',
+      'Renamed',
+      '--revision',
+      String(note.revision),
+      '--json',
+    ]);
+    assert.equal(ran.code, 0, ran.stderr);
+
+    // Decoded against the shared contract rather than picked at by hand: what the CLI prints for a
+    // script has to be the response shape, not something that merely resembles it.
+    const decoded = decodeUpdateResponse(jsonOf(ran));
+    assert.equal(Either.isRight(decoded), true);
+    if (Either.isRight(decoded)) {
+      assert.equal(decoded.right.entity.title, 'Renamed');
+      assert.equal(decoded.right.entity.revision, note.revision + 1);
+      // A title change never moves the address.
+      assert.equal(decoded.right.entity.slug, 'update-by-path');
+    }
+  });
+
+  it('changes an entity by --id, and prints what changed', async () => {
+    const note = await seedNote('update-by-id');
+    const ran = await run([
+      'update',
+      '--id',
+      String(note.id),
+      '--description',
+      'Now described',
+      '--revision',
+      String(note.revision),
+    ]);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.match(ran.stdout, /^Updated resource\.note \d+: Original$/m);
+    assert.match(ran.stdout, /revision: 2/);
+    assert.match(ran.stdout, /slug: update-by-id/);
+    assert.equal((await entityAt('/work/update-by-id')).description, 'Now described');
+  });
+
+  it('refuses a body change with no --revision, and sends nothing', async () => {
+    const note = await seedNote('body-needs-revision');
+    const file = join(temporary('raphael-body-'), 'note.md');
+    writeFileSync(file, '# Replaced\n', 'utf8');
+
+    const ran = await run(['update', '/work/body-needs-revision', '--body', `@${file}`]);
+    assert.equal(ran.code, 2);
+    assert.match(ran.stderr, /A body change needs --revision/);
+
+    // Nothing left the process: the revision has not moved, so no write was even attempted.
+    const settled = await entityAt('/work/body-needs-revision');
+    assert.equal(settled.revision, note.revision);
+    assert.match(settled.body.value, /Original/);
+  });
+
+  it('applies the same body change once --revision is given', async () => {
+    const note = await entityAt('/work/body-needs-revision');
+    const file = join(temporary('raphael-body-'), 'note.md');
+    writeFileSync(file, '# Replaced\n', 'utf8');
+
+    const ran = await run([
+      'update',
+      '/work/body-needs-revision',
+      '--body',
+      `@${file}`,
+      '--revision',
+      String(note.revision),
+      '--json',
+    ]);
+    assert.equal(ran.code, 0, ran.stderr);
+    const { entity } = jsonOf(ran);
+    assert.match(entity.body.value, /Replaced/);
+    assert.equal(entity.revision, note.revision + 1);
+  });
+
+  it('reads the current revision for itself when no body is being replaced', async () => {
+    const note = await seedNote('tag-convenience');
+    // Seed a tag to remove, so the diff exercises both lists.
+    await run([
+      'update',
+      '/work/tag-convenience',
+      '--add-tag',
+      'draft',
+      '--revision',
+      String(note.revision),
+    ]);
+
+    // No --revision at all. The CLI performs one Get immediately before the update and uses what it
+    // returns; that is a convenience, not a blessing, because the server's guard still decides.
+    const ran = await run([
+      'update',
+      '/work/tag-convenience',
+      '--add-tag',
+      'reviewed',
+      '--remove-tag',
+      'draft',
+      '--json',
+    ]);
+    assert.equal(ran.code, 0, ran.stderr);
+    const { entity } = jsonOf(ran);
+    assert.deepEqual([...entity.tags].sort(), ['reviewed']);
+    assert.equal(entity.revision, note.revision + 2);
+  });
+
+  it('reports a stale revision as a conflict, changes nothing, and never retries', async () => {
+    const note = await seedNote('stale-revision');
+    const stale = note.revision;
+    await run([
+      'update',
+      '/work/stale-revision',
+      '--title',
+      'Moved on',
+      '--revision',
+      String(stale),
+    ]);
+    const current = await entityAt('/work/stale-revision');
+    assert.equal(current.revision, stale + 1);
+
+    const ran = await run([
+      'update',
+      '/work/stale-revision',
+      '--title',
+      'Too late',
+      '--revision',
+      String(stale),
+    ]);
+    assert.equal(ran.code, 1);
+    assert.equal(ran.stdout, '', 'a conflict produces no result');
+    assert.match(ran.stderr, /code: revision_conflict \(409\)/);
+    assert.match(ran.stderr, new RegExp(`currentRevision: ${current.revision}`));
+    assert.match(ran.stderr, /send it with --revision \d+/);
+    // No creation wording, and nothing that suggests the command will try again by itself.
+    assert.equal(ran.stderr.includes('Could not confirm'), false);
+    assert.equal(ran.stderr.includes('idempotency-key'), false);
+
+    // The entity is exactly where the earlier update left it.
+    const afterConflict = await entityAt('/work/stale-revision');
+    assert.equal(afterConflict.revision, current.revision);
+    assert.equal(afterConflict.title, 'Moved on');
+  });
+
+  it('classifies a real conflict as a definite rejection in the machine report', async () => {
+    // The CLI has no JSON failure output, so the machine shape is asserted where it is actually
+    // built, against a failure a real server produced rather than a handwritten one.
+    const note = await seedNote('report-shape');
+    const transport = createTransport({
+      endpoint,
+      apiKey: KEY,
+      fetch: fetch as unknown as FetchLike,
+    }) as Transport;
+
+    await run([
+      'update',
+      '/work/report-shape',
+      '--title',
+      'First',
+      '--revision',
+      String(note.revision),
+    ]);
+    const result = await updateDirect(transport, {
+      target: { path: '/work/report-shape' },
+      revision: note.revision,
+      title: 'Second',
+    });
+
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      const report = buildFailureReport(result.failure, { operation: 'update' });
+      assert.equal(report.mutationOutcome, 'rejected');
+      assert.equal(report.code, 'revision_conflict');
+      assert.equal(report.status, 409);
+      assert.equal(
+        (report.details as { currentRevision?: number }).currentRevision,
+        note.revision + 1,
+      );
+      // An update has no key to replay, so none is reported.
+      assert.equal(report.idempotencyKey, undefined);
+    }
+  });
+
+  it('refuses an update that asks for no change at all', async () => {
+    await seedNote('no-change');
+    const ran = await run(['update', '/work/no-change']);
+    assert.equal(ran.code, 2);
+    assert.match(ran.stderr, /Give at least one change/);
+  });
+
+  it('treats an empty value as a change, for a description and for a body', async () => {
+    const note = await seedNote('clearing', '# Has a body\n');
+    await run([
+      'update',
+      '/work/clearing',
+      '--description',
+      'Something',
+      '--revision',
+      String(note.revision),
+    ]);
+
+    // Clearing a description is a change. Presence of the flag is the rule, not its value.
+    const cleared = await run(['update', '/work/clearing', '--description', '', '--json']);
+    assert.equal(cleared.code, 0, cleared.stderr);
+    assert.equal(jsonOf(cleared).entity.description, '');
+
+    const beforeBody = await entityAt('/work/clearing');
+    const emptied = await run([
+      'update',
+      '/work/clearing',
+      '--body',
+      '',
+      '--revision',
+      String(beforeBody.revision),
+      '--json',
+    ]);
+    assert.equal(emptied.code, 0, emptied.stderr);
+    assert.equal(jsonOf(emptied).entity.body.value, '');
+  });
+
+  it('reads a body from standard input, and still requires --revision for it', async () => {
+    const note = await seedNote('update-from-stdin');
+    const applied = await runProcess(
+      [
+        'update',
+        '/work/update-from-stdin',
+        '--body',
+        '@-',
+        '--revision',
+        String(note.revision),
+        '--json',
+      ],
+      { stdin: '# From stdin\n' },
+    );
+    assert.equal(applied.code, 0, applied.stderr);
+    assert.match(JSON.parse(applied.stdout).entity.body.value, /From stdin/);
+  });
+
+  it('refuses a body with no --revision before it reads standard input', async () => {
+    // The pipe is left open and empty. If the refusal came after `resolveBody`, this would block
+    // until the spawn timeout killed it - which is exactly the trap of making someone type a whole
+    // document into a terminal and only then telling them the command was wrong.
+    await seedNote('stdin-untouched');
+    const ran = await runProcess(['update', '/work/stdin-untouched', '--body', '@-'], {
+      holdStdin: true,
+    });
+    assert.equal(ran.code, 2);
+    assert.match(ran.stderr, /A body change needs --revision/);
+  });
+
+  it('carries every change flag through to the server, including the two rarer ones', async () => {
+    // `--slug` and `--body-literal` are the change flags nothing else here exercises. They are worth
+    // an end-to-end case each because the failure mode of omitting one from the request is silent: the
+    // command would pass its own "at least one change" gate, bump the revision, and print "Updated".
+    const note = await seedNote('every-flag');
+    const moved = await run(['update', '/work/every-flag', '--slug', 'every-flag-moved', '--json']);
+    assert.equal(moved.code, 0, moved.stderr);
+    assert.equal(jsonOf(moved).entity.slug, 'every-flag-moved');
+
+    const current = await entityAt('/work/every-flag-moved');
+    const literal = await run([
+      'update',
+      '/work/every-flag-moved',
+      '--body-literal',
+      '@not-a-path',
+      '--revision',
+      String(current.revision),
+      '--json',
+    ]);
+    assert.equal(literal.code, 0, literal.stderr);
+    assert.match(jsonOf(literal).entity.body.value, /@not-a-path/);
+    assert.equal(jsonOf(literal).entity.revision, note.revision + 2);
+  });
+
+  it('says the change was not sent when the revision could not be read', async () => {
+    // The pre-read is the one failure where the CLI knows with certainty that nothing changed. Saying
+    // so is worth more than the paragraph the uncertain case gets, and before this it said nothing.
+    const ran = await run(['update', '/work/anything', '--add-tag', 'reviewed'], {
+      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+    });
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /The change was not sent\./);
+    assert.match(ran.stderr, /Check the server address/);
+    // Nothing was attempted, so nothing may be said about whether it was applied.
+    assert.equal(ran.stderr.includes('Could not confirm'), false);
+  });
+
+  it('reports an unreachable server as an uncertain change, with nothing to replay', async () => {
+    // An update has no idempotency key, so an uncertain one cannot be resolved by resending. The only
+    // honest instruction is to read the entity back, and the wording must not borrow creation's.
+    const ran = await run(['update', '/work/anything', '--title', 'U', '--revision', '1'], {
+      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+    });
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /Could not confirm whether this change was applied/);
+    assert.match(ran.stderr, /does not retry a change on its own/);
+    // The transport hint still applies here, and only here: the server was never reached.
+    assert.match(ran.stderr, /Check the server address/);
+    assert.equal(ran.stderr.includes('whether this was created'), false);
+    assert.equal(ran.stderr.includes('idempotency-key'), false);
+  });
+
+  it('points at its own help when a body on standard input is refused', async () => {
+    // `readStdin` hard-coded "create" while create was its only caller. Update is the second, and an
+    // accurate refusal followed by "Run \"raphael create --help\"" sends the person to the wrong page.
+    const ran = await runProcess(
+      ['update', '/work/update-from-stdin', '--body', '@-', '--revision', '1'],
+      { stdin: 'x'.repeat(1_048_577) },
+    );
+    assert.equal(ran.code, 2);
+    assert.match(ran.stderr, /larger than the 1048576-byte request limit/);
+    assert.match(ran.stderr, /Run "raphael update --help" for usage\./);
+  });
+
+  it('documents the revision rule in its help', async () => {
+    const ran = await run(['update', '--help']);
+    assert.equal(ran.code, 0);
+    assert.match(ran.stdout, /Requires --revision/);
+    assert.match(
+      ran.stdout,
+      /the\n\s+current revision is read for you just before the update is sent/,
+    );
   });
 });

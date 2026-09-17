@@ -47,6 +47,7 @@ Usage: raphael <command> [options]
 Commands:
   login             Connect this machine to a Raphael server.
   create            Create an area or a project.
+  update            Change an area, a project, or a note.
   get               Read one area or project.
   path              Print the current full path of an area or project.
   list              List what is inside an area or project.
