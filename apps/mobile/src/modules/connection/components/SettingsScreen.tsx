@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { Text, View } from 'react-native';
 
 import { Chip, confirmDiscard, Screen, SectionHeading } from '../../../ui';
@@ -70,6 +71,27 @@ export function SettingsScreen() {
               accessibilityHint="Opens every note left unfinished on this phone"
               label="Unfinished notes"
               onPress={openRecovery}
+            />
+          </View>
+          {/* TEMPORARY PREVIEW for story #4; remove with app/preview. */}
+          <View className="flex-row flex-wrap gap-2">
+            <Chip
+              label="Preview: edit composer"
+              onPress={() => {
+                router.push('/preview/edit-composer');
+              }}
+            />
+            <Chip
+              label="Preview: container edit"
+              onPress={() => {
+                router.push('/preview/container-edit');
+              }}
+            />
+            <Chip
+              label="Preview: unfinished edits"
+              onPress={() => {
+                router.push('/preview/unfinished-edits');
+              }}
             />
           </View>
         </View>
