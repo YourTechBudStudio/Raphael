@@ -19,12 +19,10 @@ import { randomUUID } from 'expo-crypto';
 import { useEffect, useMemo } from 'react';
 
 import { queryClient } from '../../../infrastructure/query/query-client';
-import { sqlDriver, SQLITE_SUPPORTED } from '../../../infrastructure/sqlite';
 import { useConnectionSession, useConnectionStore } from '../../connection';
 import { createCaptureOwner, type CaptureSession } from '../owner.ts';
-import { CAPTURE_DATABASE } from '../schema.ts';
-import { openCaptureStore, type OpenOutcome } from '../store.ts';
 import { applyCreationTo } from './creation-cache.ts';
+import { openSharedStore } from './store-lifetime.ts';
 
 const now = () => Date.now();
 
@@ -39,11 +37,8 @@ const now = () => Date.now();
 const newId = (): string => randomUUID();
 
 export const useCaptureOwner = createCaptureOwner({
-  openStore: async (): Promise<OpenOutcome> => {
-    if (!SQLITE_SUPPORTED) return { kind: 'failed', reason: 'unopenable' };
-
-    return openCaptureStore(await sqlDriver.open(CAPTURE_DATABASE), now);
-  },
+  // One open of the capture database, shared with every other owner over it. See `store-lifetime.ts`.
+  openStore: openSharedStore,
   create: (transport, request) =>
     // The request is the frozen one, already decoded. The client decodes again, which is a fixed
     // point, so nothing is normalized twice into something different.
