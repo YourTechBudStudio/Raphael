@@ -1,8 +1,7 @@
-import { router } from 'expo-router';
 import { Text, View } from 'react-native';
 
 import { Chip, confirmDiscard, Screen, SectionHeading } from '../../../ui';
-import { goBack, openChangeServer, openRecovery, TitleTopBar } from '../../navigation';
+import { goBack, openChangeServer, TitleTopBar } from '../../navigation';
 import { useConnectionStore } from '../state/connection';
 import { ConnectionCard } from './ConnectionCard';
 import { RejectionNotice } from './RejectionNotice';
@@ -13,6 +12,11 @@ import { RejectionNotice } from './RejectionNotice';
  * There is no save button. The connection is changed by establishing a new one, which is its own
  * screen, and it is removed by disconnecting, which asks first. Nothing here edits in place,
  * because a half-edited connection is a state the rest of the app would have to understand.
+ *
+ * There is no "On this phone" section either. It existed to route to the recovery screen, and
+ * Recovery is now reached from the one place that knows whether there is anything in it: the chip
+ * beside Home's Notes heading, drawn only when it is true. A section here describing work kept on
+ * this phone would be a permanent claim on a screen with no way to check it and nowhere to go.
  */
 export function SettingsScreen() {
   const phase = useConnectionStore((state) => state.phase);
@@ -56,30 +60,6 @@ export function SettingsScreen() {
               accessibilityHint="Forgets this server and returns to setup"
               label="Disconnect"
               onPress={onDisconnect}
-            />
-          </View>
-        </View>
-
-        <View className="gap-3">
-          <SectionHeading>On this phone</SectionHeading>
-          <Text className="font-body text-[15px] leading-[22px] text-ink-soft">
-            Notes Raphael has not been able to finish are kept here until you resolve them,
-            including any written against a server you have since left.
-          </Text>
-          <View className="flex-row">
-            <Chip
-              accessibilityHint="Opens every note left unfinished on this phone"
-              label="Unfinished notes"
-              onPress={openRecovery}
-            />
-          </View>
-          {/* TEMPORARY PREVIEW for story #4; remove with app/preview. */}
-          <View className="flex-row flex-wrap gap-2">
-            <Chip
-              label="Preview: unfinished edits"
-              onPress={() => {
-                router.push('/preview/unfinished-edits');
-              }}
             />
           </View>
         </View>

@@ -19,6 +19,8 @@ import {
   type UnfinishedNote,
 } from '../unfinished.ts';
 import { useDestinationName } from './destinations.ts';
+import { useEditOwner } from './edit-owner.ts';
+import { useUnfinishedEdits } from './edits.ts';
 import { useCaptureOwner, useCaptureSession } from './owner.ts';
 
 /** Everything unfinished on this phone, most pressing first, current connection and retired alike. */
@@ -47,11 +49,49 @@ export const useUnfinishedNotes = (): readonly UnfinishedNote[] => {
   );
 };
 
-/** The cards Home leads its grid with: this connection's unfinished notes, in the same order. */
-export const useHomeUnfinishedNotes = (): readonly UnfinishedNote[] => {
-  const notes = useUnfinishedNotes();
+/**
+ * What Home's one indicator needs: how much is not on the server, and whether that is the whole of it.
+ *
+ * A tally and not a count, in the name as well as the shape. A count alone is the thing this hook
+ * exists to argue against - it cannot tell "nothing is unfinished" from "this phone could not find
+ * out" - so a name promising one would be the same mistake said in a different place.
+ *
+ * A tally rather than a number, because **zero and "could not read it" must not be the same value.**
+ * Home draws no unfinished cards any more and Settings' entry is gone, so this chip is the only door
+ * to Recovery: a store that failed to open would otherwise report zero, draw no chip, and leave both
+ * the unsent work and the failure behind a door nothing opens. That is the invisibility this
+ * indicator exists to prevent, and it is the same argument that puts `unreadableAttempts` in the
+ * count below.
+ *
+ * `complete` is false only for `unavailable`, never for a store still opening. An open in flight
+ * settles on its own within a moment and resolves to the truth; an unavailable one never does. Saying
+ * "something could not be read" during ordinary startup would put a chip on every cold launch of a
+ * phone with nothing unfinished.
+ *
+ * **It counts everything Recovery draws.** Both projections are taken whole, retired-scope rows
+ * included, because Recovery lists those too - a chip that disagreed with the screen it opens would be
+ * worse than either number alone. `unreadableAttempts` is in it because Recovery reports those rows as
+ * well, in a line rather than a card. Transient rows count: a record that is saving right now is still
+ * something the person has that the server does not, and excluding it would make the number drop
+ * mid-save and climb back on a refusal.
+ */
+export interface UnfinishedTally {
+  readonly count: number;
+  /** False when a store could not be read, so `count` is a floor rather than a total. */
+  readonly complete: boolean;
+}
 
-  return useMemo(() => notes.filter((note) => note.onHome), [notes]);
+export const useUnfinishedTally = (): UnfinishedTally => {
+  const notes = useUnfinishedNotes();
+  const edits = useUnfinishedEdits();
+  const unreadable = useCaptureOwner((state) => state.unreadableAttempts);
+  const captureStatus = useCaptureOwner((state) => state.status);
+  const editStatus = useEditOwner((state) => state.status);
+
+  return {
+    count: notes.length + edits.length + unreadable,
+    complete: captureStatus !== 'unavailable' && editStatus !== 'unavailable',
+  };
 };
 
 /**

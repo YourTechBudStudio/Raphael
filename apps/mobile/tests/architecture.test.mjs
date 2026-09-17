@@ -407,6 +407,55 @@ test('no throwaway mock surface survives', () => {
 });
 
 /**
+ * The UX mapping session's previews are gone too, and by the same rule.
+ *
+ * Three presentation-only routes were built over real components to settle the edit screen, the
+ * container editor and this surface, and each was deleted by the phase that replaced it. They used
+ * production components with invented data, which is precisely the confusion the sweep above exists
+ * to end: a route that draws a plausible conflict from a literal, one import away from the screen
+ * that draws a real one.
+ */
+test('no throwaway preview survives', () => {
+  for (const file of files) {
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    for (const name of ['TEMPORARY PREVIEW', 'app/preview', '/preview/']) {
+      assert.ok(!source.includes(name), `${file}: still reaches the retired preview ${name}`);
+    }
+  }
+
+  assert.ok(!existsSync(path.join(root, 'app', 'preview')), 'the preview routes are gone');
+});
+
+/**
+ * Home draws no unfinished cards, and the machinery for them is gone rather than unused.
+ *
+ * Home carries one count beside the Notes heading and Recovery carries the list. The leading-card
+ * mechanism that put unfinished notes into the server's grid is deleted end to end - the card, the
+ * hook that selected for it, the projection field that answered "does this go on Home", and the grid
+ * prop that drew it - because a published mechanism with no caller is a second way to build this
+ * surface, waiting to be found.
+ */
+test('nothing can lead the notes grid with local cards again', () => {
+  for (const file of files) {
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    // The field is matched in its two code forms rather than as a bare word: `edit-unfinished.ts`
+    // names it in the comment explaining why it has no such projection, and that explanation is
+    // worth keeping - the same allowance `createNote(` gets above.
+    for (const name of [
+      'UnfinishedGridCard',
+      'useHomeUnfinishedNotes',
+      'NoteGridLeadingItem',
+      'onHome:',
+      '.onHome',
+    ]) {
+      assert.ok(!source.includes(name), `${file}: still reaches the retired ${name}`);
+    }
+  }
+});
+
+/**
  * A note is server data, and there is no second kind of note.
  *
  * `NoteResource` and `localContent.createNote` wrote a note that existed only in this process and

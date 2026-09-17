@@ -90,8 +90,8 @@ const section = (view, copy = CONTAINER_NOTES_COPY, extra = {}) =>
 
 /** The cards in a container, in document order, each named by its own key. */
 const cardOrder = (container) =>
-  [...container.querySelectorAll('[data-leading], [data-testid^="note-card-"]')].map(
-    (element) => element.getAttribute('data-leading') ?? element.getAttribute('data-testid'),
+  [...container.querySelectorAll('[data-testid^="note-card-"]')].map((element) =>
+    element.getAttribute('data-testid'),
   );
 
 /** `assert.equal` on a DOM node serializes the whole tree on failure; ask about presence instead. */
@@ -211,78 +211,37 @@ describe('Home and a container say different things', () => {
   });
 });
 
-describe('the leading cards Phase 06 will pass', () => {
-  const leadingCards = () =>
-    ['draft:9', 'draft:4'].map((key) => ({
-      key,
-      card: createElement('span', { 'data-leading': key }, key),
-    }));
-
-  it('are drawn first, in the order given, before the server’s', () => {
-    // Asserted in the stacked arrangement, where reading order and item order are the same thing.
-    // Paired into columns the cards are dealt alternately, so "first" is a claim about each column,
-    // which the next test makes.
-    setWindowDimensions({ width: 390, fontScale: 1.5 });
-    const view = render(
-      createElement(NoteGrid, { items: [note(1), note(2)], leading: leadingCards() }),
-    );
-
-    assert.deepEqual(cardOrder(view.container), [
-      'draft:9',
-      'draft:4',
-      'note-card-1',
-      'note-card-2',
-    ]);
-    view.unmount();
-    setWindowDimensions({ width: 390, fontScale: 1 });
-  });
-
-  it('lead their own column when the cards are paired', () => {
-    setWindowDimensions({ width: 390, fontScale: 1 });
-    const view = render(
-      createElement(NoteGrid, { items: [note(1), note(2)], leading: leadingCards() }),
-    );
-
-    for (const column of view.container.querySelectorAll(
-      '[data-testid="note-grid-columns"] > div',
-    )) {
-      assert.equal(cardOrder(column)[0]?.startsWith('draft:'), true);
-    }
-    view.unmount();
-  });
-
-  it('lead an empty server feed rather than replacing what it says', () => {
+describe('the heading accessory', () => {
+  it('is drawn on the heading’s row when a screen has one, and nowhere otherwise', () => {
     const view = section(deriveNoteFeed(observation({ pages: [page([])] })), HOME_NOTES_COPY, {
-      leading: [{ key: 'draft:9', card: createElement('span', null, 'Unfinished') }],
+      headingTrailing: createElement(
+        'span',
+        { 'data-testid': 'heading-accessory' },
+        '3 unfinished',
+      ),
     });
 
-    // Both are said, in that order, because they report different facts: what is on this phone, and
-    // what the server holds. Phase 05 suppressed the line here on the reading that it would be
-    // false; the frozen decision is that the cards lead *either* line, and suppressing it would
-    // leave a person unable to tell an empty account from one that had not answered.
-    const text = view.text();
-
-    assert.ok(text.includes('Unfinished'));
-    assert.ok(text.includes('No notes yet.'));
-    assert.ok(
-      text.indexOf('Unfinished') < text.indexOf('No notes yet.'),
-      'local writing is never preceded by a statement about the server',
-    );
+    assert.ok(has(view.container, '[data-testid="heading-accessory"]'));
+    assert.ok(view.text().includes('Notes'));
     view.unmount();
+
+    const bare = section(deriveNoteFeed(observation({ pages: [page([])] })), HOME_NOTES_COPY);
+
+    assert.ok(!has(bare.container, '[data-testid="heading-accessory"]'));
+    bare.unmount();
   });
 
-  it('stay above a server failure, which can never hide protected local writing', () => {
-    const view = section(
-      deriveNoteFeed(observation({ isPending: true, isError: true })),
-      HOME_NOTES_COPY,
-      { leading: [{ key: 'draft:9', card: createElement('span', null, 'Unfinished') }] },
-    );
+  /**
+   * The grid draws the server's notes and nothing else.
+   *
+   * It used to take leading cards for the unfinished notes Home drew before the feed. Home draws no
+   * unfinished cards of any kind now, so the mechanism was removed rather than left with no caller,
+   * and this says so where the tests for it used to be.
+   */
+  it('is the only thing a screen may add; the grid itself takes no cards but the server’s', () => {
+    const view = render(createElement(NoteGrid, { items: [note(1), note(2)] }));
 
-    const text = view.text();
-
-    assert.ok(text.includes('Unfinished'));
-    assert.ok(text.includes('Unable to load notes.'));
-    assert.ok(text.indexOf('Unfinished') < text.indexOf('Unable to load notes.'));
+    assert.deepEqual(cardOrder(view.container), ['note-card-1', 'note-card-2']);
     view.unmount();
   });
 });
@@ -404,33 +363,6 @@ describe('the order cards are read out in', () => {
       'note-card-4',
     ]);
     view.unmount();
-  });
-
-  it('puts leading cards first in that order too', async () => {
-    setWindowDimensions({ width: 390, fontScale: 1 });
-    setScreenReaderEnabled(true);
-
-    const view = render(
-      createElement(NoteGrid, {
-        items: [note(1), note(2)],
-        leading: [
-          { key: 'draft:9', card: createElement('span', { 'data-leading': 'draft:9' }, 'a') },
-          { key: 'draft:4', card: createElement('span', { 'data-leading': 'draft:4' }, 'b') },
-        ],
-      }),
-    );
-    await act(async () => {
-      await Promise.resolve();
-    });
-
-    assert.deepEqual(cardOrder(view.container), [
-      'draft:9',
-      'draft:4',
-      'note-card-1',
-      'note-card-2',
-    ]);
-    view.unmount();
-    setScreenReaderEnabled(false);
   });
 });
 

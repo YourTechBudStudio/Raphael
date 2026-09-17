@@ -27,16 +27,16 @@ after(() => dom.teardown());
 
 const { act, createElement } = await import('react');
 const { createRoot } = await import('react-dom/client');
-const { setWindowDimensions } = await import('./support/stubs/react-native.mjs');
+const { Alert, setWindowDimensions } = await import('./support/stubs/react-native.mjs');
 const { titleMaxHeight } = await import('../src/modules/capture/title.ts');
 const { composerView, destinationEyebrow } = await import('../src/modules/capture/composer.ts');
-const { detailsChip } = await import('../src/modules/capture/edit-composer.ts');
+const { CONFLICT_NOTICE, detailsChip } = await import('../src/modules/capture/edit-composer.ts');
 const { CaptureView } = await import('../src/modules/capture/components/CaptureView.tsx');
 const { ProtectSheet } = await import('../src/modules/capture/components/ProtectSheet.tsx');
 const { OutcomeSheet } = await import('../src/modules/capture/components/OutcomeSheet.tsx');
 const { UnfinishedCard } = await import('../src/modules/capture/components/UnfinishedCard.tsx');
-const { UnfinishedGridCard } =
-  await import('../src/modules/capture/components/UnfinishedGridCard.tsx');
+const { UnfinishedEditCard } =
+  await import('../src/modules/capture/components/UnfinishedEditCard.tsx');
 const { SelectableTree } = await import('../src/modules/browse/components/SelectableTree.tsx');
 
 const T0 = 1_700_000_000_000;
@@ -579,44 +579,10 @@ const card = (over = {}) => ({
   server: null,
   withdrawn: null,
   actions: ['open', 'discard'],
-  onHome: true,
   ...over,
 });
 
 describe('the cards for a note that is only on this phone', () => {
-  it('carries its status where a saved note carries its location', () => {
-    const screen = render(
-      createElement(UnfinishedGridCard, { note: card(), now: T0 + 2 * 60 * 60 * 1000 }),
-    );
-
-    try {
-      assert.ok(screen.text().includes('Draft · on this phone'));
-      assert.ok(screen.text().includes('Edited 2 h ago'));
-    } finally {
-      screen.unmount();
-    }
-  });
-
-  it('marks a draft with a dotted edge, and says the status in words as well', () => {
-    const draft = render(createElement(UnfinishedGridCard, { note: card(), now: T0 }));
-    const unresolved = render(
-      createElement(UnfinishedGridCard, {
-        note: card({ status: 'unresolved', key: 'draft:d2' }),
-        now: T0,
-      }),
-    );
-
-    try {
-      assert.ok(draft.host.innerHTML.includes('border-dotted'));
-      // Status is never carried by colour alone: both cards say it.
-      assert.ok(unresolved.text().includes('Save not confirmed'));
-      assert.ok(!unresolved.host.innerHTML.includes('border-dotted'));
-    } finally {
-      draft.unmount();
-      unresolved.unmount();
-    }
-  });
-
   it('offers only what the projection permits', () => {
     const screen = render(
       createElement(UnfinishedCard, {
@@ -685,6 +651,150 @@ describe('the cards for a note that is only on this phone', () => {
     } finally {
       screen.unmount();
     }
+  });
+});
+
+const editRow = (over = {}) => ({
+  key: 'edit:c1/12',
+  editKey: 'c1/12',
+  nodeId: 12,
+  nodeType: 'resource',
+  kind: 'note',
+  title: 'Autosave loop notes',
+  standing: 'pending',
+  refusal: null,
+  endpoint: 'https://raphael.example',
+  scope: 'current',
+  activityAt: T0,
+  actions: ['open', 'discard'],
+  ...over,
+});
+
+describe('the cards for changes that are not on the server', () => {
+  it('says what it is, when it was touched, and what is true of it now', () => {
+    const screen = render(
+      createElement(UnfinishedEditCard, {
+        edit: editRow(),
+        now: T0 + 2 * 60 * 60 * 1000,
+      }),
+    );
+
+    try {
+      assert.ok(screen.text().includes('Note · 2 h ago'));
+      assert.ok(screen.text().includes('Autosave loop notes'));
+      assert.ok(screen.text().includes('kept on this phone'));
+      // The two states nobody has to act on never claim work that is not running.
+      assert.ok(!screen.text().includes('saving soon'));
+      assert.ok(!screen.text().includes('checking your server'));
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('carries the reason the server gave, rather than the sentence for an unreadable one', () => {
+    const screen = render(
+      createElement(UnfinishedEditCard, {
+        edit: editRow({
+          standing: 'refused',
+          refusal: { code: 'slug_conflict', field: 'slug', reason: null, at: T0 },
+        }),
+        now: T0,
+      }),
+    );
+
+    try {
+      assert.ok(screen.text().includes('that note ID is already used'));
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('says the same thing about a conflict that the editor’s band says', () => {
+    const screen = render(
+      createElement(UnfinishedEditCard, { edit: editRow({ standing: 'conflicted' }), now: T0 }),
+    );
+
+    try {
+      assert.ok(screen.text().includes(CONFLICT_NOTICE));
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('claims no title and no time for a row whose columns could not be read', () => {
+    const screen = render(
+      createElement(UnfinishedEditCard, {
+        edit: editRow({
+          key: 'unusable-edit:c1/12',
+          nodeType: null,
+          kind: null,
+          title: '',
+          standing: 'unusable',
+          problem: 'unsupported_content_schema',
+          activityAt: 0,
+          actions: ['discard'],
+        }),
+        now: T0,
+        onDiscard: () => undefined,
+        onOpen: () => undefined,
+      }),
+    );
+
+    try {
+      const text = screen.text();
+
+      assert.ok(text.startsWith('Changes'), 'no type it could not read, and no invented one');
+      assert.ok(!text.includes('ago'), 'and no time it cannot support');
+      assert.ok(!text.includes('Untitled'));
+      assert.ok(text.includes('kept exactly as they are'));
+      // Open is withheld by the projection, and the card offers exactly what it was given.
+      assert.equal(screen.byLabel('Open'), null);
+      assert.ok(screen.byLabel('Discard') !== null);
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('asks before discarding, and says the server is not touched', () => {
+    const discarded = [];
+    const screen = render(
+      createElement(UnfinishedEditCard, {
+        edit: editRow({ standing: 'conflicted' }),
+        now: T0,
+        onDiscard: (row) => {
+          discarded.push(row.editKey);
+        },
+      }),
+    );
+
+    Alert.calls.length = 0;
+
+    try {
+      screen.press('Discard');
+      assert.equal(Alert.calls.length, 1, 'nothing is removed on the press alone');
+      assert.deepEqual(discarded, []);
+
+      const [title, message, buttons] = Alert.calls[0];
+
+      assert.equal(title, 'Discard your changes?');
+      assert.ok(message.includes('What is on your server stays as it is.'));
+
+      const discard = buttons.find((button) => button.style === 'destructive');
+
+      act(() => {
+        discard.onPress();
+      });
+    } finally {
+      screen.unmount();
+    }
+
+    // The confirmation resolves a promise, so the call lands on the next turn.
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        assert.deepEqual(discarded, ['c1/12']);
+        resolve();
+      }, 0);
+    });
   });
 });
 

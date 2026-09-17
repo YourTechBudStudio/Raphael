@@ -20,12 +20,13 @@
  * list, transient rows included. There is no `onHome` projection, deliberately.
  */
 
-import type { NodeType } from '@raphael/contracts/nodes';
+import type { NodeType, ResourceKind } from '@raphael/contracts/nodes';
 
 import type { EditStanding } from './edit-policy.ts';
 import {
   editKeyOf,
   type EditProblem,
+  type EditRefusal,
   type EntityEditRecord,
   type UnusableEdit,
 } from './edit-types.ts';
@@ -37,10 +38,26 @@ export interface UnfinishedEdit {
   readonly nodeId: number;
   /** Null only for a row whose columns could not be read. Never inferred. */
   readonly nodeType: NodeType | null;
+  /**
+   * What the entity is, for the surface that has to name its ID field. Null on an unusable row.
+   *
+   * Carried rather than re-derived because `idLabelOf` needs it and nothing outside the record knows
+   * it: a card that guessed would call a project's ID a note's.
+   */
+  readonly kind: ResourceKind | null;
   /** Empty when the column could not be read. Empty is also a legitimate title. */
   readonly title: string;
   /** `'unusable'` for a retained row this build cannot open. */
   readonly standing: EditStanding['kind'] | 'unusable';
+  /**
+   * The refusal behind a `refused` row, copied straight off the record. Null everywhere else, and
+   * null on a `refused` row whose diagnostic could not be read.
+   *
+   * Carried because the sentence a list draws for a refusal has to say *why* - and a projection that
+   * kept only `standing.kind` would leave every refused row reading the sentence that exists for "the
+   * refusal could not be parsed", which is a different fact about a different failure.
+   */
+  readonly refusal: EditRefusal | null;
   readonly problem?: EditProblem | undefined;
   readonly endpoint: string | null;
   readonly scope: 'current' | 'retired';
@@ -54,8 +71,13 @@ export interface UnfinishedEdit {
  * `unusable` leads because it is the only row nothing will ever resolve on its own. `saving` trails
  * the ordinary states because a request in the air needs no decision from anyone - it is the one row
  * that is actively getting better while it is looked at.
+ *
+ * Exported because it is the **only runtime enumeration of the standing union**, and the `satisfies`
+ * below is what keeps it one: adding a standing that is not listed here fails to compile. A test that
+ * needs to walk every standing walks this rather than restating the list, which would be a second
+ * copy free to fall behind. Deliberately not re-exported from `index.ts`; it is not package-public.
  */
-const GROUP = {
+export const STANDING_ORDER = {
   unusable: 0,
   conflicted: 1,
   refused: 2,
@@ -104,8 +126,10 @@ export const unfinishedEdits = (input: UnfinishedEditsInput): readonly Unfinishe
       editKey,
       nodeId: record.key.nodeId,
       nodeType: record.nodeType,
+      kind: record.kind,
       title: record.content.title,
       standing: standing.kind,
+      refusal: standing.kind === 'refused' ? standing.refusal : null,
       endpoint: record.endpoint,
       scope: scopeOf(record.key.connectionId, input.connectionId),
       activityAt: record.updatedAt,
@@ -130,10 +154,13 @@ export const unfinishedEdits = (input: UnfinishedEditsInput): readonly Unfinishe
       editKey,
       nodeId: unusable.key.nodeId,
       nodeType: unusable.nodeType,
+      // Nothing about an unopenable row is known well enough to name what its ID field is called.
+      kind: null,
       // Nothing invented: a row whose columns cannot be read may have no title to read either, and
       // saying "Untitled" about one is the card's business, not this projection's.
       title: unusable.title ?? '',
       standing: 'unusable',
+      refusal: null,
       problem: unusable.problem,
       endpoint: unusable.endpoint,
       scope: scopeOf(unusable.key.connectionId, input.connectionId),
@@ -148,7 +175,7 @@ export const unfinishedEdits = (input: UnfinishedEditsInput): readonly Unfinishe
   // The order is total, so two renders of the same rows never disagree.
   return rows.sort(
     (left, right) =>
-      GROUP[left.standing] - GROUP[right.standing] ||
+      STANDING_ORDER[left.standing] - STANDING_ORDER[right.standing] ||
       right.activityAt - left.activityAt ||
       left.key.localeCompare(right.key),
   );

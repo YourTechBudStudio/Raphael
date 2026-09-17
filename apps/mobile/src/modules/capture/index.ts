@@ -9,10 +9,10 @@
  * standing from an attempt's fields would be a second authority on the question that decides whether
  * someone's writing is duplicated or destroyed.
  *
- * That is why `standingFor` is reached only through the owner, and why Home and recovery draw from
- * `useUnfinishedNotes` rather than from `drafts` and `attempts`: the projection is derived in one
- * place, from the owner's own answers, so no screen can disagree with another about what a record
- * means.
+ * That is why `standingFor` is reached only through the owner, and why recovery draws from
+ * `useUnfinishedNotes` - and Home reads through `useUnfinishedTally` - rather than reading `drafts`
+ * and `attempts`: the projection is derived in one place, from the owner's own answers, so no screen
+ * can disagree with another about what a record means.
  *
  * Capture is also the only capability that opens a local operational database through
  * `infrastructure/sqlite`, and `tests/architecture.test.mjs` holds that line.
@@ -27,7 +27,6 @@ export { CaptureScreen, type CaptureScreenProps } from './components/CaptureScre
 export { EditScreen, type EditScreenProps } from './components/EditScreen';
 export { RecoveryScreen } from './components/RecoveryScreen';
 export { StorageGate } from './components/StorageGate';
-export { UnfinishedGridCard, type UnfinishedGridCardProps } from './components/UnfinishedGridCard';
 
 /** The app-lifetime composition. Opened once, above the connection gate. */
 export { useCaptureLifetime, useCaptureSession } from './client/owner.ts';
@@ -36,10 +35,11 @@ export { useEditLifetime, useEditOwner } from './client/edit-owner.ts';
 export { useEditActions, useUnfinishedEdits } from './client/edits.ts';
 export { useNewNote, type NewNote } from './client/new-note.ts';
 export {
-  useHomeUnfinishedNotes,
   useSaveNotice,
   useUnfinishedActions,
   useUnfinishedNotes,
+  useUnfinishedTally,
+  type UnfinishedTally,
 } from './client/notes.ts';
 export { useDestinationName, type DestinationName } from './client/destinations.ts';
 

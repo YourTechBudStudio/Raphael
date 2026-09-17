@@ -152,6 +152,117 @@ export const EDIT_PROBLEM_COPY: Record<EditProblem, string> = {
     'Raphael could not read this record of unsent changes on this phone. It is kept exactly as it is rather than changed or removed.',
 };
 
+/**
+ * What a list says about one edit, in a sentence rather than a status line.
+ *
+ * Here, beside the status line it parallels, because the rule this module exists for is that **no
+ * sentence about an edit is composed anywhere else** - a card and the editor describing the same
+ * record differently is exactly how someone concludes they have two problems.
+ *
+ * It is not the status line reused, and two of those would be false here.
+ *
+ * `UNCONFIRMED_EDIT_STATUS` says "checking your server", which is true in the editor - the owner
+ * reconciles in `open()` - and is a claim about work in progress on a screen where no editor is
+ * attached and nothing is running. `PENDING_STATUS` says "saving soon", which is true only while an
+ * editor holds the record with its debounce armed; on a list of things nobody is holding it is a
+ * promise the phone is not keeping. So `unconfirmed` says what is actually known and what would
+ * settle it, and the two waiting states say the one fact that is true of both: it is here, it is not
+ * there.
+ *
+ * `conflicted`, `refused` and an unusable row reuse the sentences that already exist, which is the
+ * whole point - `CONFLICT_NOTICE` was already one fact said twice for two surfaces. `unusable` is in
+ * this function rather than left to the caller for the same reason everything else is: a card that
+ * reached for `EDIT_PROBLEM_COPY` itself would be one branch of this decision living somewhere else.
+ *
+ * **Total on purpose**, `synced` included. `unfinishedEdits` filters synced rows out, but a function
+ * with a hole in it renders a blank card the day that filter changes.
+ */
+export const editCardSentence = (input: {
+  readonly standing: EditStanding['kind'] | 'unusable';
+  readonly refusal: EditRefusal | null;
+  /** Read only for an unusable row, where it is the whole sentence. */
+  readonly problem?: EditProblem | undefined;
+  /**
+   * What the row is, for the one arm that names an ID field. Null is a row whose type could not be
+   * read - which is an unusable row, whose sentence names no field at all - so no caller has to
+   * invent a type to satisfy this.
+   */
+  readonly nodeType: NodeType | null;
+  readonly kind: ResourceKind | null;
+}): string => {
+  switch (input.standing) {
+    case 'unusable':
+      // A row whose columns could not be read still has a reason, and the default is the one that
+      // claims least: the record could not be read at all.
+      return EDIT_PROBLEM_COPY[input.problem ?? 'unreadable_row'];
+    case 'conflicted':
+      return CONFLICT_NOTICE;
+    case 'refused':
+      return refusedStatus(input.refusal, idLabelOf(input.nodeType ?? 'resource', input.kind));
+    case 'unconfirmed':
+      return 'The last change may or may not have reached your server. Open it to check.';
+    case 'offline':
+    case 'pending':
+      return 'Changes made here are kept on this phone and have not reached your server.';
+    case 'saving':
+      return 'These changes are on their way to your server.';
+    case 'synced':
+      return 'Everything written here is on your server.';
+  }
+};
+
+/**
+ * The heading over the edits on the recovery screen.
+ *
+ * It names the fact rather than the mechanism - not "unsent updates" or "pending edits", which
+ * describe a queue. What a person needs to know is where their writing is and where it is not.
+ */
+export const EDITS_HEADING = 'Edits not on your server';
+
+/**
+ * The word for what is being edited, as a list's eyebrow says it.
+ *
+ * Here with `idLabelOf` because it is the same decision one step earlier: that module turns a node
+ * type into the noun a person reads. A row whose columns could not be read has no type to read, and
+ * "Changes" is what is certainly true of it - inventing "Note" would be naming the one fact missing.
+ */
+export const editKindWord = (nodeType: NodeType | null, kind: ResourceKind | null): string => {
+  if (nodeType === 'area') return 'Area';
+  if (nodeType === 'project') return 'Project';
+  if (nodeType === 'resource') return kind === 'note' ? 'Note' : 'Item';
+
+  return 'Changes';
+};
+
+/**
+ * Whether a row's eyebrow is said in the alert colour.
+ *
+ * The three standings a person has to decide something about, plus the row that can never resolve
+ * itself. Waiting and sending are not problems, and colouring them would leave the colour meaning
+ * "unfinished" rather than "this one needs you". Never the only cue: every standing is also a
+ * sentence.
+ */
+export const isAlarmingEdit = (standing: EditStanding['kind'] | 'unusable'): boolean =>
+  standing === 'conflicted' ||
+  standing === 'refused' ||
+  standing === 'unconfirmed' ||
+  standing === 'unusable';
+
+/**
+ * The one confirmation for throwing local changes away, wherever it is offered.
+ *
+ * One prompt rather than one per standing, because the fact it has to establish is the same in every
+ * one of them and it is the fact people get wrong: **this removes what is on the phone and does not
+ * touch the server.** A conflict is the case that makes it matter - discarding there is the only
+ * offered action, and someone who read it as "discard the note" would be refusing to click the one
+ * control that resolves their editor.
+ */
+export const EDIT_DISCARD_PROMPT = {
+  title: 'Discard your changes?',
+  message: 'The changes kept on this phone will be removed. What is on your server stays as it is.',
+  keepLabel: 'Keep them',
+} as const;
+
 export interface EditComposerInput extends ProtectionInput {
   readonly standing: EditStanding;
   readonly nodeType: NodeType;

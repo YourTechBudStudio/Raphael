@@ -23,10 +23,12 @@ import {
   OFFLINE_STATUS,
   PENDING_STATUS,
   UNCONFIRMED_EDIT_STATUS,
+  editCardSentence,
   editComposerView,
   idLabelOf,
   refusedStatus,
 } from '../src/modules/capture/edit-composer.ts';
+import { STANDING_ORDER } from '../src/modules/capture/edit-unfinished.ts';
 
 const view = (standing, over = {}) =>
   editComposerView({
@@ -189,6 +191,92 @@ describe('refusedStatus', () => {
 
     assert.match(text, /refused the last change/);
     assert.match(text, /kept on this phone/);
+  });
+});
+
+/**
+ * The sentence a list says about one record, which is not the status line said again.
+ *
+ * Two arms exist precisely because the status line is false away from the editor, and both are
+ * asserted in their own words rather than against a constant - a test that compared them to the
+ * thing they deliberately are not would pass on the day someone put the constants back.
+ *
+ * `UNCONFIRMED_EDIT_STATUS` says "checking your server": true in the editor, where the owner
+ * reconciles on open, and a claim about work that is not running anywhere else. `PENDING_STATUS`
+ * says "saving soon": true only while an editor holds the record with its debounce armed.
+ */
+describe('editCardSentence', () => {
+  const sentence = (standing, over = {}) =>
+    editCardSentence({ standing, refusal: null, nodeType: 'resource', kind: 'note', ...over });
+
+  it('never claims an activity that is not running', () => {
+    const unconfirmed = sentence('unconfirmed');
+
+    assert.match(unconfirmed, /may or may not have reached your server/);
+    assert.match(unconfirmed, /Open it to check/);
+    assert.ok(
+      !/checking your server/.test(unconfirmed),
+      'nothing is checking away from the editor',
+    );
+    assert.notEqual(unconfirmed, UNCONFIRMED_EDIT_STATUS);
+  });
+
+  it('never promises a save nothing is about to make', () => {
+    const pending = sentence('pending');
+
+    assert.match(pending, /kept on this phone/);
+    assert.match(pending, /have not reached your server/);
+    assert.ok(!/saving soon/.test(pending), 'no editor is holding this, so nothing is saving soon');
+    assert.notEqual(pending, PENDING_STATUS);
+    assert.notEqual(pending, OFFLINE_STATUS);
+    // One fact is true of both, and the card has no room to tell them apart usefully.
+    assert.equal(sentence('offline'), pending);
+  });
+
+  it('says a request in the air is exactly that', () => {
+    assert.match(sentence('saving'), /on their way to your server/);
+  });
+
+  it('reuses the sentences that already exist rather than writing them twice', () => {
+    assert.equal(sentence('conflicted'), CONFLICT_NOTICE);
+    assert.equal(
+      sentence('refused', {
+        refusal: { code: 'slug_conflict', field: 'slug', reason: null, at: 1 },
+      }),
+      refusedStatus({ code: 'slug_conflict', field: 'slug', reason: null, at: 1 }, 'note ID'),
+    );
+    assert.equal(
+      sentence('unusable', { problem: 'unusable_body' }),
+      EDIT_PROBLEM_COPY.unusable_body,
+    );
+  });
+
+  it('claims least about an unusable row whose reason could not be read either', () => {
+    assert.equal(sentence('unusable'), EDIT_PROBLEM_COPY.unreadable_row);
+  });
+
+  /**
+   * The assertion that matters most here.
+   *
+   * `unfinishedEdits` filters `synced` out, so nothing draws that arm today - and a function with a
+   * hole in it renders a blank card the day that filter changes. The list is walked from
+   * `STANDING_ORDER`, the one runtime enumeration of the union, whose `satisfies` fails to compile
+   * when a standing is added; restating the standings here would be a second list free to fall
+   * behind the first.
+   */
+  it('has a sentence for every standing, including the one nothing draws', () => {
+    const standings = Object.keys(STANDING_ORDER);
+
+    assert.ok(standings.includes('synced'), 'the enumeration covers the filtered standing too');
+
+    for (const standing of standings) {
+      // A row with no readable type is the shape the unusable arm is given, and every other arm
+      // has to stay total over it too.
+      const text = sentence(standing, { problem: 'unreadable_row', nodeType: null, kind: null });
+
+      assert.equal(typeof text, 'string', `${standing} has no sentence`);
+      assert.ok(text.length > 0, `${standing} says nothing`);
+    }
   });
 });
 

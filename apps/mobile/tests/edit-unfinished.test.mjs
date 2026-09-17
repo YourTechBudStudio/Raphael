@@ -51,13 +51,32 @@ describe('unfinishedEdits', () => {
       editKey: 'c1/7',
       nodeId: 7,
       nodeType: 'resource',
+      kind: 'note',
       title: 'note 7',
       standing: 'pending',
+      refusal: null,
       endpoint: 'https://raphael.example',
       scope: 'current',
       activityAt: 100,
       actions: ['open', 'discard'],
     });
+  });
+
+  it('carries the refusal, so a list can say why rather than that it could not tell', () => {
+    const refusal = { code: 'slug_conflict', field: 'slug', reason: null, at: 5 };
+    const rows = listed([record(7, { syncState: 'refused', lastRefusal: refusal })], {
+      'c1/7': { kind: 'refused', refusal },
+    });
+
+    assert.deepEqual(rows[0].refusal, refusal);
+    // `kind` rides with it: the sentence names the ID field, and only the record knows what it is.
+    assert.equal(rows[0].kind, 'note');
+  });
+
+  it('carries no refusal for a standing that has none', () => {
+    const rows = listed([record(7)], { 'c1/7': { kind: 'pending' } });
+
+    assert.equal(rows[0].refusal, null);
   });
 
   it('omits a synced record, which is everything the server has', () => {

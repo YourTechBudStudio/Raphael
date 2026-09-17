@@ -106,7 +106,7 @@ test('a draft nobody has sent is a draft, and can only be opened or discarded', 
   assert.equal(rows.length, 1);
   assert.equal(rows[0].status, 'draft');
   assert.deepEqual([...rows[0].actions], ['open', 'discard']);
-  assert.equal(rows[0].onHome, true);
+  assert.equal(rows[0].scope, 'current');
   assert.equal(rows[0].key, 'draft:d1');
 });
 
@@ -255,7 +255,6 @@ test('work for a connection this phone has left offers only copy and discard', (
   const rows = project([draft({ connectionId: 'other', endpoint: 'https://old.example' })], []);
 
   assert.equal(rows[0].scope, 'retired');
-  assert.equal(rows[0].onHome, false, 'retired work never appears in the current Home');
   assert.deepEqual([...rows[0].actions], ['copy', 'discard']);
 });
 
@@ -280,8 +279,6 @@ test('a note this build cannot open is reported, with the reason it cannot', () 
   // The owner never adopted it, so there is no draft to open, copy or discard - and migrating it is
   // the one thing that is forbidden outright.
   assert.deepEqual([...rows[0].actions], []);
-  // And it is not a card on Home, where every other card goes somewhere when it is tapped.
-  assert.equal(rows[0].onHome, false);
 });
 
 test('an unreadable row claims no title and no time it cannot support', () => {

@@ -273,7 +273,6 @@ describe('a deliberately reset backend, at the same address', () => {
           const old = rows.find((row) => row.attemptId === oldAttemptId);
           assert.ok(old !== undefined, 'the old work is still here');
           assert.equal(old.scope, 'retired', 'and it belongs to the connection that is gone');
-          assert.equal(old.onHome, false, 'so it does not lead the current Home');
           assert.ok(
             old.actions.includes('copy'),
             'copying it into the current connection is offered',

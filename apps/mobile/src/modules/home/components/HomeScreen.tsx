@@ -1,13 +1,9 @@
+import { CloudOff } from 'lucide-react-native';
 import { useState } from 'react';
 import { Text, View } from 'react-native';
 
-import { Screen, SectionHeading, Snackbar, SNACKBAR_GAP } from '../../../ui';
-import {
-  CaptureDock,
-  UnfinishedGridCard,
-  useHomeUnfinishedNotes,
-  useSaveNotice,
-} from '../../capture';
+import { Chip, Screen, SectionHeading, Snackbar, SNACKBAR_GAP } from '../../../ui';
+import { CaptureDock, useSaveNotice, useUnfinishedTally } from '../../capture';
 import {
   containerTitleLookup,
   HierarchyStale,
@@ -19,8 +15,8 @@ import {
 import { RejectionNotice } from '../../connection';
 import {
   openBrowse,
-  openCapture,
   openEditor,
+  openRecovery,
   openSearch,
   openSettings,
   HomeTopBar,
@@ -31,7 +27,6 @@ import {
   SessionMediaSection,
   useNoteFeed,
   useSessionMedia,
-  type NoteGridLeadingItem,
 } from '../../resources';
 import { ActiveProjectCard } from './ActiveProjectCard';
 import { ActiveSkeleton } from './Skeletons';
@@ -44,10 +39,18 @@ import { ActiveSkeleton } from './Skeletons';
  * dependency honestly rather than showing an empty list when the server could not be reached.
  *
  * The Notes feed is the server's, newest edit first, paged as the scroll reaches its end. Nothing
- * local is mixed into it and nothing is sorted here. What *is* local leads it: the notes this phone
- * holds and the server does not, as cards in the same grid, most pressing first. They are drawn
- * above whatever the feed is doing - including its empty and failed lines - because they are on this
- * phone whatever the server is up to.
+ * local is mixed into it and nothing is sorted here.
+ *
+ * What is local is counted instead of drawn. Home used to lead the grid with cards for the notes this
+ * phone holds and the server does not; it now carries one chip beside the Notes heading saying how
+ * many things are not on the server, and Recovery - which the chip opens - is where they are read and
+ * acted on. The chip is absent at zero, so an ordinary Home says nothing about unfinished work at
+ * all, and it counts everything Recovery lists, transient rows included, because a number that
+ * disagreed with the screen it opens would be worse than either alone.
+ *
+ * It is drawn without a number when a store could not be read. This chip is the only way to reach
+ * Recovery, so a failure that reported zero would hide the unsent work *and* the failure behind a
+ * door nothing opens - and "none" is not what this phone knows in that moment.
  *
  * A save that landed is told here, once, by a snackbar, and the receipt that made it appear is spent
  * only when it has actually been shown. That is why a success survives a crash: the record is
@@ -60,13 +63,9 @@ export function HomeScreen() {
   const active = useProjectActive();
   const feed = useNoteFeed();
   const media = useSessionMedia();
-  const unfinished = useHomeUnfinishedNotes();
+  const unfinished = useUnfinishedTally();
   const notice = useSaveNotice();
   const [snackbarHeight, setSnackbarHeight] = useState(0);
-  // Sampled once per render: a grid of cards should read one clock, and none of these labels
-  // changes second by second.
-  const [now] = useState(() => Date.now());
-
   const hierarchy = tree.hierarchy;
   const projects: readonly HierarchyNode[] | undefined =
     selected.data === undefined || hierarchy === undefined
@@ -75,29 +74,6 @@ export function HomeScreen() {
           .map((id) => hierarchy.byId.get(id))
           .filter((node): node is HierarchyNode => node !== undefined && node.type === 'project');
   const projectsFailed = selected.isError || (tree.isError && hierarchy === undefined);
-
-  const leading: readonly NoteGridLeadingItem[] = unfinished.map((note) => {
-    const draftId = note.draftId;
-
-    return {
-      key: note.key,
-      card: (
-        <UnfinishedGridCard
-          note={note}
-          now={now}
-          // An attempt whose draft is gone has nothing to open. It stays reachable in recovery,
-          // where its evidence can be read without pretending there is a note behind it.
-          onOpen={
-            draftId === null
-              ? undefined
-              : () => {
-                  openCapture(draftId);
-                }
-          }
-        />
-      ),
-    };
-  });
 
   return (
     <View className="flex-1">
@@ -166,7 +142,22 @@ export function HomeScreen() {
 
           <NoteSection
             copy={HOME_NOTES_COPY}
-            leading={leading}
+            headingTrailing={
+              // Drawn when there is something to say *or* when this phone could not find out, which
+              // are different facts and only one of them is "nothing". A chip with no number is the
+              // honest form of the second: Recovery is where what could not be read is named.
+              unfinished.count === 0 && unfinished.complete ? undefined : (
+                <Chip
+                  accessibilityHint="Opens everything not yet on your server"
+                  icon={CloudOff}
+                  label={
+                    unfinished.complete ? `${String(unfinished.count)} unfinished` : 'Unfinished'
+                  }
+                  onPress={openRecovery}
+                  testID="home-unfinished-chip"
+                />
+              )
+            }
             locationFor={containerTitleLookup(tree)}
             onOpen={openEditor}
             testID="home-notes"

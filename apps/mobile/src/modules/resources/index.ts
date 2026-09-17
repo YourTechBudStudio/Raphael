@@ -22,7 +22,7 @@ export { useSessionMedia } from './client/media';
 export { toNoteSummaryItem, type NoteSummaryItem } from './client/summary';
 export { NoteCard, type NoteCardProps } from './components/NoteCard';
 export { NoteCardShell, type NoteCardShellProps } from './components/NoteCardShell';
-export { NoteGrid, type NoteGridLeadingItem, type NoteGridProps } from './components/NoteGrid';
+export { NoteGrid, type NoteGridProps } from './components/NoteGrid';
 export { NoteSection, type NoteSectionProps } from './components/NoteSection';
 export {
   CONTAINER_NOTES_COPY,

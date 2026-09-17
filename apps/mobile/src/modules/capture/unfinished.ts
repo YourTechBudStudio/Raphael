@@ -1,8 +1,8 @@
 /**
  * Everything on this phone that is not finished, as something a screen can draw.
  *
- * One projection, published by the capability, because Home's leading cards and the recovery list
- * are the same set of facts shown at two sizes. The alternative - each screen reading `drafts`,
+ * One projection, published by the capability, because the recovery list and Home's count of it are
+ * the same set of facts asked two ways. The alternative - each screen reading `drafts`,
  * `attempts` and `unsaved` and working out what they mean - would put the certainty policy in two
  * components and make "is this a refusal or an unresolved save" a question two files answer
  * separately. That question decides whether someone's note gets duplicated.
@@ -114,8 +114,6 @@ export interface UnfinishedNote {
   readonly server: { readonly id: number; readonly revision: number } | null;
   readonly withdrawn: WithdrawnReason | null;
   readonly actions: readonly UnfinishedAction[];
-  /** False for anything that belongs to a connection this app has moved on from. */
-  readonly onHome: boolean;
 }
 
 /**
@@ -280,7 +278,6 @@ export const unfinishedNotes = (input: UnfinishedInput): readonly UnfinishedNote
           : { id: draft.serverNodeId, revision: draft.serverRevision ?? 0 },
       withdrawn: withdrawnFrom(standing),
       actions: actionsFor(status, scope, draft.destination ?? attempt?.destination ?? null),
-      onHome: scope === 'current',
     });
   }
 
@@ -310,9 +307,6 @@ export const unfinishedNotes = (input: UnfinishedInput): readonly UnfinishedNote
       // Deliberately empty. `discardDraft` works over drafts the owner adopted, and this is not one;
       // offering a discard would be a control that answers no, and migrating it is forbidden.
       actions: [],
-      // Recovery only. It cannot be opened, so a card for it on Home would be a dead tap target
-      // among cards that all go somewhere.
-      onHome: false,
     });
   }
 
@@ -358,7 +352,6 @@ export const unfinishedNotes = (input: UnfinishedInput): readonly UnfinishedNote
           : attempt.acknowledged !== null
             ? ['look_in', 'dismiss']
             : ['look_in'],
-      onHome: scope === 'current',
     });
   }
 
