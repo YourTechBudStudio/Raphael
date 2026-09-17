@@ -5,3 +5,7 @@ worktrees:
         run: pnpm install
         cwd: .
         timeout: 10m
+
+      - type: copy
+        src: .env
+        dest: .env
