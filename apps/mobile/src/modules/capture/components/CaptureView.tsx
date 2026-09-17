@@ -1,26 +1,17 @@
-import { Layers, X } from 'lucide-react-native';
-import { useRef, useState, type Ref } from 'react';
-import { ScrollView, TextInput, useWindowDimensions, View } from 'react-native';
+import { Tag } from 'lucide-react-native';
+import type { Ref } from 'react';
 
-import {
-  Chip,
-  ComposerBar,
-  ComposerFrame,
-  ComposerStatus,
-  IconButton,
-  SavePill,
-} from '../../../ui';
-import {
-  EditorHost,
-  EditorToolbar,
-  type EditorPort,
-  type EditorProblem,
-  type EditorSelectionState,
-  type EditorSnapshot,
-  type EditorCommand,
+import { Chip, SavePill } from '../../../ui';
+import type {
+  EditorCommand,
+  EditorPort,
+  EditorProblem,
+  EditorSelectionState,
+  EditorSnapshot,
 } from '../../editor';
-import type { ComposerView } from '../composer.ts';
-import { singleLineTitle, titleMaxHeight } from '../title.ts';
+import type { ComposerView, DestinationEyebrow } from '../composer.ts';
+import type { DetailsChip } from '../edit-composer.ts';
+import { ComposerShell, type ComposerEyebrow } from './ComposerShell';
 
 export interface CaptureViewProps {
   title: string;
@@ -29,10 +20,10 @@ export interface CaptureViewProps {
   documentId: string;
   document: unknown;
   view: ComposerView;
-  /** `parent / leaf`, elided above that, or null until somewhere has been chosen. */
-  destinationLabel: string | null;
-  /** The whole path, spoken. The chip shows two segments; a screen reader gets all of them. */
-  destinationSpoken: string | null;
+  /** What the eyebrow says about where this goes. Composed by `destinationEyebrow`, never here. */
+  destination: DestinationEyebrow;
+  /** What the Details chip says and how it is spoken. Composed by `detailsChip`, never here. */
+  details: DetailsChip;
   editorRef?: Ref<EditorPort> | undefined;
   /** Sends one formatting command to the renderer. The screen above holds the port. */
   onCommand: (command: EditorCommand) => void;
@@ -47,20 +38,28 @@ export interface CaptureViewProps {
   /** The pill: Save, Retry or Record it again, as the view decided. */
   onAction: () => void;
   onDestination: () => void;
+  onDetails: () => void;
   onClose: () => void;
   testID?: string | undefined;
 }
 
 /**
- * Writing a note: the whole screen, one bar above the keyboard.
+ * Writing a note: the edit screen's shape, under the creation policy.
  *
- * Presentation, and deliberately nothing else - no owner, no navigation, no decision about what may
- * be sent. That is what makes it testable, and it is also what makes it honest: every sentence and
- * every enabled control on this screen is a value passed in by something that asked the owner.
+ * `ComposerShell` is the screen; this is the half of it that only a note nobody has created yet has.
+ * It adds the two things you can only do to writing that is still entirely yours: choose where it
+ * goes, and decide when it is sent.
  *
- * It is the same frame as a saved note, because to a person it is the same screen. What it adds is
- * the things you can only do to writing that is still yours: a title and description you can type
- * into, a body you can format, a place to choose, and one action.
+ * **The destination is the eyebrow, not a chip**, in the same slot where an existing entity names
+ * where it is filed - because it is the same fact, and on a new note it is still a choice. It stops
+ * being a choice in two different ways, which the eyebrow says differently:
+ *
+ * - **Locked**, while a request is in the air. It stays a button, disabled, and the hint says it comes
+ *   back, which is true.
+ * - **Frozen**, once a request has answered for it. It becomes a plain label - the path is still
+ *   there, only the press is gone - because the note is on the server at that place, moving is not in
+ *   this story, and nothing the person waits for will change it. A permanently disabled button would
+ *   promise otherwise.
  */
 export function CaptureView({
   title,
@@ -68,8 +67,8 @@ export function CaptureView({
   documentId,
   document,
   view,
-  destinationLabel,
-  destinationSpoken,
+  destination,
+  details,
   editorRef,
   onCommand,
   selection,
@@ -81,153 +80,72 @@ export function CaptureView({
   onLinkPress,
   onAction,
   onDestination,
+  onDetails,
   onClose,
   testID,
 }: CaptureViewProps) {
-  /**
-   * Whether the body is where writing is going.
-   *
-   * The body lives in a WebView, so its focus is not a native fact this screen can read. What it can
-   * read is that the editor reported a selection and that neither native field has taken focus
-   * since - which is the same thing from the person's side, and is what decides whether the
-   * formatting row is there.
-   */
-  const [bodyActive, setBodyActive] = useState(false);
-  const descriptionInput = useRef<TextInput>(null);
-  // Two lines of the title, at whatever size this person reads at. A fixed cap is two lines only at
-  // the default scale, and clips the second line for exactly those who asked for larger text.
-  const { fontScale } = useWindowDimensions();
-
-  const chipLabel = destinationLabel ?? 'Where?';
-  const chipSpoken =
-    destinationSpoken === null ? 'Choose where this note goes' : `Filed in ${destinationSpoken}`;
+  const eyebrow: ComposerEyebrow = view.destinationFrozen
+    ? { kind: 'label', label: destination.label, spoken: destination.spoken }
+    : {
+        kind: 'button',
+        label: destination.label,
+        spoken: destination.spoken,
+        hint: destination.hint,
+        disabled: view.locked,
+        onPress: onDestination,
+      };
 
   return (
-    <ComposerFrame
-      bar={
-        <ComposerBar
-          above={
-            bodyActive && !view.locked ? (
-              <EditorToolbar
-                active={selection.active}
-                available={selection.available}
-                locked={view.locked}
-                onCommand={onCommand}
-              />
-            ) : undefined
-          }
-          testID="capture-bar"
-        >
-          <Chip
-            accessibilityHint="Chooses the area or project this note goes in"
-            accessibilityLabel={chipSpoken}
-            // Frozen once a request answers for it: changing where a note goes after asking a
-            // server to create it there would make the frozen request mean something else.
-            disabled={view.locked || view.destinationFrozen}
-            icon={Layers}
-            label={chipLabel}
-            onPress={onDestination}
-            style={{ flexShrink: 1 }}
-            testID="capture-destination"
-          />
-          <View style={{ flex: 1 }} />
-          {view.action.kind === 'none' ? null : (
-            <SavePill
-              accessibilityHint={view.action.hint}
-              disabled={!view.action.enabled}
-              label={view.action.label}
-              onPress={onAction}
-              testID="capture-action"
-            />
-          )}
-        </ComposerBar>
-      }
-      leading={
-        <IconButton
-          // Unavailable while a request is in the air, and visibly so. Leaving then would take the
-          // lock a save is holding and leave the screen its outcome has nowhere to appear on - and
-          // a disabled control says that, where a silently ignored tap would not.
-          accessibilityHint={
-            view.locked ? 'Available once this note has finished saving' : undefined
-          }
+    <ComposerShell
+      barLeading={
+        <Chip
+          accessibilityHint={details.hint}
+          accessibilityLabel={details.spoken}
           disabled={view.locked}
-          icon={X}
-          label="Close"
-          onPress={onClose}
+          icon={Tag}
+          label={details.label}
+          onPress={onDetails}
+          style={{ flexShrink: 1 }}
+          testID="capture-details"
         />
       }
-      status={
-        <ComposerStatus testID="capture-status" tone={view.status.tone}>
-          {view.status.text}
-        </ComposerStatus>
+      barTrailing={
+        view.action.kind === 'none' ? undefined : (
+          <SavePill
+            accessibilityHint={view.action.hint}
+            disabled={!view.action.enabled}
+            label={view.action.label}
+            onPress={onAction}
+            testID="capture-action"
+          />
+        )
       }
+      // Unavailable while a request is in the air, and visibly so. Leaving then would take the lock a
+      // save is holding and leave the screen its outcome has nowhere to appear on - and a disabled
+      // control says that, where a silently ignored tap would not.
+      closeDisabled={view.locked}
+      closeHint={view.locked ? 'Available once this note has finished saving' : undefined}
+      description={description}
+      document={document}
+      documentId={documentId}
+      editorRef={editorRef}
+      eyebrow={eyebrow}
+      locked={view.locked}
+      namespace="capture"
+      onClose={onClose}
+      onCommand={onCommand}
+      onDescriptionChange={onDescriptionChange}
+      onLinkPress={onLinkPress}
+      onProblem={onProblem}
+      onSelectionChange={onSelectionChange}
+      onSnapshot={onSnapshot}
+      onTitleChange={onTitleChange}
+      selection={selection}
+      status={view.status}
       testID={testID}
-    >
-      <View className="flex-1">
-        <ScrollView
-          className="flex-none"
-          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8 }}
-          keyboardShouldPersistTaps="handled"
-        >
-          <TextInput
-            accessibilityLabel="Note title"
-            className="font-heading text-[26px] leading-[32px] text-ink"
-            editable={!view.locked}
-            multiline
-            // Return already moves on rather than inserting a break; this is the other way one
-            // arrives. A pasted break becomes a space here, where it is still visible and
-            // changeable, rather than at the freeze boundary, where it is refused instead.
-            onChangeText={(value) => {
-              onTitleChange(singleLineTitle(value));
-            }}
-            onFocus={() => {
-              setBodyActive(false);
-            }}
-            onSubmitEditing={() => {
-              descriptionInput.current?.focus();
-            }}
-            placeholder="Title"
-            returnKeyType="next"
-            // Return moves on rather than inserting a line break: a title is one line of text that
-            // happens to wrap, not a place to write paragraphs.
-            submitBehavior="blurAndSubmit"
-            style={{ maxHeight: titleMaxHeight(fontScale) }}
-            testID="capture-title"
-            value={title}
-          />
-          {/* Always visible, never behind a control. A description is part of writing a note, and
-              a note nobody described is the ordinary case rather than an incomplete one. */}
-          <TextInput
-            accessibilityLabel="Description"
-            className="mt-1 font-body text-[15px] leading-[22px] text-ink"
-            editable={!view.locked}
-            onChangeText={onDescriptionChange}
-            onFocus={() => {
-              setBodyActive(false);
-            }}
-            placeholder="Add a description"
-            ref={descriptionInput}
-            testID="capture-description"
-            value={description}
-          />
-        </ScrollView>
-
-        <EditorHost
-          document={document}
-          documentId={documentId}
-          editable={!view.locked}
-          onProblem={onProblem}
-          onLinkPress={onLinkPress}
-          onSelectionChange={(state) => {
-            onSelectionChange(state);
-            setBodyActive(true);
-          }}
-          onSnapshot={onSnapshot}
-          ref={editorRef}
-          style={{ flex: 1, marginTop: 8 }}
-          unprotected={view.problem !== null}
-        />
-      </View>
-    </ComposerFrame>
+      title={title}
+      titleLabel="Note title"
+      unprotected={view.problem !== null}
+    />
   );
 }

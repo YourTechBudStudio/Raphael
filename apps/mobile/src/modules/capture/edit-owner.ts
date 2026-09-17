@@ -65,6 +65,7 @@ import {
   type SnapshotResult,
 } from './protection.ts';
 import type { CaptureStore, OpenOutcome, StoredEdits } from './store.ts';
+import { sameTags } from './tags.ts';
 
 /** How long typing settles before a version is sent. Long enough that a sentence is one update. */
 export const AUTOSAVE_DELAY_MS = 1500;
@@ -203,20 +204,6 @@ const refusalOf = (failure: ClientFailure, at: number): EditRefusal => {
     at,
   };
 };
-
-/**
- * Whether two tag lists are the same list.
- *
- * Element-wise, because `tags` is the one field of `EditContent` that is not a string and `===` on an
- * array is reference identity. A tag sheet rebuilds its array on every commit, so an identity test
- * would call every no-op edit a change: a protection version bumped, a row written to SQLite, the
- * debounce armed, and an empty diff acknowledged locally. Correct, and a durable write for nothing.
- *
- * It also has to agree with `diff`, which compares tags by membership. Two halves of one question
- * answered by two notions of equality is how "nothing changed" and "nothing to send" drift apart.
- */
-const sameTags = (left: readonly string[], right: readonly string[]): boolean =>
-  left.length === right.length && left.every((tag, index) => tag === right[index]);
 
 /**
  * What this open could establish about where the entity sits.

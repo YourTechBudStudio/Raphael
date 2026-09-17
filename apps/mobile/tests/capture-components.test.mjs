@@ -29,7 +29,8 @@ const { act, createElement } = await import('react');
 const { createRoot } = await import('react-dom/client');
 const { setWindowDimensions } = await import('./support/stubs/react-native.mjs');
 const { titleMaxHeight } = await import('../src/modules/capture/title.ts');
-const { composerView } = await import('../src/modules/capture/composer.ts');
+const { composerView, destinationEyebrow } = await import('../src/modules/capture/composer.ts');
+const { detailsChip } = await import('../src/modules/capture/edit-composer.ts');
 const { CaptureView } = await import('../src/modules/capture/components/CaptureView.tsx');
 const { ProtectSheet } = await import('../src/modules/capture/components/ProtectSheet.tsx');
 const { OutcomeSheet } = await import('../src/modules/capture/components/OutcomeSheet.tsx');
@@ -82,6 +83,13 @@ const render = (element) => {
         control.click();
       });
     },
+    pressTestId: (id) => {
+      const control = host.querySelector(`[data-testid="${id}"]`);
+      assert.ok(control !== null, `no control at ${id}`);
+      act(() => {
+        control.click();
+      });
+    },
     unmount: () => {
       act(() => {
         root.unmount();
@@ -113,6 +121,10 @@ const view = (over = {}) =>
     ...over,
   });
 
+/** The destination exactly as the screen composes it: from a name, never assembled by hand. */
+const named = (over = {}) =>
+  destinationEyebrow({ chip: 'Work / Notes', spoken: 'Work / Notes', leaf: 'Notes', ...over });
+
 const composer = (over = {}) =>
   createElement(CaptureView, {
     title: 'Field notes',
@@ -120,8 +132,8 @@ const composer = (over = {}) =>
     documentId: 'd1',
     document: { type: 'doc', content: [] },
     view: view(),
-    destinationLabel: 'Work / Notes',
-    destinationSpoken: 'Work / Notes',
+    destination: named(),
+    details: detailsChip({ nodeType: 'resource', kind: 'note', slug: null, tagCount: 0 }),
     selection: { active: [], available: [] },
     onSelectionChange: () => {},
     onCommand: () => {},
@@ -130,12 +142,13 @@ const composer = (over = {}) =>
     onSnapshot: () => {},
     onAction: () => {},
     onDestination: () => {},
+    onDetails: () => {},
     onClose: () => {},
     ...over,
   });
 
 describe('the composer', () => {
-  it('shows the status, the destination and one action', () => {
+  it('shows the status, the destination above the title, and one action', () => {
     const screen = render(composer());
 
     try {
@@ -143,8 +156,12 @@ describe('the composer', () => {
         screen.byTestId('capture-status').textContent,
         'Kept on this phone as you write',
       );
-      assert.equal(screen.byTestId('capture-destination').textContent, 'Work / Notes');
+      // The destination is the eyebrow now, in the same slot where an existing entity names where
+      // it is filed. The bar carries the Details chip and the Save pill, and no location chip.
+      assert.equal(screen.byTestId('capture-eyebrow').textContent, 'Work / Notes');
+      assert.equal(screen.byTestId('capture-details').textContent, 'Tags');
       assert.equal(screen.byTestId('capture-action').textContent, 'Save');
+      assert.equal(screen.byTestId('capture-destination'), null, 'the "Where?" chip is gone');
       // The title and the description are both there, and neither is behind a control.
       assert.ok(screen.byLabel('Note title') !== null);
       assert.ok(screen.byLabel('Description') !== null);
@@ -153,25 +170,112 @@ describe('the composer', () => {
     }
   });
 
-  it('speaks the whole path even though the chip shows two segments', () => {
+  it('opens the destination sheet from the eyebrow', () => {
+    const presses = [];
     const screen = render(
-      composer({ destinationLabel: '… / Work / Notes', destinationSpoken: 'Life / Work / Notes' }),
+      composer({
+        onDestination: () => {
+          presses.push(true);
+        },
+      }),
     );
 
     try {
-      assert.equal(screen.byTestId('capture-destination').textContent, '… / Work / Notes');
+      screen.pressTestId('capture-eyebrow');
+      assert.deepEqual(presses, [true]);
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('opens the details sheet from the bar', () => {
+    const presses = [];
+    const screen = render(
+      composer({
+        onDetails: () => {
+          presses.push(true);
+        },
+      }),
+    );
+
+    try {
+      screen.pressTestId('capture-details');
+      assert.deepEqual(presses, [true]);
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('speaks the whole path even though the eyebrow shows two segments', () => {
+    const screen = render(
+      composer({ destination: named({ chip: '… / Work / Notes', spoken: 'Life / Work / Notes' }) }),
+    );
+
+    try {
+      assert.equal(screen.byTestId('capture-eyebrow').textContent, '… / Work / Notes');
       assert.ok(screen.byLabel('Filed in Life / Work / Notes') !== null);
     } finally {
       screen.unmount();
     }
   });
 
-  it('asks where, rather than naming somewhere nobody chose', () => {
-    const screen = render(composer({ destinationLabel: null, destinationSpoken: null }));
+  it('asks where, rather than naming somewhere nobody chose, and holds Save until it is told', () => {
+    const screen = render(
+      composer({
+        destination: named({ chip: null, spoken: null, leaf: null }),
+        view: view({ hasDestination: false }),
+      }),
+    );
 
     try {
-      assert.equal(screen.byTestId('capture-destination').textContent, 'Where?');
+      assert.equal(screen.byTestId('capture-eyebrow').textContent, 'Where does this go?');
       assert.ok(screen.byLabel('Choose where this note goes') !== null);
+      assert.equal(screen.byTestId('capture-action').disabled, true);
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  /**
+   * The chosen-but-unnameable state is its own thing, and it survived the move off the bar.
+   *
+   * A destination the hierarchy cannot name right now is still chosen. Reverting to the question
+   * would invite someone to pick again over a choice that still stands, which is the rule
+   * `useDestinationName` states and the eyebrow now has to keep.
+   */
+  it('does not ask again about a place it simply cannot name', () => {
+    const screen = render(
+      composer({ destination: named({ chip: 'Chosen place', spoken: null, leaf: null }) }),
+    );
+
+    try {
+      assert.equal(screen.byTestId('capture-eyebrow').textContent, 'Chosen place');
+      assert.ok(!screen.text().includes('Where does this go?'));
+      // Spoken as what it is. Never "Filed in Chosen place", which would read as a place's name, and
+      // never a sentence interpolated into another one.
+      assert.ok(
+        screen.byLabel('Where this note goes, which your server has not named here yet') !== null,
+      );
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('says how many tags a note that does not exist yet has', () => {
+    const chip = (tagCount) =>
+      detailsChip({ nodeType: 'resource', kind: 'note', slug: null, tagCount });
+
+    // No ID to show, because the server derives one from the title only once the note exists.
+    assert.equal(chip(0).label, 'Tags');
+    assert.equal(chip(0).spoken, 'Details: no tags');
+    assert.equal(chip(1).label, '1 tag');
+    assert.equal(chip(3).label, '3 tags');
+    assert.equal(chip(3).spoken, 'Details: 3 tags');
+
+    const screen = render(composer({ details: chip(2) }));
+
+    try {
+      assert.equal(screen.byTestId('capture-details').textContent, '2 tags');
     } finally {
       screen.unmount();
     }
@@ -211,8 +315,33 @@ describe('the composer', () => {
 
     try {
       assert.equal(screen.byTestId('capture-action').textContent, 'Retry');
-      // The frozen request answers for this destination, so the chip cannot be changed.
-      assert.equal(screen.byTestId('capture-destination').disabled, true);
+      // The frozen request answers for this destination, so it is no longer a choice - and it says
+      // so by becoming the label an existing entity draws, not a button that can never succeed.
+      const eyebrow = screen.byTestId('capture-eyebrow');
+
+      assert.equal(eyebrow.textContent, 'Work / Notes');
+      assert.equal(eyebrow.getAttribute('role'), null, 'no longer a button');
+      assert.equal(eyebrow.getAttribute('aria-disabled'), null);
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  /**
+   * Locked and frozen are different facts, and a disabled control is a promise.
+   *
+   * A request in the air comes back, so the eyebrow stays a button and says it is unavailable. A
+   * request that has answered never gives the choice back: the note is on the server at that place,
+   * and moving it is not in this story.
+   */
+  it('keeps the eyebrow a disabled button only while a request is in the air', () => {
+    const screen = render(composer({ view: view({ saving: true }) }));
+
+    try {
+      const eyebrow = screen.byTestId('capture-eyebrow');
+
+      assert.equal(eyebrow.getAttribute('role'), 'button');
+      assert.equal(eyebrow.getAttribute('aria-disabled'), 'true');
     } finally {
       screen.unmount();
     }

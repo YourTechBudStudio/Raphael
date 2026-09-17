@@ -313,7 +313,7 @@ describe('a note the CLI wrote, read by the phone', () => {
 });
 
 describe('a note the phone wrote, read by the CLI', () => {
-  it('carries its title, description, body, revision, identity and kind across', async () => {
+  it('carries its title, description, tags, body, revision, identity and kind across', async () => {
     const dir = await temporaryDir('phone-writes-');
 
     await withServer(async ({ endpoint }) => {
@@ -331,6 +331,9 @@ describe('a note the phone wrote, read by the CLI', () => {
         owner.getState().editDraft(draftId, {
           title: 'From the phone',
           description: 'Typed into the composer',
+          // Entered before the note exists, which is what the creation draft now carries and what
+          // the frozen request has to take with it.
+          tags: ['sync', 'design'],
         });
         owner.getState().attachEditor(draftId, editor.port);
         editor.captures(document);
@@ -355,6 +358,7 @@ describe('a note the phone wrote, read by the CLI', () => {
         assert.equal(byId.entity.parentId, WORK.id);
         assert.equal(byId.entity.title, 'From the phone');
         assert.equal(byId.entity.description, 'Typed into the composer');
+        assert.deepEqual(byId.entity.tags, ['sync', 'design'], 'tagged before it existed');
         assert.deepEqual(byId.entity.body.value, document, 'the canonical body crossed unchanged');
 
         const byPath = await cliJson(

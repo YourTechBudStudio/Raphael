@@ -35,6 +35,7 @@ const draft = (over = {}) => ({
   title: 'A note',
   description: '',
   document: document('written'),
+  tags: [],
   contentSchemaVersion: 1,
   destination: { type: 'area', id: 3 },
   draftVersion: 2,
@@ -214,6 +215,30 @@ test('a created note with writing left on the phone is a remainder, and is offer
   assert.ok(rows[0].actions.includes('copy'));
   // There is no update operation in this slice, so nothing here may offer to save it.
   assert.ok(!rows[0].actions.includes('record_again'));
+});
+
+/**
+ * Tags are authored content, so they count as writing left behind like every other field.
+ *
+ * The acknowledgement clears all four fields together, so a non-empty list on a created draft means
+ * tags written since the creation - which the server was never given and which the status line and
+ * this list both have to report rather than calling the note finished.
+ */
+test('tags written after a creation are writing left on the phone, like any other field', () => {
+  const cleared = {
+    state: 'created',
+    serverNodeId: 42,
+    serverRevision: 1,
+    title: '',
+    description: '',
+    document: createEmptyDocument(),
+  };
+  const rows = project([draft({ ...cleared, tags: ['sync'] })], []);
+
+  assert.equal(rows[0].status, 'remainder');
+
+  // And an entirely cleared draft is still not a card: there is nothing unfinished about it.
+  assert.deepEqual(project([draft({ ...cleared, tags: [] })], []), []);
 });
 
 test('a server success this phone could not write down offers only the local retry', () => {

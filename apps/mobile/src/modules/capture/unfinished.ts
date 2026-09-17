@@ -140,10 +140,19 @@ const GROUP = {
 
 const EMPTY_DOCUMENT = canonicalJson(createEmptyDocument());
 
-/** Whether a draft still holds writing. An acknowledgement empties the fields it cleared. */
-const hasWriting = (draft: NoteDraftRecord): boolean =>
+/**
+ * Whether a draft still holds writing. An acknowledgement empties the fields it cleared.
+ *
+ * Exported because the composer asks exactly this to decide whether its status says "newer writing
+ * kept on this phone", and a recovery list and a screen disagreeing about whether a note still holds
+ * something would be the same record described two ways. Every authored field is in it, tags
+ * included - the acknowledgement clears all four, so a non-empty one means writing since the
+ * creation.
+ */
+export const hasWriting = (draft: NoteDraftRecord): boolean =>
   draft.title !== '' ||
   draft.description !== '' ||
+  draft.tags.length > 0 ||
   canonicalJson(draft.document) !== EMPTY_DOCUMENT;
 
 const withdrawnFrom = (standing: Standing): WithdrawnReason | null => {

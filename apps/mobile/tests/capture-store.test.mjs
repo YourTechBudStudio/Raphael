@@ -57,6 +57,7 @@ const newDraft = (over = {}) => ({
   title: '',
   description: '',
   document: DOCUMENT,
+  tags: [],
   destination: DESTINATION,
   at: T0,
   ...over,
@@ -127,6 +128,53 @@ describe('drafts', () => {
     await store.close();
   });
 
+  it('carries tags as authored content, written and read back as given', async () => {
+    const { store } = await opened();
+    await store.insertDraft(newDraft({ tags: ['sync', 'design'] }));
+
+    const created = (await one(store)).drafts[0];
+
+    assert.deepEqual(created.tags, ['sync', 'design']);
+
+    // A version write carries them like every other authored field, order included.
+    const record = await store.writeVersion({
+      draftId: 'd1',
+      title: 'Field notes',
+      description: '',
+      document: DOCUMENT,
+      tags: ['design', 'sync'],
+      destination: DESTINATION,
+      draftVersion: 2,
+      at: T0 + 1,
+    });
+
+    assert.deepEqual(record.tags, ['design', 'sync']);
+
+    await store.close();
+  });
+
+  /**
+   * Authored content follows `title` and `description`, never `last_refusal`.
+   *
+   * The CHECK constraint guarantees a JSON array and says nothing about what is in it. A row whose
+   * authored columns are not what they claim is retained and named, never repaired to a default:
+   * degrading here would silently throw away tags someone wrote.
+   */
+  it('refuses a row whose tags are not tags, rather than emptying them', async () => {
+    const file = await temporaryFile();
+    const { store, db } = await opened(file);
+    await store.insertDraft(newDraft({ tags: ['sync'] }));
+    await db.run(`UPDATE ${DRAFTS_TABLE} SET tags = '[1,2]' WHERE draft_id = ?`, ['d1']);
+
+    const stored = await store.list();
+
+    assert.equal(stored.drafts.length, 0);
+    assert.equal(stored.unusableDrafts.length, 1);
+    assert.equal(stored.unusableDrafts[0].problem, 'unreadable_row');
+
+    await store.close();
+  });
+
   it('refuses to let an older version become the latest protected one', async () => {
     const { store } = await opened();
     await store.insertDraft(newDraft());
@@ -136,6 +184,7 @@ describe('drafts', () => {
       title: 'later',
       description: '',
       document: DOCUMENT,
+      tags: [],
       destination: DESTINATION,
       draftVersion: 4,
       at: T0 + 1,
@@ -146,6 +195,7 @@ describe('drafts', () => {
       title: 'earlier',
       description: '',
       document: DOCUMENT,
+      tags: [],
       destination: DESTINATION,
       draftVersion: 2,
       at: T0 + 2,
@@ -339,7 +389,7 @@ describe('acknowledgement', () => {
   it('records success, the draft creation and the clearing in one transaction', async () => {
     const file = await temporaryFile();
     const first = await opened(file);
-    await first.store.insertDraft(newDraft({ title: 'Consumed' }));
+    await first.store.insertDraft(newDraft({ title: 'Consumed', tags: ['sync'] }));
     await first.store.insertIntent(newIntent());
 
     const written = await first.store.acknowledge(acknowledgement());
@@ -352,6 +402,9 @@ describe('acknowledgement', () => {
     assert.equal(written.draft.serverNodeId, 42);
     assert.equal(written.draft.serverRevision, 1);
     assert.equal(written.draft.title, '');
+    // Every authored field, tags included: they went with the creation, so the draft holds nothing
+    // unsent and must not show them back as though it did.
+    assert.deepEqual(written.draft.tags, []);
     await first.store.close();
 
     // And it is on disk, not merely in a returned object.
@@ -376,6 +429,7 @@ describe('acknowledgement', () => {
       title: 'Written since',
       description: '',
       document: DOCUMENT,
+      tags: [],
       destination: DESTINATION,
       draftVersion: 2,
       at: T0 + 50,

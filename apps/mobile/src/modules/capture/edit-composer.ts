@@ -65,6 +65,11 @@ export const idLabelOf = (nodeType: NodeType, kind: ResourceKind | null): string
  * a second place where "slug" could reach an interface. The label is deliberately terse - it is a
  * chip - while the spoken form names what each part is, because "autosave-loop-notes, 3 tags" read
  * aloud says nothing about what the first half is.
+ *
+ * **A null slug is the creation screen**, where there is no ID because the server has not derived one
+ * from the title yet. The chip is then about tags alone, and it says so rather than showing a blank
+ * where an ID would be. It is composed here and not on that screen for the same reason as everything
+ * above: one place decides what this chip is called.
  */
 export interface DetailsChip {
   readonly label: string;
@@ -75,11 +80,20 @@ export interface DetailsChip {
 export const detailsChip = (input: {
   readonly nodeType: NodeType;
   readonly kind: ResourceKind | null;
-  readonly slug: string;
+  /** Null on a note that does not exist yet. */
+  readonly slug: string | null;
   readonly tagCount: number;
 }): DetailsChip => {
   const idLabel = idLabelOf(input.nodeType, input.kind);
   const tags = `${String(input.tagCount)} ${input.tagCount === 1 ? 'tag' : 'tags'}`;
+
+  if (input.slug === null) {
+    return {
+      label: input.tagCount === 0 ? 'Tags' : tags,
+      spoken: input.tagCount === 0 ? 'Details: no tags' : `Details: ${tags}`,
+      hint: 'Adds tags to this note',
+    };
+  }
 
   return {
     label: input.tagCount === 0 ? input.slug : `${input.slug} · ${tags}`,

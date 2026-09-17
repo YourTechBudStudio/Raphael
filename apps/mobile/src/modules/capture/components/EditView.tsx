@@ -1,28 +1,17 @@
-import { AlertCircle, Tag, X } from 'lucide-react-native';
-import { useRef, useState, type Ref } from 'react';
-import { ScrollView, Text, TextInput, useWindowDimensions, View } from 'react-native';
+import { AlertCircle, Tag } from 'lucide-react-native';
+import type { Ref } from 'react';
+import { Text, View } from 'react-native';
 
-import {
-  Chip,
-  colors,
-  ComposerBar,
-  ComposerFrame,
-  ComposerStatus,
-  Eyebrow,
-  IconButton,
-  PressableFeedback,
-} from '../../../ui';
-import {
-  EditorHost,
-  EditorToolbar,
-  type EditorCommand,
-  type EditorPort,
-  type EditorProblem,
-  type EditorSelectionState,
-  type EditorSnapshot,
+import { Chip, colors, PressableFeedback } from '../../../ui';
+import type {
+  EditorCommand,
+  EditorPort,
+  EditorProblem,
+  EditorSelectionState,
+  EditorSnapshot,
 } from '../../editor';
 import { CONFLICT_NOTICE, type DetailsChip, type EditComposerView } from '../edit-composer.ts';
-import { singleLineTitle, titleMaxHeight } from '../title.ts';
+import { ComposerShell, type ComposerEyebrow } from './ComposerShell';
 
 export interface EditViewProps {
   title: string;
@@ -65,15 +54,12 @@ export interface EditViewProps {
 }
 
 /**
- * Editing something the server already holds: the whole screen, one bar above the keyboard.
+ * Editing something the server already holds: the creation screen's shape, under the other policy.
  *
- * Presentation and nothing else - no owner, no navigation, no decision about what may be sent. Every
- * sentence and every enabled control is a value passed in by something that asked the owner, which is
- * what makes this testable and what makes it honest.
- *
- * It is the same frame as writing a new note, because to a person it is the same screen. What differs
- * is what the epic says must: there is no Save, because an existing entity autosaves, and the status
- * line beside the close cross carries the whole sync state instead.
+ * `ComposerShell` is the screen; this is the half of it that only an existing entity has. There is no
+ * Save, because an existing entity autosaves and the status line beside the close cross carries the
+ * whole sync state instead - and where a new note offers a destination, this names one and stops,
+ * because moving an entity is a different operation with different rules and is not in this story.
  *
  * **The conflict band is the first row of the bar stack**, above the formatting row, on the bar's own
  * surface. It is a band rather than a pill because it is the one state this screen says with more than
@@ -103,157 +89,82 @@ export function EditView({
   onClose,
   testID,
 }: EditViewProps) {
-  /**
-   * Whether the body is where writing is going.
-   *
-   * The body lives in a WebView, so its focus is not a native fact this screen can read. What it can
-   * read is that the editor reported a selection and that neither native field has taken focus since,
-   * which is the same thing from the person's side.
-   */
-  const [bodyActive, setBodyActive] = useState(false);
-  const descriptionInput = useRef<TextInput>(null);
-  const { fontScale } = useWindowDimensions();
-
   const segments = location.length > 2 ? ['…', ...location.slice(-2)] : location;
+  // Read-only, and there is nothing beside it that offers to move this: moving an entity is a
+  // different operation with different rules, and it is not in this story.
+  const eyebrow: ComposerEyebrow =
+    segments.length === 0
+      ? { kind: 'absent' }
+      : {
+          kind: 'label',
+          label: segments.join(' / '),
+          spoken: `Filed in ${location.join(', ')}`,
+        };
 
   return (
-    <ComposerFrame
-      bar={
-        <View>
-          {view.notice === null ? null : (
-            <View
-              accessibilityLiveRegion="polite"
-              className="flex-row items-center gap-3 border-b border-line py-2 pl-4 pr-2"
-              testID="edit-conflict"
-            >
-              <AlertCircle color={colors.danger} size={20} strokeWidth={2} />
-              <Text className="flex-1 font-body text-[15px] leading-[20px] text-ink">
-                {CONFLICT_NOTICE}
-              </Text>
-              <PressableFeedback
-                accessibilityHint="Removes the changes kept on this phone and reopens your server’s version"
-                accessibilityLabel="Discard my changes"
-                accessibilityRole="button"
-                className="h-11 justify-center rounded-full px-3"
-                onPress={onDiscard}
-                testID="edit-discard"
-                treatment="button"
-              >
-                <Text className="font-body-semibold text-[15px] text-danger">Discard</Text>
-              </PressableFeedback>
-            </View>
-          )}
-          <ComposerBar
-            above={
-              bodyActive && !view.locked ? (
-                <EditorToolbar
-                  active={selection.active}
-                  available={selection.available}
-                  locked={view.locked}
-                  onCommand={onCommand}
-                />
-              ) : undefined
-            }
-            testID="edit-bar"
+    <ComposerShell
+      barAbove={
+        view.notice === null ? null : (
+          <View
+            accessibilityLiveRegion="polite"
+            className="flex-row items-center gap-3 border-b border-line py-2 pl-4 pr-2"
+            testID="edit-conflict"
           >
-            <Chip
-              accessibilityHint={details.hint}
-              accessibilityLabel={details.spoken}
-              disabled={view.locked}
-              icon={Tag}
-              label={details.label}
-              onPress={onDetails}
-              style={{ flexShrink: 1 }}
-              testID="edit-details"
-            />
-            <View style={{ flex: 1 }} />
-          </ComposerBar>
-        </View>
+            <AlertCircle color={colors.danger} size={20} strokeWidth={2} />
+            <Text className="flex-1 font-body text-[15px] leading-[20px] text-ink">
+              {CONFLICT_NOTICE}
+            </Text>
+            <PressableFeedback
+              accessibilityHint="Removes the changes kept on this phone and reopens your server’s version"
+              accessibilityLabel="Discard my changes"
+              accessibilityRole="button"
+              className="h-11 justify-center rounded-full px-3"
+              onPress={onDiscard}
+              testID="edit-discard"
+              treatment="button"
+            >
+              <Text className="font-body-semibold text-[15px] text-danger">Discard</Text>
+            </PressableFeedback>
+          </View>
+        )
       }
-      leading={
-        <IconButton
-          // Leaving waits for the server to answer, and a disabled control says so where a silently
-          // ignored tap would not.
-          accessibilityHint={leaving ? 'Available once your server has answered' : undefined}
-          disabled={leaving}
-          icon={X}
-          label="Close"
-          onPress={onClose}
-          testID="edit-close"
+      barLeading={
+        <Chip
+          accessibilityHint={details.hint}
+          accessibilityLabel={details.spoken}
+          disabled={view.locked}
+          icon={Tag}
+          label={details.label}
+          onPress={onDetails}
+          style={{ flexShrink: 1 }}
+          testID="edit-details"
         />
       }
-      status={
-        <ComposerStatus testID="edit-status" tone={view.status.tone}>
-          {view.status.text}
-        </ComposerStatus>
-      }
+      // Leaving waits for the server to answer, and a disabled control says so where a silently
+      // ignored tap would not.
+      closeDisabled={leaving}
+      closeHint={leaving ? 'Available once your server has answered' : undefined}
+      description={description}
+      document={document}
+      documentId={documentId}
+      editorRef={editorRef}
+      eyebrow={eyebrow}
+      locked={view.locked}
+      namespace="edit"
+      onClose={onClose}
+      onCommand={onCommand}
+      onDescriptionChange={onDescriptionChange}
+      onLinkPress={onLinkPress}
+      onProblem={onProblem}
+      onSelectionChange={onSelectionChange}
+      onSnapshot={onSnapshot}
+      onTitleChange={onTitleChange}
+      selection={selection}
+      status={view.status}
       testID={testID}
-    >
-      <View className="flex-1">
-        <ScrollView
-          className="flex-none"
-          contentContainerStyle={{ paddingHorizontal: 20, paddingTop: 8 }}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* Read-only, and there is nothing beside it that offers to move this: moving an entity is
-              a different operation with different rules, and it is not in this story. */}
-          {segments.length === 0 ? null : (
-            <Eyebrow accessibilityLabel={`Filed in ${location.join(', ')}`} className="mb-1">
-              {segments.join(' / ')}
-            </Eyebrow>
-          )}
-          <TextInput
-            accessibilityLabel="Title"
-            className="font-heading text-[26px] leading-[32px] text-ink"
-            editable={!view.locked}
-            multiline
-            onChangeText={(value) => {
-              onTitleChange(singleLineTitle(value));
-            }}
-            onFocus={() => {
-              setBodyActive(false);
-            }}
-            onSubmitEditing={() => {
-              descriptionInput.current?.focus();
-            }}
-            placeholder="Title"
-            returnKeyType="next"
-            submitBehavior="blurAndSubmit"
-            style={{ maxHeight: titleMaxHeight(fontScale) }}
-            testID="edit-title"
-            value={title}
-          />
-          <TextInput
-            accessibilityLabel="Description"
-            className="mt-1 font-body text-[15px] leading-[22px] text-ink"
-            editable={!view.locked}
-            onChangeText={onDescriptionChange}
-            onFocus={() => {
-              setBodyActive(false);
-            }}
-            placeholder="Add a description"
-            ref={descriptionInput}
-            testID="edit-description"
-            value={description}
-          />
-        </ScrollView>
-
-        <EditorHost
-          document={document}
-          documentId={documentId}
-          editable={!view.locked}
-          onLinkPress={onLinkPress}
-          onProblem={onProblem}
-          onSelectionChange={(state) => {
-            onSelectionChange(state);
-            setBodyActive(true);
-          }}
-          onSnapshot={onSnapshot}
-          ref={editorRef}
-          style={{ flex: 1, marginTop: 8 }}
-          unprotected={view.problem !== null}
-        />
-      </View>
-    </ComposerFrame>
+      title={title}
+      titleLabel="Title"
+      unprotected={view.problem !== null}
+    />
   );
 }

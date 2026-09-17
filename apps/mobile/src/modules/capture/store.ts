@@ -71,7 +71,7 @@ const ATTEMPT_STATES: readonly AttemptState[] = [
   'acknowledged',
 ];
 
-const DRAFT_COLUMNS = `draft_id, connection_id, endpoint, state, title, description, body,
+const DRAFT_COLUMNS = `draft_id, connection_id, endpoint, state, title, description, body, tags,
   content_schema_version, destination_type, destination_id, draft_version, submitted_version,
   server_node_id, server_revision, created_at, updated_at`;
 
@@ -87,6 +87,7 @@ interface DraftRow {
   readonly title: string;
   readonly description: string;
   readonly body: string;
+  readonly tags: string;
   readonly content_schema_version: number;
   readonly destination_type: string | null;
   readonly destination_id: number | null;
@@ -125,6 +126,9 @@ const parseJson = (text: string | null): unknown => {
     return null;
   }
 };
+
+const isStringArray = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
 
 /**
  * Whether a persisted string still names a container.
@@ -278,6 +282,13 @@ const readDraft = (row: DraftRow): DraftReading => {
     return unusable('unusable_body');
   }
 
+  // Authored content, so it follows `title` and `description` rather than `last_refusal`: a row whose
+  // authored columns are not what they claim is retained and named, never repaired to a default. The
+  // CHECK constraint guarantees a JSON array; it says nothing about what is in it.
+  const tags = parseJson(row.tags);
+
+  if (!isStringArray(tags)) return unusable('unreadable_row');
+
   return {
     kind: 'usable',
     record: {
@@ -288,6 +299,7 @@ const readDraft = (row: DraftRow): DraftReading => {
       title: row.title,
       description: row.description,
       document,
+      tags,
       contentSchemaVersion: row.content_schema_version,
       destination,
       draftVersion: row.draft_version,
@@ -343,9 +355,6 @@ const isNodeType = (value: unknown): value is NodeType =>
  */
 const isResourceKind = (value: unknown): value is ResourceKind =>
   typeof value === 'string' && (RESOURCE_KINDS as readonly string[]).includes(value);
-
-const isStringArray = (value: unknown): value is readonly string[] =>
-  Array.isArray(value) && value.every((item) => typeof item === 'string');
 
 /**
  * The stored refusal, or null.
@@ -539,6 +548,7 @@ export interface NewDraft {
   readonly title: string;
   readonly description: string;
   readonly document: unknown;
+  readonly tags: readonly string[];
   readonly destination: Destination | null;
   readonly at: number;
 }
@@ -549,6 +559,7 @@ export interface DraftVersionWrite {
   readonly title: string;
   readonly description: string;
   readonly document: unknown;
+  readonly tags: readonly string[];
   readonly destination: Destination | null;
   readonly draftVersion: number;
   readonly at: number;
@@ -918,7 +929,7 @@ export const createCaptureStore = (db: SqlConnection): CaptureStore => {
       db.transaction(async (tx) => {
         await tx.run(
           `INSERT INTO ${DRAFTS_TABLE} (${DRAFT_COLUMNS})
-           VALUES (?, ?, ?, 'composing', ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
+           VALUES (?, ?, ?, 'composing', ?, ?, ?, ?, ?, ?, ?, 1, NULL, NULL, NULL, ?, ?)`,
           [
             draft.draftId,
             draft.connectionId,
@@ -926,6 +937,7 @@ export const createCaptureStore = (db: SqlConnection): CaptureStore => {
             draft.title,
             draft.description,
             JSON.stringify(draft.document),
+            JSON.stringify(draft.tags),
             CONTENT_SCHEMA_VERSION,
             draft.destination?.type ?? null,
             draft.destination?.id ?? null,
@@ -943,13 +955,14 @@ export const createCaptureStore = (db: SqlConnection): CaptureStore => {
         // an older snapshot the latest protected one.
         await tx.run(
           `UPDATE ${DRAFTS_TABLE}
-           SET title = ?, description = ?, body = ?, destination_type = ?, destination_id = ?,
-               draft_version = ?, updated_at = ?
+           SET title = ?, description = ?, body = ?, tags = ?, destination_type = ?,
+               destination_id = ?, draft_version = ?, updated_at = ?
            WHERE draft_id = ? AND draft_version < ?`,
           [
             write.title,
             write.description,
             JSON.stringify(write.document),
+            JSON.stringify(write.tags),
             write.destination?.type ?? null,
             write.destination?.id ?? null,
             write.draftVersion,
@@ -1042,9 +1055,13 @@ export const createCaptureStore = (db: SqlConnection): CaptureStore => {
         );
 
         if (cleared) {
+          // Every authored field, tags included. Leaving them behind would make the composer show
+          // tags the server already holds as though they were still unsent, and would make the
+          // remainder test - which asks whether anything authored is left - answer for three of the
+          // four fields.
           await tx.run(
             `UPDATE ${DRAFTS_TABLE}
-             SET title = '', description = '', body = ?, updated_at = ?
+             SET title = '', description = '', body = ?, tags = '[]', updated_at = ?
              WHERE draft_id = ? AND draft_version = ?`,
             [JSON.stringify(write.emptyDocument), write.at, write.draftId, write.submittedVersion],
           );

@@ -11,8 +11,17 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { createEmptyDocument } from '@raphael/content';
+import { TAGS_MAX_COUNT, TAG_MAX_CODE_POINTS } from '@raphael/contracts/nodes';
 
-import { canonicalJson, freezeNoteRequest, recoverNoteInput, thawNoteRequest } from './freeze.ts';
+import {
+  TAG_TOO_LONG_PROBLEM,
+  TOO_MANY_TAGS_PROBLEM,
+  UNPREPARABLE_PROBLEM,
+  canonicalJson,
+  freezeNoteRequest,
+  recoverNoteInput,
+  thawNoteRequest,
+} from './freeze.ts';
 
 const DESTINATION = { type: 'project', id: 7 };
 const DOCUMENT = {
@@ -26,6 +35,7 @@ const frozen = (over = {}) =>
     title: 'A note',
     description: '',
     document: DOCUMENT,
+    tags: [],
     idempotencyKey: 'key-1',
     ...over,
   });
@@ -45,7 +55,78 @@ describe('freezing a note request', () => {
     assert.deepEqual(request.parent, { id: 7 });
     assert.equal(request.format, 'tiptap');
     assert.deepEqual(request.body, { format: 'tiptap', value: DOCUMENT });
+    assert.deepEqual(request.tags, []);
     assert.equal(request.idempotencyKey, 'key-1');
+  });
+
+  /**
+   * A logical attempt is the bytes that were sent, so the empty case must have one spelling.
+   *
+   * `CreateRequest.tags` is optional, so an empty list could be omitted or sent - and choosing
+   * between them would make the frozen bytes depend on a client-side emptiness test. Two drafts that
+   * are the same draft would then freeze to two requests under two fingerprints, and the server would
+   * be asked the same question twice in two ways.
+   */
+  it('always sends tags, so an empty list has exactly one spelling', () => {
+    const empty = frozen({ tags: [] }).request;
+
+    assert.ok(empty.includes('"tags":[]'));
+    // The same draft, frozen twice. Identical bytes, not merely equivalent requests.
+    assert.equal(empty, frozen({ tags: [] }).request);
+  });
+
+  it('carries the tags it was given, in the order it was given them', () => {
+    assert.deepEqual(sent(frozen({ tags: ['sync', 'design'] })).tags, ['sync', 'design']);
+  });
+
+  /**
+   * A bound someone can reach from the details sheet is named, not swallowed.
+   *
+   * The sheet bounds nothing on purpose - the contract owns the numbers - so a long tag or a
+   * twenty-sixth one is refused here. Without a named sentence the person gets "Raphael could not
+   * prepare that request" over a tag they can see on screen, with nothing pointing at the cause and
+   * Save repeating it forever. The editor already names the same mistake when the server refuses it.
+   */
+  it('names which tag bound was hit, rather than refusing the request unhelpfully', () => {
+    const tooMany = Array.from({ length: TAGS_MAX_COUNT + 1 }, (_, index) => `t${String(index)}`);
+    const overCount = frozen({ tags: tooMany });
+
+    assert.equal(overCount.ok, false);
+    assert.equal(overCount.problem, TOO_MANY_TAGS_PROBLEM);
+    assert.match(overCount.problem, /\b25\b/, 'it says how many are allowed');
+    assert.match(overCount.problem, /Details/, 'and where to fix it');
+
+    const overLength = frozen({ tags: ['a'.repeat(TAG_MAX_CODE_POINTS + 1)] });
+
+    assert.equal(overLength.ok, false);
+    assert.equal(overLength.problem, TAG_TOO_LONG_PROBLEM);
+    assert.match(overLength.problem, /Details/);
+
+    // Neither falls through to the sentence that names nothing.
+    assert.notEqual(overCount.problem, UNPREPARABLE_PROBLEM);
+    assert.notEqual(overLength.problem, UNPREPARABLE_PROBLEM);
+
+    // And exactly at each bound still freezes, so the check is the contract's and not a stricter one.
+    assert.equal(frozen({ tags: tooMany.slice(0, TAGS_MAX_COUNT) }).ok, true);
+    assert.equal(frozen({ tags: ['a'.repeat(TAG_MAX_CODE_POINTS)] }).ok, true);
+  });
+
+  /**
+   * A draft frozen before this build knew about tags must still replay.
+   *
+   * `tags` is declared `Schema.optional` with no default, so a stored request that never mentioned
+   * them decodes to one that still does not - which is what keeps `thawNoteRequest`'s normalization
+   * comparison quiet. Had it carried a default, every request frozen by the previous build would
+   * come back `normalization_changed` and never be sent again.
+   */
+  it('replays a request frozen before tags existed, unchanged', () => {
+    const stored = JSON.parse(frozen().request);
+    delete stored.tags;
+    const bytes = canonicalJson(stored);
+    const thawed = thawNoteRequest(bytes);
+
+    assert.equal(thawed.ok, true);
+    assert.equal(canonicalJson(thawed.request), bytes, 'nothing was added on the way out');
   });
 
   it('refuses a title carrying a line break rather than repairing it', () => {
@@ -146,6 +227,7 @@ describe('recovering what was submitted', () => {
     assert.deepEqual(recovered, {
       title: 'A note',
       description: 'why',
+      tags: [],
       document: DOCUMENT,
       complete: true,
     });
@@ -171,6 +253,7 @@ describe('recovering what was submitted', () => {
     assert.deepEqual(recoverNoteInput('{{{', 'label'), {
       title: 'label',
       description: '',
+      tags: [],
       document: null,
       complete: false,
     });

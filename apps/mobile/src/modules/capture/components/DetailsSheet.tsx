@@ -44,6 +44,11 @@ const sentenceCase = (value: string): string => value.charAt(0).toUpperCase() + 
  * server - refused, and refused again on the next keystroke. Closing any other way forgets what was
  * typed, which is what makes Cancel mean something.
  *
+ * **What it says about saving differs, because the behaviour does.** An existing entity autosaves, so
+ * what is applied here goes with everything else; a new note has no autosave and no ID, so the sheet
+ * is tags alone and says they are kept until the note is saved. One sentence for both would be false
+ * on one of them.
+ *
  * **Tags are normalized on the way in, and the ID is not.** A tag's identity is the contract's to
  * decide and `normalizeTag` is that decision, so passing every entry through it is what keeps the
  * editor's tags and the server's in one identity - without it, an editor holding `work` and `work `
@@ -106,11 +111,17 @@ export function DetailsSheet({
     >
       <SheetHeader
         leading={<IconButton icon={X} label="Cancel" onPress={onClose} />}
-        subtitle="Applied when you press Done, and saved with everything else."
+        subtitle={
+          since.slug === null
+            ? 'Applied when you press Done, and saved when you save the note.'
+            : 'Applied when you press Done, and saved with everything else.'
+        }
         title="Details"
         trailing={
           <SavePill
-            accessibilityHint={`Applies the ${idLabel} and tags`}
+            accessibilityHint={
+              since.slug === null ? 'Applies the tags' : `Applies the ${idLabel} and tags`
+            }
             disabled={!changed}
             label="Done"
             onPress={() => {

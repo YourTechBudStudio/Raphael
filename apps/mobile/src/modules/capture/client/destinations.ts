@@ -7,29 +7,24 @@
  * hierarchy retained after a failed refresh was true when it was read and may not be now, and a chip
  * has nowhere to say which of those it is showing.
  *
- * Declining is not deletion. A destination nobody can name right now is still chosen, and the chip
- * says so rather than reverting to "Where?", which would invite someone to pick again.
+ * Declining is not deletion. A destination nobody can name right now is still chosen, and the eyebrow
+ * says so rather than reverting to the question, which would invite someone to pick again.
  */
 
 import { useCallback } from 'react';
 
 import { ancestorsOf, useHierarchy } from '../../collections';
+import type { DestinationName } from '../composer.ts';
 import type { Destination } from '../types.ts';
 
-export interface DestinationName {
-  /** `parent / leaf`, with a leading ellipsis when the path is deeper. Null when nothing is chosen. */
-  readonly chip: string | null;
-  /** The whole path, for the accessible label. Null when nothing is chosen. */
-  readonly spoken: string | null;
-  /** Just the leaf, for a sentence like "Look in <leaf>". Null when it cannot be named. */
-  readonly leaf: string | null;
-}
+// The shape lives beside the words composed from it, in `composer.ts`, which no live query may reach
+// into. Re-exported here so the hook and its result still have one name between them.
+export type { DestinationName };
 
-const NOT_NAMEABLE: DestinationName = {
-  chip: 'Chosen place',
-  spoken: 'Where this note goes, which your server has not named here yet',
-  leaf: null,
-};
+// Chosen, and not nameable here and now. `spoken` is null because there is no path to speak; the
+// sentence for that is composed where the words are, and a caller that interpolates this into one of
+// its own gets nothing rather than a sentence inside a sentence.
+const NOT_NAMEABLE: DestinationName = { chip: 'Chosen place', spoken: null, leaf: null };
 
 const NOTHING_CHOSEN: DestinationName = { chip: null, spoken: null, leaf: null };
 

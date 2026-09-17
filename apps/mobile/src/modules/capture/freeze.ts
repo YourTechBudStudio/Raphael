@@ -14,7 +14,9 @@
  */
 
 import {
+  TAGS_MAX_COUNT,
   decodeCreateRequest,
+  inspectTagsInput,
   inspectTitleInput,
   type CreateRequestInput,
   type TipTapDocumentTransport,
@@ -31,6 +33,8 @@ export interface FreezeInput {
   readonly description: string;
   /** The accepted canonical snapshot. */
   readonly document: unknown;
+  /** Normalized by whoever accepted them. Sent as given, empty or not. */
+  readonly tags: readonly string[];
   readonly idempotencyKey: string;
 }
 
@@ -67,11 +71,14 @@ export const MULTILINE_TITLE_PROBLEM =
   'A note title is one line. Remove the line break from the title and save again.';
 export const UNPREPARABLE_PROBLEM =
   'Raphael could not prepare that request, so nothing was sent. Your note is kept on this phone.';
+export const TOO_MANY_TAGS_PROBLEM = `A note can have at most ${String(TAGS_MAX_COUNT)} tags. Remove some in Details and save again.`;
+export const TAG_TOO_LONG_PROBLEM =
+  'One of those tags is too long. Shorten it in Details and save again.';
 
 /**
  * Build the request for one note and normalize it.
  *
- * Four decisions, each answering a question the container path never had:
+ * Five decisions, each answering a question the container path never had:
  *
  * **The title is omitted, never trimmed into existence.** Whitespace-only input is an omitted title,
  * so core resolves one from the content; a title that was written is sent exactly as typed, and core
@@ -85,10 +92,23 @@ export const UNPREPARABLE_PROBLEM =
  * what the editor produced and what core validates without conversion; the returned body is TipTap so
  * an acknowledgement can seed the note's detail cache without a second request.
  *
+ * **`tags` is always present**, for the same reason the body is. An empty list omitted and an empty
+ * list sent are equivalent on the server, but choosing between them would make the frozen bytes depend
+ * on a client-side emptiness test - and two drafts that are the same draft would freeze to two
+ * different requests, under two different fingerprints. `tags: []` says what it asked for.
+ *
  * **The parent is always `{ id }`**, never a path. Mobile holds a stable reference, and a path would
  * be a second address that can go stale.
  *
- * And one refusal: **a title carrying a line break is declined, not repaired.** The composer
+ * And two named refusals, because a generic one is a dead end. **A tag list this build would refuse
+ * is named before the decode**, the way the title is: the decoder's own message carries the submitted
+ * value so it can never be shown, and "Raphael could not prepare that request" over a tag someone can
+ * see on screen leaves them pressing Save forever with nothing pointing at the cause. `inspectTagsInput`
+ * is the decoder's own rule asked as a question, so the bounds stay the contract's; only the sentence
+ * is this app's, and it names the same mistake the editor's `refusedStatus` names when the server
+ * refuses it there.
+ *
+ * **A title carrying a line break is declined, not repaired.** The composer
  * normalizes one to a space as it is typed or pasted, which is where a person can still see it
  * happen. Anything that reaches here with a break came from somewhere else - a recovered draft
  * written by an older build, or a caller bypassing the field - and rewriting it at this boundary
@@ -113,6 +133,22 @@ export const freezeNoteRequest = (input: FreezeInput): FreezeResult => {
     }
   }
 
+  // The two a person can reach from the details sheet, which bounds nothing on purpose - the
+  // contract is the authority for the numbers. An empty or repeated tag cannot arrive from there, so
+  // it falls through to the generic problem, exactly as a title with a line break does.
+  const tagRejection = inspectTagsInput(input.tags);
+
+  if (tagRejection !== undefined) {
+    if (tagRejection.reason === 'tags_too_many') {
+      return { ok: false, problem: TOO_MANY_TAGS_PROBLEM };
+    }
+    if (tagRejection.reason === 'tag_too_long') {
+      return { ok: false, problem: TAG_TOO_LONG_PROBLEM };
+    }
+
+    return { ok: false, problem: UNPREPARABLE_PROBLEM };
+  }
+
   const request: CreateRequestInput = {
     type: 'resource',
     kind: 'note',
@@ -125,6 +161,7 @@ export const freezeNoteRequest = (input: FreezeInput): FreezeResult => {
     // validated; the decode immediately below is what proves it, so the assertion is checked at
     // runtime one line later rather than trusted.
     body: { format: 'tiptap' as const, value: input.document as TipTapDocumentTransport },
+    tags: input.tags,
     idempotencyKey: input.idempotencyKey,
     // Written out rather than left to the schema's default, so the stored request says what it asked
     // for instead of depending on what this build's default happened to be.
@@ -174,6 +211,8 @@ export const thawNoteRequest = (stored: string): ThawResult => {
 export interface RecoveredNote {
   readonly title: string;
   readonly description: string;
+  /** The submitted tags. Empty where the stored request named none, or named none readably. */
+  readonly tags: readonly string[];
   /** The submitted document, or null when it could not be read out at all. */
   readonly document: unknown;
   /**
@@ -202,12 +241,20 @@ export const recoverNoteInput = (stored: string, fallbackTitle: string): Recover
     const request = value as {
       readonly title?: unknown;
       readonly description?: unknown;
+      readonly tags?: unknown;
       readonly body?: { readonly value?: unknown };
     };
+    const tags = request.tags;
 
     return {
       title: typeof request.title === 'string' ? request.title : fallbackTitle,
       description: typeof request.description === 'string' ? request.description : '',
+      // A request frozen before tags existed has none, which is the same answer as a request that
+      // asked for none. Neither is a failure to read it, so neither marks the reading incomplete.
+      tags:
+        Array.isArray(tags) && tags.every((tag) => typeof tag === 'string')
+          ? (tags as readonly string[])
+          : [],
       document: request.body?.value ?? null,
       complete,
     };
@@ -220,7 +267,7 @@ export const recoverNoteInput = (stored: string, fallbackTitle: string): Recover
   try {
     return read(JSON.parse(stored), false);
   } catch {
-    return { title: fallbackTitle, description: '', document: null, complete: false };
+    return { title: fallbackTitle, description: '', tags: [], document: null, complete: false };
   }
 };
 

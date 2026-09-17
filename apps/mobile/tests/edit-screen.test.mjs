@@ -147,7 +147,12 @@ describe('the editor over an existing entity', () => {
     try {
       assert.equal(screen.byTestId('edit-status').textContent, 'On your server · revision 7');
       assert.equal(screen.byTestId('edit-details').textContent, 'autosave-loop-notes · 3 tags');
-      assert.ok(screen.text().includes('Raphael / Sync notes'), 'the location eyebrow');
+      // The location eyebrow, in the slot where a new note offers a destination - and a label rather
+      // than a control, because moving an entity is a different operation and is not in this story.
+      const eyebrow = screen.byTestId('edit-eyebrow');
+
+      assert.equal(eyebrow.textContent, 'Raphael / Sync notes');
+      assert.notEqual(eyebrow.getAttribute('role'), 'button');
       // No Save on an existing entity, and nothing that offers to move it.
       assert.equal(screen.byTestId('capture-action'), null);
       assert.equal(screen.byTestId('capture-destination'), null);
@@ -162,6 +167,7 @@ describe('the editor over an existing entity', () => {
     const screen = render(editor({ location: [] }));
 
     try {
+      assert.equal(screen.byTestId('edit-eyebrow'), null);
       assert.ok(!screen.text().includes('/'), 'nothing that looks like a path');
     } finally {
       screen.unmount();

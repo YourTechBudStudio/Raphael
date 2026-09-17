@@ -50,6 +50,7 @@ const DRAFT = {
   title: 'Field notes',
   description: '',
   document: { type: 'doc', content: [] },
+  tags: [],
   contentSchemaVersion: 1,
   destination: { type: 'area', id: 3 },
   draftVersion: 1,
@@ -76,6 +77,7 @@ const heldOwner = (result, options = {}) => {
   const calls = [];
   const releases = [];
   const saves = [];
+  const edits = [];
   let answer;
   let answerSave;
 
@@ -91,6 +93,9 @@ const heldOwner = (result, options = {}) => {
     protection: { d1: PROTECTION },
     standingFor: () => ({ kind: 'save' }),
     attachEditor: () => ({ draftId: 'd1', generation: 1 }),
+    editDraft: (_draftId, fields) => {
+      edits.push(fields);
+    },
     detachEditor: () => {},
     snapshotAccepted: () => 'accepted',
     flush: async () => ({ kind: 'flushed', version: 1, captured: 'editor' }),
@@ -130,6 +135,7 @@ const heldOwner = (result, options = {}) => {
     calls,
     releases,
     saves,
+    edits,
     settle: async () => {
       answer?.();
       answerSave?.();
@@ -142,6 +148,26 @@ const heldOwner = (result, options = {}) => {
       });
     },
   };
+};
+
+/**
+ * Put text into a field the way a person does.
+ *
+ * React tracks a controlled input's value on the node itself, so assigning `.value` directly is
+ * ignored as a no-op. Going through the prototype's own setter is what makes the change real.
+ */
+const type = (field, text) => {
+  const setter = Object.getOwnPropertyDescriptor(
+    field.tagName === 'TEXTAREA'
+      ? dom.window.HTMLTextAreaElement.prototype
+      : dom.window.HTMLInputElement.prototype,
+    'value',
+  )?.set;
+
+  act(() => {
+    setter?.call(field, text);
+    field.dispatchEvent(new dom.window.Event('change', { bubbles: true }));
+  });
 };
 
 const render = () => {
@@ -313,15 +339,62 @@ describe('one controlled transition at a time', () => {
     const screen = render();
 
     try {
-      screen.pressTogether('Close', '#capture-destination');
+      screen.pressTogether('Close', '#capture-eyebrow');
 
       assert.equal(owner.calls.length, 1, 'the second press finds the latch closed');
 
       await owner.settle();
 
-      // One outcome, not a sheet and a navigation arriving over each other.
+      // One outcome, not a sheet and a navigation arriving over each other. The sheet is found by
+      // its testID rather than its heading: the eyebrow that opens it asks the same question, so the
+      // words are on screen either way.
       assert.equal(navigations.length, 1);
-      assert.ok(!screen.text().includes('Where does this go?'));
+      assert.equal(screen.byTestId('destination-sheet'), null);
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  /**
+   * The Details chip is the other sheet, and it takes the same barrier.
+   *
+   * The destination half of this bar is pressed here and in `capture-components.test.mjs`; without
+   * this, the one wire phase 08 newly added - chip, controlled exit, tags-only sheet, one commit -
+   * would be the only thing on the bar that nothing pulls. Label assertions prove `detailsChip`
+   * composes words; they prove nothing about the sheet this screen opens.
+   */
+  it('opens the tags-only details sheet from the bar, and commits what it collects', async () => {
+    const owner = heldOwner({ kind: 'flushed', version: 1, captured: 'editor' });
+    const screen = render();
+
+    try {
+      screen.pressTogether('#capture-details');
+
+      // The sheet waits on the same barrier a Back does: until the editor is locked and flushed,
+      // covering it would hide both the unprotected status and the repair.
+      assert.equal(screen.byTestId('details-sheet'), null);
+
+      await owner.settle();
+
+      assert.ok(screen.byTestId('details-sheet') !== null, 'the sheet is over the editor');
+      // A new note has no ID until the server derives one from its title, so there is no ID field -
+      // the sheet is tags alone.
+      assert.equal(screen.byTestId('details-slug'), null);
+      assert.ok(screen.byTestId('details-tag-entry') !== null);
+
+      type(screen.byTestId('details-tag-entry'), 'sync');
+      screen.pressTogether('Add tag');
+      screen.pressTogether('#details-done');
+      // One commit carrying the tags - never one per keystroke - and the editor handed back with it.
+      assert.deepEqual(owner.edits, [{ tags: ['sync'] }]);
+      assert.equal(owner.releases.length, 1);
+      assert.deepEqual(navigations, [], 'a sheet is not a way out of the screen');
+
+      // And the latch is open again. That, rather than the sheet's node being gone, is what says the
+      // transition finished: `Sheet` keeps its node through the dismissal animation, so a DOM check
+      // here would be testing the motion.
+      screen.pressTogether('#capture-details');
+      assert.equal(owner.calls.length, 2);
     } finally {
       screen.unmount();
     }

@@ -79,6 +79,49 @@ describe('protecting what is written', () => {
     await kit.close();
   });
 
+  /**
+   * Tags are authored content, and the same counter answers for them.
+   *
+   * The details sheet commits on Done and rebuilds its array each time, so the no-op case is the
+   * ordinary one: opening the sheet and pressing Done over an unchanged list must not bump a version,
+   * write a row, or make the bar say anything. `sameTags` is what decides it, and identity would get
+   * it wrong on the one authored field that is not a string.
+   */
+  it('counts a tag change like any other authored field, and a tag no-op not at all', async () => {
+    const kit = await harness();
+    const editor = fakeEditor();
+    const { draftId } = await readyDraft(kit, editor);
+    const version = () => kit.owner.getState().protection[draftId].latestAcceptedVersion;
+    // Created at 1, a destination at 2.
+    const before = version();
+
+    // A new note starts with no tags, and that is a list rather than an absence: every later
+    // comparison and the frozen request itself are written against a real array.
+    assert.deepEqual(draftOf(kit, draftId).tags, []);
+
+    kit.owner.getState().editDraft(draftId, { tags: ['sync'] });
+
+    assert.equal(version(), before + 1);
+
+    // The same list, a new array - exactly what Done hands over when nothing was changed.
+    kit.owner.getState().editDraft(draftId, { tags: ['sync'] });
+
+    assert.equal(version(), before + 1, 'an equal list is not a change');
+
+    // Order is significant, because the frozen bytes are.
+    kit.owner.getState().editDraft(draftId, { tags: ['sync', 'design'] });
+
+    assert.equal(version(), before + 2);
+
+    // The barrier is what folds the accepted versions into the row, exactly as it does for a title.
+    editor.captures(documentWith('body'));
+    await kit.owner.getState().flush(draftId);
+
+    assert.deepEqual(draftOf(kit, draftId).tags, ['sync', 'design']);
+
+    await kit.close();
+  });
+
   it('coalesces snapshots rather than queueing a document per change', async () => {
     const kit = await harness();
     const editor = fakeEditor();
@@ -1218,7 +1261,9 @@ describe('copying into a separate note', () => {
     const kit = await harness();
     const editor = fakeEditor();
     const { draftId } = await readyDraft(kit, editor);
-    kit.owner.getState().editDraft(draftId, { title: 'Written on A', description: 'why' });
+    kit.owner
+      .getState()
+      .editDraft(draftId, { title: 'Written on A', description: 'why', tags: ['sync', 'design'] });
     editor.captures(documentWith('written on A'));
     kit.respond(failed('unknown'));
     await kit.owner.getState().save(draftId, kit.session());
@@ -1260,6 +1305,7 @@ describe('copying into a separate note', () => {
     assert.equal(copied.title, 'Written on A');
     assert.equal(copied.description, 'why');
     assert.equal(copied.document.content[0].content[0].text, 'written on A');
+    assert.deepEqual(copied.tags, ['sync', 'design']);
     // And nothing else does: no destination, no attempt, no key, no submitted state, no identity.
     assert.equal(copied.destination, null);
     assert.equal(copied.state, 'composing');

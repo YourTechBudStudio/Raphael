@@ -20,6 +20,33 @@ import type { DraftProtection, FlushResult } from './protection.ts';
 
 export type StatusTone = 'quiet' | 'alert';
 
+/**
+ * A chosen destination, named - or honestly not named.
+ *
+ * Here rather than beside the hook that produces it because the eyebrow's words are composed here,
+ * and the hook reads a live hierarchy that no pure module may import. `useDestinationName` supplies
+ * this and re-exports the type, so there is still one name for the shape.
+ */
+export interface DestinationName {
+  /**
+   * `parent / leaf`, with a leading ellipsis when the path is deeper.
+   *
+   * Null means **nothing is chosen**, and only that. A destination that is chosen but cannot be named
+   * right now still has words here, because declining to name a place is not forgetting it.
+   */
+  readonly chip: string | null;
+  /**
+   * The whole path, and nothing else.
+   *
+   * Null wherever there is no path to speak - nothing chosen, or a hierarchy that cannot name what
+   * was. It is deliberately never a sentence: every caller interpolates it into one of its own, and a
+   * sentence here would end up inside one of those.
+   */
+  readonly spoken: string | null;
+  /** Just the leaf, for a sentence like "Look in <leaf>". Null when it cannot be named. */
+  readonly leaf: string | null;
+}
+
 export interface ComposerStatus {
   readonly text: string;
   readonly tone: StatusTone;
@@ -143,6 +170,53 @@ export const problemFor = (result: FlushResult): ProtectionProblem => {
   if (result.kind === 'refused') return result.code === 'too_large' ? 'too_large' : 'failed_write';
 
   return result.kind === 'unanswered' ? 'unanswered' : 'failed_write';
+};
+
+/** What the destination row above the title says, and what it is called out loud. */
+export interface DestinationEyebrow {
+  readonly label: string;
+  readonly spoken: string;
+  readonly hint: string;
+  /** False only when nothing has been chosen. Declining to name a chosen place is not that. */
+  readonly chosen: boolean;
+}
+
+/**
+ * The destination, as the eyebrow above the title says it.
+ *
+ * The sibling of `detailsChip`: the one place that turns a stored `{type, id}` into words a person
+ * reads on this screen, so no screen composes its own and drifts from the other.
+ *
+ * **Three states, not two.** "Where does this go?" means *nothing chosen*, strictly. A destination
+ * that is chosen but cannot be named right now - the hierarchy has not loaded, or was retained after
+ * a failed refresh - keeps `useDestinationName`'s own words for it, because declining to name a place
+ * is not forgetting it, and reverting to the question would invite someone to pick again over a
+ * choice that still stands.
+ */
+export const destinationEyebrow = (name: DestinationName): DestinationEyebrow => {
+  const hint = 'Chooses the area or project this note goes in';
+
+  if (name.chip === null) {
+    return {
+      label: 'Where does this go?',
+      spoken: 'Choose where this note goes',
+      hint,
+      chosen: false,
+    };
+  }
+
+  return {
+    label: name.chip,
+    // The whole path, spoken: the row shows two segments and a screen reader gets all of them. With
+    // no path to speak the sentence says that instead, rather than reading the visible label aloud
+    // as though "Chosen place" were somewhere's name.
+    spoken:
+      name.spoken === null
+        ? 'Where this note goes, which your server has not named here yet'
+        : `Filed in ${name.spoken}`,
+    hint,
+    chosen: true,
+  };
 };
 
 const NO_ACTION: ComposerAction = { kind: 'none', label: '', enabled: false, hint: '' };

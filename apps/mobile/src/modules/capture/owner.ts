@@ -47,6 +47,7 @@ import type {
   StoreFailure,
   StoredCapture,
 } from './store.ts';
+import { sameTags } from './tags.ts';
 import type {
   AcknowledgedNote,
   AttemptOutcome,
@@ -213,7 +214,10 @@ export interface CaptureState {
    * fresh destination.
    */
   copyDraft(draftId: string, session: CaptureSession): Promise<DraftOutcome>;
-  editDraft(draftId: string, fields: { title?: string; description?: string }): void;
+  editDraft(
+    draftId: string,
+    fields: { title?: string; description?: string; tags?: readonly string[] },
+  ): void;
   selectDestination(
     draftId: string,
     destination: Destination,
@@ -301,6 +305,7 @@ const outcomeOf = (failure: ClientFailure, at: number): AttemptOutcome => ({
 interface DraftContent {
   readonly title: string;
   readonly description: string;
+  readonly tags: readonly string[];
   readonly destination: Destination | null;
   readonly document: unknown;
 }
@@ -308,6 +313,7 @@ interface DraftContent {
 const contentOf = (record: NoteDraftRecord): DraftContent => ({
   title: record.title,
   description: record.description,
+  tags: record.tags,
   destination: record.destination,
   document: record.document,
 });
@@ -403,6 +409,7 @@ export const createCaptureOwner = (ports: CapturePorts) =>
           title: content.title,
           description: content.description,
           document: content.document,
+          tags: content.tags,
           destination: content.destination,
           draftVersion: version,
           at,
@@ -548,7 +555,7 @@ export const createCaptureOwner = (ports: CapturePorts) =>
           attempt.draftId,
           written.draft?.draftVersion ?? null,
           written.cleared && held !== undefined
-            ? { ...held, title: '', description: '', document: createEmptyDocument() }
+            ? { ...held, title: '', description: '', tags: [], document: createEmptyDocument() }
             : undefined,
         );
         publishDraft(attempt.draftId, written.draft);
@@ -785,7 +792,12 @@ export const createCaptureOwner = (ports: CapturePorts) =>
 
     const newDraft = async (
       session: CaptureSession,
-      seed: { title: string; description: string; document: unknown },
+      seed: {
+        title: string;
+        description: string;
+        document: unknown;
+        tags: readonly string[];
+      },
     ): Promise<DraftOutcome> => {
       const active = store;
 
@@ -813,6 +825,7 @@ export const createCaptureOwner = (ports: CapturePorts) =>
           title: seed.title,
           description: seed.description,
           document: seed.document,
+          tags: seed.tags,
           // A copy always requires a fresh destination: the old one belonged to another attempt,
           // and on another connection it would not even be the same place.
           destination: null,
@@ -896,7 +909,12 @@ export const createCaptureOwner = (ports: CapturePorts) =>
       },
 
       createDraft: (session) =>
-        newDraft(session, { title: '', description: '', document: createEmptyDocument() }),
+        newDraft(session, {
+          title: '',
+          description: '',
+          document: createEmptyDocument(),
+          tags: [],
+        }),
 
       copyDraft: async (draftId, session) => {
         const content = core.content(draftId);
@@ -909,6 +927,7 @@ export const createCaptureOwner = (ports: CapturePorts) =>
           title: content.title,
           description: content.description,
           document: content.document,
+          tags: content.tags,
         });
       },
 
@@ -918,10 +937,20 @@ export const createCaptureOwner = (ports: CapturePorts) =>
         core.edit(draftId, (content) => {
           const title = fields.title ?? content.title;
           const description = fields.description ?? content.description;
+          const tags = fields.tags ?? content.tags;
 
-          if (title === content.title && description === content.description) return null;
+          // `sameTags` rather than `===` on the one field that is not a string: the details sheet
+          // rebuilds its array on every Done, so identity would make closing it over an unchanged
+          // list a version bump and a durable write for nothing.
+          if (
+            title === content.title &&
+            description === content.description &&
+            sameTags(tags, content.tags)
+          ) {
+            return null;
+          }
 
-          return { ...content, title, description };
+          return { ...content, title, description, tags };
         });
       },
 
@@ -1074,6 +1103,7 @@ export const createCaptureOwner = (ports: CapturePorts) =>
             title: flushedContent.title,
             description: flushedContent.description,
             document: flushedContent.document,
+            tags: flushedContent.tags,
             idempotencyKey,
           });
 
