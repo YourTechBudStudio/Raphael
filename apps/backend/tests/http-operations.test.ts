@@ -123,6 +123,46 @@ describe('operations over HTTP', () => {
     });
   });
 
+  test('an update answers 200, and a stale one 409 with the revision to re-read', async () => {
+    await withServer('http-update', async (server) => {
+      const created = await call(server, '/api/nodes/create', {
+        body: JSON.stringify({ type: 'project', parent: { path: '/work' }, title: 'Ship it' }),
+      });
+      const entity = (created.json as { entity: { id: number; revision: number } }).entity;
+
+      const updated = await call(server, '/api/nodes/update', {
+        body: JSON.stringify({
+          target: { id: entity.id },
+          revision: entity.revision,
+          title: 'Ship it, properly',
+          addTags: ['launch'],
+        }),
+      });
+      // 200, not 201: an update changed an entity that already existed rather than creating one.
+      assert.equal(updated.status, 200);
+      const after = (
+        updated.json as { entity: { title: string; revision: number; tags: string[] } }
+      ).entity;
+      assert.equal(after.title, 'Ship it, properly');
+      assert.equal(after.revision, entity.revision + 1);
+      assert.deepEqual(after.tags, ['launch']);
+
+      // The same envelope a second time is now stale, because the first one moved the revision.
+      const stale = await call(server, '/api/nodes/update', {
+        body: JSON.stringify({
+          target: { id: entity.id },
+          revision: entity.revision,
+          title: 'Ship it, properly',
+        }),
+      });
+      assert.equal(stale.status, 409);
+      const error = envelope(stale.json);
+      assert.equal(error.code, 'revision_conflict');
+      assert.equal(error.details.field, 'revision');
+      assert.equal(error.details.currentRevision, after.revision);
+    });
+  });
+
   test('an illegal parent answers 422, and a missing one 404', async () => {
     await withServer('http-parentage', async (server) => {
       const atRoot = await call(server, '/api/nodes/create', {

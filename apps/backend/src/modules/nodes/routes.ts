@@ -8,6 +8,7 @@ import { toPublicError, type NodeError } from './errors.ts';
 import { getNodePath } from './get-path.ts';
 import { getNode } from './get.ts';
 import { listNodes } from './list.ts';
+import { updateNode } from './update.ts';
 
 /**
  * Where the hierarchy capability publishes itself.
@@ -54,7 +55,8 @@ const adapt =
  * be enforced in one place and forgotten in the other.
  *
  * Creation answers 201, including a replay - a replay is a success that reports the entity that
- * exists, not a distinct outcome with a status of its own. Reads answer 200.
+ * exists, not a distinct outcome with a status of its own. Reads answer 200, and so does an update: it
+ * changed an entity that already existed rather than bringing one into being.
  */
 export const nodeRoutes: readonly OperationRoute[] = [
   {
@@ -70,5 +72,11 @@ export const nodeRoutes: readonly OperationRoute[] = [
     label: 'nodes.get-path',
     successStatus: 200,
     run: adapt(getNodePath),
+  },
+  {
+    descriptor: NODE_ROUTES.update,
+    label: 'nodes.update',
+    successStatus: 200,
+    run: adapt(updateNode),
   },
 ];

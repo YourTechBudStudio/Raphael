@@ -1,6 +1,5 @@
 import type { CanonicalDocument } from '@raphael/content';
-import { fromMarkdown } from '@raphael/content/conversion';
-import { canonicalizeDocument, deriveText } from '@raphael/content/schema';
+import { deriveText } from '@raphael/content/schema';
 import {
   decodeCreateRequest,
   decodeCreateResponse,
@@ -10,13 +9,13 @@ import type Database from 'better-sqlite3';
 import { Effect, Either, type Clock } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
+import { convertBody } from './content.ts';
 import { CREATE_FIELDS, invalidInputFrom } from './diagnostics.ts';
-import { InternalFailure, InvalidInput, UnsupportedContent, type NodeError } from './errors.ts';
+import { InternalFailure, InvalidInput, type NodeError } from './errors.ts';
 import {
   deriveSlugOrRaise,
   fingerprintOf,
   prepareCreate,
-  type PreparedBody,
   type PreparedCreate,
 } from './fingerprint.ts';
 import { allowsOmittedTitle } from './kinds.ts';
@@ -108,7 +107,7 @@ export const createNode = (input: unknown): Effect.Effect<CreateResponse, NodeEr
       });
       if (settled !== undefined) return settled;
 
-      const document = yield* convertBody(prepared.body);
+      const document = yield* convertBody(prepared.body, OPERATION);
 
       // Resolving the title can raise `InvalidInput`, so it shares the typed channel with the two
       // derivations that follow it.
@@ -141,30 +140,6 @@ export const createNode = (input: unknown): Effect.Effect<CreateResponse, NodeEr
           unwrapFailure({ operation: OPERATION, stage: 'write', slug: named.slug }, cause),
       });
     }),
-  );
-
-/**
- * Submitted content becomes canonical content here, outside any transaction.
- *
- * An omitted body and an explicitly empty Markdown body both arrive here as empty Markdown, which the
- * converter turns into the canonical empty document - the same document the seed migration writes. There
- * is deliberately no separate fast path for it: a second way to produce "empty" would be a second thing
- * that could drift from what the converter does.
- */
-const convertBody = (body: PreparedBody): Effect.Effect<CanonicalDocument, NodeError, never> =>
-  Effect.try({
-    // The conversion runs inside the Effect rather than while building it. Content failures are values
-    // the converter returns, but a parser or canonicalizer *exception* is not - and outside a typed
-    // channel it would surface as a defect rather than as the internal failure this operation promises.
-    try: () =>
-      body.format === 'markdown' ? fromMarkdown(body.value) : canonicalizeDocument(body.value),
-    catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'content conversion' }, cause),
-  }).pipe(
-    Effect.flatMap((converted) =>
-      Either.isRight(converted)
-        ? Effect.succeed(converted.right)
-        : Effect.fail(new UnsupportedContent({ failure: converted.left })),
-    ),
   );
 
 /**

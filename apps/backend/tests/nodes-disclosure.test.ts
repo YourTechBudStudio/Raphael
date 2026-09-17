@@ -7,6 +7,7 @@ import {
   getNode,
   listNodes,
   toPublicError,
+  updateNode,
   type NodeError,
 } from '../src/modules/nodes/index.ts';
 import { clockAt, expectLeft, expectRight, runNodes, withMigrated } from './support.ts';
@@ -152,6 +153,37 @@ test('a list request rejected on its filter says nothing about the payload', () 
     );
     assert.equal(toPublicError(error).code, 'invalid_input');
     assertClean(error, 'list filter');
+  });
+});
+
+test('a rejected update echoes neither its submitted change nor its excess properties', () => {
+  withMigrated('disclosure-update', (connection) => {
+    const created = expectRight(
+      runNodes(
+        connection,
+        createNode({ type: 'project', parent: { path: '/work' }, title: 'Holder' }),
+      ),
+    ).entity;
+
+    // Three refusals that each reach the decoder by a different route: an oversized title, an
+    // unpatchable property the envelope has no field for, and a tag named in both lists. All three are
+    // rejected before anything is written, and none of them may carry the submitted value back.
+    const envelopes = [
+      { title: `${SECRETS[0]} ${'x'.repeat(300)}` },
+      { title: 'Fine title', metadata: { [SECRETS[3]]: SECRETS[1] } },
+      { addTags: [SECRETS[2]], removeTags: [SECRETS[2]] },
+    ];
+
+    for (const change of envelopes) {
+      const error = expectLeft(
+        runNodes(
+          connection,
+          updateNode({ target: { id: created.id }, revision: created.revision, ...change }),
+        ),
+      );
+      assert.equal(toPublicError(error).code, 'invalid_input');
+      assertClean(error, `update ${JSON.stringify(Object.keys(change))}`);
+    }
   });
 });
 

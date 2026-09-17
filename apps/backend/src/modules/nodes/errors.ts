@@ -27,7 +27,8 @@ export type InvalidInputReason =
   | 'title_required'
   | 'title_too_long'
   | 'slug_underivable'
-  | 'slug_too_long';
+  | 'slug_too_long'
+  | 'tags_too_many';
 
 /**
  * The request fields an operation can name in a failure.
@@ -67,6 +68,18 @@ export class IdempotencyConflict extends Data.TaggedError('IdempotencyConflict')
   readonly reason: 'different_input';
 }> {}
 
+/**
+ * A write that named a revision the row is not at.
+ *
+ * `current` is published deliberately: it is not a diagnostic but the one fact a caller needs in order
+ * to recover, since the only way forward is to re-read the entity and rebuild the change against what
+ * is actually stored. It is a revision number, not content, so it discloses nothing.
+ */
+export class RevisionConflict extends Data.TaggedError('RevisionConflict')<{
+  /** The revision the row holds now. */
+  readonly current: number;
+}> {}
+
 /** A failure converting or validating *submitted* content. Stored content is never this error. */
 export class UnsupportedContent extends Data.TaggedError('UnsupportedContent')<{
   readonly failure: ContentFailure;
@@ -96,6 +109,7 @@ export type NodeError =
   | InvalidParent
   | SlugConflict
   | IdempotencyConflict
+  | RevisionConflict
   | UnsupportedContent
   | StorageBusy
   | InternalFailure;
@@ -120,6 +134,7 @@ const INVALID_INPUT_MESSAGES: Readonly<Record<InvalidInputReason, string>> = {
   title_too_long: 'The title is longer than the limit.',
   slug_underivable: 'No address could be derived from this title.',
   slug_too_long: 'The address derived from this title is longer than the limit.',
+  tags_too_many: 'Too many tags.',
 };
 
 /**
@@ -166,6 +181,12 @@ export const toPublicError = (error: NodeError): PublicApiError => {
         code: 'idempotency_conflict',
         message: 'That idempotency key was already used for a different request.',
         details: { field: 'idempotencyKey', reason: error.reason },
+      };
+    case 'RevisionConflict':
+      return {
+        code: 'revision_conflict',
+        message: 'This has changed since that revision was read.',
+        details: { field: 'revision', currentRevision: error.current },
       };
     case 'UnsupportedContent':
       return {
