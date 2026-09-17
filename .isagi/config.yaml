@@ -1,0 +1,7 @@
+worktrees:
+  hooks:
+    postCreate:
+      - type: command
+        run: pnpm install
+        cwd: .
+        timeout: 10m
