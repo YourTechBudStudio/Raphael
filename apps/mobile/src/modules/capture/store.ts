@@ -27,15 +27,31 @@ import { CONTENT_SCHEMA_VERSION } from '@raphael/content';
 import { findDocumentFailure } from '@raphael/content/validation';
 import {
   CONTAINER_TYPES,
+  NODE_TYPES,
+  RESOURCE_KINDS,
   decodeCreateResponse,
+  isRequestField,
   type ContainerType,
+  type NodeType,
+  type ResourceKind,
 } from '@raphael/contracts/nodes';
 import { Either } from 'effect';
 
 import { migrate } from '../../infrastructure/sqlite/migrate.ts';
 import type { SqlConnection, SqlParam, SqlTransaction } from '../../infrastructure/sqlite/port.ts';
+import type { UpdateEnvelope } from './edit-envelope.ts';
+import type {
+  EditContent,
+  EditKey,
+  EditRefusal,
+  EditSyncState,
+  EditVersionWrite,
+  EntityEditRecord,
+  NewEdit,
+  UnusableEdit,
+} from './edit-types.ts';
 import { newestAttempt } from './policy.ts';
-import { ATTEMPTS_TABLE, CAPTURE_MIGRATIONS, DRAFTS_TABLE } from './schema.ts';
+import { ATTEMPTS_TABLE, CAPTURE_MIGRATIONS, DRAFTS_TABLE, EDITS_TABLE } from './schema.ts';
 import type {
   AcknowledgedNote,
   AttemptOutcome,
@@ -284,6 +300,229 @@ const readDraft = (row: DraftRow): DraftReading => {
   };
 };
 
+const EDIT_COLUMNS = `connection_id, node_id, endpoint, node_type, kind, base, base_revision,
+  title, description, slug, tags, body, content_schema_version, draft_version,
+  acknowledged_version, inflight_version, inflight, sync_state, last_refusal, created_at, updated_at`;
+
+const SYNC_STATES: readonly EditSyncState[] = ['syncing', 'refused', 'conflicted'];
+
+interface EditRow {
+  readonly connection_id: string;
+  readonly node_id: number;
+  readonly endpoint: string;
+  readonly node_type: string;
+  readonly kind: string | null;
+  readonly base: string;
+  readonly base_revision: number;
+  readonly title: string;
+  readonly description: string;
+  readonly slug: string;
+  readonly tags: string;
+  readonly body: string;
+  readonly content_schema_version: number;
+  readonly draft_version: number;
+  readonly acknowledged_version: number;
+  readonly inflight_version: number | null;
+  readonly inflight: string | null;
+  readonly sync_state: string;
+  readonly last_refusal: string | null;
+  readonly created_at: number;
+  readonly updated_at: number;
+}
+
+const isNodeType = (value: unknown): value is NodeType =>
+  typeof value === 'string' && (NODE_TYPES as readonly string[]).includes(value);
+
+/**
+ * Whether a persisted string still names a resource kind.
+ *
+ * Consulted from `RESOURCE_KINDS` rather than compared against a literal, because this table forbids
+ * repair: a row it refuses is retained forever and shown to its owner as unreadable. A literal would
+ * mean that the day a second kind is added, every stored edit of that kind becomes permanently
+ * unopenable and undiscardable-except-by-key - from a change that touched nothing in capture.
+ */
+const isResourceKind = (value: unknown): value is ResourceKind =>
+  typeof value === 'string' && (RESOURCE_KINDS as readonly string[]).includes(value);
+
+const isStringArray = (value: unknown): value is readonly string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string');
+
+/**
+ * The stored refusal, or null.
+ *
+ * Degrading to null rather than refusing the row is the deciding direction: `sync_state` carries the
+ * fact that the server refused, so an unparseable diagnostic costs a sentence, while calling the row
+ * unreadable would cost someone their unsent writing. `field` is validated against the contract's own
+ * closed list, so an unrecognized name never reaches a screen.
+ */
+const toRefusal = (value: unknown): EditRefusal | null => {
+  if (typeof value !== 'object' || value === null) return null;
+
+  const candidate = value as Record<string, unknown>;
+
+  if (typeof candidate.code !== 'string') return null;
+  if (!Number.isSafeInteger(candidate.at)) return null;
+
+  return {
+    code: candidate.code,
+    field:
+      typeof candidate.field === 'string' && isRequestField(candidate.field)
+        ? candidate.field
+        : null,
+    reason: typeof candidate.reason === 'string' ? candidate.reason : null,
+    at: candidate.at as number,
+  };
+};
+
+/** A stored `EditContent`. The document is structurally validated; the scalars must be what they claim. */
+const toContent = (value: unknown, document: unknown): EditContent | null => {
+  if (typeof value !== 'object' || value === null) return null;
+
+  const candidate = value as Record<string, unknown>;
+
+  if (typeof candidate.title !== 'string') return null;
+  if (typeof candidate.description !== 'string') return null;
+  if (typeof candidate.slug !== 'string') return null;
+  if (!isStringArray(candidate.tags)) return null;
+
+  return {
+    title: candidate.title,
+    description: candidate.description,
+    slug: candidate.slug,
+    tags: candidate.tags,
+    document,
+  };
+};
+
+type EditReading =
+  | { readonly kind: 'usable'; readonly record: EntityEditRecord }
+  | { readonly kind: 'unusable'; readonly edit: UnusableEdit };
+
+/**
+ * A row becomes a record only if every field is what it claims to be, the content schema is this
+ * build's, and both stored documents still pass native-safe structural validation.
+ *
+ * `readDraft`'s rule applied to the second table, with the same three problems kept apart rather than
+ * collapsed into "bad row". A record written under a different content version is not damaged - it is
+ * simply not something this build may open, and it must never be migrated or downgraded on the way to
+ * being shown.
+ *
+ * The `inflight` envelope is validated only as far as being an object. What it means is the envelope
+ * module's business, and a record whose current columns are perfectly readable must not be thrown away
+ * because a reconciliation payload is odd; `matchesSubmitted` compares fields it finds and refuses
+ * otherwise, which is the safe direction anyway.
+ */
+const readEdit = (row: EditRow): EditReading => {
+  const key: EditKey = { connectionId: row.connection_id, nodeId: row.node_id };
+  const unusable = (problem: UnusableEdit['problem']): EditReading => ({
+    kind: 'unusable',
+    edit: {
+      key,
+      endpoint: typeof row.endpoint === 'string' ? row.endpoint : null,
+      nodeType: isNodeType(row.node_type) ? row.node_type : null,
+      title: typeof row.title === 'string' ? row.title : null,
+      problem,
+    },
+  });
+
+  if (!Number.isSafeInteger(row.node_id)) return unusable('unreadable_row');
+  if (typeof row.connection_id !== 'string' || typeof row.endpoint !== 'string') {
+    return unusable('unreadable_row');
+  }
+  if (!isNodeType(row.node_type)) return unusable('unreadable_row');
+  // A kind is the resource vocabulary, not the node one. A container legitimately has none.
+  if (row.kind !== null && !isResourceKind(row.kind)) return unusable('unreadable_row');
+  if (!SYNC_STATES.includes(row.sync_state as EditSyncState)) return unusable('unreadable_row');
+  if (typeof row.title !== 'string' || typeof row.description !== 'string') {
+    return unusable('unreadable_row');
+  }
+  if (typeof row.slug !== 'string') return unusable('unreadable_row');
+  if (!Number.isSafeInteger(row.base_revision) || row.base_revision < 1) {
+    return unusable('unreadable_row');
+  }
+  if (!Number.isSafeInteger(row.draft_version) || row.draft_version < 1) {
+    return unusable('unreadable_row');
+  }
+  if (!Number.isSafeInteger(row.acknowledged_version) || row.acknowledged_version < 0) {
+    return unusable('unreadable_row');
+  }
+  if (!Number.isSafeInteger(row.created_at) || !Number.isSafeInteger(row.updated_at)) {
+    return unusable('unreadable_row');
+  }
+  // The pairing is a CHECK in SQL as well. Asserted again here because a record whose halves disagree
+  // could not say what was sent, which is the one question reconciliation exists to answer.
+  if ((row.inflight_version === null) !== (row.inflight === null))
+    return unusable('unreadable_row');
+  if (row.inflight_version !== null && !Number.isSafeInteger(row.inflight_version)) {
+    return unusable('unreadable_row');
+  }
+
+  if (row.content_schema_version !== CONTENT_SCHEMA_VERSION) {
+    return unusable('unsupported_content_schema');
+  }
+
+  const document = parseJson(row.body);
+
+  if (document === null || findDocumentFailure(document) !== undefined) {
+    return unusable('unusable_body');
+  }
+
+  const baseValue = parseJson(row.base);
+  const baseDocument =
+    typeof baseValue === 'object' && baseValue !== null
+      ? (baseValue as Record<string, unknown>).document
+      : undefined;
+
+  if (baseDocument === undefined || findDocumentFailure(baseDocument) !== undefined) {
+    return unusable('unusable_body');
+  }
+
+  const base = toContent(baseValue, baseDocument);
+  const tags = parseJson(row.tags);
+
+  if (base === null || !isStringArray(tags)) return unusable('unreadable_row');
+
+  const inflight = parseJson(row.inflight);
+
+  if (row.inflight !== null && (typeof inflight !== 'object' || inflight === null)) {
+    return unusable('unreadable_row');
+  }
+
+  return {
+    kind: 'usable',
+    record: {
+      key,
+      endpoint: row.endpoint,
+      nodeType: row.node_type,
+      kind: row.kind,
+      base,
+      baseRevision: row.base_revision,
+      content: {
+        title: row.title,
+        description: row.description,
+        slug: row.slug,
+        tags,
+        document,
+      },
+      contentSchemaVersion: row.content_schema_version,
+      draftVersion: row.draft_version,
+      acknowledgedVersion: row.acknowledged_version,
+      inflightVersion: row.inflight_version,
+      inflight: row.inflight === null ? null : (inflight as UpdateEnvelope),
+      syncState: row.sync_state as EditSyncState,
+      lastRefusal: toRefusal(parseJson(row.last_refusal)),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    },
+  };
+};
+
+export interface StoredEdits {
+  readonly edits: readonly EntityEditRecord[];
+  /** Retained rows this build cannot open. Reported, never deleted, repaired or counted as zero. */
+  readonly unusableEdits: readonly UnusableEdit[];
+}
+
 export interface StoredCapture {
   readonly drafts: readonly NoteDraftRecord[];
   /** Retained drafts this build cannot open. Reported, never deleted, repaired or counted as zero. */
@@ -403,6 +642,112 @@ export interface CaptureStore {
    * dispatcher exists. Transactional and idempotent.
    */
   reconcile(at: number): Promise<ReconcileReport>;
+
+  /**
+   * The edit records, and the rows this build cannot open.
+   *
+   * Separate from `list()` rather than folded into it, so the creation owner's `StoredCapture` and its
+   * tests do not move. The two owners read the same database and nothing else about them is shared.
+   *
+   * Every writer below runs its `UPDATE` and its `SELECT` in one transaction and returns the row it
+   * produced, as `writeAttempt` does: a transition is published from what was written, never from what
+   * the caller hoped it wrote. A guard that did not match returns the row unchanged, which is how the
+   * caller learns it lost the race.
+   */
+  listEdits(): Promise<StoredEdits>;
+  /**
+   * Seed a record from the server's entity, or hand back the one that is already there.
+   *
+   * `ON CONFLICT DO NOTHING`, so a second open for the same entity returns the existing record rather
+   * than throwing. Re-opening an entity is ordinary, and two `open()` calls racing is the same class
+   * of race the other writers are shaped to survive; a rejected promise would be the one path on this
+   * table where losing a race is an exception, and the caller could only tell "already open" from a
+   * real storage failure by reading a driver message this boundary exists to stop.
+   *
+   * Never `DO UPDATE`: the existing row may hold unsent writing, and overwriting its base with a
+   * freshly-read server entity is exactly the loss the record exists to prevent.
+   */
+  insertEdit(edit: NewEdit): Promise<EntityEditRecord | null>;
+  /**
+   * One accepted authored version. Guarded on `draft_version < ?`, like `writeVersion`, so a coalesced
+   * write that lost a race cannot make an older snapshot the latest protected one.
+   *
+   * It also returns a `refused` record to `syncing`, in the same statement. That is how "the person
+   * fixes the thing the status names and autosave resumes" works, and it must not be a second write:
+   * a separate statement could commit the content and fail to clear the refusal, leaving a record that
+   * says the server said no to writing the server has never seen.
+   */
+  writeEditVersion(write: EditVersionWrite): Promise<EntityEditRecord | null>;
+  /**
+   * Adopt a newer server state on a record with nothing outstanding: base and current both become
+   * `content`.
+   *
+   * Guarded on nothing in flight, on `syncing`, **and on the record being settled**
+   * (`draft_version = acknowledged_version`). Without that third conjunct, reopening an entity whose
+   * server copy had moved would silently overwrite unsent local writing - the one thing the record
+   * exists to prevent.
+   */
+  rebaseEdit(
+    key: EditKey,
+    content: EditContent,
+    revision: number,
+    at: number,
+  ): Promise<EntityEditRecord | null>;
+  /** Guarded on `inflight_version IS NULL AND sync_state = 'syncing'`: one envelope in the air at a time. */
+  markEditInflight(
+    key: EditKey,
+    version: number,
+    envelope: UpdateEnvelope,
+    at: number,
+  ): Promise<EntityEditRecord | null>;
+  /**
+   * An acknowledged update: `acknowledged_version` becomes the in-flight version, the base becomes what
+   * was sent, and the envelope is cleared. One statement, because a base that advanced without its
+   * revision - or the reverse - would describe a server state that never existed.
+   */
+  acknowledgeEdit(
+    key: EditKey,
+    base: EditContent,
+    revision: number,
+    at: number,
+  ): Promise<EntityEditRecord | null>;
+  /**
+   * For an empty envelope: nothing was sent, so only the acknowledged mark moves.
+   *
+   * Guarded on nothing being in flight, and on the mark moving forward. The acknowledged mark never
+   * passing the version that was actually sent is the rule the whole loop rests on: advancing it past
+   * a version whose answer has not landed would report someone's writing as on the server when it is
+   * not. `../design/program-design.md` §5.3 specifies no guard here; this is a durable boundary, like
+   * the four it does specify.
+   */
+  acknowledgeEditLocally(
+    key: EditKey,
+    version: number,
+    at: number,
+  ): Promise<EntityEditRecord | null>;
+  /**
+   * The envelope is no longer in the air and nothing is known about it. `sync_state` is untouched.
+   *
+   * Deliberately unguarded. Clearing a record with nothing in flight writes the same NULLs over the
+   * same NULLs, so a guard would only suppress a redundant `updated_at` bump - and every other `WHERE`
+   * clause on this table is an argument about concurrency. One that is not would dilute the signal for
+   * the next reader deciding which guards matter.
+   */
+  clearEditInflight(key: EditKey, at: number): Promise<EntityEditRecord | null>;
+  /**
+   * Guarded on the record not already being conflicted, which is a correctness rule rather than a
+   * precedence one.
+   *
+   * A conflict downgraded to `refused` would be returned to `syncing` by `writeEditVersion`'s
+   * `CASE` on the person's very next keystroke, and autosave would resume on a record whose base
+   * revision the server has already rejected - telling someone their work is saving while every send
+   * is doomed. That is the composer's overclaim, arrived at through the store instead of the screen.
+   */
+  markEditRefused(key: EditKey, refusal: EditRefusal, at: number): Promise<EntityEditRecord | null>;
+  markEditConflicted(key: EditKey, at: number): Promise<EntityEditRecord | null>;
+  /** By key, so a row this build cannot parse can still be thrown away. */
+  deleteEdit(key: EditKey): Promise<void>;
+
   close(): Promise<void>;
 }
 
@@ -452,6 +797,26 @@ const readAttemptRow = async (
   return row === undefined ? null : toAttemptRecord(row);
 };
 
+const readEditRow = async (tx: SqlTransaction, key: EditKey): Promise<EntityEditRecord | null> => {
+  const row = await tx.get<EditRow>(
+    `SELECT ${EDIT_COLUMNS} FROM ${EDITS_TABLE} WHERE connection_id = ? AND node_id = ?`,
+    [key.connectionId, key.nodeId],
+  );
+
+  if (row === undefined) return null;
+  const reading = readEdit(row);
+
+  return reading.kind === 'usable' ? reading.record : null;
+};
+
+const contentParams = (content: EditContent): readonly SqlParam[] => [
+  content.title,
+  content.description,
+  content.slug,
+  JSON.stringify(content.tags),
+  JSON.stringify(content.document),
+];
+
 const INSERT_ATTEMPT = `INSERT INTO ${ATTEMPTS_TABLE} (${ATTEMPT_COLUMNS})
   VALUES (?, ?, ?, ?, 'dispatch_intent', ?, ?, ?, ?, ?, ?, NULL, 0, NULL, NULL, ?)`;
 
@@ -481,6 +846,20 @@ export const createCaptureStore = (db: SqlConnection): CaptureStore => {
       await tx.run(sql, params);
 
       return readAttemptRow(tx, attemptId);
+    });
+
+  /**
+   * Apply one statement to one edit row and hand back the row it produced, read inside the same
+   * transaction. `writeAttempt`'s pattern, for `writeAttempt`'s reason: a guard that did not match
+   * returns the row unchanged, and the caller must be able to see that rather than assume its write
+   * landed. Publishing a hoped-for transition is how an owner ends up sending a version the store
+   * never confirmed.
+   */
+  const writeEdit = (sql: string, params: readonly SqlParam[], key: EditKey) =>
+    db.transaction(async (tx) => {
+      await tx.run(sql, params);
+
+      return readEditRow(tx, key);
     });
 
   const writeIntent = (
@@ -753,6 +1132,157 @@ export const createCaptureStore = (db: SqlConnection): CaptureStore => {
 
         return { adopted: pending.length, released };
       }),
+
+    listEdits: async () => {
+      const rows = await db.all<EditRow>(
+        `SELECT ${EDIT_COLUMNS} FROM ${EDITS_TABLE} ORDER BY created_at ASC, connection_id ASC, node_id ASC`,
+      );
+
+      const edits: EntityEditRecord[] = [];
+      const unusableEdits: UnusableEdit[] = [];
+
+      for (const row of rows) {
+        const reading = readEdit(row);
+        if (reading.kind === 'usable') edits.push(reading.record);
+        else unusableEdits.push(reading.edit);
+      }
+
+      return { edits, unusableEdits };
+    },
+
+    insertEdit: (edit) =>
+      db.transaction(async (tx) => {
+        await tx.run(
+          `INSERT INTO ${EDITS_TABLE} (${EDIT_COLUMNS})
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, NULL, NULL, 'syncing', NULL, ?, ?)
+           ON CONFLICT (connection_id, node_id) DO NOTHING`,
+          [
+            edit.key.connectionId,
+            edit.key.nodeId,
+            edit.endpoint,
+            edit.nodeType,
+            edit.kind,
+            // The base is the content it was seeded from, which at open is the server's own entity.
+            // From here on it only ever becomes what this phone sent.
+            JSON.stringify(edit.content),
+            edit.revision,
+            ...contentParams(edit.content),
+            CONTENT_SCHEMA_VERSION,
+            edit.at,
+            edit.at,
+          ],
+        );
+
+        return readEditRow(tx, edit.key);
+      }),
+
+    writeEditVersion: (write) =>
+      writeEdit(
+        `UPDATE ${EDITS_TABLE}
+         SET title = ?, description = ?, slug = ?, tags = ?, body = ?, draft_version = ?,
+             updated_at = ?,
+             sync_state = CASE WHEN sync_state = 'refused' THEN 'syncing' ELSE sync_state END,
+             -- The diagnostic goes with the state it described. Leaving it would make the column mean
+             -- "the last refusal, possibly already repaired", which is weaker than the field claims.
+             last_refusal = CASE WHEN sync_state = 'refused' THEN NULL ELSE last_refusal END
+         WHERE connection_id = ? AND node_id = ? AND draft_version < ?`,
+        [
+          ...contentParams(write.content),
+          write.draftVersion,
+          write.at,
+          write.key.connectionId,
+          write.key.nodeId,
+          write.draftVersion,
+        ],
+        write.key,
+      ),
+
+    rebaseEdit: (key, content, revision, at) =>
+      writeEdit(
+        `UPDATE ${EDITS_TABLE}
+         SET base = ?, base_revision = ?, title = ?, description = ?, slug = ?, tags = ?, body = ?,
+             updated_at = ?
+         WHERE connection_id = ? AND node_id = ?
+           AND inflight_version IS NULL AND sync_state = 'syncing'
+           AND draft_version = acknowledged_version`,
+        [
+          JSON.stringify(content),
+          revision,
+          ...contentParams(content),
+          at,
+          key.connectionId,
+          key.nodeId,
+        ],
+        key,
+      ),
+
+    markEditInflight: (key, version, envelope, at) =>
+      writeEdit(
+        `UPDATE ${EDITS_TABLE}
+         SET inflight_version = ?, inflight = ?, updated_at = ?
+         WHERE connection_id = ? AND node_id = ?
+           AND inflight_version IS NULL AND sync_state = 'syncing'`,
+        [version, JSON.stringify(envelope), at, key.connectionId, key.nodeId],
+        key,
+      ),
+
+    acknowledgeEdit: (key, base, revision, at) =>
+      writeEdit(
+        `UPDATE ${EDITS_TABLE}
+         SET acknowledged_version = inflight_version, base = ?, base_revision = ?,
+             inflight_version = NULL, inflight = NULL, last_refusal = NULL,
+             sync_state = 'syncing', updated_at = ?
+         WHERE connection_id = ? AND node_id = ? AND inflight_version IS NOT NULL`,
+        [JSON.stringify(base), revision, at, key.connectionId, key.nodeId],
+        key,
+      ),
+
+    acknowledgeEditLocally: (key, version, at) =>
+      writeEdit(
+        `UPDATE ${EDITS_TABLE}
+         SET acknowledged_version = ?, updated_at = ?
+         WHERE connection_id = ? AND node_id = ? AND inflight_version IS NULL
+           AND acknowledged_version < ?`,
+        [version, at, key.connectionId, key.nodeId, version],
+        key,
+      ),
+
+    clearEditInflight: (key, at) =>
+      writeEdit(
+        `UPDATE ${EDITS_TABLE}
+         SET inflight_version = NULL, inflight = NULL, updated_at = ?
+         WHERE connection_id = ? AND node_id = ?`,
+        [at, key.connectionId, key.nodeId],
+        key,
+      ),
+
+    markEditRefused: (key, refusal, at) =>
+      writeEdit(
+        `UPDATE ${EDITS_TABLE}
+         SET sync_state = 'refused', last_refusal = ?, inflight_version = NULL, inflight = NULL,
+             updated_at = ?
+         WHERE connection_id = ? AND node_id = ? AND sync_state != 'conflicted'`,
+        [JSON.stringify(refusal), at, key.connectionId, key.nodeId],
+        key,
+      ),
+
+    markEditConflicted: (key, at) =>
+      writeEdit(
+        `UPDATE ${EDITS_TABLE}
+         SET sync_state = 'conflicted', inflight_version = NULL, inflight = NULL, updated_at = ?
+         WHERE connection_id = ? AND node_id = ?`,
+        [at, key.connectionId, key.nodeId],
+        key,
+      ),
+
+    deleteEdit: async (key) => {
+      await db.transaction(async (tx) => {
+        await tx.run(`DELETE FROM ${EDITS_TABLE} WHERE connection_id = ? AND node_id = ?`, [
+          key.connectionId,
+          key.nodeId,
+        ]);
+      });
+    },
 
     close: () => db.close(),
   };

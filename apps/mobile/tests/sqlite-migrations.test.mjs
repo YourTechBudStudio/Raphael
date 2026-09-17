@@ -242,6 +242,47 @@ describe('the capability schemas', () => {
     });
   }
 
+  it('reaches version 2, which is where entity_edits and the drafts tag column arrive', async () => {
+    const db = await openNodeDatabase();
+
+    assert.deepEqual(await migrate(db, CAPTURE_MIGRATIONS), { kind: 'ready', version: 2 });
+    assert.equal(await version(db), 2);
+    assert.equal((await db.all('SELECT * FROM entity_edits')).length, 0);
+    assert.equal((await db.all('SELECT tags FROM note_drafts')).length, 0);
+
+    await db.close();
+  });
+
+  it('migrates a version-1 capture file forward with its draft rows intact', async () => {
+    const location = await temporaryFile();
+    const first = await openNodeDatabase(location);
+
+    // Exactly what a build that shipped before edits existed wrote.
+    await migrate(first, CAPTURE_MIGRATIONS.slice(0, 1));
+    assert.equal(await version(first), 1);
+    await first.run(
+      `INSERT INTO note_drafts (draft_id, connection_id, endpoint, state, title, description, body,
+         content_schema_version, draft_version, created_at, updated_at)
+       VALUES ('d1', 'c1', 'https://raphael.example', 'composing', 'kept', '', '{"type":"doc"}',
+         1, 3, 10, 20)`,
+    );
+    await first.close();
+
+    const second = await openNodeDatabase(location);
+
+    assert.deepEqual(await migrate(second, CAPTURE_MIGRATIONS), { kind: 'ready', version: 2 });
+
+    const rows = await second.all('SELECT draft_id, title, draft_version, tags FROM note_drafts');
+
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].title, 'kept');
+    assert.equal(rows[0].draft_version, 3);
+    // A draft written before tags existed asked for none, which is what the default says.
+    assert.equal(rows[0].tags, '[]');
+
+    await second.close();
+  });
+
   it('rolls a failed capture step back to the version before it', async () => {
     const db = await openNodeDatabase();
     const broken = [

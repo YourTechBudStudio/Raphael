@@ -12,8 +12,11 @@
  */
 
 import type { EditorRejectionCode } from '../editor';
-import type { DraftProtection } from './owner.ts';
 import type { Standing } from './policy.ts';
+// From the core that defines it, not through `owner.ts`, which only re-exports it. The edit composer
+// reuses this module, and reaching the type through the owner would put the owner in the import graph
+// of every pure module that does.
+import type { DraftProtection } from './protection.ts';
 
 export type StatusTone = 'quiet' | 'alert';
 
@@ -70,7 +73,14 @@ export const REFUSED_STATUS = 'Your server refused the last save · kept on this
 export const UNRECORDED_STATUS = 'On your server · not yet recorded on this phone';
 /** Said for any request in the air, a first Save and a Retry alike; both are a save being sent. */
 export const SAVING_STATUS = 'Saving to your server…';
-export const KEPT_STATUS = 'Kept on this phone as you write';
+/**
+ * Half of A4, as a phrase rather than a sentence.
+ *
+ * Exported because the edit composer's `pending` and `offline` sentences are the same claim with a
+ * different tail, and A4 is about this phrase being the same wherever it is said.
+ */
+export const KEPT_ON_PHONE = 'Kept on this phone';
+export const KEPT_STATUS = `${KEPT_ON_PHONE} as you write`;
 export const INCONSISTENT_STATUS =
   'Raphael cannot tell what happened to the last save · kept on this phone';
 
@@ -81,11 +91,15 @@ export const remainderStatus = (revision: number): string =>
 export const serverStatus = (revision: number): string =>
   `On your server · revision ${String(revision)}`;
 
-export interface ComposerInput {
-  readonly standing: Standing | null;
+/** The two facts the protection question is asked of. Both composers supply exactly these. */
+export interface ProtectionInput {
   readonly protection: DraftProtection | undefined;
   /** The last thing the renderer refused, when a flush was refused rather than unanswered. */
   readonly lastRejection: EditorRejectionCode | null;
+}
+
+export interface ComposerInput extends ProtectionInput {
+  readonly standing: Standing | null;
   /** True between admission and the answer. */
   readonly saving: boolean;
   /** A title, a description, or a body with something in it. Core owns the final word on titles. */
@@ -105,8 +119,12 @@ export interface ComposerInput {
  * Save is refused - by the owner as well as by this - and the status says which it is. The flag
  * clears the moment the editor answers anything, so a slow renderer that comes back is not left
  * looking broken.
+ *
+ * Exported because the edit composer asks exactly this question and must get exactly this answer.
+ * Protection precedence is the rule both composers are built on; two copies of it is how a screen
+ * ends up saying "Saving to your server…" over writing this phone could not keep.
  */
-const problemOf = (input: ComposerInput): ProtectionProblem | null => {
+export const problemOf = (input: ProtectionInput): ProtectionProblem | null => {
   if (input.protection?.failedWrite === true) return 'failed_write';
   if (!(input.protection?.rendererUnknown ?? false)) return null;
   if (input.lastRejection === null) return 'unanswered';
