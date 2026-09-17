@@ -7,6 +7,7 @@ export {
   openCapture,
   openChangeServer,
   openContainer,
+  openEditor,
   openHome,
   openProject,
   openResource,

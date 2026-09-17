@@ -35,6 +35,25 @@ export function openResource(id: number): void {
 }
 
 /**
+ * Opens the editor over one existing entity.
+ *
+ * One route for notes and containers alike: opening something is editing it, and the owner's own read
+ * establishes which of the two it is, so the caller does not have to know. There is no read-only view
+ * to fall back to and no mode to enter.
+ *
+ * **The cast is temporary and phase 07 owns removing it.** `expo-router` generates the union of
+ * legal paths from the files in `src/app/`, and `src/app/edit/[id].tsx` lands with `EditScreen` in
+ * phase 07 - so until then there is no honest type that names this path. Nothing calls this before
+ * that file exists. The cast is deliberately scoped to the one call rather than widening the
+ * helper's own parameter, so it disappears in a single line.
+ */
+export function openEditor(id: number): void {
+  const href = { pathname: '/edit/[id]', params: { id: String(id) } };
+
+  router.push(href as unknown as Parameters<typeof router.push>[0]);
+}
+
+/**
  * Opens the composer over one durable draft.
  *
  * By the draft's own identifier, which is the only identity writing that is not on a server has.

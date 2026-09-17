@@ -14,31 +14,37 @@
  *
  * It is explicitly best effort. `inactive` and `background` are notice, not a guarantee of time, and
  * a forced kill gives no notice at all - which the design says plainly and this does not contradict.
+ *
+ * **It takes the flush rather than the draft.** Both owners protect writing the same way and leave
+ * the foreground the same way; what differs is only which one holds the record. Two hooks would be
+ * two chances for one of them to stop asking.
  */
 
 import { useEffect } from 'react';
 import { AppState, type AppStateStatus } from 'react-native';
 
-import { useCaptureOwner } from './owner.ts';
-
 /** The states that mean the foreground is going away. iOS passes through `inactive` first. */
 const LEAVING = new Set<AppStateStatus>(['inactive', 'background']);
 
-export const useBackgroundFlush = (draftId: string): void => {
-  const owner = useCaptureOwner;
-
+/**
+ * Ask on the way out.
+ *
+ * `flush` must be stable across renders - a fresh closure every render would resubscribe every
+ * render. Callers that need one build it with `useCallback` over the owner and the record's id.
+ */
+export const useBackgroundFlush = (flush: () => void): void => {
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (next: AppStateStatus) => {
       if (!LEAVING.has(next)) return;
 
       // Nothing is awaited and no outcome is reported: there is no screen left to report one to,
-      // and the owner records a failed write on the draft's protection either way - which is what
+      // and the owner records a failed write on the record's protection either way - which is what
       // the composer reads when someone comes back.
-      void owner.getState().flush(draftId);
+      flush();
     });
 
     return () => {
       subscription.remove();
     };
-  }, [owner, draftId]);
+  }, [flush]);
 };

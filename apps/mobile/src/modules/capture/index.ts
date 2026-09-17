@@ -29,6 +29,9 @@ export { UnfinishedGridCard, type UnfinishedGridCardProps } from './components/U
 
 /** The app-lifetime composition. Opened once, above the connection gate. */
 export { useCaptureLifetime, useCaptureSession } from './client/owner.ts';
+/** The second owner over the same database. Its store, schema and rules stay inside, as the first's do. */
+export { useEditLifetime, useEditOwner } from './client/edit-owner.ts';
+export { useEditActions, useUnfinishedEdits } from './client/edits.ts';
 export { useNewNote, type NewNote } from './client/new-note.ts';
 export {
   useHomeUnfinishedNotes,
@@ -58,6 +61,24 @@ export {
 export type { StoreFailure } from './store.ts';
 /** What `standingFor` answers with. The rules that produce it stay inside. */
 export type { BlockedReason, Standing, UnsendableCause } from './policy.ts';
+/**
+ * The edit owner's vocabulary, and nothing that decides anything.
+ *
+ * `edit-policy.ts`, `edit-composer.ts` and the store stay private for the reason the creation side's
+ * do: a consumer that could re-derive a standing would be a second authority on whether someone's
+ * writing is on their server.
+ */
+export {
+  createEditOwner,
+  type EditOpenOutcome,
+  type EditOwner,
+  type EditPorts,
+  type EditState,
+  type LeaveOutcome,
+} from './edit-owner.ts';
+export type { EditStanding } from './edit-policy.ts';
+export type { EditContent, EditProblem, EditRefusal, EntityEditRecord } from './edit-types.ts';
+export type { UnfinishedEdit } from './edit-unfinished.ts';
 /** Reading an attempt's submitted content back for recovery. Never rewrites the stored bytes. */
 export { recoverNoteInput, type RecoveredNote } from './freeze.ts';
 /** What Home and recovery draw. Derived from the owner's answers, never re-derived from rows. */

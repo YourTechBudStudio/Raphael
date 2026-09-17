@@ -67,6 +67,10 @@ const GROUP = {
   synced: 7,
 } as const satisfies Record<EditStanding['kind'] | 'unusable', number>;
 
+/** Whether a row belongs to the connection the app is working under right now. */
+const scopeOf = (connectionId: string, current: string | null): 'current' | 'retired' =>
+  connectionId === current ? 'current' : 'retired';
+
 export interface UnfinishedEditsInput {
   readonly edits: readonly EntityEditRecord[];
   /** Retained rows this build cannot open. Reported, never counted as nothing. */
@@ -103,9 +107,18 @@ export const unfinishedEdits = (input: UnfinishedEditsInput): readonly Unfinishe
       title: record.content.title,
       standing: standing.kind,
       endpoint: record.endpoint,
-      scope: record.key.connectionId === input.connectionId ? 'current' : 'retired',
+      scope: scopeOf(record.key.connectionId, input.connectionId),
       activityAt: record.updatedAt,
-      actions: ['open', 'discard'],
+      // A retired connection can offer only what needs no server and no id from one, which is the
+      // rule `unfinished.ts`'s `actionsFor` already applies to drafts. Here it is narrower than
+      // there, because there is nothing to copy: an edit is addressed by `(connectionId, nodeId)`
+      // and a node id is not portable between servers, so opening this row under the current
+      // connection would not reopen it - it would seed a fresh record over whatever entity happens
+      // to hold that number on the server the phone is talking to now.
+      actions:
+        scopeOf(record.key.connectionId, input.connectionId) === 'current'
+          ? ['open', 'discard']
+          : ['discard'],
     });
   }
 
@@ -123,7 +136,7 @@ export const unfinishedEdits = (input: UnfinishedEditsInput): readonly Unfinishe
       standing: 'unusable',
       problem: unusable.problem,
       endpoint: unusable.endpoint,
-      scope: unusable.key.connectionId === input.connectionId ? 'current' : 'retired',
+      scope: scopeOf(unusable.key.connectionId, input.connectionId),
       // Nothing about it is known to have happened at a time this build can read.
       activityAt: 0,
       // Discard only, and it works by key. Opening it would be a control that answers no, and

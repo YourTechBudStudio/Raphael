@@ -27,6 +27,7 @@ import { fileURLToPath } from 'node:url';
 
 import { QueryClient, QueryObserver } from '@tanstack/react-query';
 
+import { unfinishedEdits } from '../src/modules/capture/edit-unfinished.ts';
 import { displayableBody } from '../src/modules/resources/client/display.ts';
 import { noteEntityOptions, notePagesOptions } from '../src/modules/resources/client/options.ts';
 import { containerDescriptor, feedDescriptor } from '../src/modules/resources/client/requests.ts';
@@ -36,6 +37,7 @@ import {
   captureOver,
   cleanupDirectories,
   cliJson,
+  editOver,
   runCli,
   temporaryDir,
   withServer,
@@ -406,6 +408,298 @@ describe('a note the phone wrote, read by the CLI', () => {
         assert.equal(got.entity.description, '');
       } finally {
         await owner.getState().close();
+      }
+    });
+  });
+});
+
+/**
+ * One entity, two clients, changed by both.
+ *
+ * Editing is the first operation where the two clients' interaction models genuinely diverge:
+ * `raphael update` names a revision the person read, and the phone autosaves against a base it keeps
+ * for itself. Everything else about the crossing has been the same request in two spellings; this is
+ * two different ideas of what a safe write is, meeting at one compare-and-set.
+ *
+ * So these cases are not "the CLI can update and so can the phone". They are the four places where
+ * one client's idea could quietly overwrite the other's, plus one measurement of a window the design
+ * knowingly left open.
+ */
+describe('one entity, edited by both clients', () => {
+  /** A note to edit, created by the CLI so each case starts from a server-shaped entity. */
+  const noteOn = async (endpoint, over = {}) =>
+    (
+      await cliJson(
+        [
+          'create',
+          'resource.note',
+          `${WORK.path}/${over.slug ?? 'shared'}`,
+          '--title',
+          over.title ?? 'Shared note',
+          '--body-literal',
+          over.body ?? 'First line',
+        ],
+        { endpoint },
+      )
+    ).entity;
+
+  /** Wait for the owner to have nothing outstanding for this entity, or say what it is stuck on. */
+  const quiet = async (kit, nodeId, what) => {
+    const deadline = Date.now() + 15_000;
+
+    while (Date.now() < deadline) {
+      const record = kit.record(nodeId);
+
+      if (record !== null && record.inflightVersion === null) {
+        const state = kit.owner.getState();
+        const standing = state.standingFor(kit.keyFor(nodeId));
+
+        if (standing !== null && standing.kind !== 'pending' && standing.kind !== 'saving') {
+          return standing;
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    assert.fail(`timed out waiting for ${what}`);
+  };
+
+  it('rebases the phone onto a title the terminal changed', async () => {
+    const dir = await temporaryDir('edit-rebase-');
+
+    await withServer(async ({ endpoint }) => {
+      const note = await noteOn(endpoint, { slug: 'rebase-me' });
+      const kit = await editOver(endpoint, path.join(dir, 'capture.db'));
+
+      try {
+        await kit.owner.getState().initialize();
+        assert.equal((await kit.owner.getState().open(note.id, kit.session)).kind, 'ready');
+        assert.equal(kit.record(note.id).baseRevision, note.revision);
+
+        await cliJson(['update', '--id', String(note.id), '--title', 'Renamed at a terminal'], {
+          endpoint,
+        });
+
+        // Nothing is unsent, so the next open adopts what the other client wrote.
+        assert.equal((await kit.owner.getState().open(note.id, kit.session)).kind, 'ready');
+
+        const record = kit.record(note.id);
+
+        assert.equal(record.base.title, 'Renamed at a terminal');
+        assert.equal(record.content.title, 'Renamed at a terminal');
+        assert.equal(record.baseRevision, note.revision + 1);
+      } finally {
+        await kit.owner.getState().close();
+      }
+    });
+  });
+
+  it('puts a body the phone autosaved on the server, canonically, one revision on', async () => {
+    const dir = await temporaryDir('edit-body-');
+
+    await withServer(async ({ endpoint }) => {
+      const note = await noteOn(endpoint, { slug: 'autosaved-body' });
+      const kit = await editOver(endpoint, path.join(dir, 'capture.db'));
+      const editor = fakeEditor();
+
+      try {
+        await kit.owner.getState().initialize();
+        const outcome = await kit.owner.getState().open(note.id, kit.session);
+        assert.equal(outcome.kind, 'ready');
+        kit.owner.getState().attachEditor(outcome.editKey, editor.port);
+
+        const document = documentWith('Typed into the phone');
+        editor.captures(document);
+        const flushed = await kit.owner.getState().flush(outcome.editKey, { lock: true });
+        assert.equal(flushed.kind, 'flushed');
+
+        await quiet(kit, note.id, 'the body to reach the server');
+
+        const got = await cliJson(['get', '--id', String(note.id), '--format', 'tiptap'], {
+          endpoint,
+        });
+
+        assert.deepEqual(got.entity.body.value, document, 'the canonical body crossed unchanged');
+        assert.equal(got.entity.revision, note.revision + 1, 'one write, one revision');
+        assert.equal(kit.record(note.id).baseRevision, got.entity.revision);
+      } finally {
+        await kit.owner.getState().close();
+      }
+    });
+  });
+
+  it('refuses the phone once and stops, when the terminal wrote while it was unsent', async () => {
+    const dir = await temporaryDir('edit-conflict-');
+
+    await withServer(async ({ endpoint }) => {
+      const note = await noteOn(endpoint, { slug: 'conflicted' });
+      const kit = await editOver(endpoint, path.join(dir, 'capture.db'), {
+        // Held off, so the phone genuinely has unsent writing when the terminal writes.
+        autosaveDelayMs: 5_000,
+      });
+
+      try {
+        await kit.owner.getState().initialize();
+        const outcome = await kit.owner.getState().open(note.id, kit.session);
+        assert.equal(outcome.kind, 'ready');
+
+        kit.owner.getState().editFields(outcome.editKey, { title: 'Typed on the phone' });
+        await cliJson(['update', '--id', String(note.id), '--title', 'Typed at a terminal'], {
+          endpoint,
+        });
+
+        // Leaving dispatches at once rather than waiting out the debounce, and waits for the answer.
+        assert.equal(await kit.owner.getState().leave(outcome.editKey), 'kept');
+
+        const standing = kit.owner.getState().standingFor(outcome.editKey);
+        assert.deepEqual(standing, { kind: 'conflicted' });
+
+        const record = kit.record(note.id);
+        assert.equal(record.content.title, 'Typed on the phone', 'the writing is kept');
+
+        const listed = unfinishedEdits({
+          edits: kit.owner.getState().edits,
+          unusableEdits: kit.owner.getState().unusableEdits,
+          standingFor: kit.owner.getState().standingFor,
+          connectionId: kit.session.connectionId,
+        });
+        assert.equal(listed.length, 1);
+        assert.equal(listed[0].standing, 'conflicted');
+
+        const got = await cliJson(['get', '--id', String(note.id)], { endpoint });
+        assert.equal(got.entity.title, 'Typed at a terminal', 'and nothing was overwritten');
+        assert.equal(got.entity.revision, note.revision + 1, 'exactly one write landed');
+
+        // Nothing further is attempted, however long it is left.
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        const left = await cliJson(['get', '--id', String(note.id)], { endpoint });
+        assert.equal(left.entity.revision, note.revision + 1);
+      } finally {
+        await kit.owner.getState().close();
+      }
+    });
+  });
+
+  it('refuses a stale --revision at the terminal, and changes nothing', async () => {
+    const dir = await temporaryDir('edit-stale-cli-');
+
+    await withServer(async ({ endpoint }) => {
+      const note = await noteOn(endpoint, { slug: 'stale-cli' });
+      const kit = await editOver(endpoint, path.join(dir, 'capture.db'), {
+        autosaveDelayMs: 5_000,
+      });
+
+      try {
+        await kit.owner.getState().initialize();
+        const outcome = await kit.owner.getState().open(note.id, kit.session);
+        assert.equal(outcome.kind, 'ready');
+        kit.owner.getState().editFields(outcome.editKey, { title: 'Unsent on the phone' });
+
+        // The phone's writing has not been sent, so the server is still at the note's own revision
+        // and this stale one names a version that never existed.
+        const ran = await runCli(
+          [
+            'update',
+            '--id',
+            String(note.id),
+            '--title',
+            'From a stale reading',
+            '--revision',
+            String(note.revision + 5),
+          ],
+          { endpoint },
+        );
+
+        assert.equal(ran.code, 1);
+
+        const got = await cliJson(['get', '--id', String(note.id)], { endpoint });
+        assert.equal(got.entity.title, 'Shared note', 'the entity is untouched');
+        assert.equal(got.entity.revision, note.revision, 'and so is its revision');
+      } finally {
+        await kit.owner.getState().close();
+      }
+    });
+  });
+
+  /**
+   * A measurement, not a guarantee.
+   *
+   * Phase 05 recorded that `matchesSubmitted` compares a **carried** body by exact serialized
+   * equality, so a lost answer to a body update the server canonicalized reconciles as a conflict
+   * rather than as applied - and handed the lever forward on the assumption something here would
+   * exercise it. The four cases above never would: none of them loses a body answer.
+   *
+   * A paragraph ending in a hard break is the cleanest case, because `hard-breaks.ts` drops exactly
+   * that break on the way into storage, so the server's stored document legitimately differs from
+   * what was sent. The rule is deliberately not changed here - calling the shared canonicalizer from
+   * the owner overturns an architecture decision this phase has no mandate for - so this records the
+   * observed outcome and nothing else.
+   */
+  it('measures what a lost answer to a body the server canonicalized concludes', async () => {
+    const dir = await temporaryDir('edit-lost-body-');
+    let dropNext = false;
+
+    await withServer(async ({ endpoint }) => {
+      const note = await noteOn(endpoint, { slug: 'lost-body' });
+      const kit = await editOver(endpoint, path.join(dir, 'capture.db'), {
+        // The answer is dropped *after* the server has finished writing, so the entity genuinely
+        // holds the change and the phone genuinely does not know it.
+        fetch: async (input, init) => {
+          const response = await fetch(input, init);
+
+          if (dropNext && String(input).includes('/api/nodes/update')) {
+            dropNext = false;
+            throw new TypeError('fetch failed');
+          }
+
+          return response;
+        },
+      });
+      const editor = fakeEditor();
+
+      try {
+        await kit.owner.getState().initialize();
+        const outcome = await kit.owner.getState().open(note.id, kit.session);
+        assert.equal(outcome.kind, 'ready');
+        kit.owner.getState().attachEditor(outcome.editKey, editor.port);
+
+        dropNext = true;
+        editor.captures({
+          type: 'doc',
+          content: [
+            {
+              type: 'paragraph',
+              content: [{ type: 'text', text: 'ends in a break' }, { type: 'hardBreak' }],
+            },
+          ],
+        });
+        assert.equal(
+          (await kit.owner.getState().flush(outcome.editKey, { lock: true })).kind,
+          'flushed',
+        );
+
+        const standing = await quiet(kit, note.id, 'the lost answer to be reconciled');
+
+        const got = await cliJson(['get', '--id', String(note.id), '--format', 'tiptap'], {
+          endpoint,
+        });
+
+        assert.equal(got.entity.revision, note.revision + 1, 'the write did land');
+        assert.deepEqual(
+          got.entity.body.value.content[0].content,
+          [{ type: 'text', text: 'ends in a break' }],
+          'and the server dropped the trailing break, as `hard-breaks.ts` says it does',
+        );
+
+        // The measurement. `conflicted` is the known residual window; `synced` would mean the
+        // comparison recognized the canonicalized form, which today it does not.
+        assert.equal(
+          standing.kind,
+          'conflicted',
+          'a lost answer to a canonicalized body still reconciles as a conflict',
+        );
+      } finally {
+        await kit.owner.getState().close();
       }
     });
   });

@@ -74,6 +74,12 @@ describe('unfinishedEdits', () => {
     });
 
     assert.equal(rows[0].scope, 'retired');
+    // And it offers only what needs no server and no id from one. Opening it would not reopen this
+    // row: an edit is addressed by `(connectionId, nodeId)`, so the editor would seed a fresh record
+    // over whatever entity happens to hold that number on the connection the phone is on now. The
+    // sibling rule for drafts (`unfinished.ts`'s `actionsFor`) refuses `open` off-connection too;
+    // there `copy` survives, and here nothing does, because an edit has no server-free form.
+    assert.deepEqual(rows[0].actions, ['discard']);
   });
 
   it('orders by how pressing the standing is, then by latest activity, then by key', () => {

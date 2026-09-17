@@ -134,7 +134,11 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
   const leaving = useRef(false);
 
   // Best effort, on the way out of the foreground. Never the barrier a Save relies on.
-  useBackgroundFlush(draftId);
+  useBackgroundFlush(
+    useCallback(() => {
+      void useCaptureOwner.getState().flush(draftId);
+    }, [draftId]),
+  );
 
   /**
    * Adopt the record whenever it disagrees with what was last pushed into the owner.

@@ -15,7 +15,12 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import '../../global.css';
 import { queryClient, startAppStateBridge } from '../infrastructure/query/query-client';
-import { StorageGate, useCaptureLifetime, VoiceCaptureSheet } from '../modules/capture';
+import {
+  StorageGate,
+  useCaptureLifetime,
+  useEditLifetime,
+  VoiceCaptureSheet,
+} from '../modules/capture';
 import { ContainerCreationHost } from '../modules/collections';
 import { ConnectionGate } from '../modules/connection';
 import { colors } from '../ui/theme';
@@ -60,6 +65,10 @@ export default function RootLayout() {
    * else - no Home, no composer, no recovery, however much this has already read.
    */
   useCaptureLifetime();
+  // The second owner over the same database, mounted beside the first and for the same reasons: an
+  // answer arriving after someone navigates away still has to be written against its own record, and
+  // what is unsent has to be countable before any screen asks.
+  useEditLifetime();
 
   if (!ready) {
     return null;
