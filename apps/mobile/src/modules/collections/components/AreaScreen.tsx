@@ -19,9 +19,9 @@ import {
   goBack,
   openArea,
   openBrowse,
+  openEditor,
   openHome,
   openProject,
-  openResource,
   openSearch,
   LocationTopBar,
 } from '../../navigation';
@@ -43,6 +43,7 @@ import {
   useHierarchy,
 } from '../client/queries';
 import { AddInsideSheet, type AddInsideTarget } from './AddInsideSheet';
+import { ContainerEditAction } from './ContainerEditAction';
 import { ContainerHeader } from './ContainerHeader';
 import { HierarchyStale } from './HierarchyError';
 import { ReadOnlyBody } from './ReadOnlyBody';
@@ -226,19 +227,22 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
           title={entity === undefined ? 'Loading…' : entity.title}
           toggles={
             entity === undefined || target === null ? undefined : (
-              <ToggleLabel
-                accessibilityLabel={
-                  favorite.isFavorite(target)
-                    ? `Remove ${entity.title} from favorites`
-                    : `Add ${entity.title} to favorites`
-                }
-                label="Favorite"
-                mark={FAVORITE_MARK}
-                onToggle={() => {
-                  favorite.toggle(target);
-                }}
-                selected={favorite.isFavorite(target)}
-              />
+              <>
+                <ToggleLabel
+                  accessibilityLabel={
+                    favorite.isFavorite(target)
+                      ? `Remove ${entity.title} from favorites`
+                      : `Add ${entity.title} to favorites`
+                  }
+                  label="Favorite"
+                  mark={FAVORITE_MARK}
+                  onToggle={() => {
+                    favorite.toggle(target);
+                  }}
+                  selected={favorite.isFavorite(target)}
+                />
+                <ContainerEditAction id={areaId} kind="area" />
+              </>
             )
           }
         />
@@ -312,7 +316,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
           className="mt-8"
           copy={CONTAINER_NOTES_COPY}
           locationFor={containerTitleLookup(tree)}
-          onOpen={openResource}
+          onOpen={openEditor}
           testID="area-notes"
           view={notes.view}
         />

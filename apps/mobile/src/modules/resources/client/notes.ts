@@ -1,11 +1,13 @@
 /**
  * Notes, read from the connected Raphael.
  *
- * Three reads. Two of them are paged traversals - Home's newest-first
- * list of everything, and one container's own notes - and they are the *same* traversal machinery
- * with different descriptors, so paging, transport capture, mapping, failure and refresh behave
- * identically wherever notes appear. The third is one note's entity, which is the only read that
- * carries a body.
+ * Two reads, and they are two paged traversals - Home's newest-first list of everything, and one
+ * container's own notes. They are the *same* traversal machinery with different descriptors, so
+ * paging, transport capture, mapping, failure and refresh behave identically wherever notes appear.
+ *
+ * **There is no read of one note here.** Opening a note is editing it, and the editor reads through
+ * the edit owner's own Get; a query for one entity beside that read would be a second authority on
+ * what the note says, and it would refetch the note someone is typing into on every acknowledgement.
  *
  * Two rules this file exists to keep:
  *
@@ -15,31 +17,20 @@
  * the connection changed underneath it.
  *
  * No screen downloads a body to draw a card. The list response carries the title and description a
- * card shows; the body is fetched exactly once, when someone opens the note.
+ * card shows; the body arrives once, with the read the editor makes when someone opens the note.
  *
  * Every request and key lives in `options.ts` rather than inline here, so what this capability
  * promises about offsets, guards, restarts and formats can be driven against the real query library,
  * and against a real server, without a renderer standing in the way.
  */
 
-import {
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-  type UseQueryResult,
-} from '@tanstack/react-query';
+import { useInfiniteQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback } from 'react';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
 import { useConnectionSession } from '../../connection';
-import type { NoteEntity } from './entity.ts';
 import { deriveNoteFeed, type NoteFeedView } from './feed-state.ts';
-import {
-  noteEntityOptions,
-  notePagesOptions,
-  requestNextPage,
-  truncateToFirstPage,
-} from './options.ts';
+import { notePagesOptions, requestNextPage, truncateToFirstPage } from './options.ts';
 import {
   containerDescriptor,
   feedDescriptor,
@@ -105,11 +96,4 @@ export function useNotePages(parent: ContainerRef | null): NoteFeed {
     useCallback((skip: number) => containerDescriptor(parentId, skip), [parentId]),
     parent !== null,
   );
-}
-
-/** One note, with its body. What it asks for, and of which server, is `options.ts`. */
-export function useResource(id: number | null): UseQueryResult<NoteEntity> {
-  const session = useConnectionSession();
-
-  return useQuery(noteEntityOptions(session?.activation ?? -1, session?.transport ?? null, id));
 }

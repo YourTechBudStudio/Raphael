@@ -428,23 +428,48 @@ test('nothing can create a note that exists only in this process', () => {
 /**
  * A second entry point has to be a leaf, or it has not broken the cycle it exists for.
  *
- * `collections/hierarchy.ts` is imported by `resources` so that a note screen can name where a note
- * is filed. If anything it reaches were to reach back into `resources`, the cycle would be exactly
- * where it was - only harder to see, because the edge would run through a file nobody thinks of as
- * public. So the whole graph under each declared entry point is walked, and reaching the capability
- * that depends on it is a failure.
+ * `collections/hierarchy.ts` exists so that a screen in another capability can name where something
+ * is filed without importing the index that publishes the Area and Project screens. If anything it
+ * reaches were to reach back into a capability that imports it, the cycle would be exactly where it
+ * was - only harder to see, because the edge would run through a file nobody thinks of as public.
+ *
+ * **Its dependants are discovered rather than named.** The rule used to spell out `resources`, which
+ * was true while the note screen was the only importer; capture reaches it now, for the eyebrow on
+ * the edit screen. A rule that names one capability goes on passing for the wrong reason the moment a
+ * second one appears, so the importers are read off the graph and every one of them is checked.
  *
  * The capture edges are covered separately, by the acyclicity rule above.
  */
-test('a declared second entry point does not reach the capability that depends on it', () => {
-  const hierarchy = path.join('modules', 'collections', 'hierarchy.ts');
-  const reached = [...reachable(hierarchy)].filter((file) =>
-    file.startsWith(path.join('modules', 'resources') + path.sep),
-  );
+test('a declared second entry point does not reach the capabilities that depend on it', () => {
+  for (const [module, entries] of ENTRY_POINTS) {
+    for (const entry of entries) {
+      if (entry === 'index.ts') continue;
 
-  assert.deepEqual(
-    reached,
-    [],
-    `${hierarchy} reaches resources, so the cycle it exists to break is still there`,
-  );
+      const target = path.join('modules', module, entry);
+      const dependants = new Set(
+        files
+          .filter((file) =>
+            imports(file).some((it) =>
+              resolveImport(file, it) === undefined
+                ? false
+                : path.relative(root, resolveImport(file, it)) === target,
+            ),
+          )
+          .map((file) => file.split(path.sep)[1])
+          .filter((name) => name !== module),
+      );
+
+      assert.ok(dependants.size > 0, `${target} is a second entry point nothing imports`);
+
+      const reached = [...reachable(target)].filter((file) =>
+        [...dependants].some((name) => file.startsWith(path.join('modules', name) + path.sep)),
+      );
+
+      assert.deepEqual(
+        reached,
+        [],
+        `${target} reaches ${[...dependants].join(', ')}, so the cycle it exists to break is still there`,
+      );
+    }
+  }
 });

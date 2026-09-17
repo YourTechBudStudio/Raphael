@@ -99,6 +99,10 @@ export default function RootLayout() {
                     lock and the lock is held until the route actually goes. A swipe-back would
                     unmount the renderer with neither, so it is off for this screen. */}
                 <Stack.Screen name="capture/[draftId]" options={{ gestureEnabled: false }} />
+                {/* The same rule for the same reason: leaving the editor is a controlled exit that
+                    waits for the server, and a swipe-back would unmount the renderer past both the
+                    locked flush and the wait. */}
+                <Stack.Screen name="edit/[id]" options={{ gestureEnabled: false }} />
                 <Stack.Screen name="recovery" />
                 <Stack.Screen name="settings" />
                 <Stack.Screen name="change-server" />

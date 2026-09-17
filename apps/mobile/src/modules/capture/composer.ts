@@ -16,7 +16,7 @@ import type { Standing } from './policy.ts';
 // From the core that defines it, not through `owner.ts`, which only re-exports it. The edit composer
 // reuses this module, and reaching the type through the owner would put the owner in the import graph
 // of every pure module that does.
-import type { DraftProtection } from './protection.ts';
+import type { DraftProtection, FlushResult } from './protection.ts';
 
 export type StatusTone = 'quiet' | 'alert';
 
@@ -130,6 +130,19 @@ export const problemOf = (input: ProtectionInput): ProtectionProblem | null => {
   if (input.lastRejection === null) return 'unanswered';
 
   return input.lastRejection === 'too_large' ? 'too_large' : 'failed_write';
+};
+
+/**
+ * Which repair a flush that did not land calls for.
+ *
+ * Here rather than in a screen because both composers ask it of the same `FlushResult` and must get
+ * the same answer: the sheet it chooses is what someone is offered to rescue writing this phone could
+ * not keep, and two copies is how one screen ends up offering Undo where the other offers a retry.
+ */
+export const problemFor = (result: FlushResult): ProtectionProblem => {
+  if (result.kind === 'refused') return result.code === 'too_large' ? 'too_large' : 'failed_write';
+
+  return result.kind === 'unanswered' ? 'unanswered' : 'failed_write';
 };
 
 const NO_ACTION: ComposerAction = { kind: 'none', label: '', enabled: false, hint: '' };

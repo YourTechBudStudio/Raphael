@@ -10,7 +10,6 @@ export {
   openEditor,
   openHome,
   openProject,
-  openResource,
   openRecovery,
   openSearch,
   openSettings,

@@ -15,21 +15,12 @@
  * from.
  */
 
-import { get as getNode } from '@raphael/client/nodes';
-import {
-  infiniteQueryOptions,
-  queryOptions,
-  type InfiniteData,
-  type QueryClient,
-} from '@tanstack/react-query';
+import { infiniteQueryOptions, type InfiniteData, type QueryClient } from '@tanstack/react-query';
 
 import type { Transport } from '../../../infrastructure/api';
-import { unwrap } from '../../../infrastructure/query/failure.ts';
-import type { NoteEntity } from './entity.ts';
 import {
   fetchNotePage,
   nextPageSkip,
-  noteEntityKey,
   noteListKey,
   type NoteListDescriptor,
   type NotePage,
@@ -108,33 +99,3 @@ export const requestNextPage = (query: NextPageGate, previousPageFailed = false)
 
   return true;
 };
-
-/**
- * One note, with its body, as canonical TipTap.
- *
- * `format: 'tiptap'` is the whole point of this builder and is why it is data rather than a line
- * inside a hook. Markdown is the API's default, so *omitting* the field is a valid request that
- * returns a perfectly good answer this screen cannot use: the editor takes a document, and
- * `displayableBody` refuses a Markdown body rather than converting it, because converting it here
- * would make this client a second content authority beside `@raphael/content`. The failure would
- * therefore be silent and total - every note reading "This note could not be opened" - which is
- * exactly the shape of defect that has already happened once in this capability. So the request is
- * asserted, against a stub and against a real server.
- *
- * `id` may be null, for a route parameter that named no note. The query is then disabled rather than
- * asking about nothing.
- */
-export const noteEntityOptions = (
-  activation: number,
-  transport: Transport | null,
-  id: number | null,
-) =>
-  queryOptions({
-    queryKey: noteEntityKey(activation, id ?? 0),
-    queryFn: async ({ signal }): Promise<NoteEntity> => {
-      if (transport === null || id === null) throw new Error('No connection');
-
-      return unwrap(await getNode(transport, { target: { id }, format: 'tiptap' }, signal)).entity;
-    },
-    enabled: transport !== null && id !== null,
-  });

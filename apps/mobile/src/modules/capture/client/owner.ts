@@ -48,7 +48,9 @@ export const useCaptureOwner = createCaptureOwner({
   newId,
   // One consequence of one event, bound to the app's cache. What may be filed as a note's detail is
   // decided in `creation-cache.ts`, where it can be driven without a connection.
-  applyCreation: (response, activation) => applyCreationTo(queryClient, response, activation),
+  // The response is the port's identification of what was created; the cache consequence no longer
+  // needs it, now that nothing files a note's entity under a key of its own.
+  applyCreation: (_response, activation) => applyCreationTo(queryClient, activation),
   /**
    * Whether this session is the one the app is working under right now.
    *

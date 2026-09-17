@@ -15,9 +15,8 @@ import { goBack, openContainer, openHome } from '../../navigation';
 import { useBackgroundFlush } from '../client/background.ts';
 import { useDestinationName } from '../client/destinations.ts';
 import { useCaptureOwner, useCaptureSession } from '../client/owner.ts';
-import { composerView, type ProtectionProblem } from '../composer.ts';
-import type { CaptureSession } from '../owner.ts';
-import type { AttachmentToken, FlushResult } from '../owner.ts';
+import { composerView, problemFor, type ProtectionProblem } from '../composer.ts';
+import type { AttachmentToken, CaptureSession } from '../owner.ts';
 import type { Standing } from '../policy.ts';
 import type { NoteDraftRecord } from '../types.ts';
 import { CaptureView } from './CaptureView';
@@ -580,13 +579,6 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
     </>
   );
 }
-
-/** Which repair a flush that did not land calls for. */
-const problemFor = (result: FlushResult): ProtectionProblem => {
-  if (result.kind === 'refused') return result.code === 'too_large' ? 'too_large' : 'failed_write';
-
-  return result.kind === 'unanswered' ? 'unanswered' : 'failed_write';
-};
 
 /**
  * Whether this draft has a save that was sent and never answered.

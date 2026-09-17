@@ -205,8 +205,13 @@ describe('the interface never says "slug"', () => {
       'utf8',
     );
     // Every string literal in the module, including the refusal sentences and the problem copy.
+    // Interpolations are blanked first: `${input.slug}` is an identifier the compiler reads, not a
+    // word anybody sees, and the chip legitimately *shows* the stored value under the name "ID".
+    // What must never appear is the word itself, in prose.
     const literals = source.match(/'[^'\n]*'|`[^`]*`/g) ?? [];
-    const sentences = literals.filter((literal) => /\s/.test(literal));
+    const sentences = literals
+      .map((literal) => literal.replaceAll(/\$\{[^}]*\}/g, '\u2026'))
+      .filter((literal) => /\s/.test(literal));
 
     for (const sentence of sentences) {
       assert.ok(!/slug/i.test(sentence), `user-facing string says "slug": ${sentence}`);

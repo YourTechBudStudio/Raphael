@@ -25,11 +25,10 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { QueryClient, QueryObserver } from '@tanstack/react-query';
+import { QueryClient } from '@tanstack/react-query';
 
 import { unfinishedEdits } from '../src/modules/capture/edit-unfinished.ts';
-import { displayableBody } from '../src/modules/resources/client/display.ts';
-import { noteEntityOptions, notePagesOptions } from '../src/modules/resources/client/options.ts';
+import { notePagesOptions } from '../src/modules/resources/client/options.ts';
 import { containerDescriptor, feedDescriptor } from '../src/modules/resources/client/requests.ts';
 import { toNoteSummaryItem } from '../src/modules/resources/client/summary.ts';
 import { documentWith, fakeEditor } from './support/capture-harness.mjs';
@@ -53,18 +52,6 @@ after(cleanupDirectories);
 /** A client that does not retry, so a real failure is observed as one. */
 const freshClient = () =>
   new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity } } });
-
-/** Settle one query through the real observer the screens use, and hand back its result. */
-const observe = async (client, options) => {
-  const observer = new QueryObserver(client, options);
-  const unsubscribe = observer.subscribe(() => undefined);
-
-  try {
-    return await observer.refetch().then(() => observer.getCurrentResult());
-  } finally {
-    unsubscribe();
-  }
-};
 
 /** Every page of a traversal, fetched the way the feed fetches them. */
 const allPages = async (client, options) => {
@@ -186,8 +173,10 @@ describe('a note the CLI wrote, read by the phone', () => {
     const dir = await temporaryDir('cli-writes-');
 
     await withServer(async ({ endpoint }) => {
-      const client = freshClient();
-      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      // The phone's own read of one note is the edit owner's Get: opening a note is editing it, so
+      // there is no detail query left to ask, and this is the read a person actually makes.
+      const phone = await editOver(endpoint, path.join(dir, 'edits.db'));
+      await phone.owner.getState().initialize();
 
       for (const row of cases) {
         const body = await row.body();
@@ -214,27 +203,22 @@ describe('a note the CLI wrote, read by the phone', () => {
         assert.equal(written.revision, 1, `${row.name}: revision`);
         assert.ok(Number.isInteger(written.id) && written.id > 0, `${row.name}: identity`);
 
-        // The phone's own read, by the phone's own query, asking for the canonical format.
-        const read = await observe(client, noteEntityOptions(1, transport, written.id));
-        assert.equal(read.status, 'success', `${row.name}: the phone could read it`);
-
-        const entity = read.data;
-        assert.equal(entity.id, written.id, `${row.name}: same numeric identity`);
-        assert.equal(entity.revision, 1, `${row.name}: same revision`);
-        assert.equal(entity.kind, 'note', `${row.name}: same kind`);
-        assert.equal(entity.type, 'resource', `${row.name}: same type`);
-        assert.equal(entity.parentId, WORK.id, `${row.name}: same parent`);
-        assert.equal(entity.slug, row.slug, `${row.name}: same slug`);
-        assert.equal(entity.title, row.title, `${row.name}: same title`);
-        assert.equal(entity.description, row.description, `${row.name}: same description`);
-        assert.equal(entity.body.format, 'tiptap', `${row.name}: the phone reads canonical bodies`);
-
-        // The body the composer would be given is the body the server holds, not a projection of it.
+        // The phone's own read, through the owner that performs it, asking for the canonical format.
+        const opened = await phone.owner.getState().open(written.id, phone.session);
+        assert.equal(opened.kind, 'ready', `${row.name}: the phone could open it`);
         assert.deepEqual(
-          displayableBody(entity),
-          entity.body.value,
-          `${row.name}: displayable body`,
+          opened.location,
+          { kind: 'known', parentId: WORK.id },
+          `${row.name}: same parent`,
         );
+
+        const record = phone.record(written.id);
+        assert.equal(record.baseRevision, 1, `${row.name}: same revision`);
+        assert.equal(record.kind, 'note', `${row.name}: same kind`);
+        assert.equal(record.nodeType, 'resource', `${row.name}: same type`);
+        assert.equal(record.content.slug, row.slug, `${row.name}: same slug`);
+        assert.equal(record.content.title, row.title, `${row.name}: same title`);
+        assert.equal(record.content.description, row.description, `${row.name}: same description`);
 
         // And the same note, read back as Markdown through the client that wrote it: the fixture's
         // own expected export, which is what "the content survived storage" means here.
@@ -249,7 +233,20 @@ describe('a note the CLI wrote, read by the phone', () => {
         const byPath = await cliJson(['get', `${WORK.path}/${row.slug}`, '--format', 'tiptap'], {
           endpoint,
         });
-        assert.deepEqual(byPath.entity, entity, `${row.name}: id and path address the same note`);
+        assert.equal(
+          byPath.entity.id,
+          written.id,
+          `${row.name}: id and path address the same note`,
+        );
+        // A body the composer can open, and it is the server's canonical document rather than a
+        // projection of it. The owner refuses a Markdown body outright, so the request it sent must
+        // have named `format: 'tiptap'` for the record to exist at all.
+        assert.equal(byPath.entity.body.format, 'tiptap', `${row.name}: canonical body`);
+        assert.deepEqual(
+          record.content.document,
+          byPath.entity.body.value,
+          `${row.name}: the composer is given the body the server holds`,
+        );
       }
     });
   });

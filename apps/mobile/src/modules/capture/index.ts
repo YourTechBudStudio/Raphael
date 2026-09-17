@@ -23,6 +23,8 @@ export { VoiceCaptureSheet } from './components/VoiceCaptureSheet';
 // a draft exists before a composer opens over it - so no screen can wire New note a second way.
 export { CaptureDock, type CaptureDockProps } from './components/CaptureDock';
 export { CaptureScreen, type CaptureScreenProps } from './components/CaptureScreen';
+/** The editor over an existing entity. One screen for notes and containers alike. */
+export { EditScreen, type EditScreenProps } from './components/EditScreen';
 export { RecoveryScreen } from './components/RecoveryScreen';
 export { StorageGate } from './components/StorageGate';
 export { UnfinishedGridCard, type UnfinishedGridCardProps } from './components/UnfinishedGridCard';
@@ -70,6 +72,7 @@ export type { BlockedReason, Standing, UnsendableCause } from './policy.ts';
  */
 export {
   createEditOwner,
+  type EditLocation,
   type EditOpenOutcome,
   type EditOwner,
   type EditPorts,

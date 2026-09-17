@@ -85,8 +85,24 @@ export const AUTOSAVE_RETRY_MS = 10_000;
  */
 export type LeaveOutcome = 'settled' | 'kept' | 'unconfirmed';
 
+/**
+ * Where the entity sits, as far as this open could establish.
+ *
+ * Two facts that a bare `parentId: number | null` would merge, and the eyebrow draws them
+ * differently: a root-level container genuinely has no parent and reads "Areas", while an entity
+ * whose Get failed has a parent this phone could not learn and must name no location at all.
+ * Collapsing them would make an unreachable server quietly claim a note lives at the root.
+ *
+ * It comes from the entity the owner's own Get read, never from a second query - the screen mounts
+ * no query for the entity it edits, and this is what keeps that true while the eyebrow still has
+ * something to name.
+ */
+export type EditLocation =
+  | { readonly kind: 'known'; readonly parentId: number | null }
+  | { readonly kind: 'unknown' };
+
 export type EditOpenOutcome =
-  | { readonly kind: 'ready'; readonly editKey: string }
+  | { readonly kind: 'ready'; readonly editKey: string; readonly location: EditLocation }
   /** A retained row this build cannot open. The screen names the problem and offers Discard. */
   | { readonly kind: 'unusable'; readonly editKey: string; readonly problem: EditProblem }
   /**
@@ -138,6 +154,13 @@ export interface EditState {
   retryOpen(): Promise<void>;
   close(): Promise<void>;
 
+  /**
+   * Open one entity for editing, and **always resolve**.
+   *
+   * Every way this can go wrong is an `EditOpenOutcome`, never a rejection. The screen has one place
+   * to render an answer and no place to render the absence of one, so a rejection here would leave it
+   * on its opening skeleton indefinitely with nothing said about why.
+   */
   open(nodeId: number, session: CaptureSession): Promise<EditOpenOutcome>;
   /** The screen's current session, so the loop dispatches under the live one. Re-runs the tick. */
   resume(editKey: string, session: CaptureSession): void;
@@ -194,6 +217,15 @@ const refusalOf = (failure: ClientFailure, at: number): EditRefusal => {
  */
 const sameTags = (left: readonly string[], right: readonly string[]): boolean =>
   left.length === right.length && left.every((tag, index) => tag === right[index]);
+
+/**
+ * What this open could establish about where the entity sits.
+ *
+ * A Get that failed leaves the location unknown rather than null, because a record opened over local
+ * content is still perfectly editable and the eyebrow must say nothing rather than say "Areas".
+ */
+const locationOf = (result: ClientResult<GetResponse>): EditLocation =>
+  result.ok ? { kind: 'known', parentId: result.value.entity.parentId } : { kind: 'unknown' };
 
 export const createEditOwner = (ports: EditPorts) =>
   createStore<EditState>((set, get) => {
@@ -437,6 +469,56 @@ export const createEditOwner = (ports: EditPorts) =>
       keys.delete(editKey);
       sessions.delete(editKey);
       publishRecord(editKey, null);
+    };
+
+    /**
+     * Start a record for an entity this phone is not already editing.
+     *
+     * Both of `open`'s paths end here: an entity opened for the first time, and one whose reconciled
+     * session settled and was forgotten inside the very call that reconciled it.
+     */
+    const seed = async (
+      active: CaptureStore,
+      key: EditKey,
+      editKey: string,
+      session: CaptureSession,
+      result: ClientResult<GetResponse>,
+    ): Promise<EditOpenOutcome> => {
+      if (!result.ok) return { kind: 'unavailable', failure: result.failure };
+
+      const entity = result.value.entity;
+      const content = contentOf(entity);
+
+      if (content === null) return { kind: 'unavailable', failure: null };
+
+      let seeded: EntityEditRecord | null;
+
+      try {
+        seeded = await active.insertEdit({
+          key,
+          endpoint: session.endpoint,
+          nodeType: entity.type,
+          kind: entity.kind,
+          content,
+          revision: entity.revision,
+          at: ports.now(),
+        });
+      } catch {
+        return { kind: 'unavailable', failure: null };
+      }
+
+      if (!current(active)) return { kind: 'unavailable', failure: null };
+      if (seeded === null) return { kind: 'unavailable', failure: null };
+
+      keys.set(editKey, key);
+      core.track(editKey, seeded.content, seeded.draftVersion);
+      publishRecord(editKey, seeded);
+      sessions.set(editKey, session);
+      // Seeding usually has nothing to send, but `insertEdit` hands back an existing row rather than
+      // throwing, and that row may hold writing this process has not seen yet.
+      scheduleTick(editKey, autosaveDelayMs);
+
+      return { kind: 'ready', editKey, location: locationOf(result) };
     };
 
     /**
@@ -923,43 +1005,7 @@ export const createEditOwner = (ports: EditPorts) =>
 
         const existing = recordOf(editKey);
 
-        if (existing === null) {
-          if (!result.ok) return { kind: 'unavailable', failure: result.failure };
-
-          const entity = result.value.entity;
-          const content = contentOf(entity);
-
-          if (content === null) return { kind: 'unavailable', failure: null };
-
-          let seeded: EntityEditRecord | null;
-
-          try {
-            seeded = await active.insertEdit({
-              key,
-              endpoint: session.endpoint,
-              nodeType: entity.type,
-              kind: entity.kind,
-              content,
-              revision: entity.revision,
-              at: ports.now(),
-            });
-          } catch {
-            return { kind: 'unavailable', failure: null };
-          }
-
-          if (!current(active)) return { kind: 'unavailable', failure: null };
-          if (seeded === null) return { kind: 'unavailable', failure: null };
-
-          keys.set(editKey, key);
-          core.track(editKey, seeded.content, seeded.draftVersion);
-          publishRecord(editKey, seeded);
-          sessions.set(editKey, session);
-          // Seeding usually has nothing to send, but `insertEdit` hands back an existing row rather
-          // than throwing, and that row may hold writing this process has not seen yet.
-          scheduleTick(editKey, autosaveDelayMs);
-
-          return { kind: 'ready', editKey };
-        }
+        if (existing === null) return await seed(active, key, editKey, session, result);
 
         keys.set(editKey, key);
         core.track(editKey, existing.content, existing.draftVersion);
@@ -971,40 +1017,75 @@ export const createEditOwner = (ports: EditPorts) =>
           existing.acknowledgedVersion >= existing.draftVersion &&
           (core.committed(editKey)?.version ?? 0) <= existing.acknowledgedVersion;
 
-        if (settled && result.ok && result.value.entity.revision !== existing.baseRevision) {
-          // Nothing local is unsent, so adopting the server's newer state loses nothing. A body this
-          // build cannot open is the one case that is left alone: the stale base revision then makes
-          // any later send refuse as a conflict, which is the safe direction, and it can be discarded.
-          const content = contentOf(result.value.entity);
+        /**
+         * Bringing the record up to date, and neither half may take the editor down with it.
+         *
+         * Both branches are SQLite writes, and a write that throws must not reject `open`: the record
+         * is already tracked and published, so what a failed write leaves behind is precisely the
+         * state the standing already describes - an un-rebased base, or an envelope still in flight
+         * reading `unconfirmed`. Opening over local content is the same answer a failed Get gets, and
+         * it is the one that keeps someone's unsent writing reachable. Rejecting instead would leave
+         * the screen on its opening skeleton with nothing said, because a caller cannot render an
+         * outcome it was never given.
+         */
+        try {
+          if (settled && result.ok && result.value.entity.revision !== existing.baseRevision) {
+            // Nothing local is unsent, so adopting the server's newer state loses nothing. A body this
+            // build cannot open is the one case that is left alone: the stale base revision then makes
+            // any later send refuse as a conflict, which is the safe direction, and it can be discarded.
+            const content = contentOf(result.value.entity);
 
-          if (content !== null) {
-            const rebased = await active.rebaseEdit(
-              key,
-              content,
-              result.value.entity.revision,
-              ports.now(),
-            );
+            if (content !== null) {
+              const rebased = await active.rebaseEdit(
+                key,
+                content,
+                result.value.entity.revision,
+                ports.now(),
+              );
 
-            if (!current(active)) return { kind: 'unavailable', failure: null };
-            if (rebased !== null) {
-              publishRecord(editKey, rebased);
-              // The row's authored content changed without its version moving, which is exactly what
-              // `confirm` expresses. Without it the core would keep the content it was tracking and
-              // the next diff would be taken against writing nobody did.
-              core.confirm(editKey, null, rebased.content);
+              if (!current(active)) return { kind: 'unavailable', failure: null };
+              if (rebased !== null) {
+                publishRecord(editKey, rebased);
+                // The row's authored content changed without its version moving, which is exactly what
+                // `confirm` expresses. Without it the core would keep the content it was tracking and
+                // the next diff would be taken against writing nobody did.
+                core.confirm(editKey, null, rebased.content);
+              }
             }
+          } else if (existing.inflightVersion !== null) {
+            // An answer was lost. Reconciled from the entity this very call read, rather than by a
+            // second Get: it is strictly fresher, and two reads can disagree in ways these rules assume
+            // away. A failed Get leaves the record unconfirmed, and its standing says so.
+            await applyReconciliation(editKey, result);
+            if (!current(active)) return { kind: 'unavailable', failure: null };
           }
-        } else if (existing.inflightVersion !== null) {
-          // An answer was lost. Reconciled from the entity this very call read, rather than by a
-          // second Get: it is strictly fresher, and two reads can disagree in ways these rules assume
-          // away. A failed Get leaves the record unconfirmed, and its standing says so.
-          await applyReconciliation(editKey, result);
-          if (!current(active)) return { kind: 'unavailable', failure: null };
+        } catch {
+          // Whatever was written is what the standing already describes, so the record opens as it
+          // stands. The row is tracked and published before either branch runs, and neither leaves
+          // anything half-applied that a later read could misinterpret.
         }
+
+        /**
+         * The reconciliation may have ended the session it was reconciling, and then this is a first
+         * open after all.
+         *
+         * A lost answer that turns out to have landed is acknowledged, and an acknowledgement with no
+         * editor attached settles the record and forgets it - the background-flush and process-death
+         * path. **Nobody is attached here by construction**: the screen calls `open` first and attaches
+         * from an effect in the composer it mounts once this resolves, so the recovery path always
+         * takes that branch. Returning `ready` for the forgotten key would hand the screen a key with
+         * no record behind it, which it can only read as a failed read - "this could not be opened,
+         * nothing has changed" - over an entity that is intact and an edit that reached the server.
+         *
+         * So it seeds instead, from the entity this call already read. That entity is current by
+         * construction: `matchesSubmitted` only acknowledges when the server is exactly one revision
+         * past the base, which is the revision the acknowledgement then recorded.
+         */
+        if (recordOf(editKey) === null) return await seed(active, key, editKey, session, result);
 
         scheduleTick(editKey, autosaveDelayMs);
 
-        return { kind: 'ready', editKey };
+        return { kind: 'ready', editKey, location: locationOf(result) };
       },
 
       resume: (editKey, session) => {

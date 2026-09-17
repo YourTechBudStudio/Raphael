@@ -53,8 +53,14 @@ const KEY = editKeyOf({ connectionId: 'c1', nodeId: 42 });
  * Open the owner and one entity, with an editor attached.
  *
  * The attachment is not decoration. A record whose acknowledgement lands with nobody attached is
- * settled and forgotten on the spot - that is the background-flush and process-death path - so a
- * test that wants to inspect a record after it saved has to be holding it, exactly as the screen is.
+ * settled and forgotten on the spot - that is the background-flush and process-death path - so a test
+ * that wants to inspect a record after it saved has to be holding it.
+ *
+ * **It is not the screen's ordering, and no test may claim it is.** `EditScreen` calls `open` first
+ * and attaches from an effect in the composer it mounts once that resolves, so an editor is never
+ * attached *during* an open. This helper attaches after `open` returns; where the sequence itself is
+ * what is under test - the recovery path, where reconciliation can settle a record mid-open - the
+ * test drives `initialize` and `open` directly instead, with nothing attached.
  */
 const opened = async (options = {}) => {
   const kit = await editHarness(options);
@@ -91,6 +97,117 @@ describe('opening an entity', () => {
     assert.deepEqual(record.content, record.base, 'nothing is unsent the moment it is opened');
     assert.equal(record.acknowledgedVersion, record.draftVersion);
     assert.deepEqual(kit.owner.getState().standingFor(KEY), { kind: 'synced', revision: 1 });
+  });
+
+  /**
+   * "At the root" and "I could not find out" are two facts, and the eyebrow draws them differently.
+   *
+   * A root-level container genuinely has no parent and reads "Areas"; an entity whose Get failed has
+   * a parent this phone could not learn and must name no location at all. A bare `parentId: null`
+   * would merge them, and an unreachable server would then quietly claim a note lives at the root.
+   */
+  it('tells a genuinely root-level parent from one it could not establish', async () => {
+    const atRoot = await editHarness({
+      server: serverModel({ type: 'area', kind: null, parentId: null }),
+    });
+
+    await atRoot.owner.getState().initialize();
+
+    assert.deepEqual((await atRoot.owner.getState().open(42, SESSION)).location, {
+      kind: 'known',
+      parentId: null,
+    });
+
+    // A record that already exists opens over local content even when the read fails, and then the
+    // location is the one thing this open learned nothing about.
+    const kit = await opened();
+
+    kit.server.getFailure = clientFailure('transport', null, 'not_applicable');
+
+    const again = await kit.owner.getState().open(42, SESSION);
+
+    assert.equal(again.kind, 'ready', 'a failed read still opens what is on this phone');
+    assert.deepEqual(again.location, { kind: 'unknown' });
+  });
+
+  /**
+   * A store write that fails on reopen must not take the editor down with it.
+   *
+   * `open` is total by contract: the screen renders an outcome and has nowhere to render the absence
+   * of one, so a rejection would leave it on its opening skeleton forever with nothing said. The
+   * record is tracked and published before either write is attempted, and a write that threw wrote
+   * nothing - so what is left is exactly what the standing already describes.
+   */
+  it('opens over what is on this phone when the reopen write itself fails', async () => {
+    const file = await temporaryFile();
+    const first = await opened({ file });
+
+    first.server.writeBehind({ title: 'Renamed elsewhere' });
+    await first.owner.getState().close();
+
+    const kit = await editHarness({
+      file,
+      server: first.server,
+      store: () => ({
+        rebaseEdit: () => {
+          throw new Error('the database said no');
+        },
+      }),
+    });
+
+    await kit.owner.getState().initialize();
+
+    const outcome = await kit.owner.getState().open(42, SESSION);
+
+    assert.equal(outcome.kind, 'ready', 'the record is still editable');
+    assert.deepEqual(outcome.location, { kind: 'known', parentId: 3 });
+    assert.equal(kit.record(KEY).baseRevision, 1, 'the base it could not move stands');
+    assert.equal(kit.record(KEY).content.title, 'A note', 'and nothing local was lost');
+  });
+
+  /**
+   * The recovery path, in the order the screen actually performs it.
+   *
+   * A lost answer that turns out to have landed is acknowledged during `open`, and an acknowledgement
+   * with nobody attached settles the record and forgets it. Nobody is attached here **by
+   * construction**: the screen calls `open` first and attaches from an effect in the composer it
+   * mounts once that resolves. Handing back `ready` for the forgotten key left the screen with a key
+   * and no record, which it can only render as "this could not be opened, nothing has changed" - over
+   * an intact entity whose edit reached the server, at the exact moment recovery exists for.
+   *
+   * Deliberately **not** written through `opened`: that helper attaches first, which is the one
+   * ordering the screen cannot reproduce and the reason this went unseen.
+   */
+  it('opens a fresh record when the reconciliation settles the one it was reconciling', async () => {
+    const file = await temporaryFile();
+    const first = await opened({ file });
+
+    await first.owner.getState().editFields(KEY, { title: 'landed' });
+    first.server.lose = true;
+    await committed(first, 2);
+    first.fire();
+    await until(() => first.record(KEY).inflightVersion === 2, 'an envelope left in flight');
+    await first.owner.getState().close();
+
+    // The screen's ordering exactly: open, and only then attach.
+    const kit = await editHarness({ file, server: first.server });
+
+    await kit.owner.getState().initialize();
+
+    const outcome = await kit.owner.getState().open(42, SESSION);
+
+    assert.equal(outcome.kind, 'ready');
+
+    const record = kit.record(editKeyOf({ connectionId: 'c1', nodeId: 42 }));
+
+    assert.notEqual(record, null, 'the key it handed back has a record behind it');
+    assert.equal(record.content.title, 'landed', 'and it holds what the server took');
+    assert.equal(record.baseRevision, 2, 'at the revision the write produced');
+    assert.equal(record.inflightVersion, null, 'with nothing left unresolved');
+    assert.deepEqual(kit.owner.getState().standingFor(outcome.editKey), {
+      kind: 'synced',
+      revision: 2,
+    });
   });
 
   it('rebases a settled record onto a newer server revision', async () => {
@@ -482,6 +599,33 @@ describe('an answer that never arrived', () => {
 
     assert.equal(kit.record(KEY).inflightVersion, 2, 'nothing is concluded from a failed read');
     assert.equal(kit.owner.getState().standingFor(KEY).kind, 'unconfirmed');
+  });
+
+  /**
+   * The one field whose omission is silent and total.
+   *
+   * Markdown is the API's default, so a Get that leaves `format` out is a perfectly valid request
+   * whose perfectly good answer `displayableDocument` refuses rather than converts - every entity
+   * would open as "this could not be opened", and nothing would say why. It used to be asserted on
+   * the note detail query, which is gone; the owner's Get is the read now, and it has two call
+   * sites that can drift apart.
+   */
+  it('asks for the canonical format, on the open read and on the reconciling one alike', async () => {
+    const kit = await opened();
+
+    assert.deepEqual(
+      kit.server.getRequests,
+      [{ target: { id: 42 }, format: 'tiptap' }],
+      'the read that opens an entity',
+    );
+
+    await lostSend(kit, { title: 'landed' });
+    kit.fire();
+    await until(() => kit.server.getRequests.length > 1, 'the reconciling read');
+
+    for (const request of kit.server.getRequests) {
+      assert.deepEqual(request, { target: { id: 42 }, format: 'tiptap' });
+    }
   });
 });
 

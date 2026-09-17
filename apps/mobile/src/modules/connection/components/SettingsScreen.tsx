@@ -76,18 +76,6 @@ export function SettingsScreen() {
           {/* TEMPORARY PREVIEW for story #4; remove with app/preview. */}
           <View className="flex-row flex-wrap gap-2">
             <Chip
-              label="Preview: edit composer"
-              onPress={() => {
-                router.push('/preview/edit-composer');
-              }}
-            />
-            <Chip
-              label="Preview: container edit"
-              onPress={() => {
-                router.push('/preview/container-edit');
-              }}
-            />
-            <Chip
               label="Preview: unfinished edits"
               onPress={() => {
                 router.push('/preview/unfinished-edits');

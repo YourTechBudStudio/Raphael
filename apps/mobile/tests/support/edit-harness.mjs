@@ -67,6 +67,8 @@ export const serverModel = (seed = {}) => {
     hold: false,
     lose: false,
     gets: 0,
+    /** Every Get request, as sent. The one field whose omission fails silently is asserted on it. */
+    getRequests: [],
     updates: [],
     getFailure: null,
   };
@@ -76,8 +78,9 @@ export const serverModel = (seed = {}) => {
     await new Promise((resolve) => pending.push(resolve));
   };
 
-  model.get = async () => {
+  model.get = async (request) => {
     model.gets += 1;
+    model.getRequests.push(request);
     await wait();
     if (model.getFailure !== null) return model.getFailure;
 

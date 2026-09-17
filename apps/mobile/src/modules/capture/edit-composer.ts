@@ -58,6 +58,37 @@ export const idLabelOf = (nodeType: NodeType, kind: ResourceKind | null): string
 };
 
 /**
+ * What the Details chip says, and what it is called out loud.
+ *
+ * Here rather than in the component for the reason `idLabelOf` is here: this is the one place that
+ * turns a stored `slug` into a word a person reads, and a screen that composed its own label would be
+ * a second place where "slug" could reach an interface. The label is deliberately terse - it is a
+ * chip - while the spoken form names what each part is, because "autosave-loop-notes, 3 tags" read
+ * aloud says nothing about what the first half is.
+ */
+export interface DetailsChip {
+  readonly label: string;
+  readonly spoken: string;
+  readonly hint: string;
+}
+
+export const detailsChip = (input: {
+  readonly nodeType: NodeType;
+  readonly kind: ResourceKind | null;
+  readonly slug: string;
+  readonly tagCount: number;
+}): DetailsChip => {
+  const idLabel = idLabelOf(input.nodeType, input.kind);
+  const tags = `${String(input.tagCount)} ${input.tagCount === 1 ? 'tag' : 'tags'}`;
+
+  return {
+    label: input.tagCount === 0 ? input.slug : `${input.slug} · ${tags}`,
+    spoken: `Details: ${idLabel} ${input.slug}, ${tags}`,
+    hint: `Changes the ${idLabel} and tags`,
+  };
+};
+
+/**
  * Why the server refused, in the distinctions that change what someone should do next.
  *
  * A closed map rather than the server's own sentence: the codes are a contract and the words are this

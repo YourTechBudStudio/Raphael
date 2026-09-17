@@ -20,7 +20,7 @@ import { RejectionNotice } from '../../connection';
 import {
   openBrowse,
   openCapture,
-  openResource,
+  openEditor,
   openSearch,
   openSettings,
   HomeTopBar,
@@ -168,7 +168,7 @@ export function HomeScreen() {
             copy={HOME_NOTES_COPY}
             leading={leading}
             locationFor={containerTitleLookup(tree)}
-            onOpen={openResource}
+            onOpen={openEditor}
             testID="home-notes"
             view={feed.view}
           />
