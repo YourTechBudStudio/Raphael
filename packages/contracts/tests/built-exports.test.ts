@@ -63,6 +63,21 @@ test('the nodes entry point decodes a request and a response', async () => {
   assert.equal(Either.getOrUndefined(nodes.deriveSlug('Backend Work')), 'backend-work');
 });
 
+test('the nodes entry point publishes the update vocabulary', async () => {
+  const nodes = await import('@raphael/contracts/nodes');
+  assert.equal(nodes.NODE_ROUTES.update.path, '/api/nodes/update');
+  assert.equal(
+    Either.isRight(nodes.decodeUpdateRequest({ target: { id: 1 }, revision: 3, title: 'Backend' })),
+    true,
+  );
+  assert.equal(
+    Either.isLeft(nodes.decodeUpdateRequest({ target: { id: 1 }, revision: 3 })),
+    true,
+    'an update that changes nothing is refused',
+  );
+  assert.equal(nodes.normalizeTag(' Cafe\u0301 '), 'Caf\u00e9');
+});
+
 test('the connection entry point decodes verification', async () => {
   const connection = await import('@raphael/contracts/connection');
   assert.equal(connection.CONNECTION_ROUTES.verify.path, '/api/connection/verify');

@@ -14,12 +14,14 @@ import {
   NODE_TYPES,
   ORDER_DIRECTIONS,
   REQUEST_FIELDS,
+  TagsInput,
   RESOURCE_KINDS,
   TITLE_MAX_CODE_POINTS,
   TitleInput,
   inspectMetadataInput,
   inspectTitleInput,
   isRequestField,
+  normalizeTag,
 } from './fields.ts';
 
 test('metadata rejections name the limit that was actually exceeded', () => {
@@ -126,6 +128,9 @@ test('the failure vocabulary can name the fields the new request shapes added', 
   // unexplained refusal.
   assert.ok(isRequestField('kind'));
   assert.ok(isRequestField('orderBy'));
+  assert.ok(isRequestField('revision'));
+  assert.ok(isRequestField('addTags'));
+  assert.ok(isRequestField('removeTags'));
   assert.ok(!isRequestField('body_text'));
   assert.equal(new Set(REQUEST_FIELDS).size, REQUEST_FIELDS.length, 'no duplicate field names');
 });
@@ -134,4 +139,18 @@ test('the ordering vocabulary is closed and has no implicit direction', () => {
   assert.deepEqual([...NODE_ORDER_FIELDS], ['slug', 'updatedAt', 'id']);
   assert.deepEqual([...ORDER_DIRECTIONS], ['asc', 'desc']);
   assert.equal(new Set(NODE_ORDER_FIELDS).size, NODE_ORDER_FIELDS.length);
+});
+
+test('the exported tag rule is the one the decoder applies', () => {
+  // A client comparing tags it submitted against tags the server stored needs this rule and no second
+  // copy of it, so the export and the decoder have to agree exactly.
+  const decomposed = ' Cafe\u0301 ';
+  assert.equal(normalizeTag(decomposed), 'Caf\u00e9');
+  assert.deepEqual(Schema.decodeUnknownSync(TagsInput)([decomposed]), ['Caf\u00e9']);
+  assert.deepEqual(Schema.decodeUnknownSync(TagsInput)([' a ']), ['a']);
+
+  // Total over strings: it neither rejects nor bounds nor deduplicates.
+  assert.equal(normalizeTag(''), '');
+  assert.equal(normalizeTag('   '), '');
+  assert.equal(normalizeTag('a'.repeat(1_000)).length, 1_000);
 });

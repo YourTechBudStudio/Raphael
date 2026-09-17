@@ -23,6 +23,7 @@ test('every code has a status, and the catalog has no extras', () => {
       ['method_not_allowed', 405],
       ['slug_conflict', 409],
       ['idempotency_conflict', 409],
+      ['revision_conflict', 409],
       ['payload_too_large', 413],
       ['unsupported_media_type', 415],
       ['invalid_parent', 422],
@@ -35,7 +36,7 @@ test('every code has a status, and the catalog has no extras', () => {
 
 test('statuses are not reversible, which is why the mapping is one-directional', () => {
   const conflicts = API_ERROR_CODES.filter((code) => API_ERROR_STATUS[code] === 409);
-  assert.deepEqual(conflicts, ['slug_conflict', 'idempotency_conflict']);
+  assert.deepEqual(conflicts, ['slug_conflict', 'idempotency_conflict', 'revision_conflict']);
   // Two codes share 404 for genuinely different reasons: the address named no entity, or the server
   // publishes no operation there at all. A client that only saw the status could not tell them apart.
   const missing = API_ERROR_CODES.filter((code) => API_ERROR_STATUS[code] === 404);

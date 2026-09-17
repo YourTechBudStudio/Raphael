@@ -64,11 +64,14 @@ export const REQUEST_FIELDS = [
   'kind',
   'parent',
   'target',
+  'revision',
   'title',
   'slug',
   'description',
   'body',
   'tags',
+  'addTags',
+  'removeTags',
   'metadata',
   'idempotencyKey',
   'format',
@@ -202,6 +205,17 @@ export const DescriptionInput = Schema.String.pipe(
 );
 
 /**
+ * The per-tag normalization every tag goes through on input. Total over strings: it neither validates
+ * nor bounds nor deduplicates, because those are separate decisions `TagInput` and `TagsInput` make.
+ *
+ * Named and exported so that a client comparing tags it submitted against tags the server stored
+ * applies this one rule rather than a second copy of it. That comparison has to keep working against
+ * stored values, which are deliberately not re-validated against input limits (see the file header),
+ * so a normalization that could reject would be the wrong tool for it.
+ */
+export const normalizeTag = (value: string): string => value.trim().normalize('NFC');
+
+/**
  * Tags are trimmed and NFC-normalized on input, then compared for duplicates by exact equality of
  * that normalized form. Case and internal whitespace are preserved and significant, so `Work` and
  * `work` are two different tags. This deliberately avoids a second, case-insensitive identity that
@@ -209,7 +223,7 @@ export const DescriptionInput = Schema.String.pipe(
  */
 const TagInput = Schema.transform(Schema.String, Schema.String, {
   strict: true,
-  decode: (value) => value.trim().normalize('NFC'),
+  decode: normalizeTag,
   encode: (value) => value,
 }).pipe(
   Schema.filter((value) => {

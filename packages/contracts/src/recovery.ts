@@ -93,6 +93,11 @@ export interface RecoveryDetails {
   readonly element?: string;
   /** The methods an address accepts, as sent in `Allow`. */
   readonly allow?: string;
+  /**
+   * The revision the server holds now, for a stale write. What to re-read before sending the change
+   * again.
+   */
+  readonly currentRevision?: number;
 }
 
 const asString = (value: JsonValue | undefined): string | undefined =>
@@ -199,6 +204,11 @@ export const projectRecoveryDetails = (code: string, details: JsonObject): Recov
         field: requestField(read('field')),
         slug: slugValue(read('slug')),
         scope: scopeValue(read('scope')),
+      });
+    case 'revision_conflict':
+      return present({
+        field: requestField(read('field')),
+        currentRevision: safeCount(read('currentRevision')),
       });
     case 'idempotency_conflict':
       return present({
