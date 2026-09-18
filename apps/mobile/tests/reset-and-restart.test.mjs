@@ -23,13 +23,19 @@ import { rm } from 'node:fs/promises';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
+import { update } from '@raphael/client/nodes';
+
+import { unwrap } from '../src/infrastructure/query/failure.ts';
 import { factsOf, logicalStateOf } from '../src/modules/capture/policy.ts';
 import { unfinishedNotes } from '../src/modules/capture/unfinished.ts';
+import { activeProjects } from '../src/modules/collections/client/hierarchy.ts';
 import { documentWith, fakeEditor } from './support/capture-harness.mjs';
 import {
   captureOver,
   cleanupDirectories,
   cliJson,
+  hierarchyOver,
+  runCli,
   temporaryDir,
   withServer,
 } from './support/cross-client.mjs';
@@ -179,6 +185,97 @@ describe('a creation whose answer was lost, across a real shutdown and a server 
         } finally {
           await owner.getState().close();
         }
+      },
+      { databasePath: serverDb },
+    );
+  });
+});
+
+/**
+ * A selection that outlives the process that accepted it.
+ *
+ * Acceptance criterion 2 of story #5 - "selections persist across restart and are consistent across
+ * clients" - asserts two properties this repository proves separately and has never proved together,
+ * and never for a selection at all. The crossing half is in `cross-client.test.mjs`; this is the
+ * restart half, and this file is the only harness that genuinely stops a server and starts another
+ * one over the same database file.
+ *
+ * What is asserted is the row, not the byte. A durable boolean would be satisfied by reading `true`
+ * back; what the phone actually depends on is that a reading taken *before* the restart is still a
+ * usable revision *after* it, because that reading is what a Home card holds and what a toggle from
+ * it is guarded by. So the selection is read across the boundary and then written against the
+ * pre-restart revision.
+ *
+ * **What this is not.** The same limit the rest of this file states: no Expo runtime and no
+ * `expo-sqlite`, and no real process kill. A force-quit, a disconnect and reconnect, and a switch to
+ * another server and back remain device evidence.
+ */
+describe('an active project, across a server stop and a restart over the same file', () => {
+  it('is still selected afterwards, at a revision the pre-restart reading can still write against', async () => {
+    const dir = await temporaryDir('active-restart-');
+    const serverDb = path.join(dir, 'raphael.sqlite');
+    const captureDb = path.join(dir, 'capture.db');
+
+    // Selected at a terminal, on the server that is about to go away.
+    const read = await withServer(
+      async ({ endpoint }) => {
+        const created = (
+          await cliJson(
+            ['create', 'project', `${WORK.path}/outlives-its-server`, '--title', 'Ship it'],
+            {
+              endpoint,
+            },
+          )
+        ).entity;
+        assert.equal(created.active, false);
+
+        const ran = await runCli(['update', `${WORK.path}/outlives-its-server`, '--active'], {
+          endpoint,
+        });
+        assert.equal(ran.code, 0, ran.stderr);
+
+        // The phone's reading, taken while this server is still running. This is the object a Home
+        // card renders from, and the revision a toggle from that card would send.
+        const { transport } = await captureOver(endpoint, captureDb);
+        const node = (await hierarchyOver(transport)).byId.get(created.id);
+        assert.equal(node.active, true);
+
+        return { id: node.id, revision: node.revision, slug: node.slug };
+      },
+      { databasePath: serverDb },
+    );
+
+    // The server is stopped and another is started over the same file. The selection has to have
+    // been on disk rather than in the process that accepted it.
+    await withServer(
+      async ({ endpoint }) => {
+        const atTerminal = await cliJson(['get', `${WORK.path}/outlives-its-server`], { endpoint });
+        assert.equal(atTerminal.entity.active, true, 'the terminal still reads it as selected');
+        assert.equal(atTerminal.entity.revision, read.revision, 'and at the same revision');
+
+        const { transport } = await captureOver(endpoint, captureDb);
+        const fresh = await hierarchyOver(transport);
+        assert.equal(fresh.byId.get(read.id).active, true, 'and so does the phone');
+        assert.deepEqual(
+          activeProjects(fresh).map((found) => found.slug),
+          [read.slug],
+          'so Home draws it again with nothing else selected',
+        );
+
+        // The claim this case exists for: the reading taken before the restart is still a usable
+        // revision after it, so a card held across the boundary can still issue a guarded write.
+        const answered = unwrap(
+          await update(transport, {
+            target: { id: read.id },
+            revision: read.revision,
+            active: false,
+          }),
+        );
+        assert.equal(answered.entity.active, false);
+        assert.equal(answered.entity.revision, read.revision + 1);
+
+        const cleared = await cliJson(['get', `${WORK.path}/outlives-its-server`], { endpoint });
+        assert.equal(cleared.entity.active, false, 'and the deselection is durable in its turn');
       },
       { databasePath: serverDb },
     );

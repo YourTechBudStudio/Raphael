@@ -437,6 +437,39 @@ test('a response that marks a non-project active is refused, not believed', () =
   assert.equal(Either.isRight(page([entity({ active: true }), entity({ type: 'area' })])), true);
 });
 
+test('selection carries no count, ordinal, timestamp or expiry on the wire either', () => {
+  // Criterion 4 of story #5 is an absence - no cap, no ordering position, no timestamp, no expiry -
+  // so it is held by enumeration rather than by a behavioural test. `apps/backend/tests/schema.test.ts`
+  // pins the complete `nodes` column list for the storage half; this is the response half, and it is
+  // both projections rather than one because a field added to only the entity would still reach a
+  // consumer. Any future addition has to change a list here to get in.
+  const summary = right(
+    decodeListResponse({ items: [entity()], skip: 0, limit: 10, hasMore: false }),
+  ).items[0] as unknown as Record<string, unknown>;
+  assert.deepEqual(Object.keys(summary).sort(), [
+    'active',
+    'description',
+    'id',
+    'kind',
+    'parentId',
+    'revision',
+    'slug',
+    'tags',
+    'title',
+    'type',
+  ]);
+
+  // The entity is the summary plus a body and metadata, and nothing else.
+  const full = right(decodeCreateResponse({ entity: entity() })).entity as unknown as Record<
+    string,
+    unknown
+  >;
+  assert.deepEqual(
+    Object.keys(full).sort(),
+    [...Object.keys(summary).sort(), 'body', 'metadata'].sort(),
+  );
+});
+
 test('an added response property is tolerated without becoming data we claim to understand', () => {
   const decoded = right(
     decodeCreateResponse({
