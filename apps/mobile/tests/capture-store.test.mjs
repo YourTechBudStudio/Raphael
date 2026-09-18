@@ -86,6 +86,7 @@ const entity = (over = {}) => ({
   title: 'A note',
   description: '',
   tags: [],
+  active: false,
   body: { format: 'tiptap', value: DOCUMENT },
   metadata: {},
   ...over,

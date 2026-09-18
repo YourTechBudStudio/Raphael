@@ -70,6 +70,7 @@ test('internal timestamps are stored but never returned', () => {
     // response becomes a field someone depends on before anyone decided it was one.
     const keys = Object.keys(response.entity).sort();
     assert.deepEqual(keys, [
+      'active',
       'body',
       'description',
       'id',

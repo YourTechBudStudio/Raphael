@@ -406,3 +406,136 @@ describe('resource kind', () => {
     );
   });
 });
+
+describe('active selection', () => {
+  // The second type-conditional column on this table, after `kind`, and the second instance of the
+  // same pattern: a column CHECK that reads another column of the same row. This is the independent
+  // backstop, not the rule that produces a caller's refusal - `updateNode` owns that, because ADR 0007
+  // is explicit that a constraint is never a substitute for core validation.
+  test('the column defaults to not selected', () => {
+    insertNode(db, {
+      type: 'project',
+      parentId: WORK,
+      parentType: 'area',
+      slug: 'unselected-by-default',
+    });
+    assert.equal(
+      count(
+        db,
+        `SELECT count(*) AS c FROM nodes WHERE slug = 'unselected-by-default' AND active = 0`,
+      ),
+      1,
+    );
+    // And the rows that predate selection entirely, which the migration had to land somewhere.
+    assert.equal(count(db, 'SELECT count(*) AS c FROM nodes WHERE active IS NULL'), 0);
+  });
+
+  test('a project may be selected', () => {
+    insertNode(db, {
+      type: 'project',
+      parentId: WORK,
+      parentType: 'area',
+      slug: 'selected',
+      active: 1,
+    });
+    assert.equal(
+      count(db, `SELECT count(*) AS c FROM nodes WHERE slug = 'selected' AND active = 1`),
+      1,
+    );
+  });
+
+  test('nothing but a project may be selected', () => {
+    rejects(
+      () =>
+        insertNode(db, {
+          type: 'area',
+          parentId: WORK,
+          parentType: 'area',
+          slug: 'selected-area',
+          active: 1,
+        }),
+      /nodes_active_valid|CHECK constraint/i,
+    );
+    rejects(
+      () =>
+        insertNode(db, {
+          type: 'resource',
+          parentId: project,
+          parentType: 'project',
+          slug: 'selected-note',
+          active: 1,
+        }),
+      /nodes_active_valid|CHECK constraint/i,
+    );
+  });
+
+  test('the domain is closed to 0 and 1', () => {
+    for (const active of [2, -1]) {
+      rejects(
+        () =>
+          insertNode(db, {
+            type: 'project',
+            parentId: WORK,
+            parentType: 'area',
+            slug: `active-${active}`,
+            active,
+          }),
+        /nodes_active_valid|CHECK constraint/i,
+      );
+    }
+  });
+
+  test('the invariant holds on update, so a selected project cannot be retyped away', () => {
+    // A CHECK is evaluated on every update, whether or not `active` is the column being written. That
+    // is the property that makes this stronger than a `BEFORE UPDATE OF active` trigger would be.
+    const selected = one<{ id: number }>(db, `SELECT id FROM nodes WHERE slug = 'selected'`).id;
+    rejects(
+      () => db.prepare('UPDATE nodes SET active = 1 WHERE id = ?').run(WORK),
+      /nodes_active_valid|CHECK constraint/i,
+    );
+    rejects(
+      () => db.prepare('UPDATE nodes SET active = 2 WHERE id = ?').run(selected),
+      /nodes_active_valid|CHECK constraint/i,
+    );
+    // Retyping a selected project away is refused, but not by this constraint: `0001`'s identity
+    // trigger fires first and refuses *any* type change, selected or not. The CHECK would catch it
+    // otherwise, and stays as the backstop for a database where that trigger is absent. Asserting the
+    // reason actually given, rather than the one this rule would have given, is the point.
+    rejects(
+      () => db.prepare('UPDATE nodes SET type = ? WHERE id = ?').run('area', selected),
+      /identity is immutable/i,
+    );
+  });
+
+  test('selection carries no count, ordinal, timestamp or expiry anywhere on the row', () => {
+    // Criterion 4 is an absence, so it is held by enumeration rather than by a behavioural test: the
+    // complete column list is the evidence that no cap, no ordering position and no expiry exists to
+    // be enforced, and any future addition has to change this list to get in.
+    const columns = db
+      .prepare('PRAGMA table_xinfo(nodes)')
+      .all()
+      .map((c) => (c as { name: string }).name);
+    assert.deepEqual(
+      columns.filter((name) => name.startsWith('active')),
+      ['active'],
+    );
+    assert.deepEqual(columns, [
+      'id',
+      'type',
+      'parent_id',
+      'parent_type',
+      'slug',
+      'revision',
+      'title',
+      'description',
+      'body',
+      'tags',
+      'metadata',
+      'created_at',
+      'updated_at',
+      'kind',
+      'body_text',
+      'active',
+    ]);
+  });
+});

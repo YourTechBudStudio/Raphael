@@ -1,7 +1,8 @@
 import type { Transport } from '@raphael/client';
+import type { DateProtocolVersion } from '@raphael/contracts/connection';
 import { create, type StoreApi, type UseBoundStore } from 'zustand';
 
-import type { ConnectionRecord, RecordProblem } from './record.ts';
+import type { ConnectionRecord, RecordProblem, StoredProtocolVersion } from './record.ts';
 import type { ConnectionStorage } from './storage.ts';
 
 /**
@@ -55,9 +56,11 @@ export interface Connection {
    * The protocol version established when this connection was verified.
    *
    * Historical, and read as such. It is what one exchange proved at one moment, not a promise that
-   * the server on the other end still speaks it now.
+   * the server on the other end still speaks it now. Wide rather than narrow for the same reason: a
+   * connection hydrated from a record written by an older build carries the number that build stored,
+   * and that is a true account of what happened rather than something to repair.
    */
-  readonly protocolVersion: number;
+  readonly protocolVersion: StoredProtocolVersion;
   /** When that verification happened. */
   readonly verifiedAt: string;
   readonly storage: StorageState;
@@ -127,7 +130,8 @@ export interface EstablishInput {
   readonly base: string;
   readonly origin: string;
   readonly apiKey: string;
-  readonly protocolVersion: number;
+  /** Narrow, unlike the stored and hydrated shapes: establishing follows a verification that passed. */
+  readonly protocolVersion: DateProtocolVersion;
 }
 
 export interface ConnectionState {

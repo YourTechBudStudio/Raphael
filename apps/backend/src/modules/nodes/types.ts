@@ -40,6 +40,8 @@ export interface StoredSummary extends StoredNode {
   readonly title: string;
   readonly description: string;
   readonly tags: string;
+  /** The raw stored integer, `0` or `1`. `summaryProjection` is the one place it becomes a boolean. */
+  readonly active: number;
 }
 
 /** What Get needs: the summary columns plus the two stored JSON documents. */

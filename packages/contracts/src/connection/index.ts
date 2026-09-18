@@ -6,11 +6,46 @@ import { PositiveSafeInt } from '../shared/numbers.ts';
 import type { RouteDescriptor } from '../shared/route.ts';
 
 /**
+ * A protocol identifier, which is a calendar date: the day the protocol specification changed, not
+ * the day an app was built. Two dates tell a reader which side is behind; two opaque integers say
+ * only that they differ. Policy is one specification change per date, so no suffix exists.
+ *
+ * Validated as a real calendar date rather than merely a `YYYY-MM-DD` shape, so `2026-13-01` and
+ * `2026-02-30` are refused. A valid fixed-width date also sorts lexicographically in chronological
+ * order, which is what makes the directional guidance below a single comparison.
+ */
+const isCalendarDate = (value: string): boolean => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (match === null) return false;
+  const [, year, month, day] = match;
+  const utc = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  return utc.toISOString().slice(0, 10) === value;
+};
+
+export const DateProtocolVersion = Schema.String.pipe(
+  Schema.filter((value) =>
+    isCalendarDate(value) ? true : 'a protocol version is a calendar date written YYYY-MM-DD',
+  ),
+);
+
+/**
+ * What a server may have answered with, which is not the same question as what this release speaks.
+ *
+ * A legacy positive integer is accepted so a server predating the date-based scheme still decodes
+ * and can be diagnosed. It is read for diagnosis only: a number never equals the current identifier,
+ * so a legacy version is never compatible.
+ */
+export const ReceivedProtocolVersion = Schema.Union(DateProtocolVersion, PositiveSafeInt);
+
+export type DateProtocolVersion = Schema.Schema.Type<typeof DateProtocolVersion>;
+export type ReceivedProtocolVersion = Schema.Schema.Type<typeof ReceivedProtocolVersion>;
+
+/**
  * The protocol version this release speaks. It expresses compatibility, not the server's release
  * number: adding an optional response property does not move it, while changing what an existing
  * operation can return to a client that already exists does.
  */
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION: DateProtocolVersion = '2026-09-18';
 
 /**
  * Verification carries no input, and any property is refused.
@@ -31,11 +66,16 @@ export const VerifyRequest = Schema.Struct({}).pipe(
 );
 
 /**
- * The version is decoded as an ordinary positive integer rather than the literal this release knows,
- * so an incompatible server produces an actionable mismatch instead of a decoding error that says
- * nothing about why setup failed. No configuration or secret is reported here.
+ * The version is decoded as any identifier a server could plausibly have sent rather than the literal
+ * this release knows, so an incompatible server produces an actionable mismatch instead of a decoding
+ * error that says nothing about why setup failed. No configuration or secret is reported here.
+ *
+ * The line between the two is deliberate. An identifier that is merely *different* decodes and is
+ * explained; an identifier that is malformed - an impossible date, arbitrary text, zero, a negative,
+ * a fraction, or nothing at all - is a decoding failure, because there is no honest sentence to say
+ * about it.
  */
-export const VerifyResponse = Schema.Struct({ protocolVersion: PositiveSafeInt });
+export const VerifyResponse = Schema.Struct({ protocolVersion: ReceivedProtocolVersion });
 
 export type VerifyRequest = Schema.Schema.Type<typeof VerifyRequest>;
 export type VerifyResponse = Schema.Schema.Type<typeof VerifyResponse>;
@@ -43,7 +83,7 @@ export type VerifyResponse = Schema.Schema.Type<typeof VerifyResponse>;
 export const decodeVerifyRequest = requestDecoder(VerifyRequest);
 export const decodeVerifyResponse = responseDecoder(VerifyResponse);
 
-export const isCompatibleProtocolVersion = (version: number): boolean =>
+export const isCompatibleProtocolVersion = (version: ReceivedProtocolVersion): boolean =>
   version === PROTOCOL_VERSION;
 
 /**
@@ -54,10 +94,16 @@ export const isCompatibleProtocolVersion = (version: number): boolean =>
  * "Raphael here" rather than "the client": this sentence is read on a phone as often as in a
  * terminal, and someone holding a phone does not think of it as a client.
  */
-export const describeProtocolMismatch = (version: number): string =>
-  version > PROTOCOL_VERSION
+export const describeProtocolMismatch = (version: ReceivedProtocolVersion): string => {
+  // Two validated dates compare chronologically as plain strings. A legacy number is not a date and
+  // is not treated as one: everything numeric precedes the date-based scheme, so that server is
+  // behind by construction.
+  const serverIsAhead = typeof version === 'string' && version > PROTOCOL_VERSION;
+
+  return serverIsAhead
     ? `This server speaks protocol ${version}; Raphael here understands ${PROTOCOL_VERSION}. Update Raphael here.`
     : `This server speaks protocol ${version}; Raphael here understands ${PROTOCOL_VERSION}. Update the server.`;
+};
 
 /**
  * How a credential travels. One header, one scheme, defined once so the server, the typed client, and

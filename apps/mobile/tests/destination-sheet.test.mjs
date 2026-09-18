@@ -76,6 +76,7 @@ const entity = (over = {}) => ({
   title: 'Reading',
   description: '',
   tags: [],
+  active: false,
   body: { format: 'markdown', value: '' },
   metadata: {},
   ...over,

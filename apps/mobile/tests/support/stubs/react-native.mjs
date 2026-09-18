@@ -91,6 +91,9 @@ export const toDomProps = ({ style: _style, ...props }) => {
         if (value.disabled === true) dom['aria-disabled'] = 'true';
         if (value.selected !== undefined) dom['aria-selected'] = String(value.selected);
         if (value.expanded !== undefined) dom['aria-expanded'] = String(value.expanded);
+        // Both states are carried, not only the true one: "this control is not busy" is a claim a
+        // test needs to be able to make about a toggle whose write has settled.
+        if (value.busy !== undefined) dom['aria-busy'] = String(value.busy);
         break;
       case 'testID':
         dom['data-testid'] = value;

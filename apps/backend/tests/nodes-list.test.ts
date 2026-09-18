@@ -600,3 +600,39 @@ test('reading and listing never advance a node updated_at', () => {
     assert.deepEqual(after, before, 'a read is not an edit, so recency is not touched by browsing');
   });
 });
+
+test('a listing says which projects are selected, and every other row says it is not', () => {
+  withMigrated('list-active', (connection) => {
+    const work = one<{ id: number }>(connection.db, `SELECT id FROM nodes WHERE slug = 'work'`).id;
+    insertNode(connection.db, {
+      type: 'project',
+      parentId: work,
+      parentType: 'area',
+      slug: 'selected',
+      active: 1,
+    });
+    insertNode(connection.db, {
+      type: 'project',
+      parentId: work,
+      parentType: 'area',
+      slug: 'unselected',
+    });
+    insertNode(connection.db, {
+      type: 'area',
+      parentId: work,
+      parentType: 'area',
+      slug: 'reading',
+    });
+
+    // `active` is on the summary, not only on the entity, because Home discovers the selection from
+    // the one traversal it already performs rather than from a second read that could disagree.
+    for (const recursive of [false, true]) {
+      const response = expectRight(list(connection, { parent: { id: work }, recursive }));
+      assert.deepEqual(Object.fromEntries(response.items.map((item) => [item.slug, item.active])), {
+        selected: true,
+        unselected: false,
+        reading: false,
+      });
+    }
+  });
+});

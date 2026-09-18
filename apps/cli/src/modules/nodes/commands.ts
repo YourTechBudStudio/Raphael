@@ -260,6 +260,8 @@ Changes (at least one):
       --body-format <fmt>     Format of the submitted body: ${BODY_FORMATS.join(' or ')}. Default markdown.
       --add-tag <tag>         Repeatable.
       --remove-tag <tag>      Repeatable.
+      --active                Mark the project as currently being worked on.
+      --inactive              Mark it as not being worked on. Only a project can be either.
 
 Options:
       --id <id>               Address by identifier instead of by path.
@@ -278,6 +280,8 @@ const CHANGE_FLAGS = [
   'body-literal',
   'add-tag',
   'remove-tag',
+  'active',
+  'inactive',
 ] as const;
 
 /** Whether a flag was given at all, whatever it was given as. */
@@ -333,6 +337,8 @@ export const runUpdate = async (
       'body-format': { type: 'string' },
       'add-tag': { type: 'string', multiple: true },
       'remove-tag': { type: 'string', multiple: true },
+      active: { type: 'boolean' },
+      inactive: { type: 'boolean' },
       revision: { type: 'string' },
       format: { type: 'string' },
       json: { type: 'boolean' },
@@ -357,9 +363,15 @@ export const runUpdate = async (
   // being told the command was wrong.
   if (!CHANGE_FLAGS.some((flag) => wasGiven(parsed, flag))) {
     throw new UsageError(
-      'Give at least one change: --title, --description, --slug, --body, --add-tag or --remove-tag.',
+      'Give at least one change: --title, --description, --slug, --body, --add-tag, --remove-tag, --active or --inactive.',
       'update',
     );
+  }
+  // After the "at least one change" check, so someone who gave only these two is told the more useful
+  // thing first, and before anything is read or sent: this is decided from presence alone, like every
+  // other refusal above and below it.
+  if (wasGiven(parsed, 'active') && wasGiven(parsed, 'inactive')) {
+    throw new UsageError('Give --active or --inactive, not both.', 'update');
   }
   if (
     (wasGiven(parsed, 'body') || wasGiven(parsed, 'body-literal')) &&
@@ -382,6 +394,14 @@ export const runUpdate = async (
   const slug = stringOption(parsed, 'slug', 'update');
   const addTags = stringListOption(parsed, 'add-tag');
   const removeTags = stringListOption(parsed, 'remove-tag');
+  // Desired state, never a toggle: the two flags name the state to result in, so neither has to know
+  // what the current one is. Neither needs --revision - the pre-read below pins the target by
+  // identifier exactly as it does for a title change.
+  const active = wasGiven(parsed, 'active')
+    ? true
+    : wasGiven(parsed, 'inactive')
+      ? false
+      : undefined;
   const format = choiceOption(parsed, 'format', 'update', BODY_FORMATS);
 
   const transport = context.transport();
@@ -417,6 +437,7 @@ export const runUpdate = async (
     ...(body === undefined ? {} : { body }),
     ...(addTags.length === 0 ? {} : { addTags }),
     ...(removeTags.length === 0 ? {} : { removeTags }),
+    ...(active === undefined ? {} : { active }),
     ...(format === undefined ? {} : { format }),
   });
 
@@ -485,6 +506,9 @@ export const runGet = async (
   writeLine(out, `${qualifiedType(entity)} ${entity.id}  (revision ${entity.revision})`);
   writeLine(out, `title: ${forTerminal(entity.title)}`);
   writeLine(out, `slug:  ${forTerminal(entity.slug)}`);
+  // Only for a project. An area is never active, so printing `active: no` on one would answer a
+  // question nobody can ask of it - `type` is what says the field does not apply.
+  if (entity.type === 'project') writeLine(out, `active: ${entity.active ? 'yes' : 'no'}`);
   if (entity.description !== '') writeLine(out, `description: ${forTerminal(entity.description)}`);
   if (entity.tags.length > 0) {
     writeLine(out, `tags: ${entity.tags.map((tag) => forTerminal(tag)).join(', ')}`);
@@ -606,7 +630,9 @@ export const runList = async (
   for (const item of page.items) {
     writeLine(
       out,
-      `${String(item.id).padStart(6)}  ${qualifiedType(item).padEnd(13)}  ${forTerminal(item.slug)}`,
+      `${String(item.id).padStart(6)}  ${qualifiedType(item).padEnd(13)}  ${forTerminal(item.slug)}${
+        item.active ? '  active' : ''
+      }`,
     );
   }
   // Never implies completeness. A page that ends is not the same as a hierarchy that ends, and the

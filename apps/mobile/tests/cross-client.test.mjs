@@ -25,9 +25,12 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { get, update } from '@raphael/client/nodes';
 import { QueryClient } from '@tanstack/react-query';
 
+import { asClientFailure, unwrap } from '../src/infrastructure/query/failure.ts';
 import { unfinishedEdits } from '../src/modules/capture/edit-unfinished.ts';
+import { activeProjects } from '../src/modules/collections/client/hierarchy.ts';
 import { notePagesOptions } from '../src/modules/resources/client/options.ts';
 import { containerDescriptor, feedDescriptor } from '../src/modules/resources/client/requests.ts';
 import { toNoteSummaryItem } from '../src/modules/resources/client/summary.ts';
@@ -37,6 +40,7 @@ import {
   cleanupDirectories,
   cliJson,
   editOver,
+  hierarchyOver,
   runCli,
   temporaryDir,
   withServer,
@@ -95,6 +99,9 @@ const settled = async (owner, what = 'the attempt to settle') => {
  * keeps each case to the one creation it is actually about.
  */
 const WORK = { path: '/work', id: 1 };
+
+/** The other seeded area. Used where a case needs two roots to have an order at all. */
+const PERSONAL = { path: '/personal', id: 2 };
 
 describe('a note the CLI wrote, read by the phone', () => {
   /**
@@ -304,10 +311,177 @@ describe('a note the CLI wrote, read by the phone', () => {
           title: 'Work',
           description: '',
           tags: [],
+          active: false,
         }),
         null,
         'a container is never mapped into a notes grid',
       );
+    });
+  });
+});
+
+/**
+ * One project's selection, written by one client and read by the other.
+ *
+ * Story #5 asks for a selection that is "consistent across clients", and until this file said so the
+ * only regression coverage of active selection anywhere in the repository was three assertions
+ * against an in-memory `Map`. Neither client's own suite can make the claim: `apps/cli`'s remote
+ * tests prove the flags against the server, and `active-toggle.test.mjs` proves the phone's hook
+ * against a transport it controls, but nothing until here writes with one and reads with the other.
+ *
+ * Both directions, because they are different paths through different decoders. A CLI write read by
+ * the phone crosses `NodeSummary` inside a List page and then the hierarchy projection; a phone write
+ * read by the CLI crosses the update envelope and then `NodeEntity`. Criterion 1's "both clients"
+ * claim is only as good as the weaker one.
+ *
+ * The phone side issues the call `useProjectActive`'s `mutationFn` issues - `update(transport, {
+ * target: { id }, revision, active })` through the same `unwrap` - rather than mounting the hook. The
+ * crossing is a claim about the fact, not about React Query's plumbing, and that plumbing is already
+ * pinned deterministically against a controllable fake. Nothing in this file is stubbed, and adding
+ * the renderer's module-scope stubs here to reach the hook would end that.
+ */
+describe("a project's selection, across the two clients", () => {
+  /**
+   * A project the CLI created, so the pre-crossing state is server-shaped.
+   *
+   * The path is returned beside the entity because a response carries `slug` and `parentId` and no
+   * path - which is ADR 0004's point, that a path is computed and an id is identity - and the CLI is
+   * addressed by path here on purpose, since that is how a person reaches a project at a terminal.
+   */
+  const projectAt = async (endpoint, slug, parent = WORK.path) => {
+    const at = `${parent}/${slug}`;
+    const { entity } = await cliJson(['create', 'project', at, '--title', slug], { endpoint });
+
+    return { ...entity, at };
+  };
+
+  it('is set by the terminal and read by the phone, in the order Home draws it', async () => {
+    const dir = await temporaryDir('active-cli-writes-');
+
+    await withServer(async ({ endpoint }) => {
+      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+
+      // Two under one area and one under the other, so the ordering assertion below has something
+      // to order. Created out of slug order deliberately.
+      const b = await projectAt(endpoint, 'crossing-b');
+      const a = await projectAt(endpoint, 'crossing-a');
+      const c = await projectAt(endpoint, 'crossing-c', PERSONAL.path);
+      assert.equal(a.active, false, 'a project is created inactive');
+
+      const before = await hierarchyOver(transport);
+      assert.equal(before.byId.get(a.id).active, false, 'and the phone reads it that way');
+      assert.deepEqual(activeProjects(before), [], 'so Home has nothing to draw');
+
+      for (const project of [b, a, c]) {
+        const ran = await runCli(['update', project.at, '--active'], { endpoint });
+        assert.equal(ran.code, 0, ran.stderr);
+      }
+
+      const selected = await hierarchyOver(transport);
+      const node = selected.byId.get(a.id);
+      assert.equal(node.active, true, 'the phone reads what the terminal wrote');
+      assert.equal(node.revision, a.revision + 1, 'at the revision the write produced');
+      assert.equal(node.type, 'project');
+
+      // The projection Home actually draws, not merely the field. `activeProjects` is a named walk
+      // in hierarchy order - pre-order over roots, children already sorted - and until here that
+      // order had evidence only against hand-built fixtures. `/personal` sorts before `/work`, and
+      // `crossing-a` before `crossing-b` inside it.
+      assert.deepEqual(
+        activeProjects(selected).map((found) => found.slug),
+        ['crossing-c', 'crossing-a', 'crossing-b'],
+      );
+
+      // An area is never active and never reaches that list, whatever else is selected.
+      assert.equal(selected.byId.get(WORK.id).active, false);
+
+      // And through the phone's *other* decoder. The hierarchy arrives as `NodeSummary` inside a List
+      // page; the Project screen reads its entity from Get, and builds the revision its toggle writes
+      // against from that reading rather than from the tree. Same struct, different response, so the
+      // crossing is asserted on both paths the phone actually takes.
+      const entity = unwrap(await get(transport, { target: { id: a.id } })).entity;
+      assert.equal(entity.active, true);
+      assert.equal(entity.revision, node.revision, 'and the two readings agree');
+    });
+  });
+
+  it('is cleared by the phone and read by the terminal', async () => {
+    const dir = await temporaryDir('active-phone-writes-');
+
+    await withServer(async ({ endpoint }) => {
+      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const project = await projectAt(endpoint, 'phone-clears');
+      const activated = await runCli(['update', project.at, '--active'], { endpoint });
+      assert.equal(activated.code, 0, activated.stderr);
+
+      // What the phone read is what it writes against: the revision travels with the state, from the
+      // same reading, which is why `HierarchyNode` carries one at all.
+      const read = (await hierarchyOver(transport)).byId.get(project.id);
+      assert.equal(read.active, true);
+
+      const answered = unwrap(
+        await update(transport, {
+          target: { id: read.id },
+          revision: read.revision,
+          active: false,
+        }),
+      );
+      assert.equal(answered.entity.active, false, 'the server answered with the resulting state');
+      assert.equal(answered.entity.revision, read.revision + 1);
+
+      const atTerminal = await cliJson(['get', project.at], { endpoint });
+      assert.equal(atTerminal.entity.active, false, 'the terminal reads what the phone wrote');
+      assert.equal(atTerminal.entity.revision, answered.entity.revision);
+
+      // And the human-readable form a person actually looks at.
+      const shown = await runCli(['get', project.at], { endpoint });
+      assert.match(shown.stdout, /^active: no$/m);
+    });
+  });
+
+  it('refuses a phone write from a reading the terminal has already moved past', async () => {
+    const dir = await temporaryDir('active-stale-phone-');
+
+    await withServer(async ({ endpoint }) => {
+      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const project = await projectAt(endpoint, 'stale-phone');
+
+      // The reading the phone is holding, taken before the terminal writes.
+      const stale = (await hierarchyOver(transport)).byId.get(project.id);
+      assert.equal(stale.active, false);
+
+      const moved = await runCli(['update', project.at, '--active'], { endpoint });
+      assert.equal(moved.code, 0, moved.stderr);
+
+      // Desired state, not a toggle, and still refused: `false` from a revision that has moved would
+      // silently undo a decision this client never saw. The guard is what makes that a refusal rather
+      // than a last-writer-wins race, and it is asserted here against a real server because
+      // `active-toggle.test.mjs` can only assert it against an answer it wrote itself.
+      const refusal = await (async () => {
+        try {
+          unwrap(
+            await update(transport, {
+              target: { id: stale.id },
+              revision: stale.revision,
+              active: false,
+            }),
+          );
+        } catch (error) {
+          return asClientFailure(error);
+        }
+
+        return assert.fail('a stale selection write was accepted');
+      })();
+
+      // Checked before it is read: `asClientFailure` answers null for anything that is not one, and
+      // this is the case whose whole value is *which* refusal came back.
+      assert.ok(refusal !== null, 'expected a client failure');
+      assert.equal(refusal.kind, 'api_error');
+      assert.equal(refusal.error.code, 'revision_conflict');
+
+      const atTerminal = await cliJson(['get', project.at], { endpoint });
+      assert.equal(atTerminal.entity.active, true, 'nothing was undone');
+      assert.equal(atTerminal.entity.revision, stale.revision + 1, 'and exactly one write landed');
     });
   });
 });

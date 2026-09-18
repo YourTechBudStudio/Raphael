@@ -164,6 +164,7 @@ const ENTITY_COLUMNS = {
   title: nodes.title,
   description: nodes.description,
   tags: nodes.tags,
+  active: nodes.active,
   body: nodes.body,
   metadata: nodes.metadata,
 } as const;

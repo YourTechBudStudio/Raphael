@@ -149,6 +149,10 @@ export const summaryProjection = (row: StoredSummary, operation: string): unknow
     title: row.title,
     description: row.description,
     tags: parseStored(row.tags, operation, 'tags'),
+    // The single integer-to-boolean site. Deliberately unvalidated, unlike `projectedKind`: `kind`'s
+    // vocabulary is open to drift, while `nodes_active_valid` closes this one to `0` and `1` and ties
+    // `1` to a project, so there is no third value for a check here to catch.
+    active: row.active === 1,
   };
 };
 

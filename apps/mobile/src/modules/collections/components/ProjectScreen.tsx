@@ -40,6 +40,7 @@ import {
   useContainerPath,
   useHierarchy,
 } from '../client/queries';
+import { ActiveVerdict } from './ActiveVerdict';
 import { ContainerEditAction } from './ContainerEditAction';
 import { ContainerHeader } from './ContainerHeader';
 import { ProjectHeaderSkeleton } from './ProjectSkeleton';
@@ -171,6 +172,12 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   }
 
   const { title, description } = entity;
+  // The write is guarded by the revision this screen actually read, and reports the state it read,
+  // so a change made elsewhere since then is refused rather than silently overwritten.
+  const activeTarget = { id: entity.id, revision: entity.revision, active: entity.active };
+  // Disabled spans the write and the re-read that follows it. While it holds, the ring is the whole
+  // message and no sentence is drawn beside it.
+  const activeBusy = active.isDisabled(entity.id);
   const sessionMedia = (media.data ?? []).filter(
     (resource) => resource.parent.type === 'project' && resource.parent.id === projectId,
   );
@@ -198,17 +205,17 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
               <>
                 <ToggleLabel
                   accessibilityLabel={
-                    active.isActive(projectId)
+                    active.isActive(activeTarget)
                       ? `Mark ${title} as inactive`
                       : `Mark ${title} as active`
                   }
-                  disabled={active.isDisabled(projectId)}
+                  disabled={activeBusy}
                   label="Active"
                   mark={ACTIVE_MARK}
                   onToggle={() => {
-                    active.toggle(projectId);
+                    active.toggle(activeTarget);
                   }}
-                  selected={active.isActive(projectId)}
+                  selected={active.isActive(activeTarget)}
                 />
                 <ToggleLabel
                   accessibilityLabel={
@@ -227,14 +234,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
               </>
             }
           />
-          {active.isError ? (
-            <Text
-              accessibilityLiveRegion="polite"
-              className="mt-2 font-body text-[15px] text-danger"
-            >
-              Active status is unavailable. Reopen this project to try again.
-            </Text>
-          ) : null}
+          <ActiveVerdict className="mt-2" failure={activeBusy ? null : active.failure} />
           {favorite.isError ? (
             <Text
               accessibilityLiveRegion="polite"

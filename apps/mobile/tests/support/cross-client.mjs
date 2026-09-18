@@ -21,13 +21,19 @@ import { fileURLToPath } from 'node:url';
 
 import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
 import { createTransport } from '@raphael/client';
-import { create as createNode, get as getNode, update as updateNode } from '@raphael/client/nodes';
+import {
+  create as createNode,
+  get as getNode,
+  list as listNodes,
+  update as updateNode,
+} from '@raphael/client/nodes';
 import { Effect, Exit, Scope } from 'effect';
 
 import { createEditOwner } from '../../src/modules/capture/edit-owner.ts';
 import { editKeyOf } from '../../src/modules/capture/edit-types.ts';
 import { createCaptureOwner } from '../../src/modules/capture/owner.ts';
 import { openCaptureStore } from '../../src/modules/capture/store.ts';
+import { fetchHierarchy } from '../../src/modules/collections/client/hierarchy.ts';
 import { openNodeDatabase } from './node-sqlite.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -284,3 +290,14 @@ export const editOver = async (endpoint, localDbFile, options = {}) => {
       owner.getState().edits.find((candidate) => candidate.key.nodeId === nodeId) ?? null,
   };
 };
+
+/**
+ * The container hierarchy, read the way the app reads it.
+ *
+ * The same wiring `collections/client/queries.ts` performs in `runHierarchy`: the real traversal over
+ * the real client, with the transport captured rather than looked up per page. It lives here rather
+ * than in each suite because both integration files now enter the phone's read through it, and two
+ * copies of "how the phone reads the hierarchy" are two things free to drift.
+ */
+export const hierarchyOver = (transport, signal) =>
+  fetchHierarchy((request, pageSignal) => listNodes(transport, request, pageSignal), signal);

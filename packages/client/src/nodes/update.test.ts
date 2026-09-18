@@ -57,6 +57,7 @@ const entity = {
   title: 'Contracts',
   description: '',
   tags: ['reviewed'],
+  active: false,
   body: { format: 'markdown', value: '# Contracts\n' },
   metadata: {},
 };

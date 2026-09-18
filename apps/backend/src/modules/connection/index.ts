@@ -1,6 +1,7 @@
 import {
   CONNECTION_ROUTES,
   PROTOCOL_VERSION,
+  type DateProtocolVersion,
   decodeVerifyRequest,
   decodeVerifyResponse,
 } from '@raphael/contracts/connection';
@@ -45,7 +46,7 @@ const internalFailure = (detail: string): OperationFailure => ({
 
 export const verifyConnection = (
   request: unknown,
-): Effect.Effect<{ readonly protocolVersion: number }, OperationFailure> =>
+): Effect.Effect<{ readonly protocolVersion: DateProtocolVersion }, OperationFailure> =>
   Effect.suspend(() => {
     // The decode failure is not described beyond its reason. There is one legal request and its
     // shape is published; naming the offending property would echo submitted input for no gain.

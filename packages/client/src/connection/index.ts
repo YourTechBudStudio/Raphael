@@ -14,6 +14,7 @@ import {
   describeProtocolMismatch,
   isCompatibleProtocolVersion,
   CONNECTION_ROUTES,
+  type DateProtocolVersion,
   type VerifyResponse,
 } from '@raphael/contracts/connection';
 
@@ -21,7 +22,14 @@ import { fail, succeed, type ClientResult } from '../shared/failure.ts';
 import type { Transport } from '../shared/transport.ts';
 
 export interface VerifiedConnection {
-  readonly protocolVersion: number;
+  /**
+   * Always the identifier this release speaks, never the one that arrived.
+   *
+   * The two are equal by the time this is built - that is what the guard establishes - but taking the
+   * constant rather than the decoded value means a successful verification cannot carry a legacy
+   * numeric version out of this function, and the narrower type says so.
+   */
+  readonly protocolVersion: DateProtocolVersion;
 }
 
 /**
@@ -60,7 +68,7 @@ export const verify = async (
     });
   }
 
-  return succeed({ protocolVersion });
+  return succeed({ protocolVersion: PROTOCOL_VERSION });
 };
 
 export { PROTOCOL_VERSION };

@@ -301,3 +301,26 @@ test('a stored kind that contradicts its type is an integrity failure on read an
     assert.equal(recovered.entity.kind, 'note');
   });
 });
+
+test('a read says whether the project is selected, without being asked', () => {
+  withMigrated('read-active', (connection) => {
+    const created = seed(connection);
+    assert.equal(
+      expectRight(runNodes(connection, getNode({ target: { id: created.id } }))).entity.active,
+      false,
+    );
+
+    connection.db.prepare('UPDATE nodes SET active = 1 WHERE id = ?').run(created.id);
+    assert.equal(
+      expectRight(runNodes(connection, getNode({ target: { id: created.id } }))).entity.active,
+      true,
+    );
+
+    // And an area answers the same field truthfully rather than omitting it or answering null: "not
+    // selected" is the honest answer for something that cannot be, and a consumer that needs "not
+    // applicable" already has `type`.
+    const work = expectRight(runNodes(connection, getNode({ target: { path: '/work' } }))).entity;
+    assert.equal(work.type, 'area');
+    assert.equal(work.active, false);
+  });
+});

@@ -64,6 +64,7 @@ const entity = (over = {}) => ({
   title: 'Contracts',
   description: 'what we agreed',
   tags: ['work', 'review'],
+  active: false,
   metadata: {},
   body: { format: 'tiptap', value: CANONICAL },
   ...over,

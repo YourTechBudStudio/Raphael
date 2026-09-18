@@ -13,6 +13,7 @@
 
 import { isTransportRejection, type ClientFailure } from '@raphael/client';
 import { verify } from '@raphael/client/connection';
+import type { DateProtocolVersion } from '@raphael/contracts/connection';
 
 import { buildTransport } from '../../../infrastructure/api';
 import { describeVerifyFailure, type SetupProblem } from '../setup';
@@ -21,7 +22,8 @@ export interface VerifiedServer {
   readonly base: string;
   readonly origin: string;
   readonly apiKey: string;
-  readonly protocolVersion: number;
+  /** What this release speaks, established by the guard inside `verify` rather than merely received. */
+  readonly protocolVersion: DateProtocolVersion;
 }
 
 export type VerifyOutcome =

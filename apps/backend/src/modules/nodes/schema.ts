@@ -62,6 +62,11 @@ export const nodes = sqliteTable(
     description: text('description').notNull().default(''),
     body: text('body').notNull(),
     tags: text('tags').notNull().default('[]'),
+    /**
+     * Whether this project is currently being worked on. `0` or `1`, and only a project may hold `1`
+     * - the second type-conditional column on this table, following `kind`. See `nodes_active_valid`.
+     */
+    active: integer('active').notNull().default(0),
     metadata: text('metadata').notNull().default('{}'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
@@ -103,6 +108,15 @@ export const nodes = sqliteTable(
       'nodes_kind_valid',
       sql`(type = 'resource') = (kind IS NOT NULL) AND (kind IS NULL OR kind IN ('note'))`,
     ),
+    // Only a project can be active. Declared here at table level and attached to the column itself in
+    // `0003`, the same split as `nodes_kind_valid` above and for the same reason.
+    //
+    // No `typeof(active) = 'integer'` guard, unlike the open-range integer columns below: those admit
+    // any integer and must exclude non-integers and unsafe magnitudes, while this is a closed
+    // enumeration and `IN (0, 1)` does that work itself. After INTEGER affinity a lossless `'1'` or
+    // `1.0` is stored as the integer it is, and anything else fails the `IN`. `NOT NULL` closes the
+    // hole the parentage comment below warns about, where a NULL result reads as satisfied.
+    check('nodes_active_valid', sql`active IN (0, 1) AND (active = 0 OR type = 'project')`),
     check('nodes_title_present', sql`length(title) > 0`),
     check('nodes_slug_present', sql`length(slug) > 0`),
     check('nodes_id_safe', positiveSafeInteger('id')),

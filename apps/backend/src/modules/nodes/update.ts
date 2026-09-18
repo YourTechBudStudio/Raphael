@@ -107,6 +107,28 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
             if (entity.revision !== prepared.revision) {
               return raise(new RevisionConflict({ current: entity.revision }));
             }
+            // Only a project can be marked active, and the rule is on *presence*: mentioning the field
+            // for an area or a resource is refused whatever value it carries, because the caller's
+            // mistake is that the field does not apply to this target - which is the family
+            // `InvalidInput` already names - and "what did `active: false` on an area mean?" has no
+            // good answer.
+            //
+            // Three guards state this rule and they are deliberately not the same rule, because each
+            // refuses what it is positioned to know. This one sees the caller's *intent*, so it
+            // refuses the mention. `activeMatchesType` in the contracts sees a *state*, so it refuses
+            // only `true` - `active: false` on an area from some other server is a truthful reading.
+            // `nodes_active_valid` permits `0` on an area, because every non-project row is exactly
+            // that. ADR 0007 is explicit that a constraint is not a substitute for core validation, so
+            // this is the check that produces the refusal; the column CHECK is the independent backstop
+            // against a write that never came through here.
+            //
+            // After the revision precondition, before any body conversion: a caller whose write is
+            // already lost is told *that* first.
+            if (prepared.active !== undefined && entity.type !== 'project') {
+              return raise(
+                new InvalidInput({ field: 'active', reason: 'active_requires_project' }),
+              );
+            }
             return entity;
           }),
         catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'read' }, cause),
@@ -173,6 +195,9 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
                   slug: prepared.slug ?? row.slug,
                   revision: nextRevision,
                   tags: JSON.stringify(tags),
+                  // Still the stored integer shape, so `summaryProjection` stays the one place the
+                  // conversion to a boolean happens.
+                  active: prepared.active === undefined ? row.active : prepared.active ? 1 : 0,
                 },
                 projected.body,
                 OPERATION,
@@ -227,6 +252,8 @@ interface PreparedUpdate {
   readonly body: PreparedBody | undefined;
   readonly addTags: readonly string[];
   readonly removeTags: readonly string[];
+  /** The desired resulting state, or `undefined` when the caller did not mention selection. */
+  readonly active: boolean | undefined;
   readonly format: BodyFormat;
 }
 
@@ -249,6 +276,7 @@ const prepareUpdate = (request: UpdateRequest): PreparedUpdate => ({
         : { format: 'markdown', value: request.body.value },
   addTags: request.addTags === undefined ? [] : [...request.addTags],
   removeTags: request.removeTags === undefined ? [] : [...request.removeTags],
+  active: request.active,
   format: request.format,
 });
 
@@ -336,6 +364,10 @@ const commit = (
       ...(prepared.title === undefined ? {} : { title: prepared.title }),
       ...(prepared.description === undefined ? {} : { description: prepared.description }),
       ...(prepared.slug === undefined ? {} : { slug: prepared.slug }),
+      // A conditional spread like the three authored scalars above, not an unconditional write like
+      // `tags`: `tags` is the outlier because `resultingTags` computes a resolved value rather than
+      // patching a submitted one, which is what its "one `set` shape" note is about.
+      ...(prepared.active === undefined ? {} : { active: prepared.active ? 1 : 0 }),
       ...(content === undefined ? {} : { body: content.storedBody, bodyText: content.derivedText }),
       tags: JSON.stringify(tags),
       revision: nextRevision,

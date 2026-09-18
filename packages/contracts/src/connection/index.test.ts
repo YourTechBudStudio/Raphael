@@ -13,6 +13,11 @@ import {
   isCompatibleProtocolVersion,
 } from './index.ts';
 
+/** A server one protocol revision behind, one ahead, and one predating the date-based scheme. */
+const OLDER_DATE = '2026-09-10';
+const NEWER_DATE = '2026-10-01';
+const LEGACY_NUMERIC = 1;
+
 test('verification is published where the clients expect it', () => {
   assert.deepEqual(CONNECTION_ROUTES, {
     verify: { method: 'POST', path: '/api/connection/verify' },
@@ -38,31 +43,64 @@ test('a value that is merely key-less is not an empty object', () => {
   }
 });
 
-test('the response reports a protocol version and nothing about the server', () => {
+test('the protocol version is a calendar date, and the current one is compatible with itself', () => {
+  assert.match(PROTOCOL_VERSION, /^\d{4}-\d{2}-\d{2}$/u);
+  assert.equal(isCompatibleProtocolVersion(PROTOCOL_VERSION), true);
+
   const decoded = decodeVerifyResponse({ protocolVersion: PROTOCOL_VERSION });
   assert.equal(Either.isRight(decoded), true);
   if (Either.isRight(decoded)) {
     assert.deepEqual(Object.keys(decoded.right), ['protocolVersion']);
+    assert.equal(decoded.right.protocolVersion, PROTOCOL_VERSION);
   }
-  assert.equal(Either.isLeft(decodeVerifyResponse({ protocolVersion: 0 })), true);
-  assert.equal(Either.isLeft(decodeVerifyResponse({ protocolVersion: '1' })), true);
-  assert.equal(Either.isLeft(decodeVerifyResponse({})), true);
 });
 
-test('an incompatible version decodes, so the mismatch can be explained', () => {
-  const decoded = decodeVerifyResponse({ protocolVersion: PROTOCOL_VERSION + 1 });
-  assert.equal(Either.isRight(decoded), true);
-  assert.equal(isCompatibleProtocolVersion(PROTOCOL_VERSION), true);
-  assert.equal(isCompatibleProtocolVersion(PROTOCOL_VERSION + 1), false);
-  assert.match(describeProtocolMismatch(PROTOCOL_VERSION + 1), /Update Raphael here\./);
-  assert.match(describeProtocolMismatch(PROTOCOL_VERSION - 1), /Update the server\./);
+test('an identifier that is merely different decodes, so the mismatch can be explained', () => {
+  // Three ways of being different, and all three must survive decoding: only a decoded identifier
+  // can be named in a sentence about which side is behind.
+  for (const version of [OLDER_DATE, NEWER_DATE, LEGACY_NUMERIC]) {
+    const decoded = decodeVerifyResponse({ protocolVersion: version });
+    assert.equal(Either.isRight(decoded), true, `${JSON.stringify(version)} must decode`);
+    assert.equal(isCompatibleProtocolVersion(version), false);
+  }
+});
+
+test('a mismatch names both identifiers and says which side to update', () => {
+  for (const version of [OLDER_DATE, NEWER_DATE, LEGACY_NUMERIC]) {
+    const message = describeProtocolMismatch(version);
+    // Asserted in sentence position rather than as a bare pattern. A loose search would pass
+    // vacuously for the legacy number, whose digit already appears inside the current date.
+    assert.ok(message.includes(`speaks protocol ${version};`), message);
+    assert.ok(message.includes(`understands ${PROTOCOL_VERSION}.`), message);
+  }
+
+  assert.match(describeProtocolMismatch(NEWER_DATE), /Update Raphael here\.$/u);
+  assert.match(describeProtocolMismatch(OLDER_DATE), /Update the server\.$/u);
+  // Every legacy number precedes the date-based scheme, so that server is behind whatever it says.
+  assert.match(describeProtocolMismatch(LEGACY_NUMERIC), /Update the server\.$/u);
 });
 
 test('a mismatch is worded for a phone as readily as for a terminal', () => {
-  for (const version of [PROTOCOL_VERSION + 1, PROTOCOL_VERSION - 1]) {
+  for (const version of [OLDER_DATE, NEWER_DATE, LEGACY_NUMERIC]) {
     // "client" is jargon to someone holding the phone that is the client.
     assert.doesNotMatch(describeProtocolMismatch(version), /client/i);
   }
+});
+
+test('a malformed identifier fails decoding rather than becoming a mismatch', () => {
+  // There is no honest sentence to say about any of these, so none of them reaches the mismatch
+  // wording at all. An impossible calendar date is the case a bare pattern check would have missed.
+  const malformed = ['2026-13-01', '2026-02-30', '2026-9-18', 'latest', '', 0, -1, 1.5, null, true];
+
+  for (const protocolVersion of malformed) {
+    assert.equal(
+      Either.isLeft(decodeVerifyResponse({ protocolVersion })),
+      true,
+      `${JSON.stringify(protocolVersion)} must not decode`,
+    );
+  }
+
+  assert.equal(Either.isLeft(decodeVerifyResponse({})), true);
 });
 
 /**

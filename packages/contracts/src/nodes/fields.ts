@@ -72,6 +72,7 @@ export const REQUEST_FIELDS = [
   'tags',
   'addTags',
   'removeTags',
+  'active',
   'metadata',
   'idempotencyKey',
   'format',

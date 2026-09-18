@@ -3,13 +3,15 @@ import type { ContainerRef, Resource, VoiceResource } from '../api/contracts';
 /**
  * Session-only local content, kept per connection.
  *
- * Media captured in this session, favorites, and active-project selections have no server operation
- * in this release, so they live here, in memory, for as long as the process does. Nothing in this
- * module may be presented as saved to Raphael.
+ * Media captured in this session and favorites have no server operation in this release, so they
+ * live here, in memory, for as long as the process does. Nothing in this module may be presented as
+ * saved to Raphael.
  *
  * Notes are no longer among them. `createNote` wrote a note that existed only in this map, and the
  * feed that displayed it is gone; a note is created against the server now, by capture, and read
- * back by `modules/resources`. What is left here is media with no server operation yet.
+ * back by `modules/resources`. Nor is the active-project selection: it is a field on the project's
+ * own row now, written through `nodes.update`, so it survives a restart and every client sees it.
+ * What is left here is media and favorites, which have no server operation yet.
  *
  * Everything is keyed by connection id. Two servers can mint the same numeric id for different
  * containers, so a single flat store would show one server's notes under the other's areas. The
@@ -27,10 +29,9 @@ import type { ContainerRef, Resource, VoiceResource } from '../api/contracts';
 interface Bucket {
   resources: readonly Resource[];
   favorites: readonly ContainerRef[];
-  activeProjectIds: readonly number[];
 }
 
-const EMPTY: Bucket = { resources: [], favorites: [], activeProjectIds: [] };
+const EMPTY: Bucket = { resources: [], favorites: [] };
 
 const buckets = new Map<string, Bucket>();
 
@@ -95,25 +96,6 @@ export const localContent = {
     write(connectionId, { ...bucket, favorites });
 
     return [...favorites];
-  },
-
-  /** Deliberately active projects, by id, in selection order. */
-  async getActiveProjects(connectionId: string): Promise<number[]> {
-    return [...read(connectionId).activeProjectIds];
-  },
-
-  async setProjectActive(connectionId: string, id: number, active: boolean): Promise<void> {
-    const bucket = read(connectionId);
-    const present = bucket.activeProjectIds.includes(id);
-
-    if (active === present) return;
-
-    write(connectionId, {
-      ...bucket,
-      activeProjectIds: active
-        ? [...bucket.activeProjectIds, id]
-        : bucket.activeProjectIds.filter((candidate) => candidate !== id),
-    });
   },
 
   /**
