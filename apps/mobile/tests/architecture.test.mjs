@@ -397,13 +397,29 @@ test('no throwaway mock surface survives', () => {
   for (const file of files) {
     const source = readFileSync(path.join(root, file), 'utf8');
 
-    for (const name of ['THROWAWAY', 'openMock', 'modules/mock', 'MockGallery', 'useMockStore']) {
+    for (const name of [
+      'THROWAWAY',
+      'openMock',
+      'modules/mock',
+      'MockGallery',
+      'useMockStore',
+      // Story #5's active-projects design mock and the Settings chip that opened it. The mock was a
+      // presentation-only page with no queries and no transport, kept while the real screens were
+      // built and deleted with them - so the route and its door are named here rather than trusted
+      // to stay gone, the same rule the sweep above applies to the gallery.
+      'mock-active',
+      'Design mocks',
+    ]) {
       assert.ok(!source.includes(name), `${file}: still reaches the retired mock surface ${name}`);
     }
   }
 
   assert.ok(!existsSync(path.join(root, 'app', 'mock')), 'the mock routes are gone');
   assert.ok(!existsSync(path.join(root, 'modules', 'mock')), 'the mock module is gone');
+  assert.ok(
+    !existsSync(path.join(root, 'app', 'mock-active.tsx')),
+    'the active projects mock route is gone',
+  );
 });
 
 /**
@@ -470,6 +486,32 @@ test('nothing can create a note that exists only in this process', () => {
     // explains why it is gone, and that explanation is worth keeping.
     for (const name of ['NoteResource', 'createNote(', 'useLocalResources']) {
       assert.ok(!source.includes(name), `${file}: still reaches the retired session note ${name}`);
+    }
+  }
+});
+
+/**
+ * A project's active status is the server's, and there is no second copy of it.
+ *
+ * It used to be a list of ids in the session-only store: it died with the process, a disconnect
+ * erased it on purpose, no other client could see it, and the write validated nothing. It is a field
+ * on the project's own row now, read from the one hierarchy traversal and written through
+ * `nodes.update` under the revision the screen read.
+ *
+ * The local reader and writer are named here because a reinstated one would not fail to compile - it
+ * would simply be a selection that disagreed with every other client, silently, which is the whole
+ * condition this change ended. The boundary rule above already stops the mock leaking out of
+ * `infrastructure`; this stops it coming back in under the same name.
+ */
+test('nothing holds an active-project selection locally', () => {
+  for (const file of files) {
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    for (const name of ['useActiveProjectIds', 'getActiveProjects', 'setProjectActive']) {
+      assert.ok(
+        !source.includes(name),
+        `${file}: still reaches the retired local selection ${name}`,
+      );
     }
   }
 });

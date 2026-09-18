@@ -5,12 +5,10 @@ import { Text, View } from 'react-native';
 import { Chip, Screen, SectionHeading, Snackbar, SNACKBAR_GAP } from '../../../ui';
 import { CaptureDock, useSaveNotice, useUnfinishedTally } from '../../capture';
 import {
+  activeProjects,
   containerTitleLookup,
   HierarchyStale,
-  useActiveProjectIds,
   useHierarchy,
-  useProjectActive,
-  type HierarchyNode,
 } from '../../collections';
 import { RejectionNotice } from '../../connection';
 import {
@@ -34,9 +32,13 @@ import { ActiveSkeleton } from './Skeletons';
 /**
  * Home orients first: deliberately active projects together, then every note on the server.
  *
- * An active project is stored as an id, so the card's title and description are read out of the
- * hierarchy. That makes this section depend on the hierarchy loading, and it reports that
+ * Which projects are active is the server's own answer, and it arrives on the one hierarchy
+ * traversal this app already performs - so the section costs no extra request and cannot disagree
+ * with the tree Home draws from. It does depend on that traversal landing, and reports the
  * dependency honestly rather than showing an empty list when the server could not be reached.
+ *
+ * Each card holds its own toggle and its own verdict. Home neither writes the selection nor hears
+ * about a write, which is why there is no section-level sentence about one any more.
  *
  * The Notes feed is the server's, newest edit first, paged as the scroll reaches its end. Nothing
  * local is mixed into it and nothing is sorted here.
@@ -58,33 +60,25 @@ import { ActiveSkeleton } from './Skeletons';
  * process that earned it.
  */
 export function HomeScreen() {
-  const selected = useActiveProjectIds();
   const tree = useHierarchy();
-  const active = useProjectActive();
   const feed = useNoteFeed();
   const media = useSessionMedia();
   const unfinished = useUnfinishedTally();
   const notice = useSaveNotice();
   const [snackbarHeight, setSnackbarHeight] = useState(0);
   const hierarchy = tree.hierarchy;
-  const projects: readonly HierarchyNode[] | undefined =
-    selected.data === undefined || hierarchy === undefined
-      ? undefined
-      : selected.data
-          .map((id) => hierarchy.byId.get(id))
-          .filter((node): node is HierarchyNode => node !== undefined && node.type === 'project');
-  const projectsFailed = selected.isError || (tree.isError && hierarchy === undefined);
+  const projects = hierarchy === undefined ? undefined : activeProjects(hierarchy);
+  const projectsFailed = tree.isError && hierarchy === undefined;
 
   return (
     <View className="flex-1">
       <Screen
         onEndReached={feed.loadMore}
-        // Pull down reloads everything Home shows: the hierarchy the project cards are named from,
-        // the active list, and the notes - the notes from their first page, not by re-reading every
+        // Pull down reloads everything Home shows: the hierarchy the project cards are named and
+        // selected from, and the notes - the notes from their first page, not by re-reading every
         // page that happens to be held. It is not a way to confirm a save; Retry is.
         onRefresh={() => {
           tree.refetch();
-          void selected.refetch();
           feed.refresh();
           void media.refetch();
         }}
@@ -103,7 +97,10 @@ export function HomeScreen() {
           <RejectionNotice />
           <View className="gap-3">
             <SectionHeading>Active projects</SectionHeading>
-            {/* These cards are named from the hierarchy, so a stale hierarchy is stale names. */}
+            {/* The hierarchy decides which cards exist, what each bolt shows, and the revision a
+                write from a card is guarded by - not just their names. So a stale hierarchy is a
+                stale section, which is why a card can briefly outlive a successful deactivate whose
+                refresh then failed. */}
             <HierarchyStale tree={tree} />
             {/* A section that has nothing to show says so in one quiet line, not a card: the
                 cards are for content, and an empty or failed section is not content. */}
@@ -121,23 +118,8 @@ export function HomeScreen() {
                 No active projects. Mark one as Active from its page to keep it here.
               </Text>
             ) : (
-              projects.map((project) => (
-                <ActiveProjectCard
-                  key={project.id}
-                  project={project}
-                  active={active.isActive(project.id)}
-                  disabled={active.isDisabled(project.id)}
-                  onToggle={() => {
-                    active.toggle(project.id);
-                  }}
-                />
-              ))
+              projects.map((project) => <ActiveProjectCard key={project.id} project={project} />)
             )}
-            {active.isError && !projectsFailed ? (
-              <Text accessibilityLiveRegion="polite" className="font-body text-[15px] text-danger">
-                Active status did not update. Try again.
-              </Text>
-            ) : null}
           </View>
 
           <NoteSection

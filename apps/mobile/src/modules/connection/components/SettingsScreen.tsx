@@ -1,4 +1,3 @@
-import { router } from 'expo-router';
 import { Text, View } from 'react-native';
 
 import { Chip, confirmDiscard, Screen, SectionHeading } from '../../../ui';
@@ -61,20 +60,6 @@ export function SettingsScreen() {
               accessibilityHint="Forgets this server and returns to setup"
               label="Disconnect"
               onPress={onDisconnect}
-            />
-          </View>
-        </View>
-
-        {/* Temporary: design reference for story #5. Remove together with `app/mock-active.tsx`. */}
-        <View className="gap-3">
-          <SectionHeading>Design mocks</SectionHeading>
-          <View className="flex-row">
-            <Chip
-              accessibilityHint="Opens the active projects design mock"
-              label="Active projects mock"
-              onPress={() => {
-                router.push('/mock-active');
-              }}
             />
           </View>
         </View>

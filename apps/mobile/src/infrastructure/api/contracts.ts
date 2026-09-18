@@ -7,14 +7,15 @@
  * `@raphael/contracts/nodes` already owns it, and a second declaration here would be a second
  * authority that could drift.
  *
- * Media captured in this session, favorites, and active-project selections are **session-only local
- * data**. There is no server operation for any of them in this release. What is declared here is
- * their shape, and the one rule that keeps them honest: they hold a `ContainerRef` - a numeric
- * reference to a real container - and never a copy of a container's title, description, or parent. A
- * local record that copied server fields would be a second hierarchy that goes stale silently.
+ * Media captured in this session and favorites are **session-only local data**. There is no server
+ * operation for either of them in this release. What is declared here is their shape, and the one
+ * rule that keeps them honest: they hold a `ContainerRef` - a numeric reference to a real container
+ * - and never a copy of a container's title, description, or parent. A local record that copied
+ * server fields would be a second hierarchy that goes stale silently.
  *
- * Notes used to be here too. They are server data now: `@raphael/contracts/nodes` owns their shape,
- * and `modules/resources` reads them from the connected Raphael.
+ * Notes used to be here too, and so did the active-project selection. Both are server data now:
+ * `@raphael/contracts/nodes` owns their shape, `modules/resources` reads the notes, and a project's
+ * active status is a field on its own row that `modules/collections` reads and writes.
  */
 
 import type { ContainerType } from '@raphael/contracts/nodes';

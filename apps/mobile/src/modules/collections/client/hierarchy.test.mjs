@@ -14,6 +14,7 @@ import { describe, it } from 'node:test';
 
 import { ClientFailureError } from '../../../infrastructure/query/failure.ts';
 import {
+  activeProjects,
   areaOptions,
   fetchHierarchy,
   HierarchyRefusedError,
@@ -23,7 +24,7 @@ import {
   subtreeIds,
 } from './hierarchy.ts';
 
-const node = (id, type, parentId, title, slug = title.toLowerCase()) => ({
+const node = (id, type, parentId, title, slug = title.toLowerCase(), active = false) => ({
   id,
   type,
   // Containers have no kind. A summary always carries the field, so the fixtures do too.
@@ -34,7 +35,7 @@ const node = (id, type, parentId, title, slug = title.toLowerCase()) => ({
   title,
   description: '',
   tags: [],
-  active: false,
+  active,
 });
 
 /** A server that answers List out of a fixed list, honestly paginated. */
@@ -263,6 +264,58 @@ describe('the assembled tree', () => {
 
     assert.deepEqual([...subtreeIds(hierarchy, 3)].sort(), [3, 5]);
     assert.deepEqual([...subtreeIds(hierarchy, 404)], []);
+  });
+
+  it('carries the revision and the selection through projection', async () => {
+    const hierarchy = await fetchHierarchy(
+      server([
+        node(2, 'area', null, 'Work', 'work'),
+        { ...node(4, 'project', 2, 'Design', 'design', true), revision: 7 },
+      ]).list,
+    );
+
+    // Both are dropped by a projection that keeps only what a card draws, and both are needed: the
+    // revision is what a write initiated from a card is guarded by, and the selection is what puts
+    // the card on Home in the first place.
+    const project = hierarchy.byId.get(4);
+    assert.equal(project.revision, 7);
+    assert.equal(project.active, true);
+    assert.equal(hierarchy.byId.get(2).revision, 1);
+    assert.equal(hierarchy.byId.get(2).active, false);
+  });
+
+  it('walks the active projects in hierarchy order, and no areas', async () => {
+    // Deliberately interleaved: `Zulu` sorts after `Design` among Work's children, so a walk that
+    // took areas before projects, or that read `byId` insertion order, would answer differently.
+    const selected = [
+      node(1, 'area', null, 'Personal', 'personal'),
+      node(2, 'area', null, 'Work', 'work'),
+      node(3, 'project', 1, 'Kitchen', 'kitchen', true),
+      node(4, 'project', 2, 'Design', 'design', true),
+      node(5, 'area', 2, 'Zulu', 'zulu'),
+      node(6, 'project', 5, 'Acme', 'acme', true),
+      node(7, 'project', 2, 'Dormant', 'dormant'),
+    ];
+    const hierarchy = await fetchHierarchy(server(selected).list);
+
+    assert.deepEqual(
+      activeProjects(hierarchy).map((project) => project.title),
+      ['Kitchen', 'Design', 'Acme'],
+      'pre-order over the roots, each area\u2019s children in the server\u2019s order',
+    );
+    // An area is never active - the contract refuses the pairing - and an unselected project is not
+    // drawn on Home even though it is in the tree.
+    assert.ok(activeProjects(hierarchy).every((project) => project.type === 'project'));
+    assert.equal(
+      activeProjects(hierarchy).find((project) => project.title === 'Dormant'),
+      undefined,
+    );
+  });
+
+  it('has nothing to show when nothing is selected', async () => {
+    const hierarchy = await fetchHierarchy(server(items).list);
+
+    assert.deepEqual(activeProjects(hierarchy), []);
   });
 
   it('offers areas with enough context to tell two of the same name apart', async () => {

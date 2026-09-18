@@ -1,6 +1,7 @@
 import { Pressable, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { BloomIcon } from './BloomIcon';
+import { BusyRing } from './BusyRing';
 import type { ToggleMark } from './toggle-marks';
 
 /** The mark's box, which is also the touch target. */
@@ -15,7 +16,13 @@ export interface ToggleLabelProps {
   /** Spoken name. It says what pressing does, which the visible word alone does not. */
   accessibilityLabel: string;
   accessibilityHint?: string | undefined;
-  /** Announced and drawn as unavailable, e.g. while the server has not confirmed the last change. */
+  /**
+   * Announced and drawn as unavailable, e.g. while the server has not confirmed the last change.
+   *
+   * Announced as busy too, and drawn with a ring around the mark. That is this prop's documented
+   * meaning - a change is in flight - so the two states are one, and a control a person cannot
+   * press should say why rather than only that they cannot.
+   */
   disabled?: boolean | undefined;
   className?: string | undefined;
   style?: StyleProp<ViewStyle> | undefined;
@@ -50,7 +57,7 @@ export function ToggleLabel({
       accessibilityHint={accessibilityHint}
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      accessibilityState={{ checked: selected, disabled, selected }}
+      accessibilityState={{ busy: disabled, checked: selected, disabled, selected }}
       className={[
         'flex-row items-center gap-1 pr-2',
         disabled ? 'opacity-60' : '',
@@ -69,6 +76,7 @@ export function ToggleLabel({
           path={mark.path}
           selected={selected}
         />
+        {disabled ? <BusyRing size={TARGET} /> : null}
       </View>
       <Text
         className={['font-body text-[15px]', selected ? 'text-ink' : 'text-ink-soft'].join(' ')}

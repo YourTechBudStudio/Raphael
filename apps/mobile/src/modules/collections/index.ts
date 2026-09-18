@@ -1,6 +1,18 @@
-export { useActiveProjectIds, useProjectActive } from './client/active';
+export {
+  useProjectActive,
+  type ActiveFailure,
+  type ActiveTarget,
+  type ProjectActive,
+} from './client/active';
 export { useFavorites, useFavoriteToggle } from './client/favorites';
-export { allAreas, areaOptions, pathTo, subtreeIds, type AreaOption } from './client/hierarchy';
+export {
+  activeProjects,
+  allAreas,
+  areaOptions,
+  pathTo,
+  subtreeIds,
+  type AreaOption,
+} from './client/hierarchy';
 export {
   invalidateContainer,
   invalidateHierarchy,
@@ -28,6 +40,7 @@ export {
   type ContainerCreationOutcome,
   type ContainerCreationSession,
 } from './client/container-creation';
+export { ActiveVerdict } from './components/ActiveVerdict';
 export { AreaScreen } from './components/AreaScreen';
 export {
   AddInsideSheet,

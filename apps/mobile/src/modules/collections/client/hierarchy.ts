@@ -69,8 +69,19 @@ export interface HierarchyNode {
   readonly type: ContainerType;
   readonly parentId: number | null;
   readonly slug: string;
+  /**
+   * The revision this reading was taken at; what a write initiated from a card must send.
+   *
+   * Carried through projection rather than dropped, because a guarded write has to be issued
+   * against the revision the person was actually looking at. A Home card is the only thing on
+   * screen when someone toggles a project from it, so if the rendered state does not carry a
+   * revision there is nowhere else to get one that is honestly *this* reading's.
+   */
+  readonly revision: number;
   readonly title: string;
   readonly description: string;
+  /** Server-held selection: whether this project is being worked on. Always false for an area. */
+  readonly active: boolean;
   readonly children: readonly HierarchyNode[];
 }
 
@@ -259,8 +270,10 @@ const assemble = (items: readonly NodeSummary[]): Hierarchy => {
       type: summary.type,
       parentId: summary.parentId,
       slug: summary.slug,
+      revision: summary.revision,
       title: summary.title,
       description: summary.description,
+      active: summary.active,
       children,
     };
     byId.set(node.id, node);
@@ -303,6 +316,40 @@ export const allAreas = (hierarchy: Hierarchy): readonly HierarchyNode[] => {
       if (node.type !== 'area') continue;
 
       found.push(node);
+      walk(node.children);
+    }
+  };
+
+  walk(hierarchy.roots);
+
+  return found;
+};
+
+/**
+ * Every active project, depth-first in listing order.
+ *
+ * A named walk rather than a filter over `byId.values()`, because `byId` is filled in `build`'s
+ * post-order and that ordering is a side effect of map insertion rather than a property anything
+ * states. Home draws this list, so the order it is drawn in is worth being a tested fact about this
+ * file: pre-order over `roots`, descending through children already sorted by `compareNodeOrder`,
+ * so a project appears at its position within its parent area's interleaved children.
+ *
+ * Selection order is deliberately not preserved. The server has no such concept, so hierarchy order
+ * is the one ordering every client can agree on.
+ *
+ * No descent into a project: storage permits only resources beneath one, and the traversal asks for
+ * containers only, so a project can hold no container child to miss.
+ */
+export const activeProjects = (hierarchy: Hierarchy): readonly HierarchyNode[] => {
+  const found: HierarchyNode[] = [];
+
+  const walk = (nodes: readonly HierarchyNode[]): void => {
+    for (const node of nodes) {
+      if (node.type === 'project') {
+        if (node.active) found.push(node);
+        continue;
+      }
+
       walk(node.children);
     }
   };

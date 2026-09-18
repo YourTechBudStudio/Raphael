@@ -4,6 +4,9 @@
  * The setup here is the case that would be silently wrong without scoping. Two servers, each with a
  * container numbered 3, and a voice note captured against each. A flat store keyed by container id
  * would show one server's media under the other server's area, and nothing on screen would say so.
+ *
+ * Active projects used to be held here too. They are the server's now, so what is left is media and
+ * favorites - and the per-connection isolation still has to hold for them.
  */
 
 import assert from 'node:assert/strict';
@@ -18,11 +21,10 @@ const capture = (connectionId, parent, title) =>
   localContent.createVoiceNote(connectionId, parent, title, 12, [0.2, 0.5, 0.8]);
 
 describe('two servers that both have a container 3', () => {
-  it('keep their media, stars, and active projects apart', async () => {
+  it('keep their media and stars apart', async () => {
     await capture('server-a', AREA_3, 'From A');
     await capture('server-b', AREA_3, 'From B');
     await localContent.toggleFavorite('server-a', AREA_3);
-    await localContent.setProjectActive('server-b', 3, true);
 
     assert.deepEqual(
       (await localContent.getResources('server-a')).map((item) => item.title),
@@ -34,8 +36,6 @@ describe('two servers that both have a container 3', () => {
     );
     assert.deepEqual(await localContent.getFavorites('server-a'), [AREA_3]);
     assert.deepEqual(await localContent.getFavorites('server-b'), []);
-    assert.deepEqual(await localContent.getActiveProjects('server-a'), []);
-    assert.deepEqual(await localContent.getActiveProjects('server-b'), [3]);
   });
 
   it('forgetting one leaves the other untouched', async () => {
@@ -81,23 +81,23 @@ describe('what a local record holds', () => {
     assert.equal(localContent.createNote, undefined);
   });
 
+  it('holds no active-project selection, which the server owns now', () => {
+    // Removed rather than left unused. A project's active status is a field on its own row, read
+    // and written through `nodes.update`; a second copy here would be a selection that disagreed
+    // with every other client and died with the process, which is what this change ended.
+    assert.equal(localContent.getActiveProjects, undefined);
+    assert.equal(localContent.setProjectActive, undefined);
+  });
+
   it('starts empty, with nothing seeded against ids nobody chose', async () => {
     assert.deepEqual(await localContent.getResources('fresh'), []);
     assert.deepEqual(await localContent.getFavorites('fresh'), []);
-    assert.deepEqual(await localContent.getActiveProjects('fresh'), []);
   });
 });
 
 describe('the selections themselves', () => {
-  it('star and unstar, and activate and deactivate, idempotently', async () => {
+  it('stars and unstars idempotently', async () => {
     assert.deepEqual(await localContent.toggleFavorite('sel', AREA_3), [AREA_3]);
     assert.deepEqual(await localContent.toggleFavorite('sel', AREA_3), []);
-
-    await localContent.setProjectActive('sel', 9, true);
-    await localContent.setProjectActive('sel', 9, true);
-    assert.deepEqual(await localContent.getActiveProjects('sel'), [9]);
-
-    await localContent.setProjectActive('sel', 9, false);
-    assert.deepEqual(await localContent.getActiveProjects('sel'), []);
   });
 });
