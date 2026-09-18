@@ -15,7 +15,7 @@
     "lint": "oxlint . --threads=8 --deny-warnings --no-error-on-unmatched-pattern",
     "lint:fix": "oxlint . --threads=8 --fix --no-error-on-unmatched-pattern",
     "mobile:start": "pnpm --filter @raphael/mobile start",
-    "server:dev": "pnpm --filter @raphael/backend build && node apps/cli/src/main.ts server serve",
+    "backend:start": "pnpm -r --workspace-concurrency=1 --filter '@raphael/cli^...' --if-present build && node apps/cli/src/main.ts server serve",
     "test": "pnpm build:libs && pnpm -r --workspace-concurrency=1 --if-present test",
     "typecheck": "pnpm build:libs && pnpm -r --workspace-concurrency=1 --if-present typecheck"
   },
