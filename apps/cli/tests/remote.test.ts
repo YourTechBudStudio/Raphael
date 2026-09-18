@@ -9,10 +9,12 @@ import { fileURLToPath } from 'node:url';
 import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
 import { createTransport, type FetchLike, type Transport } from '@raphael/client';
 import { update as updateDirect } from '@raphael/client/nodes';
+import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
 import { decodeUpdateResponse } from '@raphael/contracts/nodes';
 import { Effect, Either, Exit, Scope } from 'effect';
 
 import { run as runCli } from '../src/main.ts';
+import { runLogin } from '../src/modules/connection/login.ts';
 import { buildFailureReport } from '../src/shared/report.ts';
 
 /**
@@ -615,6 +617,38 @@ describe('connecting', () => {
     assert.match(ran.stderr, /--idempotency-key/);
     assert.equal(ran.stderr.includes('not applied'), false);
     assert.equal(ran.stderr.includes('was not created'), false);
+  });
+
+  it('reports the protocol identifier the server answered with, as the identifier it is', async () => {
+    // `login --json` is the one place a person can read back what their server said. The identifier
+    // is a date string now, and this is what stops it quietly reverting to a number.
+    const home = temporary('raphael-cli-login-');
+    let stdout = '';
+
+    const code = await runLogin(['--json'], {
+      streams: {
+        out: (text) => {
+          stdout += text;
+        },
+        err: () => {
+          throw new Error('a successful login writes nothing to stderr');
+        },
+      },
+      // Driven directly rather than through the terminal prompter: this is about the reported
+      // identifier, and a real prompt would need a TTY that an automated check does not have.
+      prompter: () => ({
+        ask: async () => endpoint,
+        askHidden: async () => KEY,
+        close: () => {},
+      }),
+      environment: { XDG_CONFIG_HOME: home },
+      platform: 'linux',
+    });
+
+    assert.equal(code, 0);
+    const reported = JSON.parse(stdout);
+    assert.equal(reported.protocolVersion, PROTOCOL_VERSION);
+    assert.equal(typeof reported.protocolVersion, 'string');
   });
 
   it('does not present a reused key as though this invocation started the window', async () => {

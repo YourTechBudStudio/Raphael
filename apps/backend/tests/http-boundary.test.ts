@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
 import { REQUEST_MAX_BYTES } from '@raphael/contracts';
+import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
 
 import { call, envelope, rawRequest, withServer } from './server-support.ts';
 
@@ -200,7 +201,7 @@ describe('duplicate credentials', () => {
           `Content-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}`,
       );
       assert.match(response, /^HTTP\/1\.1 200 /u);
-      assert.match(response, /"protocolVersion":1/u);
+      assert.match(response, new RegExp(`"protocolVersion":"${PROTOCOL_VERSION}"`, 'u'));
     });
   });
 });

@@ -22,6 +22,18 @@
 /** The version this build writes. */
 export const RECORD_VERSION = 1;
 
+/**
+ * Either identifier a verification could have established: today's calendar date string, or the
+ * positive integer an older build of this app wrote before the identifier became a date.
+ *
+ * Historical either way. It records what one exchange proved at one moment and says nothing about
+ * whether the server still speaks it now, which is why it is read rather than trusted, and why a
+ * record written by an older build is still a perfectly good record. A stored number is read as the
+ * fact it is, never rewritten in place and never converted into a date it never was; the next
+ * successful verification stores the date string on its own.
+ */
+export type StoredProtocolVersion = string | number;
+
 export interface ConnectionRecord {
   readonly version: number;
   /**
@@ -38,13 +50,8 @@ export interface ConnectionRecord {
   /** Origin alone, for display. */
   readonly origin: string;
   readonly apiKey: string;
-  /**
-   * The protocol version the server answered with when this record was written.
-   *
-   * Historical. It records what one verification established at one moment, and says nothing about
-   * whether the server still speaks it now.
-   */
-  readonly protocolVersion: number;
+  /** What one verification established, whenever it happened. See `StoredProtocolVersion`. */
+  readonly protocolVersion: StoredProtocolVersion;
   /** When that verification happened. Also historical, and only ever shown as such. */
   readonly verifiedAt: string;
 }
@@ -63,6 +70,32 @@ export const encodeRecord = (record: ConnectionRecord): string => JSON.stringify
 
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === 'string' && value !== '';
+
+/**
+ * A calendar date, checked as a date rather than as a shape, so `2026-13-01` is refused.
+ *
+ * Spelled out here rather than imported: this file carries no dependency beyond the standard library
+ * on purpose, so the whole record and its decoder run under `node --test`. The rule it mirrors lives
+ * in `@raphael/contracts/connection`, and the two are checked against each other by a test.
+ */
+const isCalendarDate = (value: string): boolean => {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/u.exec(value);
+  if (match === null) return false;
+  const [, year, month, day] = match;
+  const utc = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)));
+  return utc.toISOString().slice(0, 10) === value;
+};
+
+/**
+ * Accepting both identifiers is a widening of what can be *read*, not a softening of the check.
+ * Anything that is neither is still "unreadable", exactly as before - a malformed identifier is a
+ * record this build cannot vouch for, and saying so is what keeps a credential from being silently
+ * discarded.
+ */
+const isStoredProtocolVersion = (value: unknown): value is StoredProtocolVersion => {
+  if (typeof value === 'string') return isCalendarDate(value);
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+};
 
 /**
  * Reads a stored record, or says exactly what is wrong with it.
@@ -97,9 +130,7 @@ export const decodeRecord = (raw: string): DecodedRecord => {
     !isNonEmptyString(base) ||
     !isNonEmptyString(origin) ||
     !isNonEmptyString(apiKey) ||
-    typeof protocolVersion !== 'number' ||
-    !Number.isSafeInteger(protocolVersion) ||
-    protocolVersion <= 0 ||
+    !isStoredProtocolVersion(protocolVersion) ||
     !isNonEmptyString(verifiedAt)
   ) {
     return { ok: false, problem: 'unreadable' };

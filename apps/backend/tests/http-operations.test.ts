@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
+import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
+
 import { call, envelope, withServer } from './server-support.ts';
 
 /**
@@ -17,7 +19,7 @@ describe('operations over HTTP', () => {
     await withServer('http-verify', async (server) => {
       const response = await call(server, '/api/connection/verify', { body: '{}' });
       assert.equal(response.status, 200);
-      assert.deepEqual(response.json, { protocolVersion: 1 });
+      assert.deepEqual(response.json, { protocolVersion: PROTOCOL_VERSION });
     });
   });
 

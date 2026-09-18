@@ -6,6 +6,8 @@ import { dirname, join, resolve } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
+
 /**
  * The CLI's own server command, as a real process.
  *
@@ -115,7 +117,7 @@ describe('starting', () => {
       body: '{}',
     });
     assert.equal(response.status, 200);
-    assert.deepEqual(await response.json(), { protocolVersion: 1 });
+    assert.deepEqual(await response.json(), { protocolVersion: PROTOCOL_VERSION });
 
     // The backend registers no signal handler; this is the CLI's to own.
     started.child.kill('SIGINT');
