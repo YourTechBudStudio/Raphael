@@ -20,6 +20,7 @@ const summary = (over = {}) => ({
   title: 'A note',
   description: 'What it is about',
   tags: [],
+  active: false,
   ...over,
 });
 

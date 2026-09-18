@@ -248,6 +248,10 @@ const commit = (
       // empty body. Null is reserved for a row that predates this column.
       bodyText: derivedText,
       tags: JSON.stringify(prepared.tags),
+      // Stated rather than left to the column default, so the insert writes the same fact the
+      // response below publishes. Every other field here is mirrored by the hand-assembled entity;
+      // without this line those two would agree only by two separately-maintained defaults.
+      active: 0,
       metadata: JSON.stringify(prepared.metadata),
       createdAt: now,
       updatedAt: now,
@@ -268,6 +272,11 @@ const commit = (
         title: named.title,
         description: prepared.description,
         tags: prepared.tags,
+        // A project is created inactive, and selection is never a creation request field: the story
+        // frames it as a deliberate act on an entity that already exists. This mirrors what the insert
+        // above writes, and is stated here because the hand-assembled entity is validated against the
+        // same response contract every other node response is.
+        active: false,
         body,
         metadata: prepared.metadata,
       },

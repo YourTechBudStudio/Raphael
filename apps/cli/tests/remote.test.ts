@@ -1397,4 +1397,166 @@ describe('updating', () => {
       /the\n\s+current revision is read for you just before the update is sent/,
     );
   });
+
+  /**
+   * Marking a project as being worked on.
+   *
+   * Two ordinary change flags on the operation that already exists, not a command of their own: the
+   * story asks for parity of the core *operation*, not of interactions.
+   */
+
+  const seedProject = async (slug: string): Promise<any> => {
+    const ran = await run(['create', 'project', `/work/${slug}`, '--title', 'Original', '--json']);
+    assert.equal(ran.code, 0, ran.stderr);
+    return jsonOf(ran).entity;
+  };
+
+  it('marks a project active and inactive by path, pinning the revision it read', async () => {
+    const created = await seedProject('selection-by-path');
+    assert.equal(created.active, false, 'a project is created inactive');
+
+    // No --revision. The existing pre-read pins the target by identifier, exactly as it does for a
+    // title change, so a slug freed and reoccupied in between cannot land this on another entity.
+    const activated = await run(['update', '/work/selection-by-path', '--active', '--json']);
+    assert.equal(activated.code, 0, activated.stderr);
+    assert.equal(jsonOf(activated).entity.active, true);
+    assert.equal(jsonOf(activated).entity.revision, created.revision + 1);
+
+    const deactivated = await run(['update', '/work/selection-by-path', '--inactive', '--json']);
+    assert.equal(deactivated.code, 0, deactivated.stderr);
+    assert.equal(jsonOf(deactivated).entity.active, false);
+
+    // And the field survives the shared response contract rather than merely resembling it.
+    const decoded = decodeUpdateResponse(jsonOf(deactivated));
+    assert.equal(Either.isRight(decoded), true);
+  });
+
+  it('marks a project active by --id against an explicit revision', async () => {
+    const created = await seedProject('selection-by-id');
+    const ran = await run([
+      'update',
+      '--id',
+      String(created.id),
+      '--active',
+      '--revision',
+      String(created.revision),
+      '--json',
+    ]);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.equal(jsonOf(ran).entity.active, true);
+  });
+
+  it('counts the selection flags as a change on their own', async () => {
+    const ran = await run(['update', '/work/anything', '--active', '--help']);
+    assert.equal(ran.code, 0);
+    assert.match(ran.stdout, /--active\s+Mark the project as currently being worked on\./);
+    assert.match(ran.stdout, /--inactive\s+Mark it as not being worked on\./);
+
+    // The refusal for an empty update now names them, so someone reading it knows they are changes.
+    const nothing = await run(['update', '/work/anything']);
+    assert.equal(nothing.code, 2);
+    assert.match(nothing.stderr, /--active or --inactive/);
+  });
+
+  it('refuses both selection flags together before it issues any request', async () => {
+    // Pointed at a port nothing listens on: a usage error here proves the refusal was decided from
+    // flag presence alone, because a dispatched request - including the revision pre-read - would
+    // have failed as a transport error with exit 1 instead.
+    const ran = await run(['update', '/work/anything', '--active', '--inactive'], {
+      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+    });
+    assert.equal(ran.code, 2);
+    assert.match(ran.stderr, /Give --active or --inactive, not both\./);
+    assert.match(ran.stderr, /Run "raphael update --help" for usage\./);
+    assert.equal(ran.stderr.includes('Check the server address'), false);
+  });
+
+  it('refuses to mark anything but a project, and says why', async () => {
+    const note = await seedNote('selection-on-a-note');
+    // Both flags, because the rule is on presence: the caller's mistake is a field that does not apply
+    // to this target, so `--inactive` is refused exactly as `--active` is. And both targets, because
+    // `/work` is a root area and the note is a resource - they travel different paths through target
+    // resolution before either one reaches the refusal, so this pins that the CLI arrives at it the
+    // same way for a container and a non-container alike.
+    for (const path of ['/work', '/work/selection-on-a-note']) {
+      for (const flag of ['--active', '--inactive']) {
+        const ran = await run(['update', path, flag]);
+        assert.equal(ran.code, 1, ran.stderr);
+        assert.match(ran.stderr, /invalid_input \(400\)/);
+        assert.match(ran.stderr, /field: active/);
+        assert.match(ran.stderr, /reason: active_requires_project/);
+        assert.match(ran.stderr, /Only a project can be marked active\./);
+      }
+    }
+    // Nothing was written by any of the four attempts. Asserted on the note, whose revision this test
+    // knows; the seeded area is shared with the rest of the suite and has no revision to pin here.
+    assert.equal((await entityAt('/work/selection-on-a-note')).revision, note.revision);
+  });
+
+  it('reports a stale selection as a revision conflict, with the revision to re-read', async () => {
+    const created = await seedProject('selection-stale');
+    await run(['update', '/work/selection-stale', '--active', '--json']);
+
+    const ran = await run([
+      'update',
+      '/work/selection-stale',
+      '--inactive',
+      '--revision',
+      String(created.revision),
+    ]);
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /revision_conflict \(409\)/);
+    assert.match(ran.stderr, new RegExp(`currentRevision: ${created.revision + 1}`));
+    assert.match(ran.stderr, /--revision/);
+    // The stale write did not silently undo a decision it never saw.
+    assert.equal((await entityAt('/work/selection-stale')).active, true);
+  });
+
+  it('shows the selection in get and list, and only where it means something', async () => {
+    const created = await seedProject('selection-shown');
+    await run(['update', '/work/selection-shown', '--active']);
+
+    const shown = await run(['get', '/work/selection-shown']);
+    assert.equal(shown.code, 0, shown.stderr);
+    assert.match(shown.stdout, /^active: yes$/m);
+
+    await run(['update', '/work/selection-shown', '--inactive']);
+    assert.match((await run(['get', '/work/selection-shown'])).stdout, /^active: no$/m);
+
+    // An area is never active, so the line would answer a question nobody can ask of it.
+    assert.equal(/^active:/m.test((await run(['get', '/work'])).stdout), false);
+
+    // A listing marks the selected row and leaves every other row exactly as it was.
+    await run(['update', '/work/selection-shown', '--active']);
+    const listed = await run(['list', '/work']);
+    const rows = listed.stdout.split('\n').filter((line) => line.includes('selection-shown'));
+    assert.equal(rows.length, 1);
+    assert.match(rows[0] ?? '', /selection-shown {2}active$/);
+
+    // --json is unchanged in shape and simply carries the field, so it is the independent statement
+    // of which rows are selected that the marker can be checked against.
+    const json = jsonOf(await run(['list', '/work', '--json']));
+    assert.equal(
+      json.items.every((row: { active: unknown }) => typeof row.active === 'boolean'),
+      true,
+      'every row carries the field, never only the selected ones',
+    );
+    const selected = json.items
+      .filter((row: { active: boolean }) => row.active)
+      .map((row: { slug: string }) => row.slug)
+      .sort();
+    const marked = listed.stdout
+      .split('\n')
+      .filter((line) => line.endsWith('  active'))
+      .map((line) => line.trim().split(/\s+/)[2])
+      .sort();
+    assert.ok(selected.includes('selection-shown'));
+    assert.deepEqual(marked, selected, 'exactly the selected rows are marked, and no others');
+
+    // An inactive row's width is untouched: nothing is padded or reserved for the marker.
+    const plain = listed.stdout.split('\n').find((line) => line.includes('selection-by-path'));
+    assert.match(plain ?? '', /selection-by-path$/);
+    assert.equal(jsonOf(await run(['get', '/work', '--json'])).entity.active, false);
+    assert.equal(created.active, false);
+  });
 });

@@ -41,6 +41,7 @@ const summary = (id, over = {}) => ({
   title: `Note ${String(id)}`,
   description: '',
   tags: [],
+  active: false,
   ...over,
 });
 

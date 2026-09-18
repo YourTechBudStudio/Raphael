@@ -35,6 +35,7 @@ export const entity = (over = {}) => ({
   title: 'A note',
   description: '',
   tags: [],
+  active: false,
   body: { format: 'tiptap', value: documentWith('first') },
   metadata: {},
   ...over,

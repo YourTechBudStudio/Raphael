@@ -34,6 +34,7 @@ const node = (id, type, parentId, title, slug = title.toLowerCase()) => ({
   title,
   description: '',
   tags: [],
+  active: false,
 });
 
 /** A server that answers List out of a fixed list, honestly paginated. */

@@ -57,6 +57,7 @@ export const UPDATE_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
   'body',
   'addTags',
   'removeTags',
+  'active',
   'format',
 ]);
 

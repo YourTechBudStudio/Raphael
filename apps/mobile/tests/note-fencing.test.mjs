@@ -36,6 +36,7 @@ const summary = (id) => ({
   title: `Note ${String(id)}`,
   description: '',
   tags: [],
+  active: false,
 });
 
 const listAnswer = (ids) => ({ items: ids.map(summary), skip: 0, limit: 50, hasMore: false });

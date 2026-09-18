@@ -304,6 +304,7 @@ describe('a note the CLI wrote, read by the phone', () => {
           title: 'Work',
           description: '',
           tags: [],
+          active: false,
         }),
         null,
         'a container is never mapped into a notes grid',

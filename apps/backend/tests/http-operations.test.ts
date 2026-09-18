@@ -138,16 +138,22 @@ describe('operations over HTTP', () => {
           revision: entity.revision,
           title: 'Ship it, properly',
           addTags: ['launch'],
+          active: true,
         }),
       });
       // 200, not 201: an update changed an entity that already existed rather than creating one.
       assert.equal(updated.status, 200);
       const after = (
-        updated.json as { entity: { title: string; revision: number; tags: string[] } }
+        updated.json as {
+          entity: { title: string; revision: number; tags: string[]; active: boolean };
+        }
       ).entity;
       assert.equal(after.title, 'Ship it, properly');
       assert.equal(after.revision, entity.revision + 1);
       assert.deepEqual(after.tags, ['launch']);
+      // The selection travels over the wire on the same body as everything else, through the same
+      // route: no endpoint, no envelope and no status code was added for it.
+      assert.equal(after.active, true);
 
       // The same envelope a second time is now stale, because the first one moved the revision.
       const stale = await call(server, '/api/nodes/update', {

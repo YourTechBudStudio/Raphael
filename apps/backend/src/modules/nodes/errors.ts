@@ -28,7 +28,8 @@ export type InvalidInputReason =
   | 'title_too_long'
   | 'slug_underivable'
   | 'slug_too_long'
-  | 'tags_too_many';
+  | 'tags_too_many'
+  | 'active_requires_project';
 
 /**
  * The request fields an operation can name in a failure.
@@ -135,6 +136,7 @@ const INVALID_INPUT_MESSAGES: Readonly<Record<InvalidInputReason, string>> = {
   slug_underivable: 'No address could be derived from this title.',
   slug_too_long: 'The address derived from this title is longer than the limit.',
   tags_too_many: 'Too many tags.',
+  active_requires_project: 'Only a project can be marked active.',
 };
 
 /**

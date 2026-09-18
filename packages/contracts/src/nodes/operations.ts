@@ -186,6 +186,7 @@ export const UPDATE_CHANGE_FIELDS = [
   'body',
   'addTags',
   'removeTags',
+  'active',
 ] as const;
 
 /**
@@ -225,6 +226,16 @@ export const UpdateRequestFields = Schema.Struct({
   body: Schema.optionalWith(BodyInput, { exact: true }),
   addTags: Schema.optionalWith(TagsInput, { exact: true }),
   removeTags: Schema.optionalWith(TagsInput, { exact: true }),
+  /**
+   * Desired state, never a toggle: `true` means "the resulting state is active". Submitting the state
+   * already stored is an ordinary successful write, which is what makes the revision guard meaningful -
+   * two clients both sending `true` from revision 7 are harmless, while one sending `false` from a
+   * stale revision 7 is told the project moved rather than silently undoing a decision it never saw.
+   *
+   * Only a project may be marked active. That is not expressible here, because this envelope never
+   * reads the target: core refuses it, and the response contract refuses to publish the pairing.
+   */
+  active: Schema.optionalWith(Schema.Boolean, { exact: true }),
   /** The format the returned body is rendered in. `body.format` describes the submitted body. */
   format: Schema.optionalWith(BodyFormatSchema, {
     default: () => 'markdown' as const,
@@ -287,6 +298,12 @@ const NodeSummaryFields = {
   title: Schema.String,
   description: Schema.String,
   tags: Schema.Array(Schema.String),
+  /**
+   * Whether this project is currently being worked on. Always present and never null: `false` is the
+   * truthful answer for an area or a resource, and a consumer needing "not applicable" already has
+   * `type`. Named `active` rather than `isActive` because it is a stored authored field like `title`.
+   */
+  active: Schema.Boolean,
 };
 
 /**
@@ -311,13 +328,34 @@ const kindMatchesType = (value: {
   (value.type === 'resource') === (value.kind !== null) ||
   'a resource must carry a kind and a container must not';
 
-export const NodeSummary = Schema.Struct(NodeSummaryFields).pipe(Schema.filter(kindMatchesType));
+/**
+ * Only a project can be active.
+ *
+ * The same argument as `kindMatchesType`, applied to the second type-conditional field: an active area
+ * is a pairing this client cannot represent, so refusing it at the integration boundary is better than
+ * carrying it into presentation. Our own server enforces the rule on the way out; this guards the case
+ * that guarantee does not cover - a different, older, or faulty server on the other end.
+ *
+ * Only `true` is refused, and that is deliberate. A decoder sees a *state*, not an intent: `active:
+ * false` on an area is a truthful reading of a row that simply is not a project, not a malformed one.
+ * Core's own rule is stricter - it refuses the field being *mentioned* at all for a non-project -
+ * because it can see the caller's intent, which a decoder cannot.
+ */
+const activeMatchesType = (value: {
+  readonly type: NodeType;
+  readonly active: boolean;
+}): true | string => !value.active || value.type === 'project' || 'only a project can be active';
+
+export const NodeSummary = Schema.Struct(NodeSummaryFields).pipe(
+  Schema.filter(kindMatchesType),
+  Schema.filter(activeMatchesType),
+);
 
 export const NodeEntity = Schema.Struct({
   ...NodeSummaryFields,
   body: BodyOutput,
   metadata: MetadataOutput,
-}).pipe(Schema.filter(kindMatchesType));
+}).pipe(Schema.filter(kindMatchesType), Schema.filter(activeMatchesType));
 
 export type NodeSummary = Schema.Schema.Type<typeof NodeSummary>;
 export type NodeEntity = Schema.Schema.Type<typeof NodeEntity>;

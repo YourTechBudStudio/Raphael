@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -34,10 +34,15 @@ describe('migration assets', () => {
 
   test('the journal and its files agree', () => {
     const bundled = readBundledMigrations(migrationsFolder);
-    assert.equal(bundled.length, 3);
+    assert.equal(bundled.length, 4);
     assert.deepEqual(
       bundled.map((m) => m.tag),
-      ['0000_init', '0001_identity_trigger_and_root_areas', '0002_resource_kind_and_body_text'],
+      [
+        '0000_init',
+        '0001_identity_trigger_and_root_areas',
+        '0002_resource_kind_and_body_text',
+        '0003_active_projects',
+      ],
     );
     for (const migration of bundled) assert.match(migration.hash, /^[0-9a-f]{64}$/);
   });
@@ -122,7 +127,7 @@ describe('initialization', () => {
           inspectMigrationHistory(second.db, readBundledMigrations(migrationsFolder)),
           {
             state: 'current',
-            applied: 3,
+            applied: 4,
           },
         );
       } finally {
@@ -378,15 +383,15 @@ describe('migration failure', () => {
       const journalPath = join(broken, 'meta', '_journal.json');
       const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
       journal.entries.push({
-        idx: 3,
+        idx: 4,
         version: '6',
         when: Date.now(),
-        tag: '0003_broken',
+        tag: '0004_broken',
         breakpoints: true,
       });
       writeFileSync(journalPath, JSON.stringify(journal));
       writeFileSync(
-        join(broken, '0003_broken.sql'),
+        join(broken, '0004_broken.sql'),
         'ALTER TABLE nodes ADD COLUMN experiment TEXT;\n--> statement-breakpoint\nTHIS IS NOT VALID SQL;',
       );
 
@@ -397,7 +402,72 @@ describe('migration failure', () => {
       );
       assert.ok(!columns.includes('experiment'), 'partial DDL must not survive');
       assert.equal(count(connection.db, `SELECT count(*) AS c FROM nodes WHERE slug = 'live'`), 1);
-      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 3);
+      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 4);
+    } finally {
+      connection.close();
+      temp.cleanup();
+    }
+  });
+});
+
+describe('adding the active column to a populated database', () => {
+  test('every existing row reaches 0003 as not selected', () => {
+    // The migration that matters is the one onto data that already exists, and `0003` adds a NOT NULL
+    // column with a CHECK that reads another column. SQLite evaluates that constraint against every
+    // current row and refuses the ALTER if any violates it, so this is the case that proves the
+    // default is a value every pre-existing row can actually take - whatever its type.
+    const temp = tempDatabase('active-backfill');
+    const partial = join(temp.dir, 'through-0002');
+    cpSync(migrationsFolder, partial, { recursive: true });
+    const journalPath = join(partial, 'meta', '_journal.json');
+    const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
+      entries: { tag: string }[];
+    };
+    journal.entries = journal.entries.filter((entry) => entry.tag !== '0003_active_projects');
+    writeFileSync(journalPath, JSON.stringify(journal));
+    rmSync(join(partial, '0003_active_projects.sql'));
+
+    const connection = openDatabase({ databasePath: temp.file });
+    try {
+      migrateToLatest(connection.db, partial);
+      const columnsBefore = many<{ name: string }>(connection.db, 'PRAGMA table_xinfo(nodes)').map(
+        (c) => c.name,
+      );
+      assert.ok(!columnsBefore.includes('active'), 'the fixture is genuinely a pre-0003 database');
+
+      // One of each type, so the constraint is evaluated against a row it permits `0` on and a row it
+      // would refuse `1` on. Written without the fixture helper, which now knows about the column.
+      const work = one<{ id: number }>(
+        connection.db,
+        `SELECT id FROM nodes WHERE slug = 'work'`,
+      ).id;
+      const insert = connection.db.prepare(
+        `INSERT INTO nodes (type, kind, parent_id, parent_type, slug, title, body, revision, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1700000000000, 1700000000000)`,
+      );
+      insert.run('area', null, work, 'area', 'reading', 'Reading', EMPTY_BODY);
+      insert.run('project', null, work, 'area', 'migration', 'Migration', EMPTY_BODY);
+      const project = one<{ id: number }>(
+        connection.db,
+        `SELECT id FROM nodes WHERE slug = 'migration'`,
+      ).id;
+      insert.run('resource', 'note', project, 'project', 'a-note', 'A note', EMPTY_BODY);
+      const before = count(connection.db, 'SELECT count(*) AS c FROM nodes');
+
+      migrateToLatest(connection.db);
+
+      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM nodes'), before, 'nothing lost');
+      assert.equal(
+        count(connection.db, 'SELECT count(*) AS c FROM nodes WHERE active = 0'),
+        before,
+        'every pre-existing row is not selected, which is the truth about all of them',
+      );
+      // And the identity trigger `0001` installs survived, which a generated table rebuild would have
+      // dropped along with the table it replaced.
+      rejects(
+        () => connection.db.prepare('UPDATE nodes SET type = ? WHERE id = ?').run('area', project),
+        /identity is immutable/i,
+      );
     } finally {
       connection.close();
       temp.cleanup();
@@ -432,6 +502,9 @@ describe('generated artifact introspection', () => {
         // no text has been derived for that row yet, which is not the same as text that is empty.
         'kind:0',
         'body_text:0',
+        // Not nullable, and there is no third state to represent: every row that predates selection
+        // is genuinely not selected, which is what the default `0` says.
+        'active:1',
       ]);
     });
   });

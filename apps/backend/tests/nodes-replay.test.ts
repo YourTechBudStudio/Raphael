@@ -498,3 +498,17 @@ test('a settled key answers before any content work, so an unnameable body still
     assert.deepEqual(second, first);
   });
 });
+
+test('a replayed creation answers with the selection the original answered with', () => {
+  withMigrated('replay-active', (connection) => {
+    // A project is created inactive and `active` is not a creation request field, so the saved result
+    // carries `false` - and a replay re-decodes that stored result against the current response
+    // contract, which is why the field has to be in it rather than synthesized on the way out.
+    const first = expectRight(runNodes(connection, createNode(request()), clockAt(T0)));
+    assert.equal(first.entity.active, false);
+
+    const replayed = expectRight(runNodes(connection, createNode(request()), clockAt(T0 + 60_000)));
+    assert.deepEqual(replayed, first);
+    assert.equal(replayed.entity.active, false);
+  });
+});

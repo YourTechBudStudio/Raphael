@@ -47,6 +47,7 @@ interface StoredRow {
   readonly slug: string;
   readonly revision: number;
   readonly tags: string;
+  readonly active: number;
   readonly body: string;
   readonly bodyText: string | null;
   readonly createdAt: number;
@@ -56,7 +57,7 @@ interface StoredRow {
 const stored = (connection: Connection, id: number): StoredRow =>
   one<StoredRow>(
     connection.db,
-    `SELECT title, description, slug, revision, tags, body,
+    `SELECT title, description, slug, revision, tags, active, body,
             body_text AS bodyText, created_at AS createdAt, updated_at AS updatedAt
      FROM nodes WHERE id = ?`,
     id,
@@ -531,6 +532,195 @@ test('a container and a note accept the same envelope', () => {
     assert.equal(response.kind, null);
     assert.equal(response.title, 'Migration, phase two');
     assert.deepEqual(response.tags, ['planning']);
+  });
+});
+
+/**
+ * The active selection.
+ *
+ * Written through this operation and no other, so everything the revision guard already provides
+ * applies to it unchanged. The wire field is desired state, never a toggle: submitting the state that
+ * is already stored is an ordinary successful write, which is exactly what makes the guard meaningful.
+ */
+
+const project = (connection: Connection, title: string, slug?: string) =>
+  create(connection, {
+    type: 'project',
+    parent: { path: '/work' },
+    title,
+    ...(slug === undefined ? {} : { slug }),
+  });
+
+test('a project is selected and deselected through the ordinary update envelope', () => {
+  withMigrated('update-active', (connection) => {
+    const created = project(connection, 'Migration');
+    assert.equal(created.active, false, 'a project is created inactive');
+
+    const activated = expectRight(
+      update(connection, { target: { id: created.id }, revision: created.revision, active: true }),
+    ).entity;
+    assert.equal(activated.active, true);
+    assert.equal(activated.revision, created.revision + 1);
+    assert.equal(stored(connection, created.id).active, 1);
+
+    const deactivated = expectRight(
+      update(connection, {
+        target: { id: created.id },
+        revision: activated.revision,
+        active: false,
+      }),
+    ).entity;
+    assert.equal(deactivated.active, false);
+    assert.equal(stored(connection, created.id).active, 0);
+  });
+});
+
+test('selecting a project that is already selected is an ordinary write, not a no-op', () => {
+  withMigrated('update-active-again', (connection) => {
+    const created = project(connection, 'Migration');
+    const first = expectRight(
+      update(
+        connection,
+        { target: { id: created.id }, revision: created.revision, active: true },
+        clockAt(AT),
+      ),
+    ).entity;
+    const afterFirst = stored(connection, created.id);
+
+    // The same desired state, submitted again. The server never compares submitted content to stored
+    // content - doing so would make it a second content-equality authority - so this is a write, and
+    // the revision and the timestamp both move. A toggled project therefore moves in an
+    // `updatedAt`-ordered listing, which is a chosen cost rather than a discovered one.
+    const again = expectRight(
+      update(
+        connection,
+        { target: { id: created.id }, revision: first.revision, active: true },
+        clockAt(AT + 1_000),
+      ),
+    ).entity;
+
+    const afterSecond = stored(connection, created.id);
+    assert.equal(again.active, true);
+    assert.equal(afterSecond.revision, afterFirst.revision + 1);
+    assert.ok(afterSecond.updatedAt > afterFirst.updatedAt);
+
+    // And what the write answered is what a later read answers, so nothing was published that the
+    // row does not hold.
+    const read = expectRight(runNodes(connection, getNode({ target: { id: created.id } }))).entity;
+    assert.deepEqual(read, again);
+  });
+});
+
+test('a stale caller is told they are stale before they are told the field does not apply', () => {
+  withMigrated('update-active-stale', (connection) => {
+    // An area, so both refusals are available; the ordering is what decides which one is reported.
+    const area = create(connection, { type: 'area', parent: { path: '/' }, title: 'Reading' });
+    const before = stored(connection, area.id);
+
+    const error = expectLeft(
+      update(connection, { target: { id: area.id }, revision: area.revision + 1, active: true }),
+    );
+    assert.equal(error._tag, 'RevisionConflict');
+    assert.deepEqual(stored(connection, area.id), before);
+  });
+});
+
+test('only a project can be marked active, and mentioning the field at all is the refusal', () => {
+  withMigrated('update-active-type', (connection) => {
+    const area = create(connection, { type: 'area', parent: { path: '/' }, title: 'Reading' });
+    const created = note(connection, 'Draft');
+
+    // The rule is on presence, not on value: the caller's mistake is that the field does not apply to
+    // this target, so `false` is refused exactly as `true` is. The column CHECK would permit `0` here,
+    // which is the point - it is a backstop against a write that never came through this operation,
+    // not the thing that produces this refusal (ADR 0007).
+    for (const target of [area, created]) {
+      for (const active of [true, false]) {
+        const before = stored(connection, target.id);
+        const error = expectLeft(
+          update(connection, { target: { id: target.id }, revision: target.revision, active }),
+        );
+        const published = toPublicError(error);
+        assert.equal(published.code, 'invalid_input');
+        assert.deepEqual(published.details, {
+          field: 'active',
+          reason: 'active_requires_project',
+        });
+        assert.equal(published.message, 'Only a project can be marked active.');
+        assert.deepEqual(stored(connection, target.id), before, 'nothing is written');
+      }
+    }
+  });
+});
+
+test('selection travels in one atomic write with the other changes, or not at all', () => {
+  withMigrated('update-active-bundled', (connection) => {
+    const created = project(connection, 'Migration');
+
+    const both = expectRight(
+      update(connection, {
+        target: { id: created.id },
+        revision: created.revision,
+        title: 'Migration, phase two',
+        active: true,
+      }),
+    ).entity;
+    assert.equal(both.title, 'Migration, phase two');
+    assert.equal(both.active, true);
+    assert.equal(both.revision, created.revision + 1, 'one write, one revision');
+
+    // And on an area the whole envelope is refused, including the title change that would have been
+    // perfectly legal on its own. The rule runs before anything is converted or written.
+    const area = create(connection, { type: 'area', parent: { path: '/' }, title: 'Reading' });
+    const before = stored(connection, area.id);
+    const error = expectLeft(
+      update(connection, {
+        target: { id: area.id },
+        revision: area.revision,
+        title: 'Reading list',
+        active: true,
+      }),
+    );
+    assert.deepEqual(toPublicError(error).details, {
+      field: 'active',
+      reason: 'active_requires_project',
+    });
+    assert.deepEqual(stored(connection, area.id), before);
+  });
+});
+
+test('an update that never mentions selection leaves it exactly as it was', () => {
+  withMigrated('update-active-untouched', (connection) => {
+    const created = project(connection, 'Migration');
+    const activated = expectRight(
+      update(connection, { target: { id: created.id }, revision: created.revision, active: true }),
+    ).entity;
+
+    const renamed = expectRight(
+      update(connection, {
+        target: { id: created.id },
+        revision: activated.revision,
+        title: 'Migration, phase two',
+      }),
+    ).entity;
+    assert.equal(renamed.active, true);
+    assert.equal(stored(connection, created.id).active, 1);
+  });
+});
+
+test('a malformed selection is attributed to its own field, not to the request as a whole', () => {
+  withMigrated('update-active-malformed', (connection) => {
+    const created = project(connection, 'Migration');
+    const error = expectLeft(
+      update(connection, {
+        target: { id: created.id },
+        revision: created.revision,
+        active: 'yes',
+      }),
+    );
+    const published = toPublicError(error);
+    assert.equal(published.code, 'invalid_input');
+    assert.deepEqual(published.details, { field: 'active', reason: 'invalid' });
   });
 });
 

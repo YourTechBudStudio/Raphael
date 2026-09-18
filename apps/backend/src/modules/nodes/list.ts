@@ -166,7 +166,8 @@ const pageQuery = (input: {
   readonly limit: number;
 }) => {
   const columns = sql`n.id AS id, n.type AS type, n.kind AS kind, n.parent_id AS parentId, n.slug AS slug,
-    n.revision AS revision, n.title AS title, n.description AS description, n.tags AS tags`;
+    n.revision AS revision, n.title AS title, n.description AS description, n.tags AS tags,
+    n.active AS active`;
   const types = sql.join(
     input.wanted.map((type) => sql`${type}`),
     sql`, `,

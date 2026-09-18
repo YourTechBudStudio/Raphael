@@ -140,6 +140,12 @@ export const insertNode = (
     body?: string;
     id?: number;
     revision?: number;
+    /**
+     * The raw stored integer. Left to the column default, because a row that predates any selection is
+     * what almost every fixture wants; pass `1` on a project to build a selected one, or on anything
+     * else to build a row the constraint must refuse.
+     */
+    active?: number;
     createdAt?: number;
     updatedAt?: number;
   },
@@ -153,6 +159,7 @@ export const insertNode = (
     'title',
     'body',
     'revision',
+    'active',
     'created_at',
     'updated_at',
   ];
@@ -165,6 +172,7 @@ export const insertNode = (
     values.title ?? 'Title',
     values.body ?? EMPTY_BODY,
     values.revision ?? 1,
+    values.active ?? 0,
     values.createdAt ?? 1_700_000_000_000,
     values.updatedAt ?? 1_700_000_000_000,
   ];

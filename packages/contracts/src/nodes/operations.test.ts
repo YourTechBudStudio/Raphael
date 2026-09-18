@@ -59,6 +59,7 @@ const entity = (overrides: Record<string, unknown> = {}): Record<string, unknown
   title: 'Backend',
   description: '',
   tags: [],
+  active: false,
   body: { format: 'markdown', value: '' },
   metadata: {},
   ...overrides,
@@ -383,6 +384,59 @@ test('a response whose kind contradicts its type is refused, not believed', () =
   assert.equal(Either.isRight(page([entity(), entity({ type: 'resource', kind: 'note' })])), true);
 });
 
+test('a response says whether the project is active, and never leaves it to be inferred', () => {
+  // Required and plain, not optional and not nullable. Nothing is synthesized: a response that omits
+  // the field is malformed, because a defaulted `false` would hide a truncated or older response
+  // behind a plausible reading of "not being worked on".
+  const { active: _active, ...withoutActive } = entity();
+  assert.equal(Either.isLeft(decodeCreateResponse({ entity: withoutActive })), true);
+  assert.equal(Either.isLeft(decodeCreateResponse({ entity: entity({ active: null }) })), true);
+  assert.equal(Either.isLeft(decodeCreateResponse({ entity: entity({ active: 1 }) })), true);
+
+  assert.equal(right(decodeCreateResponse({ entity: entity() }))['entity']['active'], false);
+  assert.equal(
+    right(decodeCreateResponse({ entity: entity({ active: true }) }))['entity']['active'],
+    true,
+  );
+});
+
+test('a response that marks a non-project active is refused, not believed', () => {
+  // The same argument as the kind refinement: our own server enforces this on the way out, so these
+  // are responses it cannot produce, and the decoder is the boundary for the ones it does not control.
+  assert.equal(
+    Either.isLeft(decodeCreateResponse({ entity: entity({ type: 'area', active: true }) })),
+    true,
+    'an area cannot be active',
+  );
+  assert.equal(
+    Either.isLeft(
+      decodeCreateResponse({
+        entity: entity({ type: 'resource', kind: 'note', active: true }),
+      }),
+    ),
+    true,
+    'a resource cannot be active',
+  );
+
+  // Only `true` is refused. A decoder sees a state, not an intent, and `false` on an area is the
+  // truthful reading of a row that simply is not a project.
+  assert.equal(
+    Either.isRight(decodeCreateResponse({ entity: entity({ type: 'area', active: false }) })),
+    true,
+  );
+  assert.equal(
+    Either.isRight(decodeCreateResponse({ entity: entity({ active: true }) })),
+    true,
+    'a project may be active',
+  );
+
+  // And the same rule holds for a summary inside a page, which is where Home meets it.
+  const page = (items: unknown[]) =>
+    decodeListResponse({ items, skip: 0, limit: 10, hasMore: false });
+  assert.equal(Either.isLeft(page([entity({ type: 'area', active: true })])), true);
+  assert.equal(Either.isRight(page([entity({ active: true }), entity({ type: 'area' })])), true);
+});
+
 test('an added response property is tolerated without becoming data we claim to understand', () => {
   const decoded = right(
     decodeCreateResponse({
@@ -680,10 +734,12 @@ test('an update carries only what it supplied, and supplying nothing is refused'
         body: { value: '# Notes' },
         addTags: ['reviewed'],
         removeTags: ['draft'],
+        active: true,
       }),
     ),
   );
   assert.deepEqual(Object.keys(combined).sort(), [
+    'active',
     'addTags',
     'body',
     'description',
@@ -716,13 +772,33 @@ test('every field named a change is one, and every other field is not', () => {
           ? ['tag']
           : field === 'slug'
             ? 'backend'
-            : 'Backend';
+            : field === 'active'
+              ? true
+              : 'Backend';
     assert.equal(
       Either.isRight(decodeUpdateRequest(update({ [field]: value }))),
       true,
       `${field} alone must be a change`,
     );
   }
+});
+
+test('an update may carry only the active selection, and only as a boolean', () => {
+  // Desired state, never a toggle: the envelope submits the state it wants to result, so the revision
+  // guard is what decides whether that state was decided against something current.
+  const onlyActive = right(decodeUpdateRequest(update({ active: true })));
+  assert.equal(onlyActive['active'], true);
+  assert.equal(right(decodeUpdateRequest(update({ active: false })))['active'], false);
+
+  assert.equal(Either.isLeft(decodeUpdateRequest(update({ active: 'yes' }))), true);
+  assert.equal(Either.isLeft(decodeUpdateRequest(update({ active: 1 }))), true);
+
+  // Omission is not a value. Nothing is defaulted in, so an update that never mentions the field
+  // leaves the stored selection alone rather than asserting it is false.
+  assert.equal(
+    Object.hasOwn(right(decodeUpdateRequest(update({ title: 'Backend' }))), 'active'),
+    false,
+  );
 });
 
 test('an update that changes nothing is refused against the request rather than a field', () => {
