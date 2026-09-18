@@ -15,11 +15,13 @@ const icon = (name) => {
   return Icon;
 };
 
+export const AlertCircle = icon('AlertCircle');
 export const Bold = icon('Bold');
 export const Check = icon('Check');
 export const ChevronDown = icon('ChevronDown');
 export const ChevronLeft = icon('ChevronLeft');
 export const ChevronRight = icon('ChevronRight');
+export const CloudOff = icon('CloudOff');
 export const Code = icon('Code');
 export const Eye = icon('Eye');
 export const EyeOff = icon('EyeOff');
@@ -37,6 +39,7 @@ export const ListOrdered = icon('ListOrdered');
 export const Mic = icon('Mic');
 export const Minus = icon('Minus');
 export const Pause = icon('Pause');
+export const Pencil = icon('Pencil');
 export const Pilcrow = icon('Pilcrow');
 export const Play = icon('Play');
 export const Plus = icon('Plus');
@@ -48,5 +51,6 @@ export const Square = icon('Square');
 export const SquareCode = icon('SquareCode');
 export const Star = icon('Star');
 export const Strikethrough = icon('Strikethrough');
+export const Tag = icon('Tag');
 export const Undo2 = icon('Undo2');
 export const X = icon('X');

@@ -25,10 +25,12 @@ import {
   GET_HELP,
   LIST_HELP,
   PATH_HELP,
+  UPDATE_HELP,
   runCreate,
   runGet,
   runList,
   runPath,
+  runUpdate,
   type CommandContext,
 } from './modules/nodes/commands.ts';
 import { SERVE_HELP, runServe } from './modules/server/serve.ts';
@@ -47,6 +49,7 @@ export interface CliEnvironment {
 
 const REMOTE_COMMANDS = {
   create: { run: runCreate, help: CREATE_HELP },
+  update: { run: runUpdate, help: UPDATE_HELP },
   get: { run: runGet, help: GET_HELP },
   path: { run: runPath, help: PATH_HELP },
   list: { run: runList, help: LIST_HELP },

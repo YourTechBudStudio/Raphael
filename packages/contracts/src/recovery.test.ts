@@ -40,6 +40,21 @@ describe('recovery detail projection', () => {
       );
     });
 
+    it('keeps the revision the server holds now, so a stale write knows what to re-read', () => {
+      assert.deepEqual(project('revision_conflict', { field: 'revision', currentRevision: 9 }), {
+        field: 'revision',
+        currentRevision: 9,
+      });
+      // A counter a server cannot legitimately emit is dropped rather than shown as guidance.
+      for (const currentRevision of [-1, 1.5, '9', Number.NaN, null]) {
+        assert.deepEqual(
+          project('revision_conflict', { field: 'revision', currentRevision }),
+          { field: 'revision' },
+          String(currentRevision),
+        );
+      }
+    });
+
     it('keeps a document location and its element name', () => {
       assert.deepEqual(
         project('unsupported_content', {

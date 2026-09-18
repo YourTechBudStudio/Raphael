@@ -18,8 +18,8 @@ import { RejectionNotice } from '../../connection';
 import {
   goBack,
   openBrowse,
+  openEditor,
   openHome,
-  openResource,
   openSearch,
   LocationTopBar,
 } from '../../navigation';
@@ -40,6 +40,7 @@ import {
   useContainerPath,
   useHierarchy,
 } from '../client/queries';
+import { ContainerEditAction } from './ContainerEditAction';
 import { ContainerHeader } from './ContainerHeader';
 import { ProjectHeaderSkeleton } from './ProjectSkeleton';
 import { ReadOnlyBody } from './ReadOnlyBody';
@@ -222,6 +223,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
                   }}
                   selected={target !== null && favorite.isFavorite(target)}
                 />
+                <ContainerEditAction id={projectId} kind="project" />
               </>
             }
           />
@@ -253,7 +255,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
           className="mt-7"
           copy={CONTAINER_NOTES_COPY}
           locationFor={containerTitleLookup(tree)}
-          onOpen={openResource}
+          onOpen={openEditor}
           testID="project-notes"
           view={notes.view}
         />

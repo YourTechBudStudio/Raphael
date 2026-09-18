@@ -27,9 +27,18 @@ import type { CreateResponse } from '@raphael/contracts/nodes';
 import { create as createStore } from 'zustand';
 
 import type { Transport } from '../../infrastructure/api/transport';
-import type { BarrierResult, EditorPort, EditorRejectionCode, EditorSnapshot } from '../editor';
+import type { EditorPort, EditorRejectionCode, EditorSnapshot } from '../editor';
 import { freezeNoteRequest, thawNoteRequest, UNUSABLE_PAYLOAD_MESSAGE } from './freeze.ts';
 import { deriveStanding, evaluateEligibility, type Standing } from './policy.ts';
+import {
+  createProtection,
+  FLUSH_TIMEOUT_MS,
+  type AttachmentToken,
+  type DraftProtection,
+  type FlushResult,
+  type Lease,
+  type SnapshotResult,
+} from './protection.ts';
 import type {
   AcknowledgeWrite,
   CaptureStore,
@@ -38,6 +47,7 @@ import type {
   StoreFailure,
   StoredCapture,
 } from './store.ts';
+import { sameTags } from './tags.ts';
 import type {
   AcknowledgedNote,
   AttemptOutcome,
@@ -47,8 +57,15 @@ import type {
   UnusableDraft,
 } from './types.ts';
 
-/** How long a flush waits for the editor before concluding it knows nothing about newer writing. */
-export const FLUSH_TIMEOUT_MS = 1500;
+/**
+ * What is protected, what an attachment is, and how a flush ended are the core's vocabulary now.
+ *
+ * Re-exported unchanged, so the capability's interface, the composer and the screens cannot tell the
+ * extraction happened: there is exactly one name for each of these ideas and it is still reached
+ * through the owner.
+ */
+export { FLUSH_TIMEOUT_MS };
+export type { AttachmentToken, DraftProtection, FlushResult, SnapshotResult };
 
 /** What the owner needs from the world. Everything platform-shaped, so a test can drive all of it. */
 export interface CapturePorts {
@@ -111,49 +128,6 @@ export type StoreProblem =
   | { readonly kind: 'unsupported_version'; readonly found: number; readonly supported: number }
   | { readonly kind: 'failed'; readonly reason: StoreFailure };
 
-/**
- * A live editor bound to one draft.
- *
- * The token names the draft, the attachment generation and the specific port. Replacing an
- * attachment retires the earlier token, and a late `detachEditor` from the retired one removes
- * nothing - which is what stops a slow unmount tearing down its own replacement.
- */
-export interface AttachmentToken {
-  readonly draftId: string;
-  readonly generation: number;
-}
-
-/**
- * What accepting a snapshot did.
- *
- * `unchanged` is an ordinary outcome, not a failure: a requested snapshot that matches what the
- * owner already holds confirms the barrier without inventing an authored change. `retired` means the
- * message came from an attachment, session or sequence that is no longer current - an expected race,
- * never a user-facing editor problem, and never a write.
- */
-export type SnapshotResult = 'accepted' | 'unchanged' | 'retired';
-
-/**
- * How a flush ended. The fourth outcome exists because the editor can answer a flush with a refusal.
- *
- * `captured: 'no_editor'` is deliberately distinguishable. It means the owner committed what it
- * already held plus the current native fields, and it is **not** a claim that renderer-only writing
- * was captured - there was no renderer to ask. A live but unresponsive editor answers `unanswered`
- * instead, which is a different sentence and has to stay one.
- */
-export type FlushResult =
-  | {
-      readonly kind: 'flushed';
-      readonly version: number;
-      readonly captured: 'editor' | 'no_editor';
-    }
-  /** No reply in time. Nothing is known about work since the last accepted snapshot. */
-  | { readonly kind: 'unanswered' }
-  /** The document exists only in the live editor. Never repaired, dropped, or reported as saved. */
-  | { readonly kind: 'refused'; readonly code: EditorRejectionCode }
-  /** Snapshot accepted, the local write failed. The last committed snapshot is intact. */
-  | { readonly kind: 'not_persisted'; readonly version: number };
-
 export type NotSavedReason =
   | 'no_store'
   | 'no_connection'
@@ -184,31 +158,6 @@ export type ActionOutcome =
 export type DraftOutcome =
   | { readonly kind: 'created'; readonly draftId: string }
   | { readonly kind: 'refused'; readonly problem: string };
-
-/**
- * What the owner knows about a draft that the database cannot see.
- *
- * Published because the surface has to be able to say "everything you have written is saved on this
- * phone" only up to `committedVersion`, and has to say something different when it is not.
- */
-export interface DraftProtection {
-  readonly committedVersion: number;
-  readonly latestAcceptedVersion: number;
-  /** A newer accepted version is waiting for its turn to be written. */
-  readonly pending: boolean;
-  readonly writing: boolean;
-  /**
-   * The last local write failed, so the newer work is in memory and is not protected.
-   *
-   * A flag, not the driver's sentence: the surface has its own wording for this, and a SQLite
-   * message would be both worse to read and a way for implementation detail to reach a screen.
-   */
-  readonly failedWrite: boolean;
-  /** The last flush went unanswered or was refused, so the renderer may hold writing native never saw. */
-  readonly rendererUnknown: boolean;
-  readonly locked: boolean;
-  readonly attached: boolean;
-}
 
 export interface CaptureState {
   readonly status: 'idle' | 'opening' | 'ready' | 'unavailable';
@@ -265,7 +214,10 @@ export interface CaptureState {
    * fresh destination.
    */
   copyDraft(draftId: string, session: CaptureSession): Promise<DraftOutcome>;
-  editDraft(draftId: string, fields: { title?: string; description?: string }): void;
+  editDraft(
+    draftId: string,
+    fields: { title?: string; description?: string; tags?: readonly string[] },
+  ): void;
   selectDestination(
     draftId: string,
     destination: Destination,
@@ -343,50 +295,36 @@ const outcomeOf = (failure: ClientFailure, at: number): AttemptOutcome => ({
   at,
 });
 
-/** The lock one path holds. Identity matters: continuity is "this same lease, unbroken". */
-interface Lease {
-  readonly draftId: string;
-  /** The version the flush under this lease produced, or null when it never got one. */
-  version: number | null;
+/**
+ * The authored payload of one draft, as the protection core carries it.
+ *
+ * The core never reads it. It is the owner's shape, threaded through the core as its content type so
+ * that one piece of machinery can protect a creation here and an edit elsewhere without either
+ * knowing about the other.
+ */
+interface DraftContent {
+  readonly title: string;
+  readonly description: string;
+  readonly tags: readonly string[];
+  readonly destination: Destination | null;
+  readonly document: unknown;
 }
 
-interface Attachment {
-  readonly token: AttachmentToken;
-  readonly port: EditorPort;
-  sessionId: number | null;
-  lastSeq: number;
-}
-
-/** Everything the owner holds about one draft that is not in the database. */
-interface Work {
-  readonly draftId: string;
-  title: string;
-  description: string;
-  destination: Destination | null;
-  document: unknown;
-  committed: number;
-  latestAccepted: number;
-  /** At most one, replaced rather than queued behind. Depth one, latest wins. */
-  pending: number | null;
-  writing: number | null;
-  runner: Promise<void> | null;
-  failedWrite: boolean;
-  rendererUnknown: boolean;
-  attachment: Attachment | null;
-  generation: number;
-  lease: Lease | null;
-  inFlight: boolean;
-  flushing: Promise<FlushResult> | null;
-  /** Flushes run one at a time per draft, in the order they were asked for. */
-  flushTail: Promise<unknown>;
-}
+const contentOf = (record: NoteDraftRecord): DraftContent => ({
+  title: record.title,
+  description: record.description,
+  tags: record.tags,
+  destination: record.destination,
+  document: record.document,
+});
 
 export const createCaptureOwner = (ports: CapturePorts) =>
   createStore<CaptureState>((set, get) => {
     let store: CaptureStore | null = null;
-    const works = new Map<string, Work>();
     /** One dispatcher per durable attempt, ever. Enforced here, not by a disabled control. */
     const sending = new Set<string>();
+    /** Draft ids with an admitted Save or Retry running in this process. */
+    const inFlight = new Set<string>();
     /** Monotonic marks for attempts this process dispatched. Absent for recovered ones. */
     const dispatchedAt = new Map<string, number>();
 
@@ -397,14 +335,6 @@ export const createCaptureOwner = (ports: CapturePorts) =>
     let lifetime = 0;
     /** An open that has not finished, so `close` can await it rather than race it. */
     let opening: Promise<void> | null = null;
-    /**
-     * Abandon callbacks for flush deadlines that are still waiting.
-     *
-     * A barrier whose editor never answers is ended by its own timer. If the owner closes first that
-     * timer is the only thing left holding the caller, so closing settles them rather than clearing
-     * them: a cleared timer would leave a promise nobody ever resolves.
-     */
-    const deadlines = new Set<() => void>();
 
     /**
      * Whether the store a piece of work started against is still the owner's.
@@ -420,28 +350,8 @@ export const createCaptureOwner = (ports: CapturePorts) =>
       ports.clearTimer ?? ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>));
     const flushTimeoutMs = ports.flushTimeoutMs ?? FLUSH_TIMEOUT_MS;
 
-    const protectionOf = (work: Work): DraftProtection => ({
-      committedVersion: work.committed,
-      latestAcceptedVersion: work.latestAccepted,
-      pending: work.pending !== null,
-      writing: work.writing !== null,
-      failedWrite: work.failedWrite,
-      rendererUnknown: work.rendererUnknown,
-      locked: work.lease !== null,
-      attached: work.attachment !== null,
-    });
-
-    const publishProtection = (): void => {
-      const protection: Record<string, DraftProtection> = {};
-      for (const [draftId, work] of works) protection[draftId] = protectionOf(work);
-      set({ protection });
-    };
-
     const publishWorking = (): void => {
-      set({
-        sending: [...sending],
-        saving: [...works.values()].filter((w) => w.inFlight).map((w) => w.draftId),
-      });
+      set({ sending: [...sending], saving: [...inFlight] });
     };
 
     /**
@@ -468,41 +378,87 @@ export const createCaptureOwner = (ports: CapturePorts) =>
       });
     };
 
-    const workFrom = (record: NoteDraftRecord): Work => ({
-      draftId: record.draftId,
-      title: record.title,
-      description: record.description,
-      destination: record.destination,
-      document: record.document,
-      committed: record.draftVersion,
-      latestAccepted: record.draftVersion,
-      pending: null,
-      writing: null,
-      runner: null,
-      failedWrite: false,
-      rendererUnknown: false,
-      attachment: null,
-      generation: 0,
-      lease: null,
-      inFlight: false,
-      flushing: null,
-      flushTail: Promise.resolve(),
+    /**
+     * Everything about whether writing is safely on this phone, and nothing about creation.
+     *
+     * The owner supplies four things and keeps the rest of its business to itself: how to read and
+     * replace the document inside its own content, how to persist one version, and where a changed
+     * protection goes. The core never learns that any of this is a note, a destination or a request.
+     */
+    const core = createProtection<DraftContent>({
+      now: () => ports.now(),
+      setTimer,
+      clearTimer,
+      flushTimeoutMs,
+      documentOf: (content) => content.document,
+      withDocument: (content, document) => ({ ...content, document }),
+      /**
+       * One accepted version, persisted and published.
+       *
+       * The store's own guard is what makes a coalesced write that lost a race return no record, and
+       * that null is what the core reads as "the store did not advance". A store this owner has let
+       * go of answers the same way rather than throwing, because a failed write is a claim about
+       * protection and there is no longer anything to make that claim about.
+       */
+      writeVersion: async (draftId, content, version, at) => {
+        const active = store;
+        if (active === null) return null;
+
+        const record = await active.writeVersion({
+          draftId,
+          title: content.title,
+          description: content.description,
+          document: content.document,
+          tags: content.tags,
+          destination: content.destination,
+          draftVersion: version,
+          at,
+        });
+
+        if (!current(active)) return null;
+        if (record !== null) publishDraft(draftId, record);
+
+        return record?.draftVersion ?? null;
+      },
+      publish: (draftId, protection) => {
+        set((state) => {
+          if (protection === null) {
+            const { [draftId]: _removed, ...rest } = state.protection;
+
+            return { protection: rest };
+          }
+
+          return { protection: { ...state.protection, [draftId]: protection } };
+        });
+      },
     });
+
+    /**
+     * Give the lock back, unless an attempt is still in flight for this draft.
+     *
+     * In-flight editability is this owner's policy rather than the core's: the composer stays locked
+     * from Save until the answer lands, because a second press would be a second creation. An
+     * autosave loop that inherited the same rule would lock the editor for the duration of every
+     * send, every couple of seconds while someone types.
+     */
+    const releaseLease = (draftId: string, lease: Lease): void => {
+      core.releaseLease(draftId, lease, !inFlight.has(draftId));
+    };
 
     /**
      * Take up what the store holds without discarding what this process knows.
      *
-     * An existing `Work` is kept: it may hold an accepted version the database has not got yet, a
-     * live attachment, or a failed write, and none of that is recoverable from a row.
+     * An existing entry is kept by `track`: it may hold an accepted version the database has not got
+     * yet, a live attachment, or a failed write, and none of that is recoverable from a row.
      */
     const adopt = (stored: StoredCapture): void => {
       for (const record of stored.drafts) {
-        const existing = works.get(record.draftId);
-        if (existing === undefined) works.set(record.draftId, workFrom(record));
-        else existing.committed = Math.max(existing.committed, record.draftVersion);
+        core.track(record.draftId, contentOf(record), record.draftVersion);
       }
-      for (const draftId of [...works.keys()]) {
-        if (!stored.drafts.some((draft) => draft.draftId === draftId)) works.delete(draftId);
+      for (const draft of get().drafts) {
+        if (!stored.drafts.some((candidate) => candidate.draftId === draft.draftId)) {
+          core.untrack(draft.draftId);
+        }
       }
 
       set({
@@ -511,283 +467,6 @@ export const createCaptureOwner = (ports: CapturePorts) =>
         attempts: stored.attempts,
         unreadableAttempts: stored.unreadableAttempts,
       });
-      publishProtection();
-    };
-
-    /**
-     * The coalescing writer: one write in progress, at most one pending version behind it.
-     *
-     * A new change replaces the pending slot rather than queueing behind it, so a long note being
-     * typed into cannot accumulate a queue of full documents. The write itself is guarded in SQL on
-     * the version moving forward, so a write that lost a race cannot make an older snapshot the
-     * latest protected one.
-     */
-    const runWrites = async (work: Work): Promise<void> => {
-      const active = store;
-      if (active === null) return;
-
-      while (work.pending !== null) {
-        if (!current(active)) return;
-
-        const version = work.pending;
-        work.pending = null;
-        work.writing = version;
-        const snapshot = {
-          draftId: work.draftId,
-          title: work.title,
-          description: work.description,
-          document: work.document,
-          destination: work.destination,
-          draftVersion: version,
-          at: ports.now(),
-        };
-        publishProtection();
-
-        try {
-          const record = await active.writeVersion(snapshot);
-
-          if (!current(active)) return;
-          work.failedWrite = false;
-          if (record !== null) {
-            work.committed = Math.max(work.committed, record.draftVersion);
-            publishDraft(work.draftId, record);
-          }
-        } catch {
-          // The newer work stays in memory and is reported unprotected. The last committed snapshot
-          // is intact, and nothing here resets, recreates, or falls back to memory for storage. The
-          // cause is not carried outward: it is a driver's sentence about our own schema.
-          if (!current(active)) return;
-          work.failedWrite = true;
-        } finally {
-          work.writing = null;
-          if (current(active)) publishProtection();
-        }
-      }
-    };
-
-    const schedule = (work: Work): void => {
-      // Nothing to write is not a write. A drain that scheduled unconditionally would put a full
-      // document through SQLite every time anything asked whether the draft was protected.
-      if (
-        work.committed >= work.latestAccepted &&
-        work.writing === null &&
-        work.pending === null &&
-        !work.failedWrite
-      ) {
-        return;
-      }
-
-      work.pending = work.latestAccepted;
-      if (work.runner !== null) return;
-
-      work.runner = runWrites(work).finally(() => {
-        work.runner = null;
-      });
-    };
-
-    /** Wait until nothing is queued or in progress for this draft. */
-    const drain = async (work: Work): Promise<void> => {
-      schedule(work);
-      while (work.runner !== null) await work.runner;
-    };
-
-    const commitOutcome = (work: Work): FlushResult =>
-      work.committed >= work.latestAccepted
-        ? { kind: 'flushed', version: work.committed, captured: 'editor' }
-        : { kind: 'not_persisted', version: work.latestAccepted };
-
-    const accept = (token: AttachmentToken, snapshot: EditorSnapshot): SnapshotResult => {
-      const work = works.get(token.draftId);
-      const attachment = work?.attachment ?? null;
-
-      if (work === undefined || attachment === null || attachment.token !== token) {
-        return 'retired';
-      }
-      // Within one session the sequence orders the messages; a new session restarts it, so a
-      // sequence comparison across sessions would silently drop a restarted renderer's first
-      // snapshot. Both are expected races and neither is an editor problem.
-      if (attachment.sessionId === snapshot.sessionId && snapshot.editSeq <= attachment.lastSeq) {
-        return 'unchanged';
-      }
-
-      attachment.sessionId = snapshot.sessionId;
-      attachment.lastSeq = snapshot.editSeq;
-      // The editor answered, so whatever it was holding, native has it now.
-      work.rendererUnknown = false;
-
-      if (JSON.stringify(snapshot.document) === JSON.stringify(work.document)) {
-        publishProtection();
-
-        return 'unchanged';
-      }
-
-      work.document = snapshot.document;
-      work.latestAccepted += 1;
-      schedule(work);
-      publishProtection();
-
-      return 'accepted';
-    };
-
-    /**
-     * A promise that answers `unanswered` if the editor does not.
-     *
-     * The port applies its own deadline, and this is not a second guess at the same one: a port that
-     * never settles at all - a renderer that is gone, a controller that was disposed mid-call - would
-     * otherwise hold a Save open forever with the editor locked.
-     */
-    const withDeadline = (pending: Promise<BarrierResult>): Promise<BarrierResult> =>
-      new Promise<BarrierResult>((resolve) => {
-        let handle: unknown = null;
-        let settled = false;
-
-        const finish = (result: BarrierResult): void => {
-          if (settled) return;
-          settled = true;
-          clearTimer(handle);
-          // eslint-disable-next-line no-use-before-define -- assigned before anything can call this
-          deadlines.delete(abandon);
-          resolve(result);
-        };
-        const abandon = (): void => {
-          finish({ kind: 'unanswered' });
-        };
-
-        handle = setTimer(abandon, flushTimeoutMs);
-        deadlines.add(abandon);
-
-        void pending.then(finish, abandon);
-      });
-
-    /**
-     * The one barrier, used by lifecycle, by controlled navigation, and by Save.
-     *
-     * Three things in order, rather than only awaiting a native write: ask the editor for a snapshot
-     * (locking first when asked, so nothing can change under the flush), fold the reply into the
-     * draft together with the current native fields, and await the SQLite commit of that version.
-     */
-    const flushWork = async (work: Work, lock: boolean): Promise<FlushResult> => {
-      const attachment = work.attachment;
-
-      if (attachment === null) {
-        // Nothing renderer-only can exist to lose: there is no renderer. What is committed is what
-        // the owner already holds plus the current native fields, and the outcome says so.
-        await drain(work);
-        const committed = commitOutcome(work);
-
-        return committed.kind === 'flushed' ? { ...committed, captured: 'no_editor' } : committed;
-      }
-
-      let asked: Promise<BarrierResult>;
-
-      try {
-        asked = Promise.resolve(attachment.port.requestSnapshot({ lock }));
-      } catch {
-        asked = Promise.resolve<BarrierResult>({ kind: 'unanswered' });
-      }
-
-      const barrier = await withDeadline(asked);
-
-      if (barrier.kind === 'unanswered') {
-        work.rendererUnknown = true;
-        publishProtection();
-
-        return { kind: 'unanswered' };
-      }
-      if (barrier.kind === 'refused') {
-        // The document was never handed over: the live editor is the sole copy. It is never
-        // repaired, never dropped, and never reported as saved.
-        work.rendererUnknown = true;
-        publishProtection();
-
-        return { kind: 'refused', code: barrier.code };
-      }
-
-      accept(attachment.token, barrier.snapshot);
-      await drain(work);
-
-      return commitOutcome(work);
-    };
-
-    const flushOnce = (draftId: string, lock: boolean): Promise<FlushResult> => {
-      const work = works.get(draftId);
-
-      if (work === undefined) {
-        return Promise.resolve({ kind: 'unanswered' } satisfies FlushResult);
-      }
-      // Serialized rather than shared. A caller that asked for a lock cannot be answered by a
-      // barrier someone else took without one: the whole point of locking first is that no edit can
-      // be generated between the capture and the commit, and a shared unlocked flush would report a
-      // version taken with that window wide open. Two flushes in a row cost a drain with nothing to
-      // write, which is nothing.
-      const body = work.flushTail.then(
-        () => flushWork(work, lock),
-        () => flushWork(work, lock),
-      );
-      // The published promise clears the slot as it settles, and only if it is still the current
-      // one - a later flush queued behind it owns the slot from the moment it was asked for.
-      const running: Promise<FlushResult> = body.finally(() => {
-        if (work.flushing === running) work.flushing = null;
-      });
-
-      work.flushTail = running.then(
-        () => undefined,
-        () => undefined,
-      );
-      work.flushing = running;
-
-      return running;
-    };
-
-    const takeLease = (work: Work): Lease => {
-      const lease: Lease = { draftId: work.draftId, version: null };
-      work.lease = lease;
-      publishProtection();
-
-      return lease;
-    };
-
-    /**
-     * Give the lock back, unless an attempt is still in flight for this draft.
-     *
-     * Every exit runs this, including the ones an HTTP-shaped rule would miss: a flush that came
-     * back unanswered, refused or unpersisted, a freeze rejection, and a failed intent write. Each
-     * of those must leave the person able to correct the input and press Save again without
-     * remounting the route, which is exactly what a leaked lock would prevent.
-     */
-    const releaseLease = (work: Work, lease: Lease): void => {
-      if (work.lease !== lease) return;
-      work.lease = null;
-      if (!work.inFlight) work.attachment?.port.setEditable(true);
-      publishProtection();
-    };
-
-    /**
-     * Whether consumed content may be cleared, from everything the owner knows.
-     *
-     * The database asks the same question again inside the acknowledgement transaction. Either
-     * saying newer work exists takes the retain branch, so the pair can only err toward retention -
-     * the only direction that cannot lose writing.
-     *
-     * The lock is what makes this a statement about the moment of acknowledgement rather than about
-     * the instant the flush was taken: an edit made a moment after a drain sits in the editor's own
-     * debounce where neither condition could see it. So either the lease that produced the submitted
-     * version is still held unbroken, or there is no live editor for this draft at all.
-     */
-    const clearable = (work: Work, lease: Lease | null, submittedVersion: number): boolean => {
-      const locked =
-        work.attachment === null ||
-        (lease !== null && work.lease === lease && lease.version === submittedVersion);
-
-      return (
-        locked &&
-        work.latestAccepted === submittedVersion &&
-        work.pending === null &&
-        work.writing === null &&
-        !work.failedWrite &&
-        !work.rendererUnknown &&
-        work.flushing === null
-      );
     };
 
     /** Write a clock anomaly down. Once recorded it is permanent for that attempt. */
@@ -833,10 +512,10 @@ export const createCaptureOwner = (ports: CapturePorts) =>
      * draft at `submitted` would refuse editing too, which is the opposite of what an unresolved
      * attempt calls for.
      */
-    const releaseDraft = async (active: CaptureStore, work: Work): Promise<void> => {
+    const releaseDraft = async (active: CaptureStore, draftId: string): Promise<void> => {
       try {
-        const written = await active.releaseDraft(work.draftId, ports.now());
-        if (written !== null && current(active)) publishDraft(work.draftId, written);
+        const written = await active.releaseDraft(draftId, ports.now());
+        if (written !== null && current(active)) publishDraft(draftId, written);
       } catch {
         // The next open's sweep does the same thing, which is what it is for.
       }
@@ -844,7 +523,6 @@ export const createCaptureOwner = (ports: CapturePorts) =>
 
     const recordAcknowledgement = async (
       active: CaptureStore,
-      work: Work,
       attempt: NoteAttemptRecord,
       response: CreateResponse,
       result: AcknowledgedNote,
@@ -856,7 +534,7 @@ export const createCaptureOwner = (ports: CapturePorts) =>
         result,
         response: JSON.stringify(response),
         submittedVersion: attempt.submittedDraftVersion,
-        clearContent: clearable(work, lease, attempt.submittedDraftVersion),
+        clearContent: core.settledAt(attempt.draftId, lease, attempt.submittedDraftVersion),
         emptyDocument: createEmptyDocument(),
         at: ports.now(),
       };
@@ -868,15 +546,18 @@ export const createCaptureOwner = (ports: CapturePorts) =>
         // it into a lifetime that has already been closed and reset.
         if (!current(active)) return;
 
-        if (written.cleared) {
-          work.title = '';
-          work.description = '';
-          work.document = createEmptyDocument();
-        }
-        if (written.draft !== null) {
-          work.committed = Math.max(work.committed, written.draft.draftVersion);
-          work.latestAccepted = Math.max(work.latestAccepted, written.draft.draftVersion);
-        }
+        // This transaction wrote the row, so what it produced is taken on rather than accepted: the
+        // core adopts the version and the cleared content as committed without bumping a counter or
+        // scheduling a write that would put the same bytes back through SQLite.
+        const held = core.content(attempt.draftId);
+
+        core.confirm(
+          attempt.draftId,
+          written.draft?.draftVersion ?? null,
+          written.cleared && held !== undefined
+            ? { ...held, title: '', description: '', tags: [], document: createEmptyDocument() }
+            : undefined,
+        );
         publishDraft(attempt.draftId, written.draft);
         publishAttempt(attempt.attemptId, written.attempt);
         set((state) => {
@@ -884,7 +565,6 @@ export const createCaptureOwner = (ports: CapturePorts) =>
 
           return { unsaved: rest };
         });
-        publishProtection();
       } catch {
         // The server created it. Only the local note of that failed, so the creation is reported as
         // the success it is, with the result held here until the write lands. What is offered is a
@@ -904,7 +584,6 @@ export const createCaptureOwner = (ports: CapturePorts) =>
      * rewritten.
      */
     const dispatch = async (
-      work: Work,
       attempt: NoteAttemptRecord,
       session: CaptureSession,
       lease: Lease | null,
@@ -938,7 +617,7 @@ export const createCaptureOwner = (ports: CapturePorts) =>
             ports.now(),
           ),
         );
-        await releaseDraft(active, work);
+        await releaseDraft(active, attempt.draftId);
 
         return;
       }
@@ -961,12 +640,11 @@ export const createCaptureOwner = (ports: CapturePorts) =>
             // A response this client cannot represent is not a success it may record. It is treated
             // as unknown, because the server may well have created something.
             settle(await active.markUncertain(attempt.attemptId, ports.now()));
-            await releaseDraft(active, work);
+            await releaseDraft(active, attempt.draftId);
           } else {
             created = result.value;
             await recordAcknowledgement(
               active,
-              work,
               attempt,
               result.value,
               {
@@ -987,14 +665,14 @@ export const createCaptureOwner = (ports: CapturePorts) =>
               ? await active.markUncertain(attempt.attemptId, at)
               : await active.markBlocked(attempt.attemptId, outcomeOf(result.failure, at), at),
           );
-          await releaseDraft(active, work);
+          await releaseDraft(active, attempt.draftId);
         }
       } catch {
         // The dispatcher itself came apart after the request left. Nothing is known about what the
         // server did, which is exactly what uncertain means.
         try {
           settle(await active.markUncertain(attempt.attemptId, ports.now()));
-          await releaseDraft(active, work);
+          await releaseDraft(active, attempt.draftId);
         } catch {
           // Recorded on the next open by the sweep, which is what it is for.
         }
@@ -1114,7 +792,12 @@ export const createCaptureOwner = (ports: CapturePorts) =>
 
     const newDraft = async (
       session: CaptureSession,
-      seed: { title: string; description: string; document: unknown },
+      seed: {
+        title: string;
+        description: string;
+        document: unknown;
+        tags: readonly string[];
+      },
     ): Promise<DraftOutcome> => {
       const active = store;
 
@@ -1142,6 +825,7 @@ export const createCaptureOwner = (ports: CapturePorts) =>
           title: seed.title,
           description: seed.description,
           document: seed.document,
+          tags: seed.tags,
           // A copy always requires a fresh destination: the old one belonged to another attempt,
           // and on another connection it would not even be the same place.
           destination: null,
@@ -1150,9 +834,8 @@ export const createCaptureOwner = (ports: CapturePorts) =>
 
         if (record === null) return { kind: 'refused', problem: NOT_RECORDED_PROBLEM };
 
-        works.set(draftId, workFrom(record));
+        core.track(draftId, contentOf(record), record.draftVersion);
         publishDraft(draftId, record);
-        publishProtection();
 
         return { kind: 'created', draftId };
       } catch {
@@ -1187,14 +870,9 @@ export const createCaptureOwner = (ports: CapturePorts) =>
         opening = null;
         store = null;
 
-        for (const abandon of [...deadlines]) abandon();
-        deadlines.clear();
-        for (const work of works.values()) {
-          work.attachment = null;
-          work.lease = null;
-        }
-        works.clear();
+        core.close();
         sending.clear();
+        inFlight.clear();
         dispatchedAt.clear();
 
         set({
@@ -1231,45 +909,56 @@ export const createCaptureOwner = (ports: CapturePorts) =>
       },
 
       createDraft: (session) =>
-        newDraft(session, { title: '', description: '', document: createEmptyDocument() }),
+        newDraft(session, {
+          title: '',
+          description: '',
+          document: createEmptyDocument(),
+          tags: [],
+        }),
 
       copyDraft: async (draftId, session) => {
-        const work = works.get(draftId);
+        const content = core.content(draftId);
 
-        if (work === undefined) return { kind: 'refused', problem: NO_DRAFT_PROBLEM };
+        if (content === undefined) return { kind: 'refused', problem: NO_DRAFT_PROBLEM };
 
         // The original draft, its attempt, its key and its evidence are untouched; the copy carries
         // only what was written.
         return newDraft(session, {
-          title: work.title,
-          description: work.description,
-          document: work.document,
+          title: content.title,
+          description: content.description,
+          document: content.document,
+          tags: content.tags,
         });
       },
 
       editDraft: (draftId, fields) => {
-        const work = works.get(draftId);
-        if (work === undefined) return;
-
-        const title = fields.title ?? work.title;
-        const description = fields.description ?? work.description;
-
-        if (title === work.title && description === work.description) return;
-
-        work.title = title;
-        work.description = description;
         // One counter for every authored field, so a title edit is protected exactly like a body
         // edit - which is the whole reason the counter is not the editor's.
-        work.latestAccepted += 1;
-        schedule(work);
-        publishProtection();
+        core.edit(draftId, (content) => {
+          const title = fields.title ?? content.title;
+          const description = fields.description ?? content.description;
+          const tags = fields.tags ?? content.tags;
+
+          // `sameTags` rather than `===` on the one field that is not a string: the details sheet
+          // rebuilds its array on every Done, so identity would make closing it over an unchanged
+          // list a version bump and a durable write for nothing.
+          if (
+            title === content.title &&
+            description === content.description &&
+            sameTags(tags, content.tags)
+          ) {
+            return null;
+          }
+
+          return { ...content, title, description, tags };
+        });
       },
 
       selectDestination: async (draftId, destination, session) => {
-        const work = works.get(draftId);
+        const content = core.content(draftId);
         const draft = get().drafts.find((candidate) => candidate.draftId === draftId);
 
-        if (work === undefined || draft === undefined) {
+        if (content === undefined || draft === undefined) {
           return { kind: 'refused', problem: NO_DRAFT_PROBLEM };
         }
         // A destination chosen on one server is a coincidence on another: ids are not portable, so a
@@ -1281,63 +970,47 @@ export const createCaptureOwner = (ports: CapturePorts) =>
         if (draft.connectionId !== session.connectionId || !session.usable) {
           return { kind: 'refused', problem: WRONG_CONNECTION_PROBLEM };
         }
-        if (work.destination?.id === destination.id && work.destination.type === destination.type) {
+        if (
+          content.destination?.id === destination.id &&
+          content.destination.type === destination.type
+        ) {
           return { kind: 'done' };
         }
 
-        work.destination = destination;
-        work.latestAccepted += 1;
-        await drain(work);
+        core.edit(draftId, (held) => ({ ...held, destination }));
+        await core.drain(draftId);
 
-        return work.failedWrite
+        return core.protectionOf(draftId)?.failedWrite === true
           ? { kind: 'refused', problem: WRITE_FAILED_PROBLEM }
           : { kind: 'done' };
       },
 
-      attachEditor: (draftId, port) => {
-        const work = works.get(draftId);
-        if (work === undefined) return null;
-
-        work.generation += 1;
-        // Replacing an attachment retires the earlier token, so a late detach from it removes
-        // nothing and a snapshot arriving from it is an expected race rather than a write.
-        const token: AttachmentToken = { draftId, generation: work.generation };
-        work.attachment = { token, port, sessionId: null, lastSeq: -1 };
-        publishProtection();
-
-        return token;
-      },
+      attachEditor: (draftId, port) => core.attach(draftId, port),
 
       detachEditor: (token) => {
-        const work = works.get(token.draftId);
-        if (work?.attachment?.token !== token) return;
-
-        work.attachment = null;
-        work.lease = null;
-        publishProtection();
+        core.detach(token);
       },
 
-      snapshotAccepted: accept,
+      snapshotAccepted: (token, snapshot) => core.accept(token, snapshot),
 
-      flush: (draftId, options) => flushOnce(draftId, options?.lock ?? false),
+      flush: (draftId, options) => core.flush(draftId, options?.lock ?? false),
 
       beginControlledExit: async (draftId) => {
-        const work = works.get(draftId);
+        const lease = core.takeLease(draftId);
 
-        if (work === undefined) {
+        if (lease === null) {
           return { result: { kind: 'unanswered' } as FlushResult, release: () => {} };
         }
 
-        const lease = takeLease(work);
-        const result = await flushOnce(draftId, true);
+        const result = await core.flush(draftId, true);
 
         if (result.kind === 'flushed') lease.version = result.version;
-        else releaseLease(work, lease);
+        else releaseLease(draftId, lease);
 
         return {
           result,
           release: () => {
-            releaseLease(work, lease);
+            releaseLease(draftId, lease);
           },
         };
       },
@@ -1355,10 +1028,10 @@ export const createCaptureOwner = (ports: CapturePorts) =>
         // hint; this is the invariant.
         if (active === null) return notSaved('no_store', NO_STORE_PROBLEM);
 
-        const work = works.get(draftId);
+        const content = core.content(draftId);
         const draft = get().drafts.find((candidate) => candidate.draftId === draftId);
 
-        if (work === undefined || draft === undefined)
+        if (content === undefined || draft === undefined)
           return notSaved('no_store', NO_DRAFT_PROBLEM);
         if (!ports.sessionIsCurrent(session)) {
           return notSaved('retired_connection', RETIRED_CONNECTION_PROBLEM);
@@ -1367,8 +1040,8 @@ export const createCaptureOwner = (ports: CapturePorts) =>
         if (draft.connectionId !== session.connectionId) {
           return notSaved('wrong_connection', WRONG_CONNECTION_PROBLEM);
         }
-        if (work.inFlight) return notSaved('already_saving', ALREADY_SAVING_PROBLEM);
-        if (work.destination === null) return notSaved('no_destination', NO_DESTINATION_PROBLEM);
+        if (inFlight.has(draftId)) return notSaved('already_saving', ALREADY_SAVING_PROBLEM);
+        if (content.destination === null) return notSaved('no_destination', NO_DESTINATION_PROBLEM);
 
         const standing = standingOf(draftId);
 
@@ -1390,13 +1063,15 @@ export const createCaptureOwner = (ports: CapturePorts) =>
           return notSaved('not_recorded', NO_IDENTIFIER_PROBLEM);
         }
 
-        work.inFlight = true;
+        const lease = core.takeLease(draftId);
+
+        if (lease === null) return notSaved('no_store', NO_DRAFT_PROBLEM);
+
+        inFlight.add(draftId);
         publishWorking();
 
-        const lease = takeLease(work);
-
         try {
-          const flushed = await flushOnce(draftId, true);
+          const flushed = await core.flush(draftId, true);
 
           if (flushed.kind === 'unanswered') {
             return notSaved('editor_unanswered', EDITOR_UNANSWERED_PROBLEM);
@@ -1414,15 +1089,21 @@ export const createCaptureOwner = (ports: CapturePorts) =>
 
           lease.version = flushed.version;
 
-          const destination = work.destination;
+          // Read again after the barrier: the flush is what folded the renderer's writing in, so
+          // what is frozen is the version the lease now names rather than the one Save opened with.
+          const flushedContent = core.content(draftId);
+          const destination = flushedContent?.destination ?? null;
 
-          if (destination === null) return notSaved('no_destination', NO_DESTINATION_PROBLEM);
+          if (flushedContent === undefined || destination === null) {
+            return notSaved('no_destination', NO_DESTINATION_PROBLEM);
+          }
 
           const frozen = freezeNoteRequest({
             destination,
-            title: work.title,
-            description: work.description,
-            document: work.document,
+            title: flushedContent.title,
+            description: flushedContent.description,
+            document: flushedContent.document,
+            tags: flushedContent.tags,
             idempotencyKey,
           });
 
@@ -1460,13 +1141,13 @@ export const createCaptureOwner = (ports: CapturePorts) =>
           publishDraft(draftId, written.draft);
           publishAttempt(attemptId, written.attempt);
 
-          await dispatch(work, written.attempt, session, lease);
+          await dispatch(written.attempt, session, lease);
 
           return { kind: 'dispatched', attemptId };
         } finally {
-          work.inFlight = false;
+          inFlight.delete(draftId);
           publishWorking();
-          releaseLease(work, lease);
+          releaseLease(draftId, lease);
         }
       },
 
@@ -1475,13 +1156,12 @@ export const createCaptureOwner = (ports: CapturePorts) =>
 
         if (active === null) return { kind: 'refused', problem: NO_STORE_PROBLEM };
 
-        const work = works.get(draftId);
         const draft = get().drafts.find((candidate) => candidate.draftId === draftId);
 
-        if (work === undefined || draft === undefined) {
+        if (!core.has(draftId) || draft === undefined) {
           return { kind: 'refused', problem: NO_DRAFT_PROBLEM };
         }
-        if (work.inFlight) return { kind: 'refused', problem: ALREADY_SAVING_PROBLEM };
+        if (inFlight.has(draftId)) return { kind: 'refused', problem: ALREADY_SAVING_PROBLEM };
         if (!ports.sessionIsCurrent(session)) {
           return { kind: 'refused', problem: RETIRED_CONNECTION_PROBLEM };
         }
@@ -1533,28 +1213,30 @@ export const createCaptureOwner = (ports: CapturePorts) =>
           return { kind: 'refused', problem: RETRY_INELIGIBLE_PROBLEM };
         }
 
-        work.inFlight = true;
-        publishWorking();
+        const lease = core.takeLease(draftId);
 
-        const lease = takeLease(work);
+        if (lease === null) return { kind: 'refused', problem: NO_DRAFT_PROBLEM };
+
+        inFlight.add(draftId);
+        publishWorking();
 
         try {
           // A flush that fails does not block a Retry: refusing to resolve an unresolved attempt
           // because local storage is full would strand the very thing recovery exists for. It does
           // force the retain branch, because the lease never gets its version.
-          const flushed = await flushOnce(draftId, true);
+          const flushed = await core.flush(draftId, true);
 
           if (flushed.kind === 'flushed') lease.version = flushed.version;
 
           // The frozen bytes, never the current form values. The lock protects the draft, not the
           // request.
-          await dispatch(work, attempt, session, lease);
+          await dispatch(attempt, session, lease);
 
           return { kind: 'done' };
         } finally {
-          work.inFlight = false;
+          inFlight.delete(draftId);
           publishWorking();
-          releaseLease(work, lease);
+          releaseLease(draftId, lease);
         }
       },
 
@@ -1569,9 +1251,7 @@ export const createCaptureOwner = (ports: CapturePorts) =>
 
         if (attempt === undefined) return { kind: 'refused', problem: NO_DRAFT_PROBLEM };
 
-        const work = works.get(attempt.draftId);
-
-        if (work === undefined) return { kind: 'refused', problem: NO_DRAFT_PROBLEM };
+        if (!core.has(attempt.draftId)) return { kind: 'refused', problem: NO_DRAFT_PROBLEM };
 
         // With no editor mounted the second limb of the clearing rule applies and this may clear.
         // With a live one it takes the lock like any other path, and if it cannot, it retains -
@@ -1579,24 +1259,17 @@ export const createCaptureOwner = (ports: CapturePorts) =>
         // writing.
         let lease: Lease | null = null;
 
-        if (work.attachment !== null) {
-          lease = takeLease(work);
-          const flushed = await flushOnce(attempt.draftId, true);
+        if (core.attached(attempt.draftId)) {
+          lease = core.takeLease(attempt.draftId);
+          const flushed = await core.flush(attempt.draftId, true);
 
-          if (flushed.kind === 'flushed') lease.version = flushed.version;
+          if (flushed.kind === 'flushed' && lease !== null) lease.version = flushed.version;
         }
 
         try {
-          await recordAcknowledgement(
-            active,
-            work,
-            attempt,
-            { entity: result.entity },
-            result,
-            lease,
-          );
+          await recordAcknowledgement(active, attempt, { entity: result.entity }, result, lease);
         } finally {
-          if (lease !== null) releaseLease(work, lease);
+          if (lease !== null) releaseLease(attempt.draftId, lease);
         }
 
         return get().unsaved[attemptId] === undefined
@@ -1630,10 +1303,8 @@ export const createCaptureOwner = (ports: CapturePorts) =>
 
         if (active === null) return { kind: 'refused', problem: NO_STORE_PROBLEM };
 
-        const work = works.get(draftId);
-
-        if (work === undefined) return { kind: 'refused', problem: NO_DRAFT_PROBLEM };
-        if (work.inFlight) return { kind: 'refused', problem: DISCARD_SENDING_PROBLEM };
+        if (!core.has(draftId)) return { kind: 'refused', problem: NO_DRAFT_PROBLEM };
+        if (inFlight.has(draftId)) return { kind: 'refused', problem: DISCARD_SENDING_PROBLEM };
 
         const standing = standingOf(draftId);
 
@@ -1649,10 +1320,9 @@ export const createCaptureOwner = (ports: CapturePorts) =>
           return { kind: 'refused', problem: DISCARD_FAILED_PROBLEM };
         }
 
-        works.delete(draftId);
+        core.untrack(draftId);
         for (const attemptId of removeAttemptIds) publishAttempt(attemptId, null);
         publishDraft(draftId, null);
-        publishProtection();
 
         return { kind: 'done' };
       },

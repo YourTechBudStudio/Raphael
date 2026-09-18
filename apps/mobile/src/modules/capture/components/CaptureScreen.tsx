@@ -15,13 +15,20 @@ import { goBack, openContainer, openHome } from '../../navigation';
 import { useBackgroundFlush } from '../client/background.ts';
 import { useDestinationName } from '../client/destinations.ts';
 import { useCaptureOwner, useCaptureSession } from '../client/owner.ts';
-import { composerView, type ProtectionProblem } from '../composer.ts';
-import type { CaptureSession } from '../owner.ts';
-import type { AttachmentToken, FlushResult } from '../owner.ts';
+import {
+  composerView,
+  destinationEyebrow,
+  problemFor,
+  type ProtectionProblem,
+} from '../composer.ts';
+import { detailsChip } from '../edit-composer.ts';
+import type { AttachmentToken, CaptureSession } from '../owner.ts';
 import type { Standing } from '../policy.ts';
 import type { NoteDraftRecord } from '../types.ts';
+import { hasWriting } from '../unfinished.ts';
 import { CaptureView } from './CaptureView';
 import { DestinationSheet } from './DestinationSheet';
+import { DetailsSheet } from './DetailsSheet';
 import { OutcomeSheet, type OutcomeKind } from './OutcomeSheet';
 import { ProtectSheet } from './ProtectSheet';
 
@@ -102,13 +109,21 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
   const [lastRejection, setLastRejection] = useState<EditorRejectionCode | null>(null);
   const [outcome, setOutcome] = useState<OutcomeState | null>(null);
   const [protectProblem, setProtectProblem] = useState<ProtectionProblem | null>(null);
-  const [pickerSession, setPickerSession] = useState(0);
-  const [pickerOpen, setPickerOpen] = useState(false);
+  /**
+   * Which sheet is open over the editor, and which opening it is.
+   *
+   * One piece of state for both, because they are one resource: each takes the editor lock and the
+   * transition latch, so two of them can never be open at once. The counter is what `DestinationSheet`
+   * and `DetailsSheet` both seed their drafts from, so a record moving underneath one cannot forget
+   * what someone is in the middle of typing.
+   */
+  const [sheet, setSheet] = useState<'destination' | 'details' | null>(null);
+  const [sheetSession, setSheetSession] = useState(0);
 
   const port = useRef<EditorPort>(null);
   const token = useRef<AttachmentToken | null>(null);
-  /** Held while the picker is open, so the lock taken for it is given back when it closes. */
-  const pickerLock = useRef<(() => void) | null>(null);
+  /** Held while a sheet is open, so the lock taken for it is given back when it closes. */
+  const sheetLock = useRef<(() => void) | null>(null);
   /**
    * One controlled transition at a time, decided in the same turn as the press.
    *
@@ -134,7 +149,11 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
   const leaving = useRef(false);
 
   // Best effort, on the way out of the foreground. Never the barrier a Save relies on.
-  useBackgroundFlush(draftId);
+  useBackgroundFlush(
+    useCallback(() => {
+      void useCaptureOwner.getState().flush(draftId);
+    }, [draftId]),
+  );
 
   /**
    * Adopt the record whenever it disagrees with what was last pushed into the owner.
@@ -167,7 +186,7 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
     };
   }, [owner, draftId]);
 
-  const edit = (fields: { title?: string; description?: string }) => {
+  const edit = (fields: { title?: string; description?: string; tags?: readonly string[] }) => {
     const next = {
       title: fields.title ?? pushed.current.title,
       description: fields.description ?? pushed.current.description,
@@ -175,6 +194,8 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
     pushed.current = next;
     if (fields.title !== undefined) setTitle(fields.title);
     if (fields.description !== undefined) setDescription(fields.description);
+    // Tags are not mirrored in local state: nothing types into them, so the record is the only copy
+    // and the sheet reads it directly.
     owner.getState().editDraft(draftId, fields);
   };
 
@@ -193,11 +214,10 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
 
   const destination = draft.destination;
   const name = nameOf(destination);
-  const hasRemainder =
-    draft.state === 'created' &&
-    (draft.title !== '' ||
-      draft.description !== '' ||
-      JSON.stringify(draft.document) !== EMPTY_DOCUMENT_JSON);
+  // `hasWriting` rather than a second copy of the same test: a recovery card and this status line
+  // describing the same record differently is how "newer writing kept on this phone" stops meaning
+  // anything.
+  const hasRemainder = draft.state === 'created' && hasWriting(draft);
 
   const view = composerView({
     standing,
@@ -215,6 +235,11 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
      * whitespace-only title is omitted from the request entirely, so it is not content and cannot
      * be the only thing standing between a draft and a Save that core would refuse for having
      * nothing to name the note from.
+     *
+     * **Tags are deliberately not here, which is where this parts company with `hasWriting` above.**
+     * That asks whether anything authored would be lost; this asks whether there is anything core
+     * could make a note out of, and a tags-only draft gives it nothing to resolve a title from. So a
+     * tag is writing worth keeping and is not, on its own, a note worth sending.
      */
     hasContent:
       title.trim() !== '' ||
@@ -429,7 +454,7 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
     void (async () => {
       const result = await owner.getState().selectDestination(draftId, chosen, session);
 
-      closePicker();
+      closeSheet();
 
       if (result.kind === 'refused') {
         // The container may well have been created; only recording where this note goes failed.
@@ -444,14 +469,14 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
   };
 
   /**
-   * Opening the picker is a controlled transition, not a detour.
+   * Opening a sheet is a controlled transition, not a detour.
    *
    * The sheet takes the window while the editor stays mounted underneath it, so the same barrier
    * that protects a Back applies: lock, flush, and keep the lock until the sheet closes. A flush
    * that did not land does **not** open the sheet - the only copy of what is on screen is in the
    * renderer, and covering it with a sheet would hide both the unprotected status and the repair.
    */
-  const openPicker = () => {
+  const openSheet = (which: 'destination' | 'details') => {
     if (transitioning.current) return;
     transitioning.current = true;
 
@@ -466,26 +491,33 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
         return;
       }
 
-      pickerLock.current = release;
-      setPickerSession((current) => current + 1);
-      setPickerOpen(true);
+      sheetLock.current = release;
+      setSheetSession((current) => current + 1);
+      setSheet(which);
     })();
   };
 
   /** Gives the editor back, whichever way the sheet was left, and admits the next transition. */
-  const closePicker = () => {
-    pickerLock.current?.();
-    pickerLock.current = null;
+  const closeSheet = () => {
+    sheetLock.current?.();
+    sheetLock.current = null;
     transitioning.current = false;
-    setPickerOpen(false);
+    setSheet(null);
   };
 
   return (
     <>
       <CaptureView
         description={description}
-        destinationLabel={name.chip}
-        destinationSpoken={name.spoken}
+        destination={destinationEyebrow(name)}
+        // No ID yet: the server derives one from the title when the note is created, so the chip is
+        // about tags alone and `detailsChip` says so.
+        details={detailsChip({
+          nodeType: 'resource',
+          kind: 'note',
+          slug: null,
+          tagCount: draft.tags.length,
+        })}
         document={document}
         documentId={draftId}
         editorRef={port}
@@ -497,7 +529,12 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
         onDescriptionChange={(value) => {
           edit({ description: value });
         }}
-        onDestination={openPicker}
+        onDestination={() => {
+          openSheet('destination');
+        }}
+        onDetails={() => {
+          openSheet('details');
+        }}
         onProblem={(problem) => {
           // Only the editor's own refusals say anything about whether native holds the document. A
           // handshake or envelope problem is about the bridge and has its own consequences.
@@ -515,11 +552,27 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
       />
 
       <DestinationSheet
-        onClose={closePicker}
+        onClose={closeSheet}
         onSelect={chooseDestination}
         selected={destination}
-        sessionId={pickerSession}
-        visible={pickerOpen}
+        sessionId={sheetSession}
+        visible={sheet === 'destination'}
+      />
+
+      <DetailsSheet
+        idLabel="note ID"
+        onClose={closeSheet}
+        onDone={(details) => {
+          // One write, not one per keystroke - the same rule the editor's sheet follows, and here it
+          // is what keeps a tag change one protected version rather than a stream of them.
+          edit({ tags: details.tags });
+          closeSheet();
+        }}
+        sessionId={sheetSession}
+        // Null: a new note has no ID until the server derives one, so the sheet is tags only.
+        slug={null}
+        tags={draft.tags}
+        visible={sheet === 'details'}
       />
 
       <OutcomeSheet
@@ -531,7 +584,7 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
           outcome?.chooseDestination === true
             ? () => {
                 setOutcome(null);
-                openPicker();
+                openSheet('destination');
               }
             : undefined
         }
@@ -576,13 +629,6 @@ function Composer({ draft }: { draft: NoteDraftRecord }) {
     </>
   );
 }
-
-/** Which repair a flush that did not land calls for. */
-const problemFor = (result: FlushResult): ProtectionProblem => {
-  if (result.kind === 'refused') return result.code === 'too_large' ? 'too_large' : 'failed_write';
-
-  return result.kind === 'unanswered' ? 'unanswered' : 'failed_write';
-};
 
 /**
  * Whether this draft has a save that was sent and never answered.

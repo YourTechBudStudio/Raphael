@@ -41,7 +41,7 @@ export const checkedResponse = <A>(decoder: Decoder<A>, value: unknown, operatio
 };
 
 /** Parses a stored JSON column. Unparseable stored JSON is corruption in data we wrote. */
-const parseStored = (text: string, operation: string, column: string): unknown => {
+export const parseStored = (text: string, operation: string, column: string): unknown => {
   try {
     return JSON.parse(text);
   } catch {

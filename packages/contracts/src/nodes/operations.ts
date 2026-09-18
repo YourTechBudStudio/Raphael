@@ -170,12 +170,93 @@ export const ListRequest = Schema.Struct({
 
 export const GetPathRequest = Schema.Struct({ target: EntitySelector });
 
+/**
+ * The fields an update may change. `format` is not one of them: it only chooses how the answer is
+ * rendered, so an envelope carrying nothing else has asked for a read spelled as a write.
+ *
+ * Stated as an allowlist rather than derived, so that adding a non-change field to the envelope is an
+ * explicit decision rather than a silent widening of what counts as a change. The drift assertion in
+ * `operations.test.ts` inverts this allowlist against the envelope's own keys, so neither can move
+ * without the other.
+ */
+export const UPDATE_CHANGE_FIELDS = [
+  'title',
+  'description',
+  'slug',
+  'body',
+  'addTags',
+  'removeTags',
+] as const;
+
+/**
+ * Presence, not value, is the test: `Object.hasOwn` rather than `!== undefined`. With `exact: true`
+ * the two agree today, and this one states the intent - an update must *mention* a change field.
+ * `addTags: []` therefore counts, and is an ordinary write that happens to change no value.
+ */
+const hasChange = (request: Record<string, unknown>): boolean =>
+  UPDATE_CHANGE_FIELDS.some((field) => Object.hasOwn(request, field));
+
+/**
+ * Both filters run on the decoded value, so this compares trimmed, NFC-normalized tags - the same
+ * identity `TagsInput` uses for its own duplicate check.
+ */
+const noTagInBothLists = (request: {
+  readonly addTags?: readonly string[];
+  readonly removeTags?: readonly string[];
+}): boolean => {
+  if (request.addTags === undefined || request.removeTags === undefined) return true;
+  const removed = new Set(request.removeTags);
+  return !request.addTags.some((tag) => removed.has(tag));
+};
+
+/**
+ * The update envelope's shape, before its two request-scoped rules.
+ *
+ * Exported for the drift assertion in `operations.test.ts` and deliberately not re-exported from
+ * `nodes/index.ts`: `UpdateRequest` is the envelope, and this is the same struct without the rules
+ * that make it one.
+ */
+export const UpdateRequestFields = Schema.Struct({
+  target: EntitySelector,
+  revision: NodeRevision,
+  title: Schema.optionalWith(TitleInput, { exact: true }),
+  description: Schema.optionalWith(DescriptionInput, { exact: true }),
+  slug: Schema.optionalWith(SlugInput, { exact: true }),
+  body: Schema.optionalWith(BodyInput, { exact: true }),
+  addTags: Schema.optionalWith(TagsInput, { exact: true }),
+  removeTags: Schema.optionalWith(TagsInput, { exact: true }),
+  /** The format the returned body is rendered in. `body.format` describes the submitted body. */
+  format: Schema.optionalWith(BodyFormatSchema, {
+    default: () => 'markdown' as const,
+    exact: true,
+  }),
+});
+
+/**
+ * Changing an entity, as an envelope rather than a patch document.
+ *
+ * What cannot be changed is expressed by what the struct does not mention. `id`, `type`, `kind`,
+ * `parent`, `parentId` and `metadata` are unpatchable because strict request decoding refuses a
+ * property the schema has no field for - a property of the shape, not a rule some later code has to
+ * remember to apply. Every optional is `exact: true`, so "present" means "supplied" for an in-process
+ * caller as well as over the wire: an omitted field stays unchanged, while `body: { value: "" }`
+ * clears the body.
+ *
+ * Both rules are struct-level, so their issue path is empty and a caller is told the request as a
+ * whole is wrong rather than being pointed at a field that is not at fault.
+ */
+export const UpdateRequest = UpdateRequestFields.pipe(
+  Schema.filter((request) => hasChange(request) || 'an update must change at least one field'),
+  Schema.filter((request) => noTagInBothLists(request) || 'a tag cannot be both added and removed'),
+);
+
 export type ContainerCreateRequest = Schema.Schema.Type<typeof ContainerCreateRequest>;
 export type ResourceCreateRequest = Schema.Schema.Type<typeof ResourceCreateRequest>;
 export type CreateRequest = Schema.Schema.Type<typeof CreateRequest>;
 export type GetRequest = Schema.Schema.Type<typeof GetRequest>;
 export type ListRequest = Schema.Schema.Type<typeof ListRequest>;
 export type GetPathRequest = Schema.Schema.Type<typeof GetPathRequest>;
+export type UpdateRequest = Schema.Schema.Type<typeof UpdateRequest>;
 
 /**
  * Response projections. Every field is always present: `parentId` is a positive ID or `null` for a
@@ -243,6 +324,7 @@ export type NodeEntity = Schema.Schema.Type<typeof NodeEntity>;
 
 export const CreateResponse = Schema.Struct({ entity: NodeEntity });
 export const GetResponse = Schema.Struct({ entity: NodeEntity });
+export const UpdateResponse = Schema.Struct({ entity: NodeEntity });
 
 export const ListResponse = Schema.Struct({
   items: Schema.Array(NodeSummary),
@@ -263,6 +345,7 @@ export const GetPathResponse = Schema.Struct({
 });
 
 export type CreateResponse = Schema.Schema.Type<typeof CreateResponse>;
+export type UpdateResponse = Schema.Schema.Type<typeof UpdateResponse>;
 export type GetResponse = Schema.Schema.Type<typeof GetResponse>;
 export type ListResponse = Schema.Schema.Type<typeof ListResponse>;
 export type GetPathResponse = Schema.Schema.Type<typeof GetPathResponse>;
@@ -283,20 +366,24 @@ export type CreateRequestInput = Schema.Schema.Encoded<typeof CreateRequest>;
 export type GetRequestInput = Schema.Schema.Encoded<typeof GetRequest>;
 export type ListRequestInput = Schema.Schema.Encoded<typeof ListRequest>;
 export type GetPathRequestInput = Schema.Schema.Encoded<typeof GetPathRequest>;
+export type UpdateRequestInput = Schema.Schema.Encoded<typeof UpdateRequest>;
 
 export const decodeCreateRequest = requestDecoder(CreateRequest);
 export const decodeGetRequest = requestDecoder(GetRequest);
 export const decodeListRequest = requestDecoder(ListRequest);
 export const decodeGetPathRequest = requestDecoder(GetPathRequest);
+export const decodeUpdateRequest = requestDecoder(UpdateRequest);
 
 export const decodeCreateResponse = responseDecoder(CreateResponse);
 export const decodeGetResponse = responseDecoder(GetResponse);
 export const decodeListResponse = responseDecoder(ListResponse);
 export const decodeGetPathResponse = responseDecoder(GetPathResponse);
+export const decodeUpdateResponse = responseDecoder(UpdateResponse);
 
 export const NODE_ROUTES = {
   create: { method: 'POST', path: '/api/nodes/create' },
   get: { method: 'POST', path: '/api/nodes/get' },
   list: { method: 'POST', path: '/api/nodes/list' },
   getPath: { method: 'POST', path: '/api/nodes/get-path' },
+  update: { method: 'POST', path: '/api/nodes/update' },
 } as const satisfies Record<string, RouteDescriptor>;

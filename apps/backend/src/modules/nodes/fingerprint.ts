@@ -11,6 +11,7 @@ import {
 } from '@raphael/contracts/nodes';
 import { Either } from 'effect';
 
+import type { PreparedBody } from './content.ts';
 import { InternalFailure, InvalidInput } from './errors.ts';
 import { raise } from './storage-failures.ts';
 import type { NodeType } from './types.ts';
@@ -25,10 +26,6 @@ import type { NodeType } from './types.ts';
  * opposite of what a key is for. Markdown stays Markdown here, submitted TipTap participates as it was
  * submitted, and the input format is part of the identity of the request.
  */
-
-export type PreparedBody =
-  | { readonly format: 'markdown'; readonly value: string }
-  | { readonly format: 'tiptap'; readonly value: JsonObject };
 
 export interface PreparedCreate {
   readonly type: NodeType;

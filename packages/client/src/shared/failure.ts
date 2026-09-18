@@ -5,8 +5,9 @@
  *
  * `kind` says what happened to the *request*: it never left, it was refused, the answer was
  * unintelligible, the wait was abandoned. `mutationOutcome` says what happened to the *entity* the
- * request was trying to create. Collapsing them into one enum is how a client ends up telling someone
- * a creation definitely failed because the socket reset, which is exactly the claim it cannot make.
+ * request was trying to create or change. Collapsing them into one enum is how a client ends up
+ * telling someone a creation definitely failed because the socket reset, which is exactly the claim it
+ * cannot make.
  *
  * The conservative direction is deliberate and costs real usability. A server that is not running
  * produces the same opaque `TypeError` from `fetch` as a connection reset halfway through a commit.
@@ -20,7 +21,13 @@
 import type { ClassifiedApiError, RecoveryDetails } from '@raphael/contracts';
 
 /**
- * What happened to the entity a mutating request was trying to create.
+ * What happened to the entity a mutating request was trying to create or change.
+ *
+ * Written without naming an operation, because the classifications transfer between creating and
+ * updating even though nothing else about the two does. An update carries no idempotency key and has
+ * no replay; its safety is the revision it names. So "may or may not have been applied" is the end of
+ * what this client can say about an uncertain update, and the caller's only way to settle it is to
+ * read the entity back.
  *
  * These statements are about **this attempt only**. A rejected retry says nothing about whether an
  * earlier attempt with the same idempotency key created something, and neither does a definite
@@ -29,9 +36,9 @@ import type { ClassifiedApiError, RecoveryDetails } from '@raphael/contracts';
 export type MutationOutcome =
   /** The request never reached the network: local validation failed, or the caller cancelled first. */
   | 'not_dispatched'
-  /** The server answered, intelligibly and consistently, that it refused. Nothing was created. */
+  /** The server answered, intelligibly and consistently, that it refused. Nothing was created or changed. */
   | 'rejected'
-  /** It may or may not have been created. Nothing here establishes which. */
+  /** It may or may not have been applied. Nothing here establishes which. */
   | 'unknown'
   /** The operation does not mutate, so the question does not arise. */
   | 'not_applicable';

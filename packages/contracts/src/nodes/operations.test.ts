@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { Either, Schema } from 'effect';
 
+import { type DecodeFailure } from '../shared/decode.ts';
 import {
   DESCRIPTION_MAX_CODE_POINTS,
   SLUG_MAX_CODE_POINTS,
@@ -21,6 +22,8 @@ import {
   ListRequest,
   ListResponse,
   NODE_ROUTES,
+  UPDATE_CHANGE_FIELDS,
+  UpdateRequestFields,
   decodeCreateRequest,
   decodeCreateResponse,
   decodeGetPathRequest,
@@ -28,6 +31,8 @@ import {
   decodeGetRequest,
   decodeListRequest,
   decodeListResponse,
+  decodeUpdateRequest,
+  decodeUpdateResponse,
 } from './operations.ts';
 import { compareNodeOrder } from './ordering.ts';
 
@@ -65,6 +70,7 @@ test('routes are the agreed POST vocabulary', () => {
     get: { method: 'POST', path: '/api/nodes/get' },
     list: { method: 'POST', path: '/api/nodes/list' },
     getPath: { method: 'POST', path: '/api/nodes/get-path' },
+    update: { method: 'POST', path: '/api/nodes/update' },
   });
 });
 
@@ -639,4 +645,137 @@ test('adding ordering left pagination and the response shapes alone', () => {
   const item = decoded.items[0] as unknown as Record<string, unknown>;
   assert.equal('updatedAt' in item, false);
   assert.equal('createdAt' in item, false);
+});
+
+const update = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+  target: { id: 42 },
+  revision: 7,
+  ...overrides,
+});
+
+const issuesOf = (result: Either.Either<unknown, DecodeFailure>) => {
+  assert.equal(Either.isLeft(result), true, 'expected a refusal');
+  if (!Either.isLeft(result)) throw new Error('unreachable');
+  return result.left.issues;
+};
+
+test('an update carries only what it supplied, and supplying nothing is refused', () => {
+  const decoded = right(decodeUpdateRequest(update({ title: 'Backend' })));
+  assert.deepEqual(Object.keys(decoded).sort(), ['format', 'revision', 'target', 'title']);
+
+  // An omitted optional leaves no own property; an explicitly empty body leaves one. That difference
+  // is the whole of "an omitted field stays unchanged, an empty body clears it".
+  assert.equal(Object.hasOwn(decoded, 'body'), false);
+  assert.equal(
+    Object.hasOwn(right(decodeUpdateRequest(update({ body: { value: '' } }))), 'body'),
+    true,
+  );
+
+  const combined = right(
+    decodeUpdateRequest(
+      update({
+        title: 'Backend',
+        description: '',
+        slug: 'backend',
+        body: { value: '# Notes' },
+        addTags: ['reviewed'],
+        removeTags: ['draft'],
+      }),
+    ),
+  );
+  assert.deepEqual(Object.keys(combined).sort(), [
+    'addTags',
+    'body',
+    'description',
+    'format',
+    'removeTags',
+    'revision',
+    'slug',
+    'target',
+    'title',
+  ]);
+});
+
+test('every field named a change is one, and every other field is not', () => {
+  // The drift guard. `UPDATE_CHANGE_FIELDS` is a second statement of the envelope's shape, and a
+  // missing entry fails in the worst direction: a caller who supplied a real change would be told
+  // they supplied none. Inverting the allowlist makes a future non-change field an explicit decision.
+  const notChanges = ['target', 'revision', 'format'];
+  assert.deepEqual(
+    Object.keys(UpdateRequestFields.fields)
+      .filter((field) => !notChanges.includes(field))
+      .sort(),
+    [...UPDATE_CHANGE_FIELDS].sort(),
+  );
+
+  for (const field of UPDATE_CHANGE_FIELDS) {
+    const value =
+      field === 'body'
+        ? { value: '' }
+        : field === 'addTags' || field === 'removeTags'
+          ? ['tag']
+          : field === 'slug'
+            ? 'backend'
+            : 'Backend';
+    assert.equal(
+      Either.isRight(decodeUpdateRequest(update({ [field]: value }))),
+      true,
+      `${field} alone must be a change`,
+    );
+  }
+});
+
+test('an update that changes nothing is refused against the request rather than a field', () => {
+  for (const envelope of [update(), update({ format: 'tiptap' })]) {
+    const issues = issuesOf(decodeUpdateRequest(envelope));
+    assert.deepEqual(issues.length, 1);
+    // Struct-level, so the path is empty: the request as a whole is wrong, and no field is at fault.
+    assert.deepEqual(issues[0]?.path, []);
+  }
+});
+
+test('mentioning a change field is the test, so an empty list is an ordinary write', () => {
+  // `hasChange` asks about presence, not value. This is a write that changes no value - the same
+  // semantic as resubmitting a field's current value - and neither first-party client sends one.
+  assert.equal(Either.isRight(decodeUpdateRequest(update({ addTags: [] }))), true);
+  assert.equal(Either.isRight(decodeUpdateRequest(update({ removeTags: [] }))), true);
+});
+
+test('a tag cannot be both added and removed, compared after normalization', () => {
+  assert.deepEqual(
+    issuesOf(decodeUpdateRequest(update({ addTags: ['a'], removeTags: [' a'] })))[0]?.path,
+    [],
+  );
+  assert.equal(
+    Either.isRight(decodeUpdateRequest(update({ addTags: ['a'], removeTags: ['b'] }))),
+    true,
+  );
+});
+
+test('identity, parentage and metadata are unpatchable because the schema never mentions them', () => {
+  for (const [field, value] of [
+    ['id', 42],
+    ['type', 'area'],
+    ['kind', 'note'],
+    ['parent', { id: 1 }],
+    ['parentId', 1],
+    ['metadata', {}],
+  ] as const) {
+    const issues = issuesOf(decodeUpdateRequest(update({ title: 'Backend', [field]: value })));
+    assert.deepEqual(
+      issues.map((issue) => issue.path),
+      [[field]],
+      field,
+    );
+  }
+});
+
+test('exactness refuses an explicit undefined, so presence means supplied in process too', () => {
+  assert.deepEqual(issuesOf(decodeUpdateRequest(update({ body: undefined })))[0]?.path, ['body']);
+  assert.deepEqual(issuesOf(decodeUpdateRequest(update({ title: undefined })))[0]?.path, ['title']);
+});
+
+test('an update answers with the resulting entity', () => {
+  const decoded = right(decodeUpdateResponse({ entity: entity({ revision: 8 }) }));
+  assert.equal(decoded.entity.revision, 8);
 });

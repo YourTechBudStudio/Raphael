@@ -14,12 +14,17 @@ import {
   NODE_TYPES,
   ORDER_DIRECTIONS,
   REQUEST_FIELDS,
+  TAGS_MAX_COUNT,
+  TAG_MAX_CODE_POINTS,
+  TagsInput,
   RESOURCE_KINDS,
   TITLE_MAX_CODE_POINTS,
   TitleInput,
   inspectMetadataInput,
+  inspectTagsInput,
   inspectTitleInput,
   isRequestField,
+  normalizeTag,
 } from './fields.ts';
 
 test('metadata rejections name the limit that was actually exceeded', () => {
@@ -126,6 +131,9 @@ test('the failure vocabulary can name the fields the new request shapes added', 
   // unexplained refusal.
   assert.ok(isRequestField('kind'));
   assert.ok(isRequestField('orderBy'));
+  assert.ok(isRequestField('revision'));
+  assert.ok(isRequestField('addTags'));
+  assert.ok(isRequestField('removeTags'));
   assert.ok(!isRequestField('body_text'));
   assert.equal(new Set(REQUEST_FIELDS).size, REQUEST_FIELDS.length, 'no duplicate field names');
 });
@@ -134,4 +142,56 @@ test('the ordering vocabulary is closed and has no implicit direction', () => {
   assert.deepEqual([...NODE_ORDER_FIELDS], ['slug', 'updatedAt', 'id']);
   assert.deepEqual([...ORDER_DIRECTIONS], ['asc', 'desc']);
   assert.equal(new Set(NODE_ORDER_FIELDS).size, NODE_ORDER_FIELDS.length);
+});
+
+/**
+ * A client that must name the bound someone hit asks the same question the decoder asks.
+ *
+ * The decoder's formatted message carries the submitted value, so a client cannot show one; it
+ * inspects the list instead. If these two ever disagreed, a screen would report a tag list as fine
+ * and then fail to send it, or name a bound the decoder does not apply.
+ */
+test('inspecting a tag list agrees with the decoder about every bound', () => {
+  const decodes = (tags) => Either.isRight(Schema.decodeUnknownEither(TagsInput)(tags));
+
+  assert.equal(inspectTagsInput(['sync', 'design']), undefined);
+  assert.equal(inspectTagsInput([]), undefined);
+
+  const tooMany = Array.from({ length: TAGS_MAX_COUNT + 1 }, (_, index) => `t${String(index)}`);
+  assert.deepEqual(inspectTagsInput(tooMany), { reason: 'tags_too_many', limit: TAGS_MAX_COUNT });
+  assert.equal(decodes(tooMany), false);
+
+  // Exactly at the bound is allowed, by both.
+  const atBound = tooMany.slice(0, TAGS_MAX_COUNT);
+  assert.equal(inspectTagsInput(atBound), undefined);
+  assert.equal(decodes(atBound), true);
+
+  const tooLong = 'a'.repeat(TAG_MAX_CODE_POINTS + 1);
+  assert.deepEqual(inspectTagsInput([tooLong]), {
+    reason: 'tag_too_long',
+    limit: TAG_MAX_CODE_POINTS,
+  });
+  assert.equal(decodes([tooLong]), false);
+  assert.equal(inspectTagsInput(['a'.repeat(TAG_MAX_CODE_POINTS)]), undefined);
+
+  // Code points, not UTF-16 units: an emoji is one tag character, so a list of them fits.
+  assert.equal(inspectTagsInput(['\u{1F525}'.repeat(TAG_MAX_CODE_POINTS)]), undefined);
+
+  assert.deepEqual(inspectTagsInput(['']), { reason: 'tag_empty' });
+  assert.deepEqual(inspectTagsInput(['a', 'a']), { reason: 'tags_repeat' });
+  assert.equal(decodes(['a', 'a']), false);
+});
+
+test('the exported tag rule is the one the decoder applies', () => {
+  // A client comparing tags it submitted against tags the server stored needs this rule and no second
+  // copy of it, so the export and the decoder have to agree exactly.
+  const decomposed = ' Cafe\u0301 ';
+  assert.equal(normalizeTag(decomposed), 'Caf\u00e9');
+  assert.deepEqual(Schema.decodeUnknownSync(TagsInput)([decomposed]), ['Caf\u00e9']);
+  assert.deepEqual(Schema.decodeUnknownSync(TagsInput)([' a ']), ['a']);
+
+  // Total over strings: it neither rejects nor bounds nor deduplicates.
+  assert.equal(normalizeTag(''), '');
+  assert.equal(normalizeTag('   '), '');
+  assert.equal(normalizeTag('a'.repeat(1_000)).length, 1_000);
 });

@@ -192,8 +192,14 @@ describe('leaving the foreground', () => {
       },
     });
 
+    // The hook takes the flush itself now, so one hook serves both owners. A stable reference,
+    // because an unstable one would resubscribe on every render.
+    const askOwner = () => {
+      void useCaptureOwner.getState().flush('d1');
+    };
+
     function Probe() {
-      useBackgroundFlush('d1');
+      useBackgroundFlush(askOwner);
 
       return null;
     }
@@ -235,8 +241,14 @@ describe('leaving the foreground', () => {
       },
     });
 
+    // The hook takes the flush itself now, so one hook serves both owners. A stable reference,
+    // because an unstable one would resubscribe on every render.
+    const askOwner = () => {
+      void useCaptureOwner.getState().flush('d1');
+    };
+
     function Probe() {
-      useBackgroundFlush('d1');
+      useBackgroundFlush(askOwner);
 
       return null;
     }

@@ -1,21 +1,18 @@
 import { decodeGetRequest, decodeGetResponse, type GetResponse } from '@raphael/contracts/nodes';
-import { eq } from 'drizzle-orm';
 import { Effect, Either } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
 import { GET_FIELDS, invalidInputFrom } from './diagnostics.ts';
-import { InternalFailure, type NodeError } from './errors.ts';
+import type { NodeError } from './errors.ts';
 import {
   bodyProjection,
   checkedResponse,
   entityProjection,
   validatedStoredBody,
 } from './projection.ts';
-import { resolveEntity } from './resolve.ts';
-import { nodes } from './schema.ts';
+import { loadEntity } from './resolve.ts';
 import { raise, unwrapFailure } from './storage-failures.ts';
 import { orm, readTransaction } from './store.ts';
-import type { StoredEntity } from './types.ts';
 
 const OPERATION = 'nodes.get';
 
@@ -41,35 +38,7 @@ export const getNode = (input: unknown): Effect.Effect<GetResponse, NodeError, D
           return raise(invalidInputFrom(request.left, GET_FIELDS, input));
         }
         const { target, format } = request.right;
-        const found = readTransaction(db, () => {
-          const handle = orm(db);
-          const node = resolveEntity(handle, target, 'target', OPERATION);
-          const entity = handle
-            .select({
-              id: nodes.id,
-              type: nodes.type,
-              kind: nodes.kind,
-              parentId: nodes.parentId,
-              slug: nodes.slug,
-              revision: nodes.revision,
-              title: nodes.title,
-              description: nodes.description,
-              tags: nodes.tags,
-              body: nodes.body,
-              metadata: nodes.metadata,
-            })
-            .from(nodes)
-            .where(eq(nodes.id, node.id))
-            .get();
-          if (entity === undefined) {
-            // Resolution just found this row inside the same snapshot, so its disappearance is not a
-            // missing node; something is wrong with the read itself.
-            return raise(
-              new InternalFailure({ operation: OPERATION, detail: 'a resolved node did not load' }),
-            );
-          }
-          return entity as StoredEntity;
-        });
+        const found = readTransaction(db, () => loadEntity(orm(db), target, 'target', OPERATION));
         return { found, format };
       },
       catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'read' }, cause),

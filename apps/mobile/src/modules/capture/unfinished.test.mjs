@@ -35,6 +35,7 @@ const draft = (over = {}) => ({
   title: 'A note',
   description: '',
   document: document('written'),
+  tags: [],
   contentSchemaVersion: 1,
   destination: { type: 'area', id: 3 },
   draftVersion: 2,
@@ -105,7 +106,7 @@ test('a draft nobody has sent is a draft, and can only be opened or discarded', 
   assert.equal(rows.length, 1);
   assert.equal(rows[0].status, 'draft');
   assert.deepEqual([...rows[0].actions], ['open', 'discard']);
-  assert.equal(rows[0].onHome, true);
+  assert.equal(rows[0].scope, 'current');
   assert.equal(rows[0].key, 'draft:d1');
 });
 
@@ -216,6 +217,30 @@ test('a created note with writing left on the phone is a remainder, and is offer
   assert.ok(!rows[0].actions.includes('record_again'));
 });
 
+/**
+ * Tags are authored content, so they count as writing left behind like every other field.
+ *
+ * The acknowledgement clears all four fields together, so a non-empty list on a created draft means
+ * tags written since the creation - which the server was never given and which the status line and
+ * this list both have to report rather than calling the note finished.
+ */
+test('tags written after a creation are writing left on the phone, like any other field', () => {
+  const cleared = {
+    state: 'created',
+    serverNodeId: 42,
+    serverRevision: 1,
+    title: '',
+    description: '',
+    document: createEmptyDocument(),
+  };
+  const rows = project([draft({ ...cleared, tags: ['sync'] })], []);
+
+  assert.equal(rows[0].status, 'remainder');
+
+  // And an entirely cleared draft is still not a card: there is nothing unfinished about it.
+  assert.deepEqual(project([draft({ ...cleared, tags: [] })], []), []);
+});
+
 test('a server success this phone could not write down offers only the local retry', () => {
   const rows = project([draft()], [attempt({ state: 'uncertain' })], {
     unsaved: { a1: acknowledged() },
@@ -230,7 +255,6 @@ test('work for a connection this phone has left offers only copy and discard', (
   const rows = project([draft({ connectionId: 'other', endpoint: 'https://old.example' })], []);
 
   assert.equal(rows[0].scope, 'retired');
-  assert.equal(rows[0].onHome, false, 'retired work never appears in the current Home');
   assert.deepEqual([...rows[0].actions], ['copy', 'discard']);
 });
 
@@ -255,8 +279,6 @@ test('a note this build cannot open is reported, with the reason it cannot', () 
   // The owner never adopted it, so there is no draft to open, copy or discard - and migrating it is
   // the one thing that is forbidden outright.
   assert.deepEqual([...rows[0].actions], []);
-  // And it is not a card on Home, where every other card goes somewhere when it is tapped.
-  assert.equal(rows[0].onHome, false);
 });
 
 test('an unreadable row claims no title and no time it cannot support', () => {

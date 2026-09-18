@@ -61,6 +61,43 @@ export function invalidateHierarchy(client: QueryClient, activation: number): Pr
 }
 
 /**
+ * One container changed on `activation`: its entity is stale.
+ *
+ * Beside `invalidateHierarchy` and scoped the same way, so an update answered under a connection the
+ * app has since left cannot pull a fresh read of a server that has nothing to do with it. It
+ * invalidates rather than writing what the server returned: a response written into the cache would
+ * make the update a second authority on ordering between concurrent clients, and the next read is the
+ * one that should decide.
+ */
+export function invalidateContainer(
+  client: QueryClient,
+  activation: number,
+  ref: ContainerRef,
+): Promise<void> {
+  const key = keys.entity(activation, ref);
+
+  return client.invalidateQueries({
+    predicate: (query) =>
+      activationOf(query.queryKey) === activation &&
+      query.queryKey.length === key.length &&
+      key.every((segment, index) => query.queryKey[index] === segment),
+  });
+}
+
+/**
+ * A title changed, so every computed path that may contain it is stale.
+ *
+ * Every path on this activation, not just this container's: the server composes a path from its
+ * ancestors' titles, so renaming an area changes the canonical path of everything beneath it.
+ */
+export function invalidatePaths(client: QueryClient, activation: number): Promise<void> {
+  return client.invalidateQueries({
+    predicate: (query) =>
+      activationOf(query.queryKey) === activation && query.queryKey[2] === 'path',
+  });
+}
+
+/**
  * A creation landed: hold on to what the server said, and mark the hierarchy stale.
  *
  * Seeding is absent-only. That is not because a container we just created is usually the newest

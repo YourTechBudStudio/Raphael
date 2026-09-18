@@ -162,6 +162,7 @@ export function DestinationSheet({
       label="the destination sheet"
       onClose={onClose}
       snapHeight={560}
+      testID="destination-sheet"
       visible={visible}
     >
       <SheetHeader

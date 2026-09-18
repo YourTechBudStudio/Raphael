@@ -44,6 +44,23 @@ export const LIST_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
 export const GET_PATH_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>(['target']);
 
 /**
+ * `tags` is deliberately absent: the update envelope has no such field. The 25-tag bound is on the
+ * *resulting* set, which only core can compute, so its refusal is raised directly rather than
+ * attributed by this allowlist - which only ever names fields a decoder can point at.
+ */
+export const UPDATE_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
+  'target',
+  'revision',
+  'title',
+  'slug',
+  'description',
+  'body',
+  'addTags',
+  'removeTags',
+  'format',
+]);
+
+/**
  * Reads one own data property.
  *
  * The three outcomes are deliberately distinct. An **absent** property is information - a missing title

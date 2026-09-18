@@ -20,7 +20,6 @@ import { InfiniteQueryObserver, QueryClient } from '@tanstack/react-query';
 import { Either } from 'effect';
 
 import {
-  noteEntityOptions,
   notePagesOptions,
   requestNextPage,
   truncateToFirstPage,
@@ -28,7 +27,6 @@ import {
 import {
   containerDescriptor,
   feedDescriptor,
-  noteEntityKey,
   noteListKey,
 } from '../src/modules/resources/client/requests.ts';
 
@@ -80,26 +78,6 @@ const stubTransport = (answers) => {
     },
   };
 };
-
-const entityAnswer = (over = {}) => ({
-  entity: {
-    id: 12,
-    type: 'resource',
-    kind: 'note',
-    parentId: 3,
-    slug: 'a-note',
-    revision: 2,
-    title: 'A note',
-    description: '',
-    tags: [],
-    body: {
-      format: 'tiptap',
-      value: { type: 'doc', content: [{ type: 'paragraph', content: [] }] },
-    },
-    metadata: {},
-    ...over,
-  },
-});
 
 const listAnswer = (ids, over = {}) => ({
   items: ids.map((id) => summary(id)),
@@ -399,43 +377,5 @@ describe('two connections', () => {
     assert.equal(handle.result().fetchStatus, 'idle');
     assert.equal(handle.result().data, undefined);
     handle.stop();
-  });
-});
-
-describe('the request that opens one note', () => {
-  it('names the note and asks for TipTap explicitly', async () => {
-    const { transport, requests } = stubTransport([entityAnswer()]);
-    const client = freshClient();
-
-    await client.fetchQuery(noteEntityOptions(1, transport, 12));
-
-    // `format` defaults to Markdown at the contract, so omitting it is a perfectly valid request
-    // that returns an answer this screen refuses rather than converts. The failure would be silent
-    // and total, which is why the field is asserted rather than trusted.
-    assert.deepEqual(requests[0], { target: { id: 12 }, format: 'tiptap' });
-    client.clear();
-  });
-
-  it('asks nothing without a transport, and nothing about a route that named no note', async () => {
-    const { transport, requests } = stubTransport([]);
-    const client = freshClient();
-
-    assert.equal(noteEntityOptions(-1, null, 12).enabled, false);
-    assert.equal(noteEntityOptions(1, transport, null).enabled, false);
-    assert.deepEqual(requests, []);
-    client.clear();
-  });
-
-  it('files two connections\u2019 readings of the same id apart', async () => {
-    const first = stubTransport([entityAnswer({ revision: 1 })]);
-    const second = stubTransport([entityAnswer({ revision: 9 })]);
-    const client = freshClient();
-
-    await client.fetchQuery(noteEntityOptions(1, first.transport, 12));
-    await client.fetchQuery(noteEntityOptions(2, second.transport, 12));
-
-    assert.equal(client.getQueryData(noteEntityKey(1, 12)).revision, 1);
-    assert.equal(client.getQueryData(noteEntityKey(2, 12)).revision, 9);
-    client.clear();
   });
 });

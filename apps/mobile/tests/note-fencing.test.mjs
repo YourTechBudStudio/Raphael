@@ -23,12 +23,8 @@ import { describe, it } from 'node:test';
 import { InfiniteQueryObserver, QueryClient } from '@tanstack/react-query';
 import { Either } from 'effect';
 
-import { noteEntityOptions, notePagesOptions } from '../src/modules/resources/client/options.ts';
-import {
-  feedDescriptor,
-  noteEntityKey,
-  noteListKey,
-} from '../src/modules/resources/client/requests.ts';
+import { notePagesOptions } from '../src/modules/resources/client/options.ts';
+import { feedDescriptor, noteListKey } from '../src/modules/resources/client/requests.ts';
 
 const summary = (id) => ({
   id,
@@ -43,15 +39,6 @@ const summary = (id) => ({
 });
 
 const listAnswer = (ids) => ({ items: ids.map(summary), skip: 0, limit: 50, hasMore: false });
-
-const entityAnswer = (revision) => ({
-  entity: {
-    ...summary(12),
-    revision,
-    body: { format: 'tiptap', value: { type: 'doc', content: [{ type: 'paragraph' }] } },
-    metadata: {},
-  },
-});
 
 /**
  * A transport that answers only when the test says so, and records that it was the one asked.
@@ -172,41 +159,6 @@ describe('a page that completes after the connection changed', () => {
     );
 
     live.stop();
-    client.clear();
-  });
-});
-
-describe('a note read that completes after the connection changed', () => {
-  it('cannot put one server’s note under the other server’s id', async () => {
-    const calls = [];
-    const retiredServer = deferredTransport('retired', calls);
-    const liveServer = deferredTransport('live', calls);
-    const client = freshClient();
-
-    // The same numeric id on both servers, which is the whole reason a key carries an activation.
-    const retiredRead = client.fetchQuery(noteEntityOptions(1, retiredServer.transport, 12));
-    await tick();
-
-    const liveRead = client.fetchQuery(noteEntityOptions(2, liveServer.transport, 12));
-    await tick();
-    liveServer.settle(entityAnswer(4));
-    await liveRead;
-
-    retiredServer.settle(entityAnswer(1));
-    await retiredRead;
-    await tick();
-
-    assert.equal(client.getQueryData(noteEntityKey(1, 12)).revision, 1);
-    assert.equal(
-      client.getQueryData(noteEntityKey(2, 12)).revision,
-      4,
-      'the live note is untouched',
-    );
-    assert.deepEqual(
-      calls.map((call) => call.transport),
-      ['retired', 'live'],
-    );
-
     client.clear();
   });
 });

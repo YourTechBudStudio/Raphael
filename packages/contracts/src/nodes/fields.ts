@@ -64,11 +64,14 @@ export const REQUEST_FIELDS = [
   'kind',
   'parent',
   'target',
+  'revision',
   'title',
   'slug',
   'description',
   'body',
   'tags',
+  'addTags',
+  'removeTags',
   'metadata',
   'idempotencyKey',
   'format',
@@ -202,6 +205,71 @@ export const DescriptionInput = Schema.String.pipe(
 );
 
 /**
+ * The per-tag normalization every tag goes through on input. Total over strings: it neither validates
+ * nor bounds nor deduplicates, because those are separate decisions `TagInput` and `TagsInput` make.
+ *
+ * Named and exported so that a client comparing tags it submitted against tags the server stored
+ * applies this one rule rather than a second copy of it. That comparison has to keep working against
+ * stored values, which are deliberately not re-validated against input limits (see the file header),
+ * so a normalization that could reject would be the wrong tool for it.
+ */
+export const normalizeTag = (value: string): string => value.trim().normalize('NFC');
+
+/** Why a submitted tag, or a whole submitted list, cannot be sent as it is. */
+export type TagsRejectionReason = 'tag_empty' | 'tag_too_long' | 'tags_too_many' | 'tags_repeat';
+
+export interface TagsRejection {
+  readonly reason: TagsRejectionReason;
+  /** The bound that was exceeded, when the reason is a limit. */
+  readonly limit?: number;
+}
+
+/**
+ * Inspects one normalized tag and names what is wrong with it, without repeating the value.
+ *
+ * `TagInput`'s refinement is this helper, for the reason `inspectTitleInput` is: a client that has to
+ * tell someone *which* bound they hit must ask the same question the decoder asks, rather than
+ * carrying a second copy of the rule that can drift from it. It takes an already-normalized tag,
+ * because that is what the transform hands the refinement and what `normalizeTag` gives a caller.
+ */
+export const inspectTagInput = (value: string): TagsRejection | undefined => {
+  const length = codePointLength(value);
+
+  if (length < TAG_MIN_CODE_POINTS) return { reason: 'tag_empty' };
+  if (length > TAG_MAX_CODE_POINTS) return { reason: 'tag_too_long', limit: TAG_MAX_CODE_POINTS };
+
+  return undefined;
+};
+
+/**
+ * Inspects a whole normalized tag list, reporting the most actionable bound first.
+ *
+ * For a caller holding a list it is about to submit and needing to say what is wrong with it before
+ * the decoder answers in a formatted message that carries the values. The per-tag half is
+ * `inspectTagInput`, which is `TagInput`'s own refinement, so that rule has one home. The count and
+ * the repeat are stated here a second time against the same `TAGS_MAX_COUNT` that `TagsInput` bounds
+ * itself with: the array-level schema is deliberately left exactly as it is, because its decode
+ * failures are what the server's own diagnostics are shaped around.
+ *
+ * **The order is this function's, not the decoder's**, and deliberately so: a list that is both too
+ * long and holds an over-long tag is reported as too long, because that is the one a person fixes
+ * first, while the decoder reaches the element failure before `maxItems` can apply. What the two must
+ * agree on is per-bound - whether a given list passes - and that is what the tests pin. Nothing
+ * user-facing rests on which reason comes back, since either is a true statement about the list.
+ */
+export const inspectTagsInput = (tags: readonly string[]): TagsRejection | undefined => {
+  if (tags.length > TAGS_MAX_COUNT) return { reason: 'tags_too_many', limit: TAGS_MAX_COUNT };
+
+  for (const tag of tags) {
+    const rejection = inspectTagInput(tag);
+
+    if (rejection !== undefined) return rejection;
+  }
+
+  return new Set(tags).size === tags.length ? undefined : { reason: 'tags_repeat' };
+};
+
+/**
  * Tags are trimmed and NFC-normalized on input, then compared for duplicates by exact equality of
  * that normalized form. Case and internal whitespace are preserved and significant, so `Work` and
  * `work` are two different tags. This deliberately avoids a second, case-insensitive identity that
@@ -209,15 +277,17 @@ export const DescriptionInput = Schema.String.pipe(
  */
 const TagInput = Schema.transform(Schema.String, Schema.String, {
   strict: true,
-  decode: (value) => value.trim().normalize('NFC'),
+  decode: normalizeTag,
   encode: (value) => value,
 }).pipe(
   Schema.filter((value) => {
-    const length = codePointLength(value);
-    if (length < TAG_MIN_CODE_POINTS) return 'a tag must not be empty';
-    return length <= TAG_MAX_CODE_POINTS
-      ? true
-      : `a tag may be at most ${TAG_MAX_CODE_POINTS} characters`;
+    const rejection = inspectTagInput(value);
+
+    if (rejection === undefined) return true;
+
+    return rejection.reason === 'tag_too_long'
+      ? `a tag may be at most ${TAG_MAX_CODE_POINTS} characters`
+      : 'a tag must not be empty';
   }),
 );
 

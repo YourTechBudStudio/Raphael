@@ -9,10 +9,10 @@
  * standing from an attempt's fields would be a second authority on the question that decides whether
  * someone's writing is duplicated or destroyed.
  *
- * That is why `standingFor` is reached only through the owner, and why Home and recovery draw from
- * `useUnfinishedNotes` rather than from `drafts` and `attempts`: the projection is derived in one
- * place, from the owner's own answers, so no screen can disagree with another about what a record
- * means.
+ * That is why `standingFor` is reached only through the owner, and why recovery draws from
+ * `useUnfinishedNotes` - and Home reads through `useUnfinishedTally` - rather than reading `drafts`
+ * and `attempts`: the projection is derived in one place, from the owner's own answers, so no screen
+ * can disagree with another about what a record means.
  *
  * Capture is also the only capability that opens a local operational database through
  * `infrastructure/sqlite`, and `tests/architecture.test.mjs` holds that line.
@@ -23,18 +23,23 @@ export { VoiceCaptureSheet } from './components/VoiceCaptureSheet';
 // a draft exists before a composer opens over it - so no screen can wire New note a second way.
 export { CaptureDock, type CaptureDockProps } from './components/CaptureDock';
 export { CaptureScreen, type CaptureScreenProps } from './components/CaptureScreen';
+/** The editor over an existing entity. One screen for notes and containers alike. */
+export { EditScreen, type EditScreenProps } from './components/EditScreen';
 export { RecoveryScreen } from './components/RecoveryScreen';
 export { StorageGate } from './components/StorageGate';
-export { UnfinishedGridCard, type UnfinishedGridCardProps } from './components/UnfinishedGridCard';
 
 /** The app-lifetime composition. Opened once, above the connection gate. */
 export { useCaptureLifetime, useCaptureSession } from './client/owner.ts';
+/** The second owner over the same database. Its store, schema and rules stay inside, as the first's do. */
+export { useEditLifetime, useEditOwner } from './client/edit-owner.ts';
+export { useEditActions, useUnfinishedEdits } from './client/edits.ts';
 export { useNewNote, type NewNote } from './client/new-note.ts';
 export {
-  useHomeUnfinishedNotes,
   useSaveNotice,
   useUnfinishedActions,
   useUnfinishedNotes,
+  useUnfinishedTally,
+  type UnfinishedTally,
 } from './client/notes.ts';
 export { useDestinationName, type DestinationName } from './client/destinations.ts';
 
@@ -58,6 +63,25 @@ export {
 export type { StoreFailure } from './store.ts';
 /** What `standingFor` answers with. The rules that produce it stay inside. */
 export type { BlockedReason, Standing, UnsendableCause } from './policy.ts';
+/**
+ * The edit owner's vocabulary, and nothing that decides anything.
+ *
+ * `edit-policy.ts`, `edit-composer.ts` and the store stay private for the reason the creation side's
+ * do: a consumer that could re-derive a standing would be a second authority on whether someone's
+ * writing is on their server.
+ */
+export {
+  createEditOwner,
+  type EditLocation,
+  type EditOpenOutcome,
+  type EditOwner,
+  type EditPorts,
+  type EditState,
+  type LeaveOutcome,
+} from './edit-owner.ts';
+export type { EditStanding } from './edit-policy.ts';
+export type { EditContent, EditProblem, EditRefusal, EntityEditRecord } from './edit-types.ts';
+export type { UnfinishedEdit } from './edit-unfinished.ts';
 /** Reading an attempt's submitted content back for recovery. Never rewrites the stored bytes. */
 export { recoverNoteInput, type RecoveredNote } from './freeze.ts';
 /** What Home and recovery draw. Derived from the owner's answers, never re-derived from rows. */

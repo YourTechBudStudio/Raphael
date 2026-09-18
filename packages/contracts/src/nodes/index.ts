@@ -1,4 +1,4 @@
-/** The hierarchy capability: identity, addressing, authored fields, and the four node operations. */
+/** The hierarchy capability: identity, addressing, authored fields, and the five node operations. */
 export {
   BODY_FORMATS,
   BodyFormatSchema,
@@ -56,11 +56,16 @@ export {
   type RequestField,
   type ResourceKind,
   type TipTapDocumentTransport,
+  type TagsRejection,
+  type TagsRejectionReason,
   type TitleRejection,
   type TitleRejectionReason,
   inspectMetadataInput,
+  inspectTagInput,
+  inspectTagsInput,
   inspectTitleInput,
   isRequestField,
+  normalizeTag,
 } from './fields.ts';
 export { compareNodeOrder } from './ordering.ts';
 export {
@@ -84,10 +89,13 @@ export {
   ResourceCreateRequest,
   ScopePath,
   ScopeSelector,
+  UpdateRequest,
+  UpdateResponse,
   type CreateRequestInput,
   type GetPathRequestInput,
   type GetRequestInput,
   type ListRequestInput,
+  type UpdateRequestInput,
   decodeCreateRequest,
   decodeCreateResponse,
   decodeGetPathRequest,
@@ -96,6 +104,8 @@ export {
   decodeGetResponse,
   decodeListRequest,
   decodeListResponse,
+  decodeUpdateRequest,
+  decodeUpdateResponse,
 } from './operations.ts';
 export {
   ROOT_PATH,

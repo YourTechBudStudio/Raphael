@@ -27,9 +27,6 @@ import { toNoteSummaryItem, type NoteSummaryItem } from './summary.ts';
 
 /** The cache segment every server-note query lives under. Media has its own. */
 export const NOTES_SEGMENT = 'notes';
-/** The cache segment one note's full entity lives under. */
-export const NOTE_ENTITY_SEGMENT = 'note';
-
 /**
  * One page, everywhere. The server's own default, which is what a client with no better information
  * should ask for: it is the size core is tuned against, and a smaller page would multiply round
@@ -116,10 +113,6 @@ export const noteListKey = (
     descriptor.skip,
     descriptor.limit,
   );
-
-/** The cache key for one note's entity. */
-export const noteEntityKey = (activation: number, id: number): readonly unknown[] =>
-  scopeKey(activation, NOTE_ENTITY_SEGMENT, id);
 
 /** One page of notes as this app holds it: mapped, guarded, and carrying the server's own offsets. */
 export interface NotePage {

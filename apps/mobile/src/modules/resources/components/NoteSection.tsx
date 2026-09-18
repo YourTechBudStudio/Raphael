@@ -1,9 +1,10 @@
 import clsx from 'clsx';
+import type { ReactNode } from 'react';
 import { Text, View } from 'react-native';
 
 import { SectionHeading, SkeletonBlock, SkeletonGroup } from '../../../ui';
 import type { NoteFeedView } from '../client/feed-state';
-import { NoteGrid, type NoteGridLeadingItem } from './NoteGrid';
+import { NoteGrid } from './NoteGrid';
 import type { NoteSectionCopy } from './notes-copy';
 
 /**
@@ -20,8 +21,14 @@ import type { NoteSectionCopy } from './notes-copy';
 export interface NoteSectionProps {
   view: NoteFeedView;
   copy: NoteSectionCopy;
-  /** Cards drawn before the server's, in order. Phase 06 fills this from capture. */
-  leading?: readonly NoteGridLeadingItem[] | undefined;
+  /**
+   * Drawn on the heading's own row, at its end.
+   *
+   * The prop exists because the heading is here rather than in each screen, and Home has one thing to
+   * put beside it: the count of everything that is not on the server. Duplicating the heading in Home
+   * to hang a chip off it would be two renderings of one heading, free to drift.
+   */
+  headingTrailing?: ReactNode | undefined;
   locationFor?: ((parentId: number) => string | undefined) | undefined;
   onOpen?: ((id: number) => void) | undefined;
   className?: string | undefined;
@@ -59,45 +66,39 @@ function Line({ children, live }: { children: string; live?: boolean | undefined
 export function NoteSection({
   view,
   copy,
-  leading,
+  headingTrailing,
   locationFor,
   onOpen,
   className,
   testID,
 }: NoteSectionProps) {
-  const leadingCards = leading ?? [];
-  const hasCards = view.items.length > 0 || leadingCards.length > 0;
+  const hasCards = view.items.length > 0;
 
   return (
     <View className={clsx('gap-3', className)} testID={testID}>
-      <SectionHeading>Notes</SectionHeading>
+      {headingTrailing === undefined ? (
+        <SectionHeading>Notes</SectionHeading>
+      ) : (
+        <View className="flex-row items-center justify-between gap-3">
+          <SectionHeading>Notes</SectionHeading>
+          {headingTrailing}
+        </View>
+      )}
 
-      {/* Nothing has arrived and nothing has failed. Cards already on this phone still show:
-          they are here whatever the server is doing. */}
+      {/* Nothing has arrived and nothing has failed. */}
       {view.isLoading && !hasCards ? <NotesSkeleton /> : null}
 
-      {/* Cards first, always, and that order is the point rather than a layout preference.
-          What leads this grid is writing that is on this phone and is not on the server, and a
-          server that is empty or unreachable must never be allowed to precede it - let alone hide
-          it. Everything below this is a statement about the server's half of the section. */}
-      {hasCards ? (
-        <NoteGrid
-          items={view.items}
-          leading={leadingCards}
-          locationFor={locationFor}
-          onOpen={onOpen}
-        />
-      ) : null}
+      {/* The server's notes. Everything below this is a statement about the reading that produced
+          them - or failed to. */}
+      {hasCards ? <NoteGrid items={view.items} locationFor={locationFor} onOpen={onOpen} /> : null}
 
       {/* The read failed. Beside cards this says what is not known about an earlier reading;
           with no cards it is the whole answer. Either way it is the same sentence, because the
           thing that went wrong is the same thing. */}
       {view.isUnavailable || view.isStale ? <Line live>{copy.failed}</Line> : null}
 
-      {/* Read successfully, and the server holds nothing here.
-          It is said even while unfinished cards are on screen, because the two report different
-          facts: what is on this phone, and what is filed on the server. Suppressing it would leave
-          a person unable to tell an empty account from one that had not answered. */}
+      {/* Read successfully, and the server holds nothing here. Distinct from a read that never
+          answered, which is the line above: an empty account and a silent one are not the same. */}
       {view.isEmpty ? <Line>{copy.empty}</Line> : null}
 
       {/* The only statement of incompleteness. Nothing implies the list has ended while another

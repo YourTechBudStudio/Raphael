@@ -18,6 +18,7 @@ import {
   type GetPathRequestInput,
   type GetRequestInput,
   type ListRequestInput,
+  type UpdateRequestInput,
   decodeCreateRequest,
   decodeCreateResponse,
   decodeGetPathRequest,
@@ -26,10 +27,13 @@ import {
   decodeGetResponse,
   decodeListRequest,
   decodeListResponse,
+  decodeUpdateRequest,
+  decodeUpdateResponse,
   type CreateResponse,
   type GetPathResponse,
   type GetResponse,
   type ListResponse,
+  type UpdateResponse,
 } from '@raphael/contracts/nodes';
 import { Either } from 'effect';
 
@@ -108,6 +112,30 @@ export const create = (
     decodeCreateResponse,
     request,
     201,
+    true,
+    signal,
+  );
+
+/**
+ * Change one existing area, project, or note. Answers 200.
+ *
+ * No idempotency key and no replay, deliberately: an update's safety is the revision it names, not a
+ * key. A caller sends the revision it read, and the server's compare-and-set either applies the change
+ * to that exact version or refuses it as `revision_conflict`. There is nothing to replay, because a
+ * repeat of an applied update would be a second write against a revision that has already moved.
+ */
+export const update = (
+  transport: Transport,
+  request: UpdateRequestInput,
+  signal?: AbortSignal,
+): Promise<ClientResult<UpdateResponse>> =>
+  run(
+    transport,
+    NODE_ROUTES.update,
+    decodeUpdateRequest as Decoder<unknown>,
+    decodeUpdateResponse,
+    request,
+    200,
     true,
     signal,
   );

@@ -21,9 +21,11 @@ import { fileURLToPath } from 'node:url';
 
 import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
 import { createTransport } from '@raphael/client';
-import { create as createNode } from '@raphael/client/nodes';
+import { create as createNode, get as getNode, update as updateNode } from '@raphael/client/nodes';
 import { Effect, Exit, Scope } from 'effect';
 
+import { createEditOwner } from '../../src/modules/capture/edit-owner.ts';
+import { editKeyOf } from '../../src/modules/capture/edit-types.ts';
 import { createCaptureOwner } from '../../src/modules/capture/owner.ts';
 import { openCaptureStore } from '../../src/modules/capture/store.ts';
 import { openNodeDatabase } from './node-sqlite.mjs';
@@ -228,5 +230,57 @@ export const captureOver = async (endpoint, localDbFile, options = {}) => {
       transport,
       usable: true,
     },
+  };
+};
+
+/**
+ * An edit owner over a real store, wired to a real transport.
+ *
+ * `captureOver`'s counterpart, and the reason both exist in one harness: editing is the first
+ * operation where the two clients' interaction models genuinely diverge - `raphael update` names a
+ * revision explicitly, the phone autosaves against a base it keeps itself - so the only place that
+ * divergence can be checked is at a server both of them talk to.
+ *
+ * The debounce is set to zero and the timers are real, so a case reads as "edit, then wait for the
+ * server to have it" rather than as a schedule being driven by hand. `fetchImpl` is the one seam a
+ * case replaces, and only to make an answer actually go missing.
+ */
+export const editOver = async (endpoint, localDbFile, options = {}) => {
+  const transport = createTransport({
+    endpoint,
+    apiKey: options.key ?? KEY,
+    fetch: options.fetch ?? fetch,
+  });
+  const applied = [];
+
+  const owner = createEditOwner({
+    openStore: async () => openCaptureStore(await openNodeDatabase(localDbFile), () => Date.now()),
+    get: (activeTransport, request) => getNode(activeTransport, request),
+    update: (activeTransport, request) => updateNode(activeTransport, request),
+    now: options.now ?? (() => Date.now()),
+    applyUpdate: async (ref, activation) => {
+      applied.push({ ref, activation });
+    },
+    sessionIsCurrent: options.sessionIsCurrent ?? ((session) => session.activation === 1),
+    autosaveDelayMs: options.autosaveDelayMs ?? 0,
+    autosaveRetryMs: options.autosaveRetryMs ?? 50,
+  });
+
+  const session = {
+    activation: options.activation ?? 1,
+    connectionId: options.connectionId ?? 'c1',
+    endpoint,
+    transport,
+    usable: true,
+  };
+
+  return {
+    owner,
+    transport,
+    session,
+    applied,
+    keyFor: (nodeId) => editKeyOf({ connectionId: session.connectionId, nodeId }),
+    record: (nodeId) =>
+      owner.getState().edits.find((candidate) => candidate.key.nodeId === nodeId) ?? null,
   };
 };

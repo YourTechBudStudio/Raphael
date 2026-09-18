@@ -93,6 +93,13 @@ export interface NoteDraftRecord {
   readonly description: string;
   /** The canonical TipTap document, as last committed. */
   readonly document: unknown;
+  /**
+   * Tags written before the note exists, normalized as the contract normalizes them.
+   *
+   * Authored content like every field beside it: a change to it bumps `draftVersion` and is protected
+   * exactly as a title edit is, and it is carried into the frozen request rather than reassembled.
+   */
+  readonly tags: readonly string[];
   readonly contentSchemaVersion: number;
   readonly destination: Destination | null;
   /** Every authored field participates in this, so a title edit is protected like a body edit. */

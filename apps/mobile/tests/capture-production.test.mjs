@@ -549,11 +549,11 @@ describe('a connection the app has moved on from', () => {
       const refused = await kit.owner.getState().createDraft(kit.session({ activation: 1 }));
       assert.equal(refused.kind, 'refused');
 
-      // And the work filed under it is not in the current Home: it is recovery's, under its own
-      // heading, offering only what needs no server.
+      // And the work filed under it is recovery's, under its own heading, offering only what needs
+      // no server.
       const elsewhere = cards(kit, 'another-connection');
       for (const card of elsewhere) {
-        assert.equal(card.onHome, false);
+        assert.equal(card.scope, 'retired');
         assert.deepEqual([...card.actions], ['copy', 'discard']);
       }
     } finally {

@@ -12,7 +12,8 @@
         "backgroundColor": "#f8f6fc",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
-      }
+      },
+      "package": "studio.yourtechbud.raphael"
     },
     "web": {
       "output": "static",
@@ -29,6 +30,11 @@
         }
       ]
     ],
-    "experiments": { "typedRoutes": true }
+    "experiments": {
+      "typedRoutes": true
+    },
+    "ios": {
+      "bundleIdentifier": "studio.yourtechbud.raphael"
+    }
   }
 }

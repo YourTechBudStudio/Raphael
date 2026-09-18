@@ -12,10 +12,40 @@
  */
 
 import type { EditorRejectionCode } from '../editor';
-import type { DraftProtection } from './owner.ts';
 import type { Standing } from './policy.ts';
+// From the core that defines it, not through `owner.ts`, which only re-exports it. The edit composer
+// reuses this module, and reaching the type through the owner would put the owner in the import graph
+// of every pure module that does.
+import type { DraftProtection, FlushResult } from './protection.ts';
 
 export type StatusTone = 'quiet' | 'alert';
+
+/**
+ * A chosen destination, named - or honestly not named.
+ *
+ * Here rather than beside the hook that produces it because the eyebrow's words are composed here,
+ * and the hook reads a live hierarchy that no pure module may import. `useDestinationName` supplies
+ * this and re-exports the type, so there is still one name for the shape.
+ */
+export interface DestinationName {
+  /**
+   * `parent / leaf`, with a leading ellipsis when the path is deeper.
+   *
+   * Null means **nothing is chosen**, and only that. A destination that is chosen but cannot be named
+   * right now still has words here, because declining to name a place is not forgetting it.
+   */
+  readonly chip: string | null;
+  /**
+   * The whole path, and nothing else.
+   *
+   * Null wherever there is no path to speak - nothing chosen, or a hierarchy that cannot name what
+   * was. It is deliberately never a sentence: every caller interpolates it into one of its own, and a
+   * sentence here would end up inside one of those.
+   */
+  readonly spoken: string | null;
+  /** Just the leaf, for a sentence like "Look in <leaf>". Null when it cannot be named. */
+  readonly leaf: string | null;
+}
 
 export interface ComposerStatus {
   readonly text: string;
@@ -70,7 +100,14 @@ export const REFUSED_STATUS = 'Your server refused the last save · kept on this
 export const UNRECORDED_STATUS = 'On your server · not yet recorded on this phone';
 /** Said for any request in the air, a first Save and a Retry alike; both are a save being sent. */
 export const SAVING_STATUS = 'Saving to your server…';
-export const KEPT_STATUS = 'Kept on this phone as you write';
+/**
+ * Half of A4, as a phrase rather than a sentence.
+ *
+ * Exported because the edit composer's `pending` and `offline` sentences are the same claim with a
+ * different tail, and A4 is about this phrase being the same wherever it is said.
+ */
+export const KEPT_ON_PHONE = 'Kept on this phone';
+export const KEPT_STATUS = `${KEPT_ON_PHONE} as you write`;
 export const INCONSISTENT_STATUS =
   'Raphael cannot tell what happened to the last save · kept on this phone';
 
@@ -81,11 +118,15 @@ export const remainderStatus = (revision: number): string =>
 export const serverStatus = (revision: number): string =>
   `On your server · revision ${String(revision)}`;
 
-export interface ComposerInput {
-  readonly standing: Standing | null;
+/** The two facts the protection question is asked of. Both composers supply exactly these. */
+export interface ProtectionInput {
   readonly protection: DraftProtection | undefined;
   /** The last thing the renderer refused, when a flush was refused rather than unanswered. */
   readonly lastRejection: EditorRejectionCode | null;
+}
+
+export interface ComposerInput extends ProtectionInput {
+  readonly standing: Standing | null;
   /** True between admission and the answer. */
   readonly saving: boolean;
   /** A title, a description, or a body with something in it. Core owns the final word on titles. */
@@ -105,13 +146,77 @@ export interface ComposerInput {
  * Save is refused - by the owner as well as by this - and the status says which it is. The flag
  * clears the moment the editor answers anything, so a slow renderer that comes back is not left
  * looking broken.
+ *
+ * Exported because the edit composer asks exactly this question and must get exactly this answer.
+ * Protection precedence is the rule both composers are built on; two copies of it is how a screen
+ * ends up saying "Saving to your server…" over writing this phone could not keep.
  */
-const problemOf = (input: ComposerInput): ProtectionProblem | null => {
+export const problemOf = (input: ProtectionInput): ProtectionProblem | null => {
   if (input.protection?.failedWrite === true) return 'failed_write';
   if (!(input.protection?.rendererUnknown ?? false)) return null;
   if (input.lastRejection === null) return 'unanswered';
 
   return input.lastRejection === 'too_large' ? 'too_large' : 'failed_write';
+};
+
+/**
+ * Which repair a flush that did not land calls for.
+ *
+ * Here rather than in a screen because both composers ask it of the same `FlushResult` and must get
+ * the same answer: the sheet it chooses is what someone is offered to rescue writing this phone could
+ * not keep, and two copies is how one screen ends up offering Undo where the other offers a retry.
+ */
+export const problemFor = (result: FlushResult): ProtectionProblem => {
+  if (result.kind === 'refused') return result.code === 'too_large' ? 'too_large' : 'failed_write';
+
+  return result.kind === 'unanswered' ? 'unanswered' : 'failed_write';
+};
+
+/** What the destination row above the title says, and what it is called out loud. */
+export interface DestinationEyebrow {
+  readonly label: string;
+  readonly spoken: string;
+  readonly hint: string;
+  /** False only when nothing has been chosen. Declining to name a chosen place is not that. */
+  readonly chosen: boolean;
+}
+
+/**
+ * The destination, as the eyebrow above the title says it.
+ *
+ * The sibling of `detailsChip`: the one place that turns a stored `{type, id}` into words a person
+ * reads on this screen, so no screen composes its own and drifts from the other.
+ *
+ * **Three states, not two.** "Where does this go?" means *nothing chosen*, strictly. A destination
+ * that is chosen but cannot be named right now - the hierarchy has not loaded, or was retained after
+ * a failed refresh - keeps `useDestinationName`'s own words for it, because declining to name a place
+ * is not forgetting it, and reverting to the question would invite someone to pick again over a
+ * choice that still stands.
+ */
+export const destinationEyebrow = (name: DestinationName): DestinationEyebrow => {
+  const hint = 'Chooses the area or project this note goes in';
+
+  if (name.chip === null) {
+    return {
+      label: 'Where does this go?',
+      spoken: 'Choose where this note goes',
+      hint,
+      chosen: false,
+    };
+  }
+
+  return {
+    label: name.chip,
+    // The whole path, spoken: the row shows two segments and a screen reader gets all of them. With
+    // no path to speak the sentence says that instead, rather than reading the visible label aloud
+    // as though "Chosen place" were somewhere's name.
+    spoken:
+      name.spoken === null
+        ? 'Where this note goes, which your server has not named here yet'
+        : `Filed in ${name.spoken}`,
+    hint,
+    chosen: true,
+  };
 };
 
 const NO_ACTION: ComposerAction = { kind: 'none', label: '', enabled: false, hint: '' };

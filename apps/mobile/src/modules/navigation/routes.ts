@@ -24,14 +24,18 @@ export function openProject(id: number): void {
 }
 
 /**
- * Opens one saved note, read-only.
+ * Opens the editor over one existing entity.
  *
- * By the server's numeric id, which is the only identity a note has. There is no draft route here:
- * a note that exists only on this phone is not addressable by a server id and is opened from the
+ * By the server's numeric id, which is the only identity an entity has. There is no draft route here:
+ * writing that exists only on this phone is not addressable by a server id and is opened from the
  * record that holds it.
+ *
+ * One route for notes and containers alike: opening something is editing it, and the owner's own read
+ * establishes which of the two it is, so the caller does not have to know. There is no read-only view
+ * to fall back to and no mode to enter.
  */
-export function openResource(id: number): void {
-  router.push({ pathname: '/resource/[id]', params: { id: String(id) } });
+export function openEditor(id: number): void {
+  router.push({ pathname: '/edit/[id]', params: { id: String(id) } });
 }
 
 /**

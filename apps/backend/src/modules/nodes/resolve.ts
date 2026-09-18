@@ -6,7 +6,13 @@ import { InternalFailure, InvalidInput, InvalidParent, NodeNotFound } from './er
 import { nodes } from './schema.ts';
 import { raise } from './storage-failures.ts';
 import type { Orm } from './store.ts';
-import { isNodeType, type NodeType, type ResolvedScope, type StoredNode } from './types.ts';
+import {
+  isNodeType,
+  type NodeType,
+  type ResolvedScope,
+  type StoredEntity,
+  type StoredNode,
+} from './types.ts';
 
 /**
  * One resolution path for both selector forms.
@@ -138,6 +144,52 @@ export const resolveEntity = (
     return raise(new InvalidInput({ field, reason: 'invalid' }));
   }
   return scope.node;
+};
+
+/**
+ * The columns an entity response is built from.
+ *
+ * Exactly the set `StoredEntity` declares and `entityProjection` publishes, named once. Two operations
+ * load this row and a third will when lifecycle lands, and a column list copied per caller is a list
+ * that drifts: adding a field to the entity contract would mean editing selects that share no symbol,
+ * and the one that was missed would fail its own response decode rather than saying what went wrong.
+ */
+const ENTITY_COLUMNS = {
+  id: nodes.id,
+  type: nodes.type,
+  kind: nodes.kind,
+  parentId: nodes.parentId,
+  slug: nodes.slug,
+  revision: nodes.revision,
+  title: nodes.title,
+  description: nodes.description,
+  tags: nodes.tags,
+  body: nodes.body,
+  metadata: nodes.metadata,
+} as const;
+
+/**
+ * Resolves a selector and loads the whole entity behind it.
+ *
+ * Takes the query handle rather than the connection, so it composes into either transaction shape: a
+ * read for an ordinary projection, and - when lifecycle arrives (ADR 0002) - the write transaction that
+ * must check eligibility atomically with the mutation. It opens no transaction of its own, because the
+ * caller is the one that knows which guarantee it needs.
+ */
+export const loadEntity = (
+  orm: Orm,
+  selector: Selector,
+  field: 'target' | 'parent',
+  operation: string,
+): StoredEntity => {
+  const node = resolveEntity(orm, selector, field, operation);
+  const entity = orm.select(ENTITY_COLUMNS).from(nodes).where(eq(nodes.id, node.id)).get();
+  if (entity === undefined) {
+    // Resolution just found this row inside the same snapshot, so its disappearance is not a missing
+    // node; something is wrong with the read itself.
+    return raise(new InternalFailure({ operation, detail: 'a resolved node did not load' }));
+  }
+  return entity as StoredEntity;
 };
 
 /**

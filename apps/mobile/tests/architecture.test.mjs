@@ -407,6 +407,55 @@ test('no throwaway mock surface survives', () => {
 });
 
 /**
+ * The UX mapping session's previews are gone too, and by the same rule.
+ *
+ * Three presentation-only routes were built over real components to settle the edit screen, the
+ * container editor and this surface, and each was deleted by the phase that replaced it. They used
+ * production components with invented data, which is precisely the confusion the sweep above exists
+ * to end: a route that draws a plausible conflict from a literal, one import away from the screen
+ * that draws a real one.
+ */
+test('no throwaway preview survives', () => {
+  for (const file of files) {
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    for (const name of ['TEMPORARY PREVIEW', 'app/preview', '/preview/']) {
+      assert.ok(!source.includes(name), `${file}: still reaches the retired preview ${name}`);
+    }
+  }
+
+  assert.ok(!existsSync(path.join(root, 'app', 'preview')), 'the preview routes are gone');
+});
+
+/**
+ * Home draws no unfinished cards, and the machinery for them is gone rather than unused.
+ *
+ * Home carries one count beside the Notes heading and Recovery carries the list. The leading-card
+ * mechanism that put unfinished notes into the server's grid is deleted end to end - the card, the
+ * hook that selected for it, the projection field that answered "does this go on Home", and the grid
+ * prop that drew it - because a published mechanism with no caller is a second way to build this
+ * surface, waiting to be found.
+ */
+test('nothing can lead the notes grid with local cards again', () => {
+  for (const file of files) {
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    // The field is matched in its two code forms rather than as a bare word: `edit-unfinished.ts`
+    // names it in the comment explaining why it has no such projection, and that explanation is
+    // worth keeping - the same allowance `createNote(` gets above.
+    for (const name of [
+      'UnfinishedGridCard',
+      'useHomeUnfinishedNotes',
+      'NoteGridLeadingItem',
+      'onHome:',
+      '.onHome',
+    ]) {
+      assert.ok(!source.includes(name), `${file}: still reaches the retired ${name}`);
+    }
+  }
+});
+
+/**
  * A note is server data, and there is no second kind of note.
  *
  * `NoteResource` and `localContent.createNote` wrote a note that existed only in this process and
@@ -428,23 +477,48 @@ test('nothing can create a note that exists only in this process', () => {
 /**
  * A second entry point has to be a leaf, or it has not broken the cycle it exists for.
  *
- * `collections/hierarchy.ts` is imported by `resources` so that a note screen can name where a note
- * is filed. If anything it reaches were to reach back into `resources`, the cycle would be exactly
- * where it was - only harder to see, because the edge would run through a file nobody thinks of as
- * public. So the whole graph under each declared entry point is walked, and reaching the capability
- * that depends on it is a failure.
+ * `collections/hierarchy.ts` exists so that a screen in another capability can name where something
+ * is filed without importing the index that publishes the Area and Project screens. If anything it
+ * reaches were to reach back into a capability that imports it, the cycle would be exactly where it
+ * was - only harder to see, because the edge would run through a file nobody thinks of as public.
+ *
+ * **Its dependants are discovered rather than named.** The rule used to spell out `resources`, which
+ * was true while the note screen was the only importer; capture reaches it now, for the eyebrow on
+ * the edit screen. A rule that names one capability goes on passing for the wrong reason the moment a
+ * second one appears, so the importers are read off the graph and every one of them is checked.
  *
  * The capture edges are covered separately, by the acyclicity rule above.
  */
-test('a declared second entry point does not reach the capability that depends on it', () => {
-  const hierarchy = path.join('modules', 'collections', 'hierarchy.ts');
-  const reached = [...reachable(hierarchy)].filter((file) =>
-    file.startsWith(path.join('modules', 'resources') + path.sep),
-  );
+test('a declared second entry point does not reach the capabilities that depend on it', () => {
+  for (const [module, entries] of ENTRY_POINTS) {
+    for (const entry of entries) {
+      if (entry === 'index.ts') continue;
 
-  assert.deepEqual(
-    reached,
-    [],
-    `${hierarchy} reaches resources, so the cycle it exists to break is still there`,
-  );
+      const target = path.join('modules', module, entry);
+      const dependants = new Set(
+        files
+          .filter((file) =>
+            imports(file).some((it) =>
+              resolveImport(file, it) === undefined
+                ? false
+                : path.relative(root, resolveImport(file, it)) === target,
+            ),
+          )
+          .map((file) => file.split(path.sep)[1])
+          .filter((name) => name !== module),
+      );
+
+      assert.ok(dependants.size > 0, `${target} is a second entry point nothing imports`);
+
+      const reached = [...reachable(target)].filter((file) =>
+        [...dependants].some((name) => file.startsWith(path.join('modules', name) + path.sep)),
+      );
+
+      assert.deepEqual(
+        reached,
+        [],
+        `${target} reaches ${[...dependants].join(', ')}, so the cycle it exists to break is still there`,
+      );
+    }
+  }
 });

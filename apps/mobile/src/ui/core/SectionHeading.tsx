@@ -19,13 +19,18 @@ export function SectionHeading({ children, className }: SectionHeadingProps) {
 
 export interface EyebrowProps {
   children: string;
+  /** Spoken name when the visible label is elided, such as a path shown as its last two segments. */
+  accessibilityLabel?: string | undefined;
   className?: string | undefined;
 }
 
 /** The small primary label above a screen title, such as "Area" or "Project". */
-export function Eyebrow({ children, className }: EyebrowProps) {
+export function Eyebrow({ children, accessibilityLabel, className }: EyebrowProps) {
   return (
-    <Text className={['font-body-medium text-[16px] text-primary', className ?? ''].join(' ')}>
+    <Text
+      accessibilityLabel={accessibilityLabel}
+      className={['font-body-medium text-[16px] text-primary', className ?? ''].join(' ')}
+    >
       {children}
     </Text>
   );

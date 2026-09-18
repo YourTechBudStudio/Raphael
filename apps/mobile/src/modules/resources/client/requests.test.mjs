@@ -14,7 +14,6 @@ import {
   containerDescriptor,
   feedDescriptor,
   nextPageSkip,
-  noteEntityKey,
   noteListKey,
   noteListRequest,
   NOTE_PAGE_SIZE,
@@ -124,11 +123,5 @@ describe('cache keys', () => {
 
   it('are stable for the same question asked twice', () => {
     assert.equal(hash(noteListKey(3, feedDescriptor(0))), hash(noteListKey(3, feedDescriptor(0))));
-  });
-
-  it('keep one note’s entity apart from the lists and from another connection', () => {
-    assert.notEqual(hash(noteEntityKey(1, 4)), hash(noteEntityKey(2, 4)));
-    assert.notEqual(hash(noteEntityKey(1, 4)), hash(noteEntityKey(1, 5)));
-    assert.notEqual(hash(noteEntityKey(1, 4)), hash(noteListKey(1, containerDescriptor(4, 0))));
   });
 });
