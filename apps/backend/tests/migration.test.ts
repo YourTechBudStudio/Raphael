@@ -24,6 +24,18 @@ import {
   withMigrated,
 } from './support.ts';
 
+/**
+ * The node ids the index matches for one term.
+ *
+ * The term is wrapped in double quotes so FTS5 reads it as a literal string rather than as query
+ * syntax - these tests ask what the index holds, never what the query language does with it.
+ */
+const matching = (db: import('better-sqlite3').Database, term: string): number[] =>
+  many<{ id: number }>(
+    db,
+    `SELECT rowid AS id FROM nodes_fts WHERE nodes_fts MATCH '"${term}"'`,
+  ).map((row) => row.id);
+
 describe('migration assets', () => {
   test('resolve relative to the package, not the working directory', () => {
     // A compiled, installed backend is started from an arbitrary directory. If this resolution used
@@ -34,7 +46,7 @@ describe('migration assets', () => {
 
   test('the journal and its files agree', () => {
     const bundled = readBundledMigrations(migrationsFolder);
-    assert.equal(bundled.length, 4);
+    assert.equal(bundled.length, 5);
     assert.deepEqual(
       bundled.map((m) => m.tag),
       [
@@ -42,6 +54,7 @@ describe('migration assets', () => {
         '0001_identity_trigger_and_root_areas',
         '0002_resource_kind_and_body_text',
         '0003_active_projects',
+        '0004_search_index',
       ],
     );
     for (const migration of bundled) assert.match(migration.hash, /^[0-9a-f]{64}$/);
@@ -109,6 +122,82 @@ describe('initialization', () => {
     });
   });
 
+  test('FTS5 is compiled into the SQLite build this backend runs on', () => {
+    // The migration is the real guard: `CREATE VIRTUAL TABLE ... USING fts5` fails without FTS5, and
+    // the transactional migrator rolls the database back, so a backend that cannot index fails to
+    // start. This assertion adds nothing to that guarantee - it buys a failure that names the cause
+    // at `pnpm check` time instead of a raw SQL error at first start.
+    withMigrated('fts5', ({ db }) => {
+      assert.equal(
+        one<{ used: number }>(db, `SELECT sqlite_compileoption_used('ENABLE_FTS5') AS used`).used,
+        1,
+      );
+    });
+  });
+
+  test('the search index is populated for rows that predate it', () => {
+    // `0001` seeds the two root areas long before `0004` exists, so the only thing that can make them
+    // searchable is the `rebuild` the migration issues.
+    withMigrated('fts-rebuild', ({ db }) => {
+      const work = one<{ id: number }>(db, `SELECT id FROM nodes WHERE slug = 'work'`).id;
+      assert.deepEqual(matching(db, 'work'), [work]);
+    });
+  });
+
+  test('rebuild is idempotent and leaves a sound index', () => {
+    // `rebuild` is the documented recovery from a corrupt external-content index, so running it on an
+    // index that is already correct must be safe, and `integrity-check` is how an operator confirms
+    // it worked. It raises rather than returning a row when the index disagrees with `nodes`.
+    withMigrated('fts-repair', ({ db }) => {
+      db.exec(`INSERT INTO nodes_fts(nodes_fts) VALUES ('rebuild')`);
+      db.exec(`INSERT INTO nodes_fts(nodes_fts) VALUES ('integrity-check')`);
+      const work = one<{ id: number }>(db, `SELECT id FROM nodes WHERE slug = 'work'`).id;
+      assert.deepEqual(matching(db, 'work'), [work]);
+    });
+  });
+
+  test('the triggers keep the index sound across a row lifecycle', () => {
+    // No operation deletes a node today, so the delete trigger ships unreachable from the application
+    // - and it is the one whose failure mode is SQLITE_CORRUPT_VTAB, because an external-content table
+    // trusts that a 'delete' names content it currently holds. This walks the whole lifecycle against
+    // raw SQL, on a row whose `body_text` is null for part of it, and asks the index whether it is
+    // still sound. It does not try to *cause* corruption: that would pin SQLite's behaviour rather
+    // than ours, and the hazard is recorded in the migration header instead.
+    withMigrated('fts-lifecycle', ({ db }) => {
+      const work = one<{ id: number }>(db, `SELECT id FROM nodes WHERE slug = 'work'`).id;
+      // The fixture writes no `body_text`, so this row starts out exactly like one the backfill has
+      // not reached: indexed on its title, with an empty body column.
+      insertNode(db, {
+        type: 'project',
+        parentId: work,
+        parentType: 'area',
+        slug: 'indexed',
+        title: 'Indexed project',
+      });
+      const id = one<{ id: number }>(db, `SELECT id FROM nodes WHERE slug = 'indexed'`).id;
+
+      assert.deepEqual(matching(db, 'indexed'), [id], 'the insert trigger indexed the new row');
+
+      // The shape the derived-text backfill writes: `body_text` alone, on a row that had none.
+      db.prepare('UPDATE nodes SET body_text = ? WHERE id = ?').run('quarterly planning', id);
+      assert.deepEqual(matching(db, 'quarterly'), [id], 'a later projection becomes searchable');
+
+      db.prepare('UPDATE nodes SET title = ? WHERE id = ?').run('Renamed project', id);
+      assert.deepEqual(matching(db, 'indexed'), [], 'the old title is gone from the index');
+      assert.deepEqual(matching(db, 'renamed'), [id], 'and the new one is in it');
+      assert.deepEqual(
+        matching(db, 'quarterly'),
+        [id],
+        'a column the update did not touch is unharmed',
+      );
+
+      db.prepare('DELETE FROM nodes WHERE id = ?').run(id);
+      assert.deepEqual(matching(db, 'renamed'), [], 'the delete trigger un-indexed the row');
+
+      db.exec(`INSERT INTO nodes_fts(nodes_fts) VALUES ('integrity-check')`);
+    });
+  });
+
   test('reopening and re-migrating does not duplicate the seed', () => {
     const temp = tempDatabase('reopen');
     try {
@@ -127,7 +216,7 @@ describe('initialization', () => {
           inspectMigrationHistory(second.db, readBundledMigrations(migrationsFolder)),
           {
             state: 'current',
-            applied: 4,
+            applied: 5,
           },
         );
       } finally {
@@ -383,15 +472,15 @@ describe('migration failure', () => {
       const journalPath = join(broken, 'meta', '_journal.json');
       const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
       journal.entries.push({
-        idx: 4,
+        idx: 5,
         version: '6',
         when: Date.now(),
-        tag: '0004_broken',
+        tag: '0005_broken',
         breakpoints: true,
       });
       writeFileSync(journalPath, JSON.stringify(journal));
       writeFileSync(
-        join(broken, '0004_broken.sql'),
+        join(broken, '0005_broken.sql'),
         'ALTER TABLE nodes ADD COLUMN experiment TEXT;\n--> statement-breakpoint\nTHIS IS NOT VALID SQL;',
       );
 
@@ -402,7 +491,7 @@ describe('migration failure', () => {
       );
       assert.ok(!columns.includes('experiment'), 'partial DDL must not survive');
       assert.equal(count(connection.db, `SELECT count(*) AS c FROM nodes WHERE slug = 'live'`), 1);
-      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 4);
+      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 5);
     } finally {
       connection.close();
       temp.cleanup();
@@ -421,11 +510,18 @@ describe('adding the active column to a populated database', () => {
     cpSync(migrationsFolder, partial, { recursive: true });
     const journalPath = join(partial, 'meta', '_journal.json');
     const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
-      entries: { tag: string }[];
+      entries: { idx: number; tag: string }[];
     };
-    journal.entries = journal.entries.filter((entry) => entry.tag !== '0003_active_projects');
+    // "Through 0002" is expressed as that rule rather than as a list of the tags that happen to
+    // follow it today, because a list stops being true the moment a migration is added and does so
+    // silently. A fixture still carrying the newest migration applies it in `0003`'s place, and the
+    // `migrateToLatest` below then compares that applied hash against the bundled `0003` and refuses
+    // the database as changed SQL - failing this test with a message about migration history when
+    // the thing under test is a column default.
+    const dropped = journal.entries.filter((entry) => entry.idx > 2);
+    journal.entries = journal.entries.filter((entry) => entry.idx <= 2);
     writeFileSync(journalPath, JSON.stringify(journal));
-    rmSync(join(partial, '0003_active_projects.sql'));
+    for (const entry of dropped) rmSync(join(partial, `${entry.tag}.sql`));
 
     const connection = openDatabase({ databasePath: temp.file });
     try {
@@ -467,6 +563,15 @@ describe('adding the active column to a populated database', () => {
       rejects(
         () => connection.db.prepare('UPDATE nodes SET type = ? WHERE id = ?').run('area', project),
         /identity is immutable/i,
+      );
+      // An FTS assertion in a test about the `active` column is not drift. This is the only fixture in
+      // the suite where rows exist *before* `0004` does, so it is the only place that can show the
+      // migration's `rebuild` reaching rows no trigger ever saw - and these three were written with a
+      // null `body_text`, so it also shows a row indexes on its title alone.
+      assert.deepEqual(
+        matching(connection.db, 'migration'),
+        [project],
+        'rebuild indexed rows that predate the index',
       );
     } finally {
       connection.close();
@@ -562,6 +667,16 @@ describe('generated artifact introspection', () => {
         'table:__drizzle_migrations',
         'table:creation_replays',
         'table:nodes',
+        // One virtual table and the four shadow tables FTS5 creates to back it. They are the storage
+        // an external-content index needs and are not addressed directly by anything we write.
+        'table:nodes_fts',
+        'table:nodes_fts_config',
+        'table:nodes_fts_data',
+        'table:nodes_fts_docsize',
+        'table:nodes_fts_idx',
+        'trigger:nodes_fts_after_delete',
+        'trigger:nodes_fts_after_insert',
+        'trigger:nodes_fts_after_update',
         'trigger:nodes_identity_immutable',
       ]);
     });
