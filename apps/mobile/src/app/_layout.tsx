@@ -107,6 +107,8 @@ export default function RootLayout() {
                 <Stack.Screen name="settings" />
                 <Stack.Screen name="change-server" />
                 <Stack.Screen name="search" options={{ presentation: 'modal' }} />
+                {/* THROWAWAY: story #6 presentation mock. Delete before merging. */}
+                <Stack.Screen name="mock-search" options={{ presentation: 'modal' }} />
               </Stack>
               <VoiceCaptureSheet />
               <ContainerCreationHost />

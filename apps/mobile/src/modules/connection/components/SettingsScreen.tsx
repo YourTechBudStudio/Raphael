@@ -1,7 +1,7 @@
 import { Text, View } from 'react-native';
 
 import { Chip, confirmDiscard, Screen, SectionHeading } from '../../../ui';
-import { goBack, openChangeServer, TitleTopBar } from '../../navigation';
+import { goBack, openChangeServer, openSearchMock, TitleTopBar } from '../../navigation';
 import { useConnectionStore } from '../state/connection';
 import { ConnectionCard } from './ConnectionCard';
 import { RejectionNotice } from './RejectionNotice';
@@ -60,6 +60,18 @@ export function SettingsScreen() {
               accessibilityHint="Forgets this server and returns to setup"
               label="Disconnect"
               onPress={onDisconnect}
+            />
+          </View>
+        </View>
+
+        {/* THROWAWAY: story #6 presentation mock. Delete before merging. */}
+        <View className="gap-3">
+          <SectionHeading>Mocks</SectionHeading>
+          <View className="flex-row flex-wrap gap-2">
+            <Chip
+              accessibilityHint="Opens the search presentation mock"
+              label="Search mock"
+              onPress={openSearchMock}
             />
           </View>
         </View>

@@ -96,6 +96,11 @@ export function openSearch(scope: ContainerRef | null = null): void {
   });
 }
 
+/** THROWAWAY: opens the story #6 search presentation mock. Delete before merging. */
+export function openSearchMock(): void {
+  router.push('/mock-search');
+}
+
 /** Lands on Home, replacing the current screen so a dead link does not stay in the back stack. */
 export function openHome(): void {
   router.replace('/');

@@ -12,6 +12,7 @@ export {
   openProject,
   openRecovery,
   openSearch,
+  openSearchMock,
   openSettings,
   parseContainerRef,
   parseNodeId,
