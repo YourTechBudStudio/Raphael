@@ -18,6 +18,7 @@ import {
   type GetPathRequestInput,
   type GetRequestInput,
   type ListRequestInput,
+  type SearchRequestInput,
   type UpdateRequestInput,
   decodeCreateRequest,
   decodeCreateResponse,
@@ -27,12 +28,15 @@ import {
   decodeGetResponse,
   decodeListRequest,
   decodeListResponse,
+  decodeSearchRequest,
+  decodeSearchResponse,
   decodeUpdateRequest,
   decodeUpdateResponse,
   type CreateResponse,
   type GetPathResponse,
   type GetResponse,
   type ListResponse,
+  type SearchResponse,
   type UpdateResponse,
 } from '@raphael/contracts/nodes';
 import { Either } from 'effect';
@@ -166,6 +170,29 @@ export const list = (
     NODE_ROUTES.list,
     decodeListRequest as Decoder<unknown>,
     decodeListResponse,
+    request,
+    200,
+    false,
+    signal,
+  );
+
+/**
+ * Find areas, projects and notes by their text, within the given scopes. Answers 200.
+ *
+ * The same three steps as `list`, and the same division of authority: the query grammar is the
+ * contract's, its translation into an engine match string is the server's, and nothing here rewrites
+ * a caller's query on the way past.
+ */
+export const search = (
+  transport: Transport,
+  request: SearchRequestInput,
+  signal?: AbortSignal,
+): Promise<ClientResult<SearchResponse>> =>
+  run(
+    transport,
+    NODE_ROUTES.search,
+    decodeSearchRequest as Decoder<unknown>,
+    decodeSearchResponse,
     request,
     200,
     false,

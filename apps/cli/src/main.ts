@@ -25,11 +25,13 @@ import {
   GET_HELP,
   LIST_HELP,
   PATH_HELP,
+  SEARCH_HELP,
   UPDATE_HELP,
   runCreate,
   runGet,
   runList,
   runPath,
+  runSearch,
   runUpdate,
   type CommandContext,
 } from './modules/nodes/commands.ts';
@@ -53,6 +55,7 @@ const REMOTE_COMMANDS = {
   get: { run: runGet, help: GET_HELP },
   path: { run: runPath, help: PATH_HELP },
   list: { run: runList, help: LIST_HELP },
+  search: { run: runSearch, help: SEARCH_HELP },
 } as const;
 
 type RemoteCommandName = keyof typeof REMOTE_COMMANDS;

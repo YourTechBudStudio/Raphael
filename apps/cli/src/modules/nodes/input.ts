@@ -13,18 +13,24 @@ import { REQUEST_MAX_BYTES, isJsonObject, type JsonObject } from '@raphael/contr
 import {
   CONTAINER_TYPES,
   NODE_ORDER_FIELDS,
-  NODE_TYPES,
   NodeOrderBy,
   ORDER_DIRECTIONS,
   RESOURCE_KINDS,
   ROOT_PATH,
+  describeFilterRejection,
+  describePathRejection,
+  describeQueryRejection,
+  inspectFilterInput,
+  inspectQueryInput,
+  parsePath,
   type ContainerType,
+  type NodeFilterInput,
   type NodeOrderBy as NodeOrderByType,
-  type NodeType,
   type ResourceKind,
+  type ScopeSelector,
   type TipTapDocumentTransport,
 } from '@raphael/contracts/nodes';
-import { Schema } from 'effect';
+import { Either, Schema } from 'effect';
 
 import { UsageError } from '../../shared/args.ts';
 
@@ -365,40 +371,104 @@ export const resolveMetadata = (
 };
 
 /**
- * Split `--types area,project`.
+ * Assemble the scopes a page request searches: every positional path, then every `--id`.
  *
- * Empty entries and duplicates are refused rather than dropped: a filter that silently discarded part
- * of what was asked for would return a page that does not answer the question. The values themselves
- * go to the shared request decoder, which owns which types exist.
+ * `selectorFrom`'s "exactly one of path or id" rule does not apply here and is not a weaker version of
+ * it. A scope page takes a *union*, so naming two places is the feature rather than the ambiguity, and
+ * the two spellings compose: `raphael search /work --id 9` asks about both. Repetition and the count
+ * bound are the contract's, which is where they are defined.
+ *
+ * The order is what makes a failure reportable. The server reports an unresolvable scope by its index
+ * in the list it received, so the list has to be assembled in one stated order rather than in the order
+ * the flags happened to appear.
  */
-export const parseTypes = (
-  raw: string | undefined,
+export const scopesFrom = (
+  positionals: readonly string[],
+  ids: readonly string[],
   command: string,
-): readonly NodeType[] | undefined => {
-  if (raw === undefined) return undefined;
-  const parts = raw.split(',');
-  const seen = new Set<string>();
-  for (const part of parts) {
-    if (part === '') {
-      throw new UsageError(`--types must not contain an empty entry. Got "${raw}".`, command);
-    }
-    if (seen.has(part)) {
-      throw new UsageError(`--types must not repeat "${part}".`, command);
-    }
-    if (!isNodeType(part)) {
-      throw new UsageError(`--types must name ${NODE_TYPES.join(' or ')}. Got "${part}".`, command);
-    }
-    seen.add(part);
-  }
-  return parts as readonly NodeType[];
+): readonly ScopeSelector[] => {
+  const scopes: ScopeSelector[] = [
+    ...positionals.map((path) => {
+      // `parsePath` is not a second opinion about addressing: `ScopePath` filters on
+      // `isCanonicalPath`, which *is* `Either.isRight(parsePath(value))`. Asking it here reaches the
+      // same verdict the request decoder would, early enough to say which scope was wrong and why.
+      // Without it the decoder answers for a union of two selector shapes, and someone who forgot the
+      // leading slash is told an `id` was expected - true of the union, and useless to them.
+      const parsed = parsePath(path);
+      if (Either.isLeft(parsed)) {
+        throw new UsageError(`scope "${path}": ${describePathRejection(parsed.left)}`, command);
+      }
+      // The original string travels, not a path rebuilt from the segments. `parsePath` refuses a
+      // noncanonical path rather than repairing one, so there is nothing to rebuild and rebuilding
+      // would be the rewriting it exists to prevent.
+      return { path };
+    }),
+    ...ids.map((id) => ({ id: parseId(id, command) })),
+  ];
+  if (scopes.length === 0) throw new UsageError('Give at least one path, or --id.', command);
+  // The count bound and the no-repeat rule stay the decoder's. Both already report themselves
+  // adequately, and a local copy could only ever come to disagree with the one that decides.
+  return scopes;
 };
 
 /**
- * Whether a word names a type this release can address.
+ * Parse a `--filter` argument: inline JSON, or `@file`. Must be a filter the contract accepts.
  *
- * This is the contract's own published vocabulary, not a hierarchy rule: what may contain what, and
- * what a type means, remain the server's. Checking the name here only turns a round trip into a
- * local message that lists the alternatives.
+ * This follows `resolveMetadata` exactly, and returns the *parsed JSON* rather than a decoded value.
+ * The request decoder in the client package is the one that normalizes it; a second normalization here
+ * would be a second authority over the same shape.
+ *
+ * The check is `inspectFilterInput` alone, deliberately, and not a local `Schema.decodeUnknownEither`
+ * over `NodeFilter`. Strictness about unrecognized keys lives in the contracts' `requestDecoder`, not
+ * in the schema, so a bare decode here would *ignore* an unsupported key and quietly send a filter with
+ * it removed - which is a narrower question than the one that was asked, answered without saying so.
+ * `inspectFilterInput` owns all three failure classes and routes each known key through the same
+ * decoders `NodeFilter` is assembled from, so its verdict and the request decoder's cannot disagree.
+ *
+ * An empty object passes and means no restriction, exactly as omitting the flag does. There is nothing
+ * to refuse about asking for everything.
  */
-export const isNodeType = (value: string): value is NodeType =>
-  (NODE_TYPES as readonly string[]).includes(value);
+export const resolveFilter = (
+  raw: string | undefined,
+  command: string,
+): NodeFilterInput | undefined => {
+  if (raw === undefined) return undefined;
+  const text = raw.startsWith('@') ? readLocalFile(raw.slice(1), 'the filter file', command) : raw;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new UsageError('--filter must be valid JSON, or @file containing it.', command);
+  }
+
+  const rejection = inspectFilterInput(parsed);
+  if (rejection !== undefined) {
+    throw new UsageError(`--filter: ${describeFilterRejection(rejection)}`, command);
+  }
+  // A compile-time bridge across a runtime-checked boundary. `inspectFilterInput` has just established
+  // that the value carries only the keys this filter owns, each with a value its own decoder accepts.
+  return parsed as NodeFilterInput;
+};
+
+/**
+ * Check each repeated `-q` against the shared grammar, and pass every value through unchanged.
+ *
+ * The CLI never rewrites a query. It does not add operators, strip punctuation, or normalize spacing:
+ * the grammar belongs to the contracts and its translation into an engine match string belongs to the
+ * server, and a query altered in between would search for something other than what was typed.
+ *
+ * The rejection sentence is `describeQueryRejection`'s, which is fixed text per reason. Assembling a
+ * message around the submitted query would put caller text into terminal output for no gain - the
+ * person can see what they typed.
+ */
+export const parseQueries = (values: readonly string[], command: string): readonly string[] => {
+  if (values.length === 0) throw new UsageError('Give at least one -q query.', command);
+  for (const value of values) {
+    const rejection = inspectQueryInput(value);
+    if (rejection !== undefined) {
+      throw new UsageError(`-q: ${describeQueryRejection(rejection)}`, command);
+    }
+  }
+  return values;
+};

@@ -1,5 +1,5 @@
 /**
- * The five hierarchy commands.
+ * The six hierarchy commands.
  *
  * Each one assembles a request, sends it, and renders the answer. No hierarchy rule is implemented
  * here and none may be: slug derivation, parentage, conflict detection, and content conversion all
@@ -10,16 +10,19 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ClientFailure, Transport } from '@raphael/client';
-import { create, get, getPath, list, update } from '@raphael/client/nodes';
+import { create, get, getPath, list, search, update } from '@raphael/client/nodes';
 import {
   BODY_FORMATS,
+  FILTER_KEYS,
   LIST_LIMIT_MAX,
   LIST_LIMIT_MIN,
   NODE_ORDER_FIELDS,
-  NODE_TYPES,
   ORDER_DIRECTIONS,
+  SCOPES_MAX_COUNT,
   type NodeEntity,
+  type NodeFilterInput,
   type NodeSummary,
+  type ScopeSelector,
 } from '@raphael/contracts/nodes';
 
 import {
@@ -30,6 +33,7 @@ import {
   parseArgs,
   stringListOption,
   stringOption,
+  type OptionConfig,
   type ParsedArgs,
 } from '../../shared/args.ts';
 import { EXIT_OK, type ExitCode } from '../../shared/exit.ts';
@@ -46,9 +50,11 @@ import {
   parseCreateTarget,
   parseId,
   parseOrderBy,
-  parseTypes,
+  parseQueries,
   resolveBody,
+  resolveFilter,
   resolveMetadata,
+  scopesFrom,
   selectorFrom,
   splitCreatePath,
   type Selector,
@@ -63,6 +69,124 @@ import {
  */
 const qualifiedType = (entity: Pick<NodeEntity | NodeSummary, 'type' | 'kind'>): string =>
   entity.kind === null ? entity.type : `${entity.type}.${entity.kind}`;
+
+/**
+ * The page footer both `list` and `search` print.
+ *
+ * Never implies completeness. A page that ends is not the same as a hierarchy that ends, and the
+ * difference is what tells someone whether to ask for more.
+ *
+ * One helper rather than a copy per command, because the two footers are byte-identical and the next
+ * change to this wording must land once. The summary *lines* above it are deliberately not shared: a
+ * search hit prints the title that matched and a listing does not, and collapsing two honest formats
+ * behind one flag would be worse than two clear literals.
+ */
+const writePageFooter = (
+  streams: Streams,
+  page: {
+    readonly items: readonly unknown[];
+    readonly skip: number;
+    readonly limit: number;
+    readonly hasMore: boolean;
+  },
+): void => {
+  writeLine(
+    streams.out,
+    page.items.length === 0
+      ? `Nothing here (skip ${page.skip}, limit ${page.limit}).`
+      : `${page.items.length} shown, skip ${page.skip}, limit ${page.limit}${
+          page.hasMore ? `. More available: --skip ${page.skip + page.limit}` : '. No more.'
+        }`,
+  );
+};
+
+/**
+ * Report a scope-page failure, and name the scope when the server says one could not be resolved.
+ *
+ * `reportFailure` already prints `index: 0` from the projected details, because the projection carries
+ * it and the detail lines are generic. That number counts the list that was *sent* - paths first, then
+ * ids - which is not the order the person typed, so leaving them to count it themselves would be
+ * unkind. This adds the one translation on top and changes nothing else about the report.
+ *
+ * Silent whenever the failure is anything else, or the index falls outside the list. An out-of-range
+ * index is a server answer this build cannot interpret, and inventing a scope for it would be worse
+ * than printing only what was actually said.
+ */
+const reportScopeFailure = (
+  streams: Streams,
+  failure: ClientFailure,
+  scopes: readonly ScopeSelector[],
+): ExitCode => {
+  const code = reportFailure(streams, failure);
+  if (failure.kind !== 'api_error' || failure.error.code !== 'node_not_found') return code;
+  const { field, index } = failure.details;
+  if (field !== 'scopes' || index === undefined) return code;
+  const scope = scopes[index];
+  if (scope === undefined) return code;
+  writeLine(
+    streams.err,
+    `  scope: ${'id' in scope ? `--id ${scope.id}` : forTerminal(scope.path)}`,
+  );
+  return code;
+};
+
+/**
+ * The options every scope page accepts, declared once.
+ *
+ * List and Search take the same request and differ only in how they order what they found, so the
+ * flags that say *where to look* have one spelling here for the same reason they have one spelling in
+ * the contract. Each command spreads this and adds its own: `--order-by` for a listing, `-q` for a
+ * search.
+ */
+const SCOPE_PAGE_OPTIONS = {
+  id: { type: 'string', multiple: true },
+  recursive: { type: 'boolean', short: 'r' },
+  filter: { type: 'string' },
+  skip: { type: 'string' },
+  limit: { type: 'string' },
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
+/**
+ * Adapt the shared half of a scope-page request, for either command.
+ *
+ * Returns the request fragment ready to spread, and the assembled scopes beside it, because a failure
+ * The archive flag #8 brings, and any other field both operations come to share, lands here once.
+ *
+ * The fragment carries its own scopes, which is also what a failure is reported against: the list a
+ * caller sends *is* the list the server indexes into, so `reportScopeFailure` reads it back off the
+ * fragment rather than being handed a second copy to keep in step - see `reportScopeFailure`.
+ */
+const scopePageFrom = (
+  parsed: ParsedArgs,
+  command: string,
+): {
+  readonly scopes: readonly ScopeSelector[];
+  readonly recursive?: boolean;
+  readonly filter?: NodeFilterInput;
+  readonly skip?: number;
+  readonly limit?: number;
+} => {
+  // Every positional is a scope. There is no "unexpected argument" case, because a second path is a
+  // second place to look rather than a mistake.
+  const scopes = scopesFrom(parsed.positionals, stringListOption(parsed, 'id'), command);
+  const recursive = booleanOption(parsed, 'recursive');
+  const filter = resolveFilter(stringOption(parsed, 'filter', command), command);
+  const skip = integerOption(parsed, 'skip', command, { min: 0, max: Number.MAX_SAFE_INTEGER });
+  const limit = integerOption(parsed, 'limit', command, {
+    min: LIST_LIMIT_MIN,
+    max: LIST_LIMIT_MAX,
+  });
+
+  return {
+    scopes,
+    ...(recursive ? { recursive } : {}),
+    ...(filter === undefined ? {} : { filter }),
+    ...(skip === undefined ? {} : { skip }),
+    ...(limit === undefined ? {} : { limit }),
+  };
+};
 
 export interface CommandContext {
   readonly streams: Streams;
@@ -555,23 +679,28 @@ export const runPath = async (
   return EXIT_OK;
 };
 
-export const LIST_HELP = `Usage: raphael list <path> [options]
+export const LIST_HELP = `Usage: raphael list <path>... [options]
        raphael list --id <id> [options]
 
 List what is inside an area or project. Use "/" for the root. A note holds nothing, so listing
 one is an empty page rather than an error.
 
+Several paths list all of them at once, as one page. Repeat --id to address a scope by its
+durable identifier instead, and mix the two forms freely. At most ${SCOPES_MAX_COUNT} scopes.
+
 Ordering applies to everything in scope before the page is cut, so paging through a sorted
 listing is paging through one order rather than sorting each page on its own.
 
 Examples:
-  raphael list / -r --types resource --order-by updatedAt:desc --limit 4
-  raphael list /work -r --types resource --order-by updatedAt:desc --order-by slug:asc
+  raphael list / -r --filter '{"type":"resource"}' --order-by updatedAt:desc --limit 4
+  raphael list /work -r --filter '{"type":"resource"}' --order-by updatedAt:desc --order-by slug:asc
+  raphael list /work /personal --filter '{"tags":{"$in":["urgent"]}}'
 
 Options:
-      --id <id>       Address by identifier instead of by path.
+      --id <id>       Address a scope by identifier. Repeatable.
   -r, --recursive     Include everything underneath, not just direct children.
-      --types <list>  Comma-separated: ${NODE_TYPES.join(',')}. Omit for every type.
+      --filter <json> A JSON object, or @file containing one. Keys: ${FILTER_KEYS.join(', ')}.
+                      A value is either the value itself or {"$in": [...]}.
       --order-by <f:d>  Repeatable, in priority order. Fields: ${NODE_ORDER_FIELDS.join(', ')}.
                       Directions: ${ORDER_DIRECTIONS.join(', ')}. Default slug:asc then id:asc.
       --skip <n>      How many to skip. Default 0.
@@ -585,40 +714,18 @@ export const runList = async (
 ): Promise<ExitCode> => {
   const parsed = parseArgs(
     argv,
-    {
-      id: { type: 'string' },
-      recursive: { type: 'boolean', short: 'r' },
-      types: { type: 'string' },
-      'order-by': { type: 'string', multiple: true },
-      skip: { type: 'string' },
-      limit: { type: 'string' },
-      json: { type: 'boolean' },
-      help: { type: 'boolean', short: 'h' },
-    },
+    { ...SCOPE_PAGE_OPTIONS, 'order-by': { type: 'string', multiple: true } },
     'list',
   );
-  const [path, ...extra] = parsed.positionals;
-  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'list');
 
-  const parent = selectorFrom(path, stringOption(parsed, 'id', 'list'), 'list');
-  const recursive = booleanOption(parsed, 'recursive');
-  const types = parseTypes(stringOption(parsed, 'types', 'list'), 'list');
+  const scopePage = scopePageFrom(parsed, 'list');
   const orderBy = parseOrderBy(stringListOption(parsed, 'order-by'), 'list');
-  const skip = integerOption(parsed, 'skip', 'list', { min: 0, max: Number.MAX_SAFE_INTEGER });
-  const limit = integerOption(parsed, 'limit', 'list', {
-    min: LIST_LIMIT_MIN,
-    max: LIST_LIMIT_MAX,
-  });
 
   const result = await list(context.transport(), {
-    parent,
-    ...(recursive ? { recursive } : {}),
-    ...(types === undefined ? {} : { types }),
+    ...scopePage,
     ...(orderBy === undefined ? {} : { orderBy }),
-    ...(skip === undefined ? {} : { skip }),
-    ...(limit === undefined ? {} : { limit }),
   });
-  if (!result.ok) return reportFailure(context.streams, result.failure);
+  if (!result.ok) return reportScopeFailure(context.streams, result.failure, scopePage.scopes);
 
   if (booleanOption(parsed, 'json')) {
     writeJson(context.streams.out, result.value);
@@ -635,15 +742,79 @@ export const runList = async (
       }`,
     );
   }
-  // Never implies completeness. A page that ends is not the same as a hierarchy that ends, and the
-  // difference is what tells someone whether to ask for more.
-  writeLine(
-    out,
-    page.items.length === 0
-      ? `Nothing here (skip ${page.skip}, limit ${page.limit}).`
-      : `${page.items.length} shown, skip ${page.skip}, limit ${page.limit}${
-          page.hasMore ? `. More available: --skip ${page.skip + page.limit}` : '. No more.'
-        }`,
+  writePageFooter(context.streams, page);
+  return EXIT_OK;
+};
+
+export const SEARCH_HELP = `Usage: raphael search <path>... -q <query> [options]
+       raphael search --id <id> -q <query> [options]
+
+Find areas, projects and notes by their text. Title, description and body are all searched, and
+results come back with the closest match first.
+
+Words match any of them.
+Quote a phrase to match it exactly.
+Uppercase AND narrows; OR is the default.
+
+Several paths search all of them at once, as one page. Repeat --id to address a scope by its
+durable identifier instead, and mix the two forms freely. At most ${SCOPES_MAX_COUNT} scopes.
+Repeat -q to ask more than one question of the same scopes.
+
+Examples:
+  raphael search /work -q 'auth tokens'
+  raphael search /work -r -q '"login flow" AND retry'
+  raphael search / -r -q auth --filter '{"type":"resource","kind":"note"}'
+  raphael search /work /personal -r -q auth --limit 20
+
+Options:
+      --id <id>       Address a scope by identifier. Repeatable.
+  -q, --query <text>  What to look for. Repeatable. At least one is required.
+  -r, --recursive     Search everything underneath, not just direct children.
+      --filter <json> A JSON object, or @file containing one. Keys: ${FILTER_KEYS.join(', ')}.
+                      A value is either the value itself or {"$in": [...]}.
+      --skip <n>      How many to skip. Default 0.
+      --limit <n>     How many to return, ${LIST_LIMIT_MIN} to ${LIST_LIMIT_MAX}.
+      --json          Print the result as JSON.
+  -h, --help          Show this help.
+
+There is no --order-by. A search answers in relevance order; ask "raphael list" for an
+authored one.`;
+
+export const runSearch = async (
+  argv: readonly string[],
+  context: CommandContext,
+): Promise<ExitCode> => {
+  const parsed = parseArgs(
+    argv,
+    { ...SCOPE_PAGE_OPTIONS, query: { type: 'string', multiple: true, short: 'q' } },
+    'search',
   );
+
+  const scopePage = scopePageFrom(parsed, 'search');
+  const queries = parseQueries(stringListOption(parsed, 'query'), 'search');
+
+  const result = await search(context.transport(), { ...scopePage, queries });
+  if (!result.ok) return reportScopeFailure(context.streams, result.failure, scopePage.scopes);
+
+  if (booleanOption(parsed, 'json')) {
+    writeJson(context.streams.out, result.value);
+    return EXIT_OK;
+  }
+
+  const { out } = context.streams;
+  const page = result.value;
+  for (const { node } of page.items) {
+    // The title comes after the slug, because a hit's title is usually the thing that matched, and a
+    // slug alone does not tell someone which of two similarly addressed notes they found. The active
+    // marker stays, for the same reason `list` prints it: wherever a node summary is printed, an
+    // active project says so rather than reading as one that is not.
+    writeLine(
+      out,
+      `${String(node.id).padStart(6)}  ${qualifiedType(node).padEnd(13)}  ${forTerminal(
+        node.slug,
+      )}  ${forTerminal(node.title)}${node.active ? '  active' : ''}`,
+    );
+  }
+  writePageFooter(context.streams, page);
   return EXIT_OK;
 };

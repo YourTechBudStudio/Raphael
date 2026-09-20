@@ -51,6 +51,7 @@ Commands:
   get               Read one area or project.
   path              Print the current full path of an area or project.
   list              List what is inside an area or project.
+  search            Find areas, projects and notes by their text.
   server serve      Run a Raphael server on this machine.
   help              Show this help.
 
