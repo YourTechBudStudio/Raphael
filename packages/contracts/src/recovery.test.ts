@@ -17,6 +17,31 @@ const project = (code: string, details: JsonObject) => projectRecoveryDetails(co
 
 describe('recovery detail projection', () => {
   describe('preserving what a person needs', () => {
+    it('keeps the position of the scope that did not resolve, and only a usable one', () => {
+      // A position says which of the caller's own entries was at fault without repeating any of them,
+      // which is why it is projected at all. Without this case the server would produce `index` and
+      // every client would silently drop it.
+      assert.deepEqual(project('node_not_found', { field: 'scopes', index: 1 }), {
+        field: 'scopes',
+        index: 1,
+      });
+      assert.deepEqual(project('node_not_found', { field: 'scopes', index: 0 }), {
+        field: 'scopes',
+        index: 0,
+      });
+
+      // A single-selector operation reports no position at all.
+      assert.deepEqual(project('node_not_found', { field: 'target' }), { field: 'target' });
+
+      for (const index of [-1, 1.5, '0', null, Number.NaN, Number.MAX_SAFE_INTEGER + 1]) {
+        assert.deepEqual(
+          project('node_not_found', { field: 'scopes', index } as JsonObject),
+          { field: 'scopes' },
+          `must drop ${String(index)}`,
+        );
+      }
+    });
+
     it('keeps the validated fields of an invalid_input rejection', () => {
       assert.deepEqual(
         project('invalid_input', {

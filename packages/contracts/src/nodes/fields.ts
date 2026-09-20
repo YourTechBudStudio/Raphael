@@ -48,6 +48,23 @@ export const LIST_LIMIT_DEFAULT = 50;
 export const LIST_LIMIT_MIN = 1;
 export const LIST_LIMIT_MAX = 500;
 
+/**
+ * The bounds a scope page and a search request are held to.
+ *
+ * They live here, beside the list bounds, because they are request bounds of exactly the same kind:
+ * limits on what a caller may submit in one call, binding nothing that is already stored. A stored
+ * hierarchy may be any shape; these only say how much of it one request may name at once, so raising
+ * one is a contract change and never a migration.
+ *
+ * `SEARCH_QUERY_MAX_TERMS` counts *operands* - a quoted phrase counts once however many words it
+ * holds - because an operand is what becomes one quoted string in the engine expression, and that is
+ * the thing whose count needs bounding.
+ */
+export const SCOPES_MAX_COUNT = 10;
+export const SEARCH_QUERIES_MAX_COUNT = 10;
+export const SEARCH_QUERY_MAX_CODE_POINTS = 1_000;
+export const SEARCH_QUERY_MAX_TERMS = 32;
+
 export { SLUG_MAX_CODE_POINTS };
 
 /**
@@ -77,7 +94,9 @@ export const REQUEST_FIELDS = [
   'idempotencyKey',
   'format',
   'recursive',
-  'types',
+  'scopes',
+  'filter',
+  'queries',
   'skip',
   'limit',
   'orderBy',
@@ -276,7 +295,7 @@ export const inspectTagsInput = (tags: readonly string[]): TagsRejection | undef
  * `work` are two different tags. This deliberately avoids a second, case-insensitive identity that
  * storage and filtering would then have to honor; no requirement needs one yet.
  */
-const TagInput = Schema.transform(Schema.String, Schema.String, {
+export const TagInput = Schema.transform(Schema.String, Schema.String, {
   strict: true,
   decode: normalizeTag,
   encode: (value) => value,

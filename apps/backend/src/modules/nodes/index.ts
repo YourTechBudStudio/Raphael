@@ -1,7 +1,7 @@
 /**
  * The hierarchy capability.
  *
- * Five operations, each taking an undecoded request and returning an Effect whose failures are all
+ * Six operations, each taking an undecoded request and returning an Effect whose failures are all
  * expected and tagged. Callers do not resolve selectors, open transactions, coordinate replay, convert
  * content, or decide what a SQLite error meant - every one of those is settled behind this boundary.
  *
@@ -10,8 +10,8 @@
  * transport above owns authentication, JSON parsing, the byte budget, routing, and turning a public
  * error into a status; it does not re-decode what these operations decode.
  *
- * Not here, by intent: no HTTP or configuration objects, no archive or move, no search, no
- * users, no hook delivery. Replay expiry is enforced at lookup; the periodic collection of expired
+ * Not here, by intent: no HTTP or configuration objects, no archive or move, no users, no hook
+ * delivery. Replay expiry is enforced at lookup; the periodic collection of expired
  * records belongs to the runtime that owns scheduling.
  */
 
@@ -19,6 +19,7 @@ export { createNode } from './create.ts';
 export { getNode } from './get.ts';
 export { getNodePath } from './get-path.ts';
 export { listNodes } from './list.ts';
+export { searchNodes } from './search.ts';
 export { updateNode } from './update.ts';
 
 export {

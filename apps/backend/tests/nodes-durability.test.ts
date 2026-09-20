@@ -63,7 +63,7 @@ test('what was created survives closing and reopening the database', () => {
       );
       assert.equal(byPath.entity.id, createdId);
 
-      const listed = expectRight(runNodes(second, listNodes({ parent: { path: '/work' } })));
+      const listed = expectRight(runNodes(second, listNodes({ scopes: [{ path: '/work' }] })));
       assert.deepEqual(
         listed.items.map((item) => item.slug),
         ['quarterly-plan'],
@@ -166,7 +166,7 @@ test('a note created without a title comes back whole after a restart', () => {
       assert.equal(byPath.entity.id, createdId);
 
       const listed = expectRight(
-        runNodes(second, listNodes({ parent: { path: '/work' }, types: ['resource'] })),
+        runNodes(second, listNodes({ scopes: [{ path: '/work' }], filter: { type: 'resource' } })),
       );
       assert.deepEqual(
         listed.items.map((item) => item.slug),

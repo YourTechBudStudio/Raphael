@@ -8,6 +8,7 @@ import { toPublicError, type NodeError } from './errors.ts';
 import { getNodePath } from './get-path.ts';
 import { getNode } from './get.ts';
 import { listNodes } from './list.ts';
+import { searchNodes } from './search.ts';
 import { updateNode } from './update.ts';
 
 /**
@@ -67,6 +68,12 @@ export const nodeRoutes: readonly OperationRoute[] = [
   },
   { descriptor: NODE_ROUTES.get, label: 'nodes.get', successStatus: 200, run: adapt(getNode) },
   { descriptor: NODE_ROUTES.list, label: 'nodes.list', successStatus: 200, run: adapt(listNodes) },
+  {
+    descriptor: NODE_ROUTES.search,
+    label: 'nodes.search',
+    successStatus: 200,
+    run: adapt(searchNodes),
+  },
   {
     descriptor: NODE_ROUTES.getPath,
     label: 'nodes.get-path',

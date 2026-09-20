@@ -149,7 +149,7 @@ test('a malformed selector does not echo what was submitted as one', () => {
 test('a list request rejected on its filter says nothing about the payload', () => {
   withMigrated('disclosure-list', (connection) => {
     const error = expectLeft(
-      runNodes(connection, listNodes({ parent: { path: '/' }, types: [SECRETS[0]] })),
+      runNodes(connection, listNodes({ scopes: [{ path: '/' }], filter: { type: SECRETS[0] } })),
     );
     assert.equal(toPublicError(error).code, 'invalid_input');
     assertClean(error, 'list filter');

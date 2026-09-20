@@ -73,6 +73,7 @@ export {
   getNode,
   getNodePath,
   listNodes,
+  searchNodes,
   toPublicError,
   updateNode,
   type InvalidInputReason,

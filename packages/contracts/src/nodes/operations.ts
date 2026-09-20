@@ -17,20 +17,22 @@ import {
   MetadataInput,
   MetadataOutput,
   NODE_ORDER_FIELDS,
-  NODE_TYPES,
   NodeId,
   NodeOrderFieldSchema,
   NodeRevision,
   NodeTypeSchema,
   OrderDirectionSchema,
   ResourceKindSchema,
+  SCOPES_MAX_COUNT,
   type NodeType,
   type ResourceKind,
   SlugInput,
   TagsInput,
   TitleInput,
 } from './fields.ts';
+import { NodeFilter } from './filter.ts';
 import { ROOT_PATH, isCanonicalPath, isEntityPath } from './path.ts';
+import { SearchQueries } from './search-query.ts';
 import { isCanonicalSlugShape } from './slug.ts';
 
 /** A path usable as a scope, including the virtual root. */
@@ -67,13 +69,32 @@ export type ScopeSelector = Schema.Schema.Type<typeof ScopeSelector>;
 export type EntitySelector = Schema.Schema.Type<typeof EntitySelector>;
 
 /**
- * A list filter. Omitted means every type this release supports; an empty array is invalid, so a
- * caller cannot accidentally ask for nothing and read the empty page as an empty hierarchy.
+ * How two selectors are compared for repetition: by what was *written*, not by what they resolve to.
+ *
+ * A contract cannot know that `{ id: 9 }` and `{ path: '/work' }` name one node - only storage can -
+ * so only a literal repeat is refused here, exactly as `orderBy` and `tags` refuse literal repeats
+ * today. Two spellings of one node are accepted and made harmless by deduplication in SQL, which is
+ * also what makes nested scopes such as `/work` beside `/work/raphael` return each row once.
+ *
+ * The prefix is what keeps the two forms in one namespace: an id key can never collide with a path
+ * key, so a numeric-looking path is not mistaken for an id.
  */
-export const NodeTypeFilter = Schema.Array(NodeTypeSchema).pipe(
+const selectorKey = (selector: ScopeSelector): string =>
+  'id' in selector ? `id:${selector.id}` : `path:${selector.path}`;
+
+/**
+ * Where to look: one or more scopes, taken as a union.
+ *
+ * Required on both operations. ADR 0001 says search is always scoped, and listing has always required
+ * a parent; an unscoped request is not a wider search but an unstated one. The root path is a valid
+ * member alongside others, and the union makes that harmless.
+ */
+export const Scopes = Schema.Array(ScopeSelector).pipe(
   Schema.minItems(1),
-  Schema.maxItems(NODE_TYPES.length),
-  Schema.filter((types) => new Set(types).size === types.length || 'types must not repeat'),
+  Schema.maxItems(SCOPES_MAX_COUNT),
+  Schema.filter(
+    (scopes) => new Set(scopes.map(selectorKey)).size === scopes.length || 'scopes must not repeat',
+  ),
 );
 
 /** Everything both members of the creation union accept, spelled once. */
@@ -159,13 +180,36 @@ export const NodeOrderBy = Schema.Array(NodeOrderClause).pipe(
 export type NodeOrderClause = Schema.Schema.Type<typeof NodeOrderClause>;
 export type NodeOrderBy = Schema.Schema.Type<typeof NodeOrderBy>;
 
-export const ListRequest = Schema.Struct({
-  parent: ScopeSelector,
+/**
+ * One scope page, shared by List and Search.
+ *
+ * The two operations differ only in how they order what they found: List by an authored field,
+ * Search by relevance. Everything before that - where to look, how deep, which nodes qualify, and
+ * which slice of the answer to return - is one vocabulary spelled once, so a predicate cannot mean
+ * one thing to a listing and another to a search.
+ */
+const ScopePageFields = {
+  scopes: Scopes,
   recursive: Schema.optionalWith(Schema.Boolean, { default: () => false, exact: true }),
-  types: Schema.optional(NodeTypeFilter),
-  orderBy: Schema.optional(NodeOrderBy),
+  filter: Schema.optional(NodeFilter),
   skip: Schema.optionalWith(ListSkipInput, { default: () => LIST_SKIP_DEFAULT, exact: true }),
   limit: Schema.optionalWith(ListLimitInput, { default: () => LIST_LIMIT_DEFAULT, exact: true }),
+};
+
+export const ListRequest = Schema.Struct({
+  ...ScopePageFields,
+  orderBy: Schema.optional(NodeOrderBy),
+});
+
+/**
+ * Searching, as the same page with a relevance order.
+ *
+ * There is no `orderBy`: a search answers in relevance order, and strict decoding refuses the field
+ * rather than accepting it and ignoring it. A caller that wants an authored order is asking to list.
+ */
+export const SearchRequest = Schema.Struct({
+  ...ScopePageFields,
+  queries: SearchQueries,
 });
 
 export const GetPathRequest = Schema.Struct({ target: EntitySelector });
@@ -266,6 +310,7 @@ export type ResourceCreateRequest = Schema.Schema.Type<typeof ResourceCreateRequ
 export type CreateRequest = Schema.Schema.Type<typeof CreateRequest>;
 export type GetRequest = Schema.Schema.Type<typeof GetRequest>;
 export type ListRequest = Schema.Schema.Type<typeof ListRequest>;
+export type SearchRequest = Schema.Schema.Type<typeof SearchRequest>;
 export type GetPathRequest = Schema.Schema.Type<typeof GetPathRequest>;
 export type UpdateRequest = Schema.Schema.Type<typeof UpdateRequest>;
 
@@ -372,6 +417,29 @@ export const ListResponse = Schema.Struct({
 });
 
 /**
+ * One result, as a wrapper around the summary rather than the summary itself.
+ *
+ * The wrapper *is* the room. A hit will eventually want to say something about the match - which
+ * field matched, an excerpt, which source answered - and every one of those is a claim this release
+ * cannot make honestly. There is one source, so a `source` field would be a constant; an excerpt
+ * cannot be computed from a match that may have landed in a field the excerpt does not show. So the
+ * wrapper carries nothing yet, and adding a sibling later is an additive change rather than a change
+ * of the item type every client has already written code against.
+ */
+export const SearchHit = Schema.Struct({ node: NodeSummary });
+
+/**
+ * `hasMore` means the page sequence ended. It never claims coverage: this response has no place to
+ * say "and one source did not answer", and it will not have one until a second source exists.
+ */
+export const SearchResponse = Schema.Struct({
+  items: Schema.Array(SearchHit),
+  skip: NonNegativeSafeInt,
+  limit: PositiveSafeInt,
+  hasMore: Schema.Boolean,
+});
+
+/**
  * A computed path must be one that can be handed straight back as a selector. The root is therefore
  * refused here as well: it addresses no entity, so it cannot be the path of the entity asked about.
  */
@@ -386,6 +454,8 @@ export type CreateResponse = Schema.Schema.Type<typeof CreateResponse>;
 export type UpdateResponse = Schema.Schema.Type<typeof UpdateResponse>;
 export type GetResponse = Schema.Schema.Type<typeof GetResponse>;
 export type ListResponse = Schema.Schema.Type<typeof ListResponse>;
+export type SearchHit = Schema.Schema.Type<typeof SearchHit>;
+export type SearchResponse = Schema.Schema.Type<typeof SearchResponse>;
 export type GetPathResponse = Schema.Schema.Type<typeof GetPathResponse>;
 
 /**
@@ -403,18 +473,21 @@ export type GetPathResponse = Schema.Schema.Type<typeof GetPathResponse>;
 export type CreateRequestInput = Schema.Schema.Encoded<typeof CreateRequest>;
 export type GetRequestInput = Schema.Schema.Encoded<typeof GetRequest>;
 export type ListRequestInput = Schema.Schema.Encoded<typeof ListRequest>;
+export type SearchRequestInput = Schema.Schema.Encoded<typeof SearchRequest>;
 export type GetPathRequestInput = Schema.Schema.Encoded<typeof GetPathRequest>;
 export type UpdateRequestInput = Schema.Schema.Encoded<typeof UpdateRequest>;
 
 export const decodeCreateRequest = requestDecoder(CreateRequest);
 export const decodeGetRequest = requestDecoder(GetRequest);
 export const decodeListRequest = requestDecoder(ListRequest);
+export const decodeSearchRequest = requestDecoder(SearchRequest);
 export const decodeGetPathRequest = requestDecoder(GetPathRequest);
 export const decodeUpdateRequest = requestDecoder(UpdateRequest);
 
 export const decodeCreateResponse = responseDecoder(CreateResponse);
 export const decodeGetResponse = responseDecoder(GetResponse);
 export const decodeListResponse = responseDecoder(ListResponse);
+export const decodeSearchResponse = responseDecoder(SearchResponse);
 export const decodeGetPathResponse = responseDecoder(GetPathResponse);
 export const decodeUpdateResponse = responseDecoder(UpdateResponse);
 
@@ -422,6 +495,7 @@ export const NODE_ROUTES = {
   create: { method: 'POST', path: '/api/nodes/create' },
   get: { method: 'POST', path: '/api/nodes/get' },
   list: { method: 'POST', path: '/api/nodes/list' },
+  search: { method: 'POST', path: '/api/nodes/search' },
   getPath: { method: 'POST', path: '/api/nodes/get-path' },
   update: { method: 'POST', path: '/api/nodes/update' },
 } as const satisfies Record<string, RouteDescriptor>;

@@ -6,8 +6,11 @@ import { Either, Schema } from 'effect';
 import { type DecodeFailure } from '../shared/decode.ts';
 import {
   DESCRIPTION_MAX_CODE_POINTS,
+  SCOPES_MAX_COUNT,
+  SEARCH_QUERIES_MAX_COUNT,
   SLUG_MAX_CODE_POINTS,
   LIST_LIMIT_MAX,
+  REQUEST_FIELDS,
   METADATA_MAX_SERIALIZED_BYTES,
   METADATA_MAX_TOP_LEVEL_KEYS,
   TAGS_MAX_COUNT,
@@ -22,6 +25,7 @@ import {
   ListRequest,
   ListResponse,
   NODE_ROUTES,
+  SearchRequest,
   UPDATE_CHANGE_FIELDS,
   UpdateRequestFields,
   decodeCreateRequest,
@@ -31,6 +35,8 @@ import {
   decodeGetRequest,
   decodeListRequest,
   decodeListResponse,
+  decodeSearchRequest,
+  decodeSearchResponse,
   decodeUpdateRequest,
   decodeUpdateResponse,
 } from './operations.ts';
@@ -70,6 +76,7 @@ test('routes are the agreed POST vocabulary', () => {
     create: { method: 'POST', path: '/api/nodes/create' },
     get: { method: 'POST', path: '/api/nodes/get' },
     list: { method: 'POST', path: '/api/nodes/list' },
+    search: { method: 'POST', path: '/api/nodes/search' },
     getPath: { method: 'POST', path: '/api/nodes/get-path' },
     update: { method: 'POST', path: '/api/nodes/update' },
   });
@@ -91,53 +98,189 @@ test('ids are positive safe integers', () => {
 
 test('the root is a scope for create and list but never selects an entity', () => {
   assert.equal(Either.isRight(decodeCreateRequest(create({ parent: { path: '/' } }))), true);
-  assert.equal(Either.isRight(decodeListRequest({ parent: { path: '/' } })), true);
+  assert.equal(Either.isRight(decodeListRequest({ scopes: [{ path: '/' }] })), true);
   assert.equal(Either.isLeft(decodeGetRequest({ target: { path: '/' } })), true);
   assert.equal(Either.isLeft(decodeGetPathRequest({ target: { path: '/' } })), true);
 });
 
-test('list defaults are materialized, and omitted types means every supported type', () => {
-  const decoded = right(decodeListRequest({ parent: { id: 1 } }));
-  assert.deepEqual(decoded, { parent: { id: 1 }, recursive: false, skip: 0, limit: 50 });
-  assert.equal('types' in decoded, false);
+test('list defaults are materialized, and an omitted filter restricts nothing', () => {
+  const decoded = right(decodeListRequest({ scopes: [{ id: 1 }] }));
+  assert.deepEqual(decoded, { scopes: [{ id: 1 }], recursive: false, skip: 0, limit: 50 });
+  assert.equal('filter' in decoded, false);
 });
 
-test('pagination rejects values outside the agreed range instead of clamping them', () => {
-  for (const limit of [0, -1, 1.5, LIST_LIMIT_MAX + 1]) {
-    assert.equal(
-      Either.isLeft(decodeListRequest({ parent: { id: 1 }, limit })),
-      true,
-      String(limit),
-    );
-  }
+test('search is the same page with queries instead of an ordering', () => {
+  const decoded = right(decodeSearchRequest({ scopes: [{ path: '/' }], queries: ['auth'] }));
+  assert.deepEqual(decoded, {
+    scopes: [{ path: '/' }],
+    queries: ['auth'],
+    recursive: false,
+    skip: 0,
+    limit: 50,
+  });
+
+  // Each operation refuses the other's own field, rather than accepting and ignoring it.
   assert.equal(
-    Either.isRight(decodeListRequest({ parent: { id: 1 }, limit: LIST_LIMIT_MAX })),
+    Either.isLeft(
+      decodeSearchRequest({
+        scopes: [{ id: 1 }],
+        queries: ['a'],
+        orderBy: [{ field: 'slug', direction: 'asc' }],
+      }),
+    ),
     true,
   );
-  assert.equal(Either.isLeft(decodeListRequest({ parent: { id: 1 }, skip: -1 })), true);
-  assert.equal(Either.isRight(decodeListRequest({ parent: { id: 1 }, skip: 0 })), true);
+  assert.equal(Either.isLeft(decodeListRequest({ scopes: [{ id: 1 }], queries: ['a'] })), true);
+
+  // `queries` is required: a search with nothing to search for is not a wider search.
+  assert.equal(Either.isLeft(decodeSearchRequest({ scopes: [{ id: 1 }] })), true);
+  assert.equal(Either.isLeft(decodeSearchRequest({ scopes: [{ id: 1 }], queries: [] })), true);
 });
 
-test('an empty type filter is invalid, so nobody reads an empty page as an empty hierarchy', () => {
-  assert.equal(Either.isLeft(decodeListRequest({ parent: { id: 1 }, types: [] })), true);
+test('scopes are a bounded union that refuses a literal repeat', () => {
+  assert.equal(Either.isLeft(decodeListRequest({ scopes: [] })), true);
+  assert.equal(Either.isRight(decodeListRequest({ scopes: [{ id: 1 }, { path: '/' }] })), true);
+  assert.equal(Either.isLeft(decodeListRequest({ scopes: [{ id: 1 }, { id: 1 }] })), true);
   assert.equal(
-    Either.isLeft(decodeListRequest({ parent: { id: 1 }, types: ['area', 'area'] })),
+    Either.isLeft(decodeListRequest({ scopes: [{ path: '/work' }, { path: '/work' }] })),
     true,
   );
-  assert.equal(Either.isRight(decodeListRequest({ parent: { id: 1 }, types: ['project'] })), true);
-  // Expressible now that resources are a public type: this is the filter a caller uses to ask for
-  // notes, and the one every container consumer stopped relying on the default for.
-  assert.equal(Either.isRight(decodeListRequest({ parent: { id: 1 }, types: ['resource'] })), true);
+  // Two spellings of one node are accepted here; only storage can know they agree, and SQL
+  // deduplication is what makes it harmless.
+  assert.equal(Either.isRight(decodeListRequest({ scopes: [{ id: 1 }, { path: '/work' }] })), true);
   assert.equal(
     Either.isRight(
-      decodeListRequest({ parent: { id: 1 }, types: ['area', 'project', 'resource'] }),
+      decodeListRequest({
+        scopes: Array.from({ length: SCOPES_MAX_COUNT }, (_, index) => ({ id: index + 1 })),
+      }),
     ),
     true,
   );
   assert.equal(
     Either.isLeft(
-      decodeListRequest({ parent: { id: 1 }, types: ['area', 'project', 'resource', 'area'] }),
+      decodeListRequest({
+        scopes: Array.from({ length: SCOPES_MAX_COUNT + 1 }, (_, index) => ({ id: index + 1 })),
+      }),
     ),
+    true,
+  );
+});
+
+test('the query list is bounded and each member must parse', () => {
+  const search = (queries: unknown): Record<string, unknown> => ({
+    scopes: [{ path: '/' }],
+    queries,
+  });
+  assert.equal(Either.isRight(decodeSearchRequest(search(['auth', '"login flow"']))), true);
+  assert.equal(Either.isLeft(decodeSearchRequest(search(['auth AND']))), true);
+  assert.equal(Either.isLeft(decodeSearchRequest(search([42]))), true);
+  assert.equal(
+    Either.isRight(
+      decodeSearchRequest(search(Array.from({ length: SEARCH_QUERIES_MAX_COUNT }, () => 'auth'))),
+    ),
+    true,
+  );
+  assert.equal(
+    Either.isLeft(
+      decodeSearchRequest(
+        search(Array.from({ length: SEARCH_QUERIES_MAX_COUNT + 1 }, () => 'auth')),
+      ),
+    ),
+    true,
+  );
+});
+
+test('a search response is hits, and a hit tolerates an unknown sibling of node', () => {
+  const page = right(
+    decodeSearchResponse({ items: [{ node: entity() }], skip: 0, limit: 10, hasMore: true }),
+  );
+  assert.equal(page.items.length, 1);
+  assert.equal(page.items[0]?.node.id, 42);
+  assert.equal(page.hasMore, true);
+
+  // The wrapper is the room: a later excerpt or source field must not break an installed client.
+  const widened = right(
+    decodeSearchResponse({
+      items: [{ node: entity(), excerpt: 'later' }],
+      skip: 0,
+      limit: 10,
+      hasMore: false,
+    }),
+  );
+  assert.equal(widened.items[0]?.node.id, 42);
+
+  // A hit is still a hit: a bare summary is not one.
+  assert.equal(
+    Either.isLeft(decodeSearchResponse({ items: [entity()], skip: 0, limit: 10, hasMore: false })),
+    true,
+  );
+});
+
+test('the request-field vocabulary matches the fields the operations now have', () => {
+  for (const field of ['scopes', 'filter', 'queries']) {
+    assert.ok((REQUEST_FIELDS as readonly string[]).includes(field), field);
+  }
+  assert.equal((REQUEST_FIELDS as readonly string[]).includes('types'), false);
+  // `parent` survives because creation still has one.
+  assert.ok((REQUEST_FIELDS as readonly string[]).includes('parent'));
+});
+
+test('pagination rejects values outside the agreed range instead of clamping them', () => {
+  for (const limit of [0, -1, 1.5, LIST_LIMIT_MAX + 1]) {
+    assert.equal(
+      Either.isLeft(decodeListRequest({ scopes: [{ id: 1 }], limit })),
+      true,
+      String(limit),
+    );
+  }
+  assert.equal(
+    Either.isRight(decodeListRequest({ scopes: [{ id: 1 }], limit: LIST_LIMIT_MAX })),
+    true,
+  );
+  assert.equal(Either.isLeft(decodeListRequest({ scopes: [{ id: 1 }], skip: -1 })), true);
+  assert.equal(Either.isRight(decodeListRequest({ scopes: [{ id: 1 }], skip: 0 })), true);
+
+  // The same window applies to search, because it is the same page.
+  assert.equal(
+    Either.isLeft(decodeSearchRequest({ scopes: [{ id: 1 }], queries: ['a'], limit: 0 })),
+    true,
+  );
+});
+
+test('the filter is shared by both operations and is the same predicate in each', () => {
+  const list = (filter: unknown): Record<string, unknown> => ({ scopes: [{ id: 1 }], filter });
+  const search = (filter: unknown): Record<string, unknown> => ({
+    scopes: [{ id: 1 }],
+    queries: ['auth'],
+    filter,
+  });
+
+  for (const filter of [
+    { type: 'resource' },
+    { type: { $in: ['area', 'project'] } },
+    { kind: 'note' },
+    { tags: { $in: ['backend'] } },
+    { type: 'resource', kind: 'note', tags: 'auth' },
+  ]) {
+    assert.equal(Either.isRight(decodeListRequest(list(filter))), true, JSON.stringify(filter));
+    assert.equal(Either.isRight(decodeSearchRequest(search(filter))), true, JSON.stringify(filter));
+  }
+
+  for (const filter of [
+    { type: { $in: [] } },
+    { type: { $in: ['area', 'area'] } },
+    { type: 'folder' },
+    { metadata: { x: 1 } },
+    { type: { $nin: ['area'] } },
+    'resource',
+  ]) {
+    assert.equal(Either.isLeft(decodeListRequest(list(filter))), true, JSON.stringify(filter));
+    assert.equal(Either.isLeft(decodeSearchRequest(search(filter))), true, JSON.stringify(filter));
+  }
+
+  // The predicate the old `types` field spelled, in its one remaining spelling.
+  assert.equal(
+    Either.isLeft(decodeListRequest({ scopes: [{ id: 1 }], types: ['resource'] })),
     true,
   );
 });
@@ -269,7 +412,7 @@ test('body input is Markdown unless TipTap is chosen explicitly', () => {
 
 test('an unrecognized request property is refused', () => {
   assert.equal(Either.isLeft(decodeCreateRequest(create({ surprise: true }))), true);
-  assert.equal(Either.isLeft(decodeListRequest({ parent: { id: 1 }, sort: 'title' })), true);
+  assert.equal(Either.isLeft(decodeListRequest({ scopes: [{ id: 1 }], sort: 'title' })), true);
 });
 
 test('an idempotency key is an opaque bounded string', () => {
@@ -546,9 +689,22 @@ test('a decoded request survives encoding and decoding again', () => {
   // Normalization survives the round trip rather than being reapplied to a different value.
   assert.deepEqual((encoded as { tags: readonly string[] }).tags, ['Work', '\u00e9tude']);
 
-  const listDecoded = right(decodeListRequest({ parent: { id: 1 }, limit: 10 }));
+  const listDecoded = right(decodeListRequest({ scopes: [{ id: 1 }], limit: 10 }));
   const listEncoded = right(Schema.encodeEither(ListRequest)(listDecoded));
   assert.deepEqual(right(decodeListRequest(listEncoded)), listDecoded);
+
+  // A query is a string refined by the parser, never a transform into a tree: the typed client puts
+  // the decoded request on the wire, so a decoded request has to re-decode to itself.
+  const searchDecoded = right(
+    decodeSearchRequest({
+      scopes: [{ id: 1 }],
+      queries: ['auth AND tokens'],
+      filter: { tags: ' Work ' },
+    }),
+  );
+  const searchEncoded = right(Schema.encodeEither(SearchRequest)(searchDecoded));
+  assert.deepEqual(right(decodeSearchRequest(searchEncoded)), searchDecoded);
+  assert.deepEqual((searchEncoded as { queries: readonly string[] }).queries, ['auth AND tokens']);
 });
 
 test('a decoded response survives encoding and decoding again', () => {
@@ -654,7 +810,7 @@ test('the body format default applies to both members of the creation union', ()
 });
 
 const listWith = (orderBy: unknown): Record<string, unknown> => ({
-  parent: { path: '/' },
+  scopes: [{ path: '/' }],
   orderBy,
 });
 
@@ -676,7 +832,7 @@ test('ordering clauses are taken in the order they were given, and only from the
 
   // Omitted rather than defaulted in. What the default ordering *is* belongs to the server, which is
   // the only party that can apply it.
-  assert.equal(right(decodeListRequest({ parent: { path: '/' } })).orderBy, undefined);
+  assert.equal(right(decodeListRequest({ scopes: [{ path: '/' }] })).orderBy, undefined);
 });
 
 test('malformed ordering is refused rather than partially honored', () => {
@@ -716,11 +872,11 @@ test('ordering is a List concern and is refused everywhere else', () => {
 });
 
 test('adding ordering left pagination and the response shapes alone', () => {
-  const page = right(decodeListRequest({ parent: { path: '/' } }));
+  const page = right(decodeListRequest({ scopes: [{ path: '/' }] }));
   assert.equal(page.skip, 0);
   assert.equal(page.limit, 50);
   assert.equal(
-    Either.isLeft(decodeListRequest({ parent: { path: '/' }, limit: LIST_LIMIT_MAX + 1 })),
+    Either.isLeft(decodeListRequest({ scopes: [{ path: '/' }], limit: LIST_LIMIT_MAX + 1 })),
     true,
   );
 

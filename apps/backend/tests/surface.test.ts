@@ -17,7 +17,14 @@ import * as capability from '../src/modules/nodes/index.ts';
  * someone makes here on purpose instead of a side effect of adding a re-export.
  */
 
-const OPERATIONS = ['createNode', 'getNode', 'getNodePath', 'listNodes', 'updateNode'] as const;
+const OPERATIONS = [
+  'createNode',
+  'getNode',
+  'getNodePath',
+  'listNodes',
+  'searchNodes',
+  'updateNode',
+] as const;
 
 const ERROR_CONTRACT = [
   'IdempotencyConflict',

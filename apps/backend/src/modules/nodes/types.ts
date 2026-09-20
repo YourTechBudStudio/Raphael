@@ -54,3 +54,22 @@ export interface StoredEntity extends StoredSummary {
 export type ResolvedScope =
   | { readonly kind: 'root' }
   | { readonly kind: 'node'; readonly node: StoredNode };
+
+/**
+ * A resolved scope *union*, as both page operations take one.
+ *
+ * It lives here rather than in either of the two modules that use it, so that `resolve.ts`, which
+ * produces it, and `scope-page.ts`, which consumes it, do not depend on each other. `nodeIds` is
+ * deduplicated: two selectors naming one row contribute it once.
+ *
+ * **At least one of `root` or an entry in `nodeIds` is always present.** `resolveScopes` contributes
+ * exactly one of the two per selector and the contract requires at least one selector, so the empty
+ * union cannot arise from a request. It is stated because the type cannot carry it and
+ * `membershipFragments` relies on it: an empty union would produce a membership condition with no
+ * alternatives, which is not a query that says "nothing" - it is not a query at all. Anyone building
+ * one of these by hand owes that invariant.
+ */
+export interface ResolvedScopes {
+  readonly root: boolean;
+  readonly nodeIds: readonly number[];
+}

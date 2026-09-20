@@ -29,7 +29,11 @@ export type InvalidInputReason =
   | 'slug_underivable'
   | 'slug_too_long'
   | 'tags_too_many'
-  | 'active_requires_project';
+  | 'active_requires_project'
+  | 'query_malformed'
+  | 'query_too_long'
+  | 'query_too_many_terms'
+  | 'filter_unsupported';
 
 /**
  * The request fields an operation can name in a failure.
@@ -47,8 +51,15 @@ export class InvalidInput extends Data.TaggedError('InvalidInput')<{
   readonly limit?: number;
 }> {}
 
+/**
+ * `index` is the position of the offending element in a submitted list, and is present only for a
+ * field that *is* a list - `scopes` today. A position is not content: it says which of the caller's
+ * own entries was at fault without repeating any of them, which is the one thing that makes a refused
+ * multi-scope request actionable rather than merely refused.
+ */
 export class NodeNotFound extends Data.TaggedError('NodeNotFound')<{
-  readonly field: 'target' | 'parent';
+  readonly field: 'target' | 'parent' | 'scopes';
+  readonly index?: number;
 }> {}
 
 /**
@@ -137,6 +148,10 @@ const INVALID_INPUT_MESSAGES: Readonly<Record<InvalidInputReason, string>> = {
   slug_too_long: 'The address derived from this title is longer than the limit.',
   tags_too_many: 'Too many tags.',
   active_requires_project: 'Only a project can be marked active.',
+  query_malformed: 'The search query is not well formed.',
+  query_too_long: 'The search query is longer than the limit.',
+  query_too_many_terms: 'The search query has more terms than the limit.',
+  filter_unsupported: 'The filter uses a key or operator that is not supported.',
 };
 
 /**
@@ -159,7 +174,7 @@ export const toPublicError = (error: NodeError): PublicApiError => {
       return {
         code: 'node_not_found',
         message: 'No entity exists at that address.',
-        details: { field: error.field },
+        details: withoutUndefined({ field: error.field, index: error.index }),
       };
     case 'InvalidParent':
       return {
