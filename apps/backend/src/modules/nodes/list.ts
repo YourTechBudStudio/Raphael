@@ -1,10 +1,8 @@
 import {
-  NODE_TYPES,
   decodeListRequest,
   decodeListResponse,
   type ListResponse,
   type NodeOrderBy,
-  type NodeType,
 } from '@raphael/contracts/nodes';
 import { sql } from 'drizzle-orm';
 import { Effect, Either } from 'effect';
@@ -12,8 +10,14 @@ import { Effect, Either } from 'effect';
 import { Db } from '../../infrastructure/database/index.ts';
 import { LIST_FIELDS, invalidInputFrom } from './diagnostics.ts';
 import type { NodeError } from './errors.ts';
-import { checkedResponse, summaryProjection } from './projection.ts';
-import { resolveScope } from './resolve.ts';
+import { SUMMARY_COLUMNS, checkedResponse, summaryProjection } from './projection.ts';
+import { resolveScopes } from './resolve.ts';
+import {
+  membershipFragments,
+  predicateConditions,
+  whereFragment,
+  windowFragment,
+} from './scope-page.ts';
 import { raise, unwrapFailure } from './storage-failures.ts';
 import { orm, readTransaction } from './store.ts';
 import type { StoredSummary } from './types.ts';
@@ -21,29 +25,26 @@ import type { StoredSummary } from './types.ts';
 const OPERATION = 'nodes.list';
 
 /**
- * Listing what a scope contains.
+ * Listing what a scope contains: ordering and assembly over the shared scope page.
  *
- * Two properties are easy to get wrong and are both deliberate here.
- *
- * Type filtering applies to *results*, never to traversal. A recursive listing filtered to projects still
- * walks through areas to reach them; pruning the walk by the filter would silently hide every project
- * that happens to live one level deeper. The supported-type restriction is applied in SQL, before
- * `LIMIT`, so a page is a page of things the caller can actually receive and `hasMore` is truthful rather
- * than an artifact of rows dropped after the fact.
- *
- * A recursive result is a flat, globally ordered list of descendants. It is not depth-first, and a page
- * can contain a node whose ancestors are on another page - so it is a descendant listing, not a tree
- * source. Navigating a hierarchy is what the immediate-child query is for.
+ * Where to look, how deep, which nodes qualify and which slice to return all live in
+ * `scope-page.ts`, together with the traversal invariants they carry - filtering never prunes the
+ * walk, membership is deduplicated before anything is ordered, and `hasMore` is observed rather than
+ * counted. What stays here is the only thing listing does not share with searching: the ordering.
  *
  * Ordering is global and is applied *before* pagination, whichever clauses were asked for. Sorting an
  * already-limited page, or sorting per branch, would produce a page that is ordered internally and
  * wrong overall - the most convincing kind of wrong.
  *
- * Two consequences worth naming. Listing an area now returns its resources alongside its containers,
- * because the default filter is every type; a caller that means "containers" says so with `types`.
- * And listing a resource returns an empty page rather than a refusal: a resource holds nothing, and an
- * empty page is the truthful answer for a valid scope. Both are successful empty results, and a client
- * must present them as such rather than as loading or failure.
+ * A recursive result is a flat, globally ordered list of descendants. It is not depth-first, and a page
+ * can contain a node whose ancestors are on another page - so it is a descendant listing, not a tree
+ * source. Navigating a hierarchy is what the immediate-child query is for.
+ *
+ * Three consequences worth naming. Listing an area returns its resources alongside its containers,
+ * because an omitted `filter` restricts nothing; a caller that means "containers" says so with
+ * `filter`. Listing a resource returns an empty page rather than a refusal: a resource holds nothing,
+ * and an empty page is the truthful answer for a valid scope. And several scopes are listed as one
+ * union, so a row inside two of them appears once.
  */
 export const listNodes = (input: unknown): Effect.Effect<ListResponse, NodeError, Db> =>
   Effect.gen(function* () {
@@ -55,20 +56,19 @@ export const listNodes = (input: unknown): Effect.Effect<ListResponse, NodeError
         if (Either.isLeft(request)) {
           return raise(invalidInputFrom(request.left, LIST_FIELDS, input));
         }
-        const { parent, recursive, types, orderBy, skip, limit } = request.right;
-        const wanted: readonly NodeType[] = types ?? NODE_TYPES;
+        const { scopes, recursive, filter, orderBy, skip, limit } = request.right;
         const ordering = effectiveOrderBy(orderBy);
 
         const page = readTransaction(db, () => {
           const handle = orm(db);
-          const scope = resolveScope(handle, parent, 'parent', OPERATION);
-          const scopeId = scope.kind === 'root' ? null : scope.node.id;
+          const resolved = resolveScopes(handle, scopes, OPERATION);
+          const membership = membershipFragments(resolved, recursive);
 
-          // One row beyond the page, so `hasMore` is observed rather than inferred from a second count
-          // query that could disagree with the page it describes.
-          const rows = handle.all<StoredSummary>(
-            pageQuery({ scopeId, recursive, wanted, ordering, skip, limit }),
-          );
+          const rows = handle.all<StoredSummary>(sql`
+            ${membership.with}
+            SELECT ${SUMMARY_COLUMNS} FROM nodes n ${membership.join}
+            ${whereFragment([...membership.conditions, ...predicateConditions(filter)])}
+            ORDER BY ${orderingFragment(ordering)} ${windowFragment(skip, limit)}`);
           return { rows, skip, limit };
         });
 
@@ -141,56 +141,3 @@ const orderingFragment = (ordering: NodeOrderBy) =>
     ),
     sql`, `,
   );
-
-/**
- * The page query.
- *
- * Recursion collects identities with `UNION` rather than `UNION ALL`, so the deduplication *is* the
- * visited set and corrupted cyclic parentage terminates instead of spinning. That guarantees termination;
- * it does not certify that the hierarchy is acyclic, which is why Get Path does its own cycle detection
- * rather than trusting this. The scope node is excluded explicitly as well as by the seed, so a cycle that
- * makes it reachable again cannot list it as its own descendant.
- *
- * Traversal is never pruned by the type filter, and the recursion does not stop at a non-matching
- * ancestor: a recursive root listing filtered to resources still walks through every area and project to
- * reach them. Filtering is applied to results, in SQL, before `LIMIT` - so a page is a page of things the
- * caller can actually receive and `hasMore` is truthful rather than an artifact of rows dropped after the
- * fact. The ordering window then applies to that whole filtered set, not to a page already cut from it.
- */
-const pageQuery = (input: {
-  readonly scopeId: number | null;
-  readonly recursive: boolean;
-  readonly wanted: readonly NodeType[];
-  readonly ordering: NodeOrderBy;
-  readonly skip: number;
-  readonly limit: number;
-}) => {
-  const columns = sql`n.id AS id, n.type AS type, n.kind AS kind, n.parent_id AS parentId, n.slug AS slug,
-    n.revision AS revision, n.title AS title, n.description AS description, n.tags AS tags,
-    n.active AS active`;
-  const types = sql.join(
-    input.wanted.map((type) => sql`${type}`),
-    sql`, `,
-  );
-  const window = sql`ORDER BY ${orderingFragment(input.ordering)} LIMIT ${input.limit + 1} OFFSET ${input.skip}`;
-
-  if (!input.recursive) {
-    const parent =
-      input.scopeId === null ? sql`n.parent_id IS NULL` : sql`n.parent_id = ${input.scopeId}`;
-    return sql`SELECT ${columns} FROM nodes n WHERE ${parent} AND n.type IN (${types}) ${window}`;
-  }
-
-  const seed =
-    input.scopeId === null
-      ? sql`SELECT id FROM nodes WHERE parent_id IS NULL`
-      : sql`SELECT id FROM nodes WHERE parent_id = ${input.scopeId}`;
-  const notScope = input.scopeId === null ? sql`` : sql`AND n.id <> ${input.scopeId}`;
-  return sql`
-    WITH RECURSIVE descendant(id) AS (
-      ${seed}
-      UNION
-      SELECT child.id FROM nodes child JOIN descendant ON child.parent_id = descendant.id
-    )
-    SELECT ${columns} FROM nodes n JOIN descendant ON n.id = descendant.id
-    WHERE n.type IN (${types}) ${notScope} ${window}`;
-};

@@ -71,7 +71,7 @@ describe('acquisition', () => {
       // The very first request a server can possibly receive already sees the migrated schema,
       // including the seeded root areas. There is no window in which the listener is open and the
       // schema is not current.
-      const list = await call(server, '/api/nodes/list', { body: '{"parent":{"path":"/"}}' });
+      const list = await call(server, '/api/nodes/list', { body: '{"scopes":[{"path":"/"}]}' });
       assert.equal(list.status, 200);
       assert.equal((list.json as { items: unknown[] }).items.length, 2);
     });

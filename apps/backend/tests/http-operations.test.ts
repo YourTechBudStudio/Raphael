@@ -33,9 +33,55 @@ describe('operations over HTTP', () => {
     });
   });
 
+  test('search answers a page of hits over HTTP', async () => {
+    await withServer('http-search', async (server) => {
+      const created = await call(server, '/api/nodes/create', {
+        body: JSON.stringify({
+          type: 'project',
+          parent: { path: '/work' },
+          title: 'Quarterly plan',
+          description: 'budget and headcount',
+        }),
+      });
+      assert.equal(created.status, 201);
+
+      const found = await call(server, '/api/nodes/search', {
+        body: JSON.stringify({ scopes: [{ path: '/' }], recursive: true, queries: ['headcount'] }),
+      });
+      assert.equal(found.status, 200);
+      const page = found.json as {
+        items: { node: { slug: string } }[];
+        skip: number;
+        limit: number;
+        hasMore: boolean;
+      };
+      assert.deepEqual(
+        page.items.map((hit) => hit.node.slug),
+        ['quarterly-plan'],
+      );
+      assert.equal(page.hasMore, false);
+
+      // The relevance score the query computes is not part of the wire contract.
+      assert.doesNotMatch(JSON.stringify(found.json), /score|rank/u);
+    });
+  });
+
+  test('a malformed query is a bounded 400 that echoes no query text', async () => {
+    await withServer('http-search-malformed', async (server) => {
+      const response = await call(server, '/api/nodes/search', {
+        body: JSON.stringify({ scopes: [{ path: '/' }], queries: ['confidentialword AND'] }),
+      });
+      assert.equal(response.status, 400);
+      const error = envelope(response.json);
+      assert.equal(error.code, 'invalid_input');
+      assert.deepEqual(error.details, { field: 'queries', reason: 'query_malformed' });
+      assert.doesNotMatch(JSON.stringify(response.json), /confidentialword/u);
+    });
+  });
+
   test('the seeded root areas are listable, and a create answers 201', async () => {
     await withServer('http-create', async (server) => {
-      const list = await call(server, '/api/nodes/list', { body: '{"parent":{"path":"/"}}' });
+      const list = await call(server, '/api/nodes/list', { body: '{"scopes":[{"path":"/"}]}' });
       assert.equal(list.status, 200);
       const items = (list.json as { items: { slug: string }[] }).items;
       assert.deepEqual(
@@ -230,7 +276,7 @@ describe('operations over HTTP', () => {
       // Nothing was created. The database still holds exactly what the bootstrap migration seeded, so
       // a refusal that had partially applied would show up here as an extra row.
       const listed = await call(server, '/api/nodes/list', {
-        body: JSON.stringify({ parent: { path: '/' }, recursive: true }),
+        body: JSON.stringify({ scopes: [{ path: '/' }], recursive: true }),
       });
       assert.equal(listed.status, 200);
       const remaining = (listed.json as { items: { slug: string; type: string }[] }).items;

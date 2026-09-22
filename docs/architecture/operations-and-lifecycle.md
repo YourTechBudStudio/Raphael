@@ -11,6 +11,10 @@ Core owns stored records and structural guarantees. This overview connects the a
 
 ## Retrieval
 
+List and Search share scope selection, descendant inclusion, and structured filtering. Multiple scopes form a union, with entities deduplicated by identity before global ordering and pagination. Result filters do not prune hierarchy traversal: a nonmatching container can still contain matching descendants.
+
+If any requested scope cannot be resolved, the whole request fails. Clients preserve the requested boundary; broadening it requires an explicit user choice.
+
 Get remains available for archived entities; List and Search exclude them by default. Search can match external content absent from stored bodies, so results distinguish incomplete coverage from no matches. [ADR 0001](../adrs/0001-retrieval-and-search-authority.md) owns retrieval authority; [ADR 0005](../adrs/0005-canonical-content-and-search.md) owns canonical content and indexing.
 
 ## Mutations

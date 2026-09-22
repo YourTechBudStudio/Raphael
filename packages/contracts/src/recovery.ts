@@ -98,6 +98,11 @@ export interface RecoveryDetails {
    * again.
    */
   readonly currentRevision?: number;
+  /**
+   * The position in a submitted list, when the failure is about one element of it. A position is not
+   * content: it says which of the caller's own entries was at fault without repeating any of them.
+   */
+  readonly index?: number;
 }
 
 const asString = (value: JsonValue | undefined): string | undefined =>
@@ -192,7 +197,7 @@ export const projectRecoveryDetails = (code: string, details: JsonObject): Recov
         nodeType: identifier(read('nodeType')),
       });
     case 'node_not_found':
-      return present({ field: requestField(read('field')) });
+      return present({ field: requestField(read('field')), index: safeCount(read('index')) });
     case 'invalid_parent':
       return present({
         field: requestField(read('field')),

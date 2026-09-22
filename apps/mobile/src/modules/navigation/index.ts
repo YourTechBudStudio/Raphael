@@ -2,6 +2,7 @@ export { HomeTopBar, LocationTopBar, TitleTopBar } from './components/TopBar';
 export {
   goBack,
   leaveSearchFor,
+  leaveSearchForNote,
   openArea,
   openBrowse,
   openCapture,

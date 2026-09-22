@@ -19,18 +19,29 @@ function resolveImport(source, specifier) {
 /**
  * The files a module publishes. `index.ts` everywhere, plus the declared exceptions below.
  *
- * A second entry point exists for exactly one reason: to break an import cycle that a single door
- * would force. `collections/index.ts` publishes the Area and Project screens, and those screens
- * render the resources capability's note sections. A note screen reaching the hierarchy through that
- * index would make the two modules mutually dependent, where each public surface can only finish
- * evaluating after the other's - an edge that works until a refactor reorders it and then fails as
- * an undefined component at startup.
+ * A second entry point exists to stop one door forcing a dependency that has nothing to do with what
+ * is being asked for. There are exactly two reasons on this list.
  *
- * The exception is narrow by construction and is checked below: a declared entry point must not
- * reach the capability that depends on it. Adding one for convenience, rather than to break a cycle,
- * is what this list exists to make visible.
+ * `collections/hierarchy.ts` breaks an import cycle. `collections/index.ts` publishes the Area and
+ * Project screens, and those screens render the resources capability's note sections. A note screen
+ * reaching the hierarchy through that index would make the two modules mutually dependent, where
+ * each public surface can only finish evaluating after the other's - an edge that works until a
+ * refactor reorders it and then fails as an undefined component at startup.
+ *
+ * `resources/summary.ts` keeps a pure module out of the renderer. `resources/index.ts` publishes the
+ * cards, the grid and the sections, so everything it reaches is a React Native component; search's
+ * request builder only maps a `NodeSummary` into the shape a card is drawn from, holds no
+ * presentation, and runs in Node under its own unit tests, where reaching the renderer half is
+ * impossible rather than merely heavy.
+ *
+ * Both exceptions are narrow by construction and are checked below: a declared entry point must not
+ * reach the capability that depends on it. Adding one for convenience, rather than for a reason of
+ * this kind, is what this list exists to make visible.
  */
-const ENTRY_POINTS = new Map([['collections', ['index.ts', 'hierarchy.ts']]]);
+const ENTRY_POINTS = new Map([
+  ['collections', ['index.ts', 'hierarchy.ts']],
+  ['resources', ['index.ts', 'summary.ts']],
+]);
 
 const entryPointsOf = (module) => ENTRY_POINTS.get(module) ?? ['index.ts'];
 

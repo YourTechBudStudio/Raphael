@@ -24,9 +24,9 @@ const hash = (key) => JSON.stringify(key);
 describe('the request Home sends', () => {
   it('is the whole server, resources only, newest first, one fixed page', () => {
     assert.deepEqual(noteListRequest(feedDescriptor(0)), {
-      parent: { path: '/' },
+      scopes: [{ path: '/' }],
       recursive: true,
-      types: ['resource'],
+      filter: { type: 'resource' },
       orderBy: [{ field: 'updatedAt', direction: 'desc' }],
       skip: 0,
       limit: NOTE_PAGE_SIZE,
@@ -52,9 +52,9 @@ describe("the request a container's notes send", () => {
   it('asks for that container only, in the default order', () => {
     const request = noteListRequest(containerDescriptor(7, 0));
 
-    assert.deepEqual(request.parent, { id: 7 });
+    assert.deepEqual(request.scopes, [{ id: 7 }]);
     assert.equal(request.recursive, false);
-    assert.deepEqual(request.types, ['resource']);
+    assert.deepEqual(request.filter, { type: 'resource' });
     // Omitted entirely rather than sent as null: omission is how the wire contract asks for slug
     // then id, and a container list has no recency to offer.
     assert.ok(!('orderBy' in request));

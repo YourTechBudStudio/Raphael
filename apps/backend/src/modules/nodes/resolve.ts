@@ -10,6 +10,7 @@ import {
   isNodeType,
   type NodeType,
   type ResolvedScope,
+  type ResolvedScopes,
   type StoredEntity,
   type StoredNode,
 } from './types.ts';
@@ -103,25 +104,69 @@ export type Selector = { readonly id: number } | { readonly path: string };
  * reaches these operations through the same decode boundary and a malformed path must not become a
  * silent empty walk.
  */
+export type SelectorField = 'target' | 'parent' | 'scopes';
+
+/**
+ * `index` is carried in rather than recovered afterwards because `raise` throws: a caller cannot
+ * observe *which* selector failed once the failure is in flight, so the position has to be attached
+ * where the failure is built. Single-selector callers pass nothing and keep reporting no position.
+ */
 export const resolveScope = (
   orm: Orm,
   selector: Selector,
-  field: 'target' | 'parent',
+  field: SelectorField,
   operation: string,
+  index?: number,
 ): ResolvedScope => {
+  const notFound = (): never =>
+    raise(new NodeNotFound({ field, ...(index === undefined ? {} : { index }) }));
+
   if ('id' in selector) {
     const node = byId(orm, selector.id, operation);
-    if (node === undefined) return raise(new NodeNotFound({ field }));
+    if (node === undefined) return notFound();
     return { kind: 'node', node };
   }
 
+  // No index on this one, deliberately. `ScopePath` is refined by `isCanonicalPath`, which is
+  // `parsePath`, so a path that reaches here through the decode boundary has already been accepted;
+  // this branch survives only for the internal caller the comment above describes.
   const segments = parsePath(selector.path);
   if (Either.isLeft(segments)) return raise(new InvalidInput({ field, reason: 'invalid' }));
   if (segments.right.length === 0) return { kind: 'root' };
 
   const node = byPath(orm, segments.right, operation);
-  if (node === undefined) return raise(new NodeNotFound({ field }));
+  if (node === undefined) return notFound();
   return { kind: 'node', node };
+};
+
+/**
+ * Resolves the scope union both page operations take.
+ *
+ * A scope that does not resolve refuses the **whole** request. Answering from the scopes that did
+ * resolve would need a coverage field the response does not have, and without one `hasMore: false`
+ * would quietly come to mean "and one of your scopes was ignored". Partial coverage in ADR 0001 is
+ * about a *source* that failed, not about a caller naming something that is not there.
+ *
+ * Nothing is caught here: the first selector that does not resolve raises from inside `resolveScope`
+ * with its position already attached. Ids are deduplicated, so two spellings of one node - an id and
+ * its path - contribute it once, which is what the contract relies on when it refuses only literal
+ * repeats.
+ */
+export const resolveScopes = (
+  orm: Orm,
+  selectors: readonly Selector[],
+  operation: string,
+): ResolvedScopes => {
+  let root = false;
+  const nodeIds = new Set<number>();
+
+  for (const [index, selector] of selectors.entries()) {
+    const scope = resolveScope(orm, selector, 'scopes', operation, index);
+    if (scope.kind === 'root') root = true;
+    else nodeIds.add(scope.node.id);
+  }
+
+  return { root, nodeIds: [...nodeIds] };
 };
 
 /**
@@ -135,7 +180,7 @@ export const resolveScope = (
 export const resolveEntity = (
   orm: Orm,
   selector: Selector,
-  field: 'target' | 'parent',
+  field: SelectorField,
   operation: string,
 ): StoredNode => {
   const scope = resolveScope(orm, selector, field, operation);
@@ -180,7 +225,7 @@ const ENTITY_COLUMNS = {
 export const loadEntity = (
   orm: Orm,
   selector: Selector,
-  field: 'target' | 'parent',
+  field: SelectorField,
   operation: string,
 ): StoredEntity => {
   const node = resolveEntity(orm, selector, field, operation);

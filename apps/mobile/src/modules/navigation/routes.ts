@@ -138,3 +138,17 @@ export function leaveSearchFor(ref: ContainerRef): void {
 
   openContainer(ref);
 }
+
+/**
+ * Closes the search modal and opens one note, so the stack ends Home -> Editor.
+ *
+ * The same ordering as `leaveSearchFor`, and for the same reason: dismissing and pushing in one
+ * frame lets the push land first on native, which leaves the modal sitting on top of the editor.
+ * It exists so the search screen neither pushes the editor from inside the modal nor keeps its own
+ * copy of the dismissal.
+ */
+export function leaveSearchForNote(id: number): void {
+  if (router.canDismiss()) router.dismissTo('/');
+
+  openEditor(id);
+}

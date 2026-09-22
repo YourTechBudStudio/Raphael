@@ -545,7 +545,9 @@ describe('a note the phone wrote, read by the CLI', () => {
         assert.equal(asMarkdown.entity.body.value, 'Written on the phone, read at a terminal');
 
         // And it is listed with its qualified type, which is how a terminal sees it at all.
-        const listed = await runCli(['list', WORK.path, '--types', 'resource'], { endpoint });
+        const listed = await runCli(['list', WORK.path, '--filter', '{"type":"resource"}'], {
+          endpoint,
+        });
         assert.equal(listed.code, 0);
         assert.match(listed.stdout, new RegExp(`resource\\.note {2}${byId.entity.slug}`));
       } finally {

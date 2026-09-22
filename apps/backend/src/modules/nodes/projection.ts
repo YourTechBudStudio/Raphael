@@ -5,6 +5,7 @@ import { toMarkdown } from '@raphael/content/conversion';
 import { canonicalizeDocument } from '@raphael/content/schema';
 import type { Decoder } from '@raphael/contracts';
 import { RESOURCE_KINDS, type BodyFormat, type ResourceKind } from '@raphael/contracts/nodes';
+import { sql, type SQL } from 'drizzle-orm';
 import { Either } from 'effect';
 
 import { InternalFailure } from './errors.ts';
@@ -135,6 +136,19 @@ const projectedKind = (
   }
   return kind as ResourceKind;
 };
+
+/**
+ * The columns a summary is read from, aliased as `StoredSummary` names them.
+ *
+ * Here rather than in either page operation, because this is the module that owns the "every field
+ * named" rule and the `StoredSummary` shape they are read into. Two statements select these columns
+ * and a third will; a column list copied per caller is a list that drifts. Naming them is also what
+ * keeps a computed column - the relevance score a search selects beside them - off the wire, since
+ * `summaryProjection` below reads only the fields it lists.
+ */
+export const SUMMARY_COLUMNS: SQL = sql`n.id AS id, n.type AS type, n.kind AS kind,
+  n.parent_id AS parentId, n.slug AS slug, n.revision AS revision, n.title AS title,
+  n.description AS description, n.tags AS tags, n.active AS active`;
 
 /** The summary fields, every one of them named. */
 export const summaryProjection = (row: StoredSummary, operation: string): unknown => {

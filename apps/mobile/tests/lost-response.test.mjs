@@ -147,9 +147,9 @@ const listNotes = async (base) => {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${KEY}` },
     body: JSON.stringify({
-      parent: { path: '/' },
+      scopes: [{ path: '/' }],
       recursive: true,
-      types: ['resource'],
+      filter: { type: 'resource' },
       limit: 100,
     }),
   });

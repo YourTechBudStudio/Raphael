@@ -18,6 +18,7 @@ const ROUTES = [
   '/api/nodes/create',
   '/api/nodes/get',
   '/api/nodes/list',
+  '/api/nodes/search',
   '/api/nodes/get-path',
   '/api/connection/verify',
 ] as const;

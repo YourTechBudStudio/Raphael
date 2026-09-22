@@ -60,7 +60,7 @@ describe('what an operator is told', () => {
   test('ordinary traffic writes no log line at all', async () => {
     await withServer('diag-quiet', async (server) => {
       await call(server, '/api/connection/verify', { body: '{}' });
-      await call(server, '/api/nodes/list', { body: '{"parent":{"path":"/"}}' });
+      await call(server, '/api/nodes/list', { body: '{"scopes":[{"path":"/"}]}' });
       await call(server, '/api/nodes/get', { body: '{"target":{"id":999999}}' });
       await call(server, '/api/nodes/get', { body: 'not json' });
       await call(server, '/api/connection/verify', { body: '{}', authorize: false });

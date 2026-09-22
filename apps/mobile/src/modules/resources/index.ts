@@ -19,7 +19,10 @@ export { invalidateResources, invalidateSessionMedia } from './client/cache';
 export { useNoteFeed, useNotePages, type NoteFeed } from './client/notes';
 export type { NoteEntity } from './client/entity';
 export { useSessionMedia } from './client/media';
-export { toNoteSummaryItem, type NoteSummaryItem } from './client/summary';
+// The summary projection is published by `summary.ts` as well, so a capability that only maps a
+// server summary can take it without depending on the components this file also publishes.
+// Re-exported here rather than declared twice: one definition, two doors.
+export { toNoteSummaryItem, type NoteSummaryItem } from './summary';
 export { NoteCard, type NoteCardProps } from './components/NoteCard';
 export { NoteCardShell, type NoteCardShellProps } from './components/NoteCardShell';
 export { NoteGrid, type NoteGridProps } from './components/NoteGrid';

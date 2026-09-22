@@ -1,120 +1,92 @@
-import { useMemo } from 'react';
-
-import type { ContainerRef } from '../../../infrastructure/api/contracts';
-import {
-  subtreeIds,
-  useHierarchy,
-  type Hierarchy,
-  type HierarchyNode,
-  type HierarchyQuery,
-} from '../../collections';
-
 /**
- * Search, over what this app actually has.
+ * Search, as one question asked of the server.
  *
- * Areas and projects, and nothing else. They are searched by filtering the loaded hierarchy, because
- * there is no server search operation in this release and inventing one here would mean this client
- * deciding what "matching" means - the server's job to define once rather than each client's to
- * guess.
+ * The screen filtered a hierarchy it held in memory and said so about notes, because there was no
+ * server search to ask. There is now, so this asks it: one request, one page, and no client-side
+ * notion of what matching means. Notes are searched for the first time, and by their body text as
+ * well as their title and description, which is something no client could have done for itself.
  *
- * Notes are deliberately not searched. They used to be, over a session-only store that held whatever
- * this process had captured; against a server that holds all of them, filtering the handful this app
- * happens to have read would return an answer shaped exactly like a complete one. The screen says
- * they are not searched instead. Server-side note search is story #6.
+ * Two rules it keeps, both borrowed from the notes capability because they are the same rules.
+ * Every key is stamped with the connection activation, and the query function captures the session's
+ * transport at render rather than reading the current one when it runs - so a search issued against
+ * one server stays a search against that server, and lands in a key nothing is looking at if the
+ * connection changed underneath it.
  *
- * Container results inherit the hierarchy's loading and failure states exactly. A hierarchy that did
- * not load must never read as "no matching areas or projects": one is a fact about the server, the
- * other is a claim about someone's data, and they look identical on screen if they are not kept
- * apart here.
+ * **A malformed query and a malformed tag never leave the phone.** Both are inspected here through
+ * the contract's own inspectors, and `enabled` is false while either is set. This is not politeness
+ * about round trips: `run` in the client package would refuse a repeated, empty, over-long or
+ * over-counted tag as an `invalid_request`, `unwrap` would throw it, and the view would read the
+ * throw as "search did not answer" - which is the wrong sentence, and an unrecoverable one, for a
+ * typo in a tag. The inspectors are the same authority the decoder is built from, so the local
+ * verdict and the server's cannot disagree.
  */
 
+import { inspectQueryInput, inspectTagsInput } from '@raphael/contracts/nodes';
+import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
+
+import { useConnectionSession } from '../../connection';
+import { fetchSearchPage, searchKey, type SearchDescriptor, type SearchPage } from './requests.ts';
+import { deriveSearchView, isScopeGone, type SearchView } from './view.ts';
+
 export interface SearchResults {
-  readonly containers: readonly HierarchyNode[];
+  readonly view: SearchView;
+  /** Ask the same question again. There is no next page to ask for. */
+  readonly refresh: () => void;
+  readonly isRefreshing: boolean;
 }
 
-export interface SearchState {
-  readonly results: SearchResults;
-  readonly isPending: boolean;
-  /** The hierarchy could not be read at all, so container results are unknown, not empty. */
-  readonly containersFailed: boolean;
-  /** The hierarchy query itself, so a container failure is reported the way it is everywhere else. */
-  readonly tree: HierarchyQuery;
-  readonly isFetching: boolean;
-  /** The containers being searched come from a complete but no longer current reading. */
-  readonly isStale: boolean;
-  /** True when the scope was given but is not in the hierarchy, so everything was searched. */
-  readonly scopeMissing: boolean;
-  readonly scopeName: string | undefined;
-  readonly refetch: () => void;
-}
+export function useSearchResults(descriptor: SearchDescriptor): SearchResults {
+  const session = useConnectionSession();
+  const activation = session?.activation ?? -1;
+  const transport = session?.transport ?? null;
 
-const EMPTY: SearchResults = { containers: [] };
+  const { query, tags } = descriptor;
 
-const matches = (haystack: string, needle: string): boolean =>
-  haystack.toLowerCase().includes(needle);
-
-const searchHierarchy = (
-  hierarchy: Hierarchy,
-  needle: string,
-  scopeIds: ReadonlySet<number> | null,
-): readonly HierarchyNode[] => {
-  const found: HierarchyNode[] = [];
-
-  const walk = (nodes: readonly HierarchyNode[]): void => {
-    for (const node of nodes) {
-      const inScope = scopeIds === null || scopeIds.has(node.id);
-
-      if (inScope && (matches(node.title, needle) || matches(node.description, needle))) {
-        found.push(node);
-      }
-
-      walk(node.children);
-    }
-  };
-
-  walk(hierarchy.roots);
-
-  return found;
-};
-
-export function useSearch(query: string, scope: ContainerRef | null): SearchState {
-  const tree = useHierarchy();
-  const hierarchy = tree.hierarchy;
-
-  const needle = query.trim().toLowerCase();
-
-  const scopeNode = scope === null ? undefined : hierarchy?.byId.get(scope.id);
-  // A scope that is not in a *loaded* hierarchy is genuinely not there. While the hierarchy is
-  // still loading it is unknown, and claiming it is missing then would be a guess.
-  const scopeMissing = scope !== null && hierarchy !== undefined && scopeNode === undefined;
-
-  const scopeIds = useMemo(
-    () =>
-      scope === null || hierarchy === undefined || scopeMissing
-        ? null
-        : subtreeIds(hierarchy, scope.id),
-    [scope, hierarchy, scopeMissing],
+  // An empty query is not an invalid one - it is a search nobody has asked for yet - so it is never
+  // put to the inspector, whose answer for it would be a complaint about nothing.
+  const queryRejection = useMemo(
+    () => (query === '' ? undefined : inspectQueryInput(query)),
+    [query],
   );
+  const tagsRejection = useMemo(() => inspectTagsInput(tags), [tags]);
 
-  const results = useMemo((): SearchResults => {
-    if (needle === '') return EMPTY;
+  const enabled =
+    transport !== null &&
+    query !== '' &&
+    queryRejection === undefined &&
+    tagsRejection === undefined;
 
-    return {
-      containers: hierarchy === undefined ? [] : searchHierarchy(hierarchy, needle, scopeIds),
-    };
-  }, [needle, hierarchy, scopeIds]);
+  const result = useQuery({
+    queryKey: searchKey(activation, descriptor),
+    queryFn: ({ signal }): Promise<SearchPage> => {
+      if (transport === null) throw new Error('No connection');
+
+      return fetchSearchPage(transport, descriptor, signal);
+    },
+    // A reading of this moment, never a cached one. Nothing invalidates `SEARCH_SEGMENT` on a write
+    // and nothing needs to: with no freshness and no retention, the page is dropped when the modal
+    // closes and reopening asks the server again. See `requests.ts`.
+    staleTime: 0,
+    gcTime: 0,
+    enabled,
+  });
+
+  const view = deriveSearchView({
+    query,
+    queryRejection,
+    tagsRejection,
+    scopeGone: isScopeGone(result.error),
+    page: result.data,
+    isPending: result.isPending,
+    isError: result.isError,
+  });
 
   return {
-    results,
-    isPending: needle !== '' && tree.isPending,
-    containersFailed: tree.isError && hierarchy === undefined,
-    tree,
-    isFetching: tree.isFetching,
-    isStale: tree.isStale,
-    scopeMissing,
-    scopeName: scopeNode?.title,
-    refetch: () => {
-      tree.refetch();
+    view,
+    refresh: () => {
+      void result.refetch();
     },
+    isRefreshing: result.isRefetching,
   };
 }

@@ -43,6 +43,12 @@ const safeEpochMillis = (column: string) =>
  * to `(id, type)` is what keeps that duplicate honest: it cannot name a type the parent does not
  * actually have. The two constraints solve different problems and neither replaces the other. Neither
  * detects a multi-node cycle; that belongs to future move validation.
+ *
+ * This table also backs `nodes_fts`, the lexical search index, which is declared only in
+ * `drizzle/0004_search_index.sql` because Drizzle cannot express a virtual table. Three triggers there
+ * keep it current, and they are a second reason - after the identity trigger `0001` installs - that a
+ * generated table rebuild must never be applied to `nodes`. Read that migration's header before
+ * changing anything here.
  */
 export const nodes = sqliteTable(
   'nodes',

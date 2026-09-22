@@ -273,7 +273,7 @@ test('a stored kind that contradicts its type is an integrity failure on read an
       // scope is chosen so the malformed row is inside the page being projected - a listing that
       // never selected it would pass this assertion without exercising anything.
       const scope = scenario.id === project.id ? { path: '/work' } : { id: project.id };
-      const page = runNodes(connection, listNodes({ parent: scope }));
+      const page = runNodes(connection, listNodes({ scopes: [scope] }));
       const listed = toPublicError(expectLeft(page));
       assert.equal(listed.code, 'internal_error', scenario.what);
       assert.deepEqual(listed.details, {});

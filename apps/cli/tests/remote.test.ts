@@ -541,15 +541,18 @@ describe('pagination', () => {
     }
   });
 
-  it('refuses an empty or repeated type filter rather than dropping entries', async () => {
-    for (const types of ['area,', 'area,area', '']) {
-      const ran = await run(['list', '/work', '--types', types]);
-      assert.equal(ran.code, 2, `--types "${types}"`);
-    }
+  it('refuses a repeated filter operand rather than dropping entries', async () => {
+    // The old --types flag enforced this by hand while splitting on commas. The rule did not go away
+    // with the flag: it moved into the contract's own `$in` operand list, which is where it now has to
+    // be exercised. A filter that silently discarded half of what was asked for would return a page
+    // that does not answer the question.
+    const ran = await run(['list', '/work', '--filter', '{"type":{"$in":["area","area"]}}']);
+    assert.equal(ran.code, 2);
+    assert.match(ran.stderr, /--filter: the value given for type/);
   });
 
   it('filters by type', async () => {
-    const ran = await run(['list', '/', '--types', 'area', '--json']);
+    const ran = await run(['list', '/', '--filter', '{"type":"area"}', '--json']);
     assert.equal(ran.code, 0, ran.stderr);
     for (const item of jsonOf(ran).items) assert.equal(item.type, 'area');
   });
@@ -691,7 +694,7 @@ describe('notes', () => {
     assert.match(got.stdout, /title: API design/);
     assert.match(got.stdout, /# API design/);
 
-    const listed = await run(['list', '/work', '--types', 'resource']);
+    const listed = await run(['list', '/work', '--filter', '{"type":"resource"}']);
     assert.equal(listed.code, 0);
     assert.match(listed.stdout, /resource\.note {2}api-design/);
   });
@@ -765,13 +768,28 @@ describe('notes', () => {
     }
   });
 
-  it('filters by resource, and refuses a kind as a filter value', async () => {
-    const byType = await run(['list', '/work', '--types', 'resource', '--json']);
+  it('filters by resource, and by kind through the key that owns it', async () => {
+    const byType = await run(['list', '/work', '--filter', '{"type":"resource"}', '--json']);
     assert.equal(byType.code, 0);
 
-    const byKind = await run(['list', '/work', '--types', 'resource.note']);
-    assert.equal(byKind.code, 2);
-    assert.match(byKind.stderr, /--types must name area or project or resource/);
+    // A qualified token is not a value `type` accepts. The dotted form belongs to `create`, where it
+    // names what to make; in a filter, which leaf is wanted is the `kind` key's question.
+    const qualified = await run(['list', '/work', '--filter', '{"type":"resource.note"}']);
+    assert.equal(qualified.code, 2);
+    assert.match(qualified.stderr, /--filter: the value given for type/);
+
+    const byKind = await run([
+      'list',
+      '/work',
+      '--filter',
+      '{"type":"resource","kind":"note"}',
+      '--json',
+    ]);
+    assert.equal(byKind.code, 0);
+    for (const item of jsonOf(byKind).items) {
+      assert.equal(item.type, 'resource');
+      assert.equal(item.kind, 'note');
+    }
   });
 });
 
@@ -861,8 +879,8 @@ describe('ordering', () => {
       'list',
       '/',
       '-r',
-      '--types',
-      'resource',
+      '--filter',
+      '{"type":"resource"}',
       '--order-by',
       'slug:asc',
       '--limit',
@@ -884,8 +902,8 @@ describe('ordering', () => {
       'list',
       '/',
       '-r',
-      '--types',
-      'resource',
+      '--filter',
+      '{"type":"resource"}',
       '--order-by',
       'slug:asc',
       '--skip',
@@ -914,8 +932,8 @@ describe('ordering', () => {
       'list',
       '/',
       '-r',
-      '--types',
-      'resource',
+      '--filter',
+      '{"type":"resource"}',
       '--order-by',
       'slug:desc',
       '--limit',
@@ -957,8 +975,8 @@ describe('ordering', () => {
       'list',
       '/',
       '-r',
-      '--types',
-      'resource',
+      '--filter',
+      '{"type":"resource"}',
       '--order-by',
       'slug:asc',
       '--limit',
@@ -978,8 +996,8 @@ describe('ordering', () => {
       'list',
       '/',
       '-r',
-      '--types',
-      'resource',
+      '--filter',
+      '{"type":"resource"}',
       '--order-by',
       'slug:asc',
       '--order-by',
@@ -996,8 +1014,8 @@ describe('ordering', () => {
       'list',
       '/',
       '-r',
-      '--types',
-      'resource',
+      '--filter',
+      '{"type":"resource"}',
       '--order-by',
       'id:desc',
       '--limit',
@@ -1558,5 +1576,298 @@ describe('updating', () => {
     assert.match(plain ?? '', /selection-by-path$/);
     assert.equal(jsonOf(await run(['get', '/work', '--json'])).entity.active, false);
     assert.equal(created.active, false);
+  });
+});
+
+describe('search', () => {
+  /**
+   * One fixture area, used by every case below.
+   *
+   * Scoped to itself rather than to the root, because the other suites in this file seed notes into
+   * `/work` and the root, and a search assertion that counted rows from them would depend on test
+   * order. `/searching/deep` is a nested container, which is what lets a two-scope request be asked
+   * about a parent and its own child at once.
+   */
+  before(async () => {
+    assert.equal((await run(['create', 'area', '/searching', '--title', 'Searching'])).code, 0);
+    assert.equal((await run(['create', 'project', '/searching/deep', '--title', 'Deep'])).code, 0);
+    const notes: readonly (readonly [string, string, string])[] = [
+      ['/searching/tokens', 'Auth tokens', 'Rotating the signing key'],
+      ['/searching/deep/flow', 'Login flow', 'The retry path after a refused token'],
+      ['/searching/unrelated', 'Kitchen inventory', 'Nothing to do with sessions'],
+    ];
+    for (const [path, title, body] of notes) {
+      const made = await run(['create', 'resource.note', path, '--title', title, '--body', body]);
+      assert.equal(made.code, 0, path);
+    }
+  });
+
+  it('finds a note by its text, and prints the title beside the slug', async () => {
+    const ran = await run(['search', '/searching', '-r', '-q', 'auth tokens']);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.match(ran.stdout, /resource\.note {2}tokens {2}Auth tokens/);
+    assert.match(ran.stdout, /shown, skip 0, limit \d+/);
+
+    // The same request as JSON is the independent statement of what was found, so the text form is
+    // checked against it rather than against a hand-written expectation.
+    const json = await run(['search', '/searching', '-r', '-q', 'auth tokens', '--json']);
+    assert.equal(json.code, 0, json.stderr);
+    const page = jsonOf(json);
+    assert.equal(Array.isArray(page.items), true);
+    assert.equal(page.skip, 0);
+    assert.equal(typeof page.hasMore, 'boolean');
+    // A hit is a wrapper around the summary, not the summary itself.
+    assert.ok(page.items.every((hit: { node: unknown }) => typeof hit.node === 'object'));
+    const slugs = page.items.map((hit: { node: { slug: string } }) => hit.node.slug);
+    assert.ok(slugs.includes('tokens'));
+    assert.equal(slugs.includes('unrelated'), false);
+  });
+
+  it('searches the body, not only the title', async () => {
+    const ran = await run(['search', '/searching', '-r', '-q', 'rotating', '--json']);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.deepEqual(
+      jsonOf(ran).items.map((hit: { node: { slug: string } }) => hit.node.slug),
+      ['tokens'],
+    );
+  });
+
+  it('takes a quoted phrase and an uppercase AND as the grammar describes', async () => {
+    const phrase = await run(['search', '/searching', '-r', '-q', '"login flow"', '--json']);
+    assert.equal(phrase.code, 0, phrase.stderr);
+    assert.deepEqual(
+      jsonOf(phrase).items.map((hit: { node: { slug: string } }) => hit.node.slug),
+      ['flow'],
+    );
+
+    // AND narrows: both words are in the one note, and no other note has both.
+    const narrowed = await run(['search', '/searching', '-r', '-q', 'login AND retry', '--json']);
+    assert.equal(narrowed.code, 0, narrowed.stderr);
+    assert.deepEqual(
+      jsonOf(narrowed).items.map((hit: { node: { slug: string } }) => hit.node.slug),
+      ['flow'],
+    );
+
+    // Whitespace is OR, so the same two words unnarrowed reach more than the one note.
+    const widened = await run(['search', '/searching', '-r', '-q', 'login kitchen', '--json']);
+    assert.equal(widened.code, 0, widened.stderr);
+    const slugs = jsonOf(widened).items.map((hit: { node: { slug: string } }) => hit.node.slug);
+    assert.ok(slugs.includes('flow'));
+    assert.ok(slugs.includes('unrelated'));
+  });
+
+  it('takes a filter inline and from a file, and applies it to the hits', async () => {
+    const inline = await run([
+      'search',
+      '/searching',
+      '-r',
+      '-q',
+      'login kitchen deep',
+      '--filter',
+      '{"type":"resource"}',
+      '--json',
+    ]);
+    assert.equal(inline.code, 0, inline.stderr);
+    const inlineItems = jsonOf(inline).items as { node: { type: string } }[];
+    assert.ok(inlineItems.length > 0);
+    for (const hit of inlineItems) assert.equal(hit.node.type, 'resource');
+
+    const directory = temporary('raphael-cli-filter-');
+    const file = join(directory, 'filter.json');
+    writeFileSync(file, '{"type":{"$in":["project"]}}');
+    const fromFile = await run([
+      'search',
+      '/searching',
+      '-r',
+      '-q',
+      'deep',
+      '--filter',
+      `@${file}`,
+      '--json',
+    ]);
+    assert.equal(fromFile.code, 0, fromFile.stderr);
+    const fileItems = jsonOf(fromFile).items as { node: { type: string; slug: string } }[];
+    assert.deepEqual(
+      fileItems.map((hit) => hit.node.slug),
+      ['deep'],
+    );
+    for (const hit of fileItems) assert.equal(hit.node.type, 'project');
+  });
+
+  it('takes two scopes at once and returns a shared descendant exactly once', async () => {
+    // `/searching` recursively already contains `/searching/deep`, so naming both is a union with an
+    // overlap. Deduplication happens in the page query; a client-side merge would either repeat the
+    // row or cut a page that had already been made wrong.
+    const ran = await run([
+      'search',
+      '/searching',
+      '/searching/deep',
+      '-r',
+      '-q',
+      'login',
+      '--json',
+    ]);
+    assert.equal(ran.code, 0, ran.stderr);
+    const ids = (jsonOf(ran).items as { node: { id: number } }[]).map((hit) => hit.node.id);
+    assert.deepEqual(ids, [...new Set(ids)], 'no row appears twice');
+    const slugs = (jsonOf(ran).items as { node: { slug: string } }[]).map((hit) => hit.node.slug);
+    assert.deepEqual(
+      slugs.filter((slug) => slug === 'flow'),
+      ['flow'],
+    );
+  });
+
+  it('marks an active project among its hits, exactly as a listing does', async () => {
+    await run(['update', '/searching/deep', '--active']);
+    const ran = await run(['search', '/searching', '-r', '-q', 'deep']);
+    assert.equal(ran.code, 0, ran.stderr);
+    const row = ran.stdout.split('\n').find((line) => line.includes('  deep  '));
+    assert.match(row ?? '', /project {6}  deep {2}Deep {2}active$/);
+    await run(['update', '/searching/deep', '--inactive']);
+  });
+
+  it('asks each repeated -q of the same scopes', async () => {
+    // The help says so, so the suite has to hold it. Iterating and passing every value through
+    // unchanged is the one thing about repetition the CLI owns; a build that sent only the first or
+    // only the last would still type-check.
+    const both = await run([
+      'search',
+      '/searching',
+      '-r',
+      '-q',
+      'login',
+      '-q',
+      'kitchen',
+      '--json',
+    ]);
+    assert.equal(both.code, 0, both.stderr);
+    const slugs = (jsonOf(both).items as { node: { slug: string } }[]).map((hit) => hit.node.slug);
+    assert.ok(slugs.includes('flow'), 'the first query was asked');
+    assert.ok(slugs.includes('unrelated'), 'the second query was asked');
+
+    // Each alone reaches only its own note, which is what makes the pair above a union rather than a
+    // coincidence of one broad query.
+    const first = await run(['search', '/searching', '-r', '-q', 'login', '--json']);
+    assert.deepEqual(
+      (jsonOf(first).items as { node: { slug: string } }[]).map((hit) => hit.node.slug),
+      ['flow'],
+    );
+    const second = await run(['search', '/searching', '-r', '-q', 'kitchen', '--json']);
+    assert.deepEqual(
+      (jsonOf(second).items as { node: { slug: string } }[]).map((hit) => hit.node.slug),
+      ['unrelated'],
+    );
+  });
+
+  it('names the scope and the reason when a path cannot be a scope at all', async () => {
+    // The decoder would answer for a union of two selector shapes here, telling someone who forgot
+    // the leading slash that an `id` was expected. The contract's own path helper is asked first, so
+    // the sentence is about the mistake that was actually made.
+    const relative = await run(['search', 'work', '-q', 'x']);
+    assert.equal(relative.code, 2);
+    assert.match(relative.stderr, /^scope "work": a path must start with "\/"$/m);
+    assert.equal(relative.stderr.includes('expected: "id"'), false);
+
+    for (const [path, expected] of [
+      ['/work/', /a path must not end with "\/"/],
+      ['/work//deep', /a path must not contain an empty segment at segment 2/],
+      ['/Work', /a path segment must be a canonical slug at segment 1/],
+    ] as const) {
+      const ran = await run(['search', path, '-q', 'x']);
+      assert.equal(ran.code, 2, path);
+      assert.match(ran.stderr, expected, path);
+      assert.match(ran.stderr, new RegExp(`^scope "${path.replace('/', '\\/')}`, 'm'), path);
+    }
+
+    // The same check, on the same helper, for the other command that takes scopes.
+    const listed = await run(['list', 'work']);
+    assert.equal(listed.code, 2);
+    assert.match(listed.stderr, /^scope "work": a path must start with "\/"$/m);
+
+    // The root is a valid scope and must survive the check that refuses the others.
+    const root = await run(['search', '/', '-r', '-q', 'auth', '--json']);
+    assert.equal(root.code, 0, root.stderr);
+  });
+
+  it('refuses a malformed query locally, in the contract’s own words', async () => {
+    for (const query of ['a AND', '"unclosed', '""', '   ']) {
+      const ran = await run(['search', '/searching', '-q', query]);
+      assert.equal(ran.code, 2, query);
+      assert.match(ran.stderr, /^-q: /m, query);
+      // Fixed text per reason: the submitted query is never echoed back into the message.
+      assert.equal(ran.stderr.includes(`-q: ${query}`), false, query);
+    }
+  });
+
+  it('requires at least one query and at least one scope', async () => {
+    const noQuery = await run(['search', '/searching']);
+    assert.equal(noQuery.code, 2);
+    assert.match(noQuery.stderr, /Give at least one -q query\./);
+
+    const noScope = await run(['search', '-q', 'auth']);
+    assert.equal(noScope.code, 2);
+    assert.match(noScope.stderr, /Give at least one path, or --id\./);
+
+    const noScopeList = await run(['list']);
+    assert.equal(noScopeList.code, 2);
+    assert.match(noScopeList.stderr, /Give at least one path, or --id\./);
+  });
+
+  it('refuses an unsupported filter key locally rather than sending it stripped', async () => {
+    // The key is outside the three this filter owns. A local decode against the schema would have
+    // *ignored* it and sent an empty filter, answering a wider question than the one asked; the
+    // contract's own inspector is what refuses it.
+    const ran = await run(['search', '/searching', '-q', 'auth', '--filter', '{"metadata.x":1}']);
+    assert.equal(ran.code, 2);
+    assert.match(ran.stderr, /--filter: a filter may only use type, kind, tags/);
+
+    for (const filter of ['[]', '"nope"', '{"type":{"$nin":["area"]}}', 'not json']) {
+      const bad = await run(['search', '/searching', '-q', 'auth', '--filter', filter]);
+      assert.equal(bad.code, 2, filter);
+      assert.match(bad.stderr, /--filter/, filter);
+    }
+
+    // An empty filter is no restriction, the same as omitting the flag. There is nothing to refuse
+    // about asking for everything.
+    const empty = await run([
+      'search',
+      '/searching',
+      '-r',
+      '-q',
+      'auth',
+      '--filter',
+      '{}',
+      '--json',
+    ]);
+    assert.equal(empty.code, 0, empty.stderr);
+    assert.ok((jsonOf(empty).items as unknown[]).length > 0);
+  });
+
+  it('names the scope behind the index when one cannot be resolved', async () => {
+    const ran = await run(['search', '--id', '9', '/missing', '-q', 'x']);
+    assert.equal(ran.code, 1, ran.stderr);
+    assert.match(ran.stderr, /node_not_found/);
+    // Paths are assembled before ids, so index 0 is the path however the flags were typed - which is
+    // exactly why the index alone would be unkind and the translation below exists.
+    assert.match(ran.stderr, /^ {2}index: 0$/m);
+    assert.match(ran.stderr, /^ {2}scope: \/missing$/m);
+  });
+
+  it('refuses --order-by rather than accepting an order it cannot honour', async () => {
+    const ran = await run(['search', '/searching', '-q', 'auth', '--order-by', 'slug:asc']);
+    assert.equal(ran.code, 2);
+  });
+
+  it('documents the grammar and the repeatable query in its help', async () => {
+    const ran = await run(['search', '--help']);
+    assert.equal(ran.code, 0);
+    assert.match(ran.stdout, /Words match any of them\./);
+    assert.match(ran.stdout, /Quote a phrase to match it exactly\./);
+    assert.match(ran.stdout, /Uppercase AND narrows; OR is the default\./);
+    assert.match(ran.stdout, /-q, --query <text> {2}What to look for\. Repeatable\./);
+    assert.match(ran.stdout, /Several paths search all of them at once/);
+
+    const root = await run(['--help']);
+    assert.match(root.stdout, /^ {2}search {12}Find areas, projects and notes by their text\.$/m);
   });
 });
