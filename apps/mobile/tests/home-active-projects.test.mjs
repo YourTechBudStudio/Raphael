@@ -104,7 +104,9 @@ const classify = (call) => {
   if (call.route.path === '/api/nodes/update') return WRITE;
   if (call.route.path !== '/api/nodes/list') return call.route.path;
 
-  return [...(call.body.types ?? [])].includes('area') ? TRAVERSAL : '/api/nodes/list (notes)';
+  const type = call.body.filter?.type;
+
+  return [...(type?.$in ?? [type])].includes('area') ? TRAVERSAL : '/api/nodes/list (notes)';
 };
 
 /**

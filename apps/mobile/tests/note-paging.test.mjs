@@ -321,9 +321,9 @@ describe('the request that actually goes out', () => {
 
     await settle(handle);
     assert.deepEqual(requests[0], {
-      parent: { path: '/' },
+      scopes: [{ path: '/' }],
       recursive: true,
-      types: ['resource'],
+      filter: { type: 'resource' },
       orderBy: [{ field: 'updatedAt', direction: 'desc' }],
       skip: 0,
       limit: 50,
@@ -341,7 +341,7 @@ describe('the request that actually goes out', () => {
 
     await settle(handle);
     assert.equal('orderBy' in requests[0], false);
-    assert.deepEqual(requests[0].parent, { id: 7 });
+    assert.deepEqual(requests[0].scopes, [{ id: 7 }]);
     assert.equal(requests[0].recursive, false);
     handle.stop();
   });

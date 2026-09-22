@@ -4,9 +4,9 @@
  * Everything here is pure and private to the capability. One builder makes the List request, one
  * makes the cache key, and they take the same descriptor - so a query that asks a different question
  * cannot share a cache entry with one that asks this question, which is the failure a hand-written
- * key invites. The key carries the selector, the recursion, the types, the ordering *in the caller's
- * priority order*, the starting offset and the page size, because every one of those changes what
- * came back.
+ * key invites. The key carries the scope selector, the recursion, the filter this capability always
+ * applies, the ordering *in the caller's priority order*, the starting offset and the page size,
+ * because every one of those changes what came back.
  *
  * What is deliberately absent: any reordering, any tie-breaker, any client-side notion of recency.
  * Core appends the id clause that makes an ordering total (`effectiveOrderBy` in the backend's list
@@ -16,7 +16,7 @@
  */
 
 import { list } from '@raphael/client/nodes';
-import type { NodeOrderBy, NodeSummary, NodeType, ScopeSelector } from '@raphael/contracts/nodes';
+import type { NodeOrderBy, NodeSummary, ScopeSelector } from '@raphael/contracts/nodes';
 import { LIST_LIMIT_DEFAULT, ROOT_PATH } from '@raphael/contracts/nodes';
 import type { ListRequestInput } from '@raphael/contracts/nodes';
 
@@ -34,20 +34,25 @@ export const NOTES_SEGMENT = 'notes';
  */
 export const NOTE_PAGE_SIZE = LIST_LIMIT_DEFAULT;
 
-/** Notes are the only resource kind core admits today; the guard on the way back is what proves it. */
-export const RESOURCE_TYPES: readonly NodeType[] = ['resource'];
-
 /** Home's ordering. Core appends the id tie-breaker; this must not name one itself. */
 export const NEWEST_FIRST: NodeOrderBy = [{ field: 'updatedAt', direction: 'desc' }];
 
 /** Every note on the server, wherever it sits. */
 export const ROOT_SCOPE: ScopeSelector = { path: ROOT_PATH };
 
-/** Everything that makes one page of notes the page it is. */
+/** The one node type this capability ever asks for. */
+const RESOURCE_FILTER = 'resource';
+
+/**
+ * Everything that makes one page of notes the page it is.
+ *
+ * There is no type field. Every page this capability reads is a page of resources, so a descriptor
+ * field would be one more spelling of a decision `noteListRequest` already makes - and a caller
+ * holding a descriptor could then ask this feed for something that is not a note.
+ */
 export interface NoteListDescriptor {
   readonly parent: ScopeSelector;
   readonly recursive: boolean;
-  readonly types: readonly NodeType[];
   /** Null means the server's default order - slug then id - and is not the same key as any ordering. */
   readonly orderBy: NodeOrderBy | null;
   readonly skip: number;
@@ -58,7 +63,6 @@ export interface NoteListDescriptor {
 export const feedDescriptor = (skip: number): NoteListDescriptor => ({
   parent: ROOT_SCOPE,
   recursive: true,
-  types: RESOURCE_TYPES,
   orderBy: NEWEST_FIRST,
   skip,
   limit: NOTE_PAGE_SIZE,
@@ -74,17 +78,22 @@ export const feedDescriptor = (skip: number): NoteListDescriptor => ({
 export const containerDescriptor = (parentId: number, skip: number): NoteListDescriptor => ({
   parent: { id: parentId },
   recursive: false,
-  types: RESOURCE_TYPES,
   orderBy: null,
   skip,
   limit: NOTE_PAGE_SIZE,
 });
 
-/** The wire request. `orderBy` is omitted entirely when null, which is how the default is asked for. */
+/**
+ * The wire request. `orderBy` is omitted entirely when null, which is how the default is asked for.
+ *
+ * One scope, because a note feed looks in one place. The filter is written out rather than taken
+ * from the descriptor: notes are the only resource kind core admits today, and the guard on the way
+ * back is what proves the answer kept its side of that.
+ */
 export const noteListRequest = (descriptor: NoteListDescriptor): ListRequestInput => ({
-  parent: descriptor.parent,
+  scopes: [descriptor.parent],
   recursive: descriptor.recursive,
-  types: [...descriptor.types],
+  filter: { type: RESOURCE_FILTER },
   ...(descriptor.orderBy === null
     ? {}
     : { orderBy: descriptor.orderBy.map((clause) => ({ ...clause })) }),
@@ -108,7 +117,9 @@ export const noteListKey = (
     NOTES_SEGMENT,
     descriptor.parent,
     descriptor.recursive,
-    [...descriptor.types],
+    // A constant, and named anyway: the key says what was asked for, so a later feed that asks a
+    // different question cannot land on an answer read under this one.
+    RESOURCE_FILTER,
     descriptor.orderBy === null ? null : descriptor.orderBy.map((clause) => ({ ...clause })),
     descriptor.skip,
     descriptor.limit,
@@ -135,9 +146,9 @@ export const nextPageSkip = (page: NotePage): number | null =>
 /**
  * Asks for one page.
  *
- * Anything that is not a note is dropped rather than rendered: `types: ['resource']` is a filter on
- * the request, and a server that later serves another resource kind would otherwise have it land in
- * a notes grid drawn as a note.
+ * Anything that is not a note is dropped rather than rendered: `filter: { type: 'resource' }` is a
+ * filter on the request, and a server that later serves another resource kind would otherwise have
+ * it land in a notes grid drawn as a note.
  */
 export const fetchNotePage = async (
   transport: Transport,

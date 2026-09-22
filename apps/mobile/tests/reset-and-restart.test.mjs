@@ -172,7 +172,9 @@ describe('a creation whose answer was lost, across a real shutdown and a server 
           assert.equal(resolved.acknowledged.kind, 'note');
 
           // One note, across two dispatches and a restarted server on both sides.
-          const listed = await cliJson(['list', WORK.path, '--types', 'resource'], { endpoint });
+          const listed = await cliJson(['list', WORK.path, '--filter', '{"type":"resource"}'], {
+            endpoint,
+          });
           const matching = listed.items.filter(
             (item) => item.title === 'Written before the answer went missing',
           );
@@ -301,7 +303,9 @@ describe('a deliberately reset backend, at the same address', () => {
           );
 
           try {
-            const listed = await cliJson(['list', WORK.path, '--types', 'resource'], { endpoint });
+            const listed = await cliJson(['list', WORK.path, '--filter', '{"type":"resource"}'], {
+              endpoint,
+            });
 
             return {
               address: { endpoint, port },
@@ -333,9 +337,12 @@ describe('a deliberately reset backend, at the same address', () => {
 
         // A fresh bootstrap: the seeded areas and nothing else. The old note is gone, and so is the
         // receipt that could have resolved its attempt.
-        const fresh = await cliJson(['list', '/', '--types', 'area,project,resource'], {
-          endpoint,
-        });
+        const fresh = await cliJson(
+          ['list', '/', '--filter', '{"type":{"$in":["area","project","resource"]}}'],
+          {
+            endpoint,
+          },
+        );
         assert.deepEqual(
           fresh.items.map((item) => item.slug).sort(),
           ['personal', 'work'],
@@ -412,7 +419,9 @@ describe('a deliberately reset backend, at the same address', () => {
           assert.equal(original.state, 'uncertain');
 
           // Nothing has been sent to the fresh server yet.
-          const remaining = await cliJson(['list', WORK.path, '--types', 'resource'], { endpoint });
+          const remaining = await cliJson(['list', WORK.path, '--filter', '{"type":"resource"}'], {
+            endpoint,
+          });
           assert.deepEqual(remaining.items, [], 'the reset server still holds no notes');
 
           // --- The copy is now saved, and its answer is lost too. ---
@@ -498,7 +507,7 @@ describe('a deliberately reset backend, at the same address', () => {
           );
 
           // Exactly one note exists, across both dispatches, on the whole fresh server.
-          const everything = await cliJson(['list', '/', '-r', '--types', 'resource'], {
+          const everything = await cliJson(['list', '/', '-r', '--filter', '{"type":"resource"}'], {
             endpoint,
           });
           assert.equal(everything.items.length, 1, 'one note, not one per dispatch');

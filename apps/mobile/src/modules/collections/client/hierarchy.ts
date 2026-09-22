@@ -145,12 +145,13 @@ const fetchPages = async (list: ListFn, signal?: AbortSignal): Promise<NodeSumma
 
   for (;;) {
     const request: ListRequestInput = {
-      parent: { path: ROOT_PATH },
+      scopes: [{ path: ROOT_PATH }],
       recursive: true,
-      // Asked for explicitly rather than left to the default. The server's default is now every node
-      // type, which includes notes, and a hierarchy built from a list containing leaves would be a tree
-      // this app cannot hold. Naming the filter is what keeps the widened vocabulary from reaching here.
-      types: [...CONTAINER_TYPES],
+      // Asked for explicitly rather than left to the default. The server applies no type restriction
+      // of its own, so an unfiltered list carries notes, and a hierarchy built from a list containing
+      // leaves would be a tree this app cannot hold. Naming the filter is what keeps the wider
+      // vocabulary from reaching here.
+      filter: { type: { $in: [...CONTAINER_TYPES] } },
       skip,
       limit: PAGE_LIMIT,
     };

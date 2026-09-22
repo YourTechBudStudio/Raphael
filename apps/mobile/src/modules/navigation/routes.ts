@@ -96,11 +96,6 @@ export function openSearch(scope: ContainerRef | null = null): void {
   });
 }
 
-/** THROWAWAY: opens the story #6 search presentation mock. Delete before merging. */
-export function openSearchMock(): void {
-  router.push('/mock-search');
-}
-
 /** Lands on Home, replacing the current screen so a dead link does not stay in the back stack. */
 export function openHome(): void {
   router.replace('/');
@@ -142,4 +137,18 @@ export function leaveSearchFor(ref: ContainerRef): void {
   if (router.canDismiss()) router.dismissTo('/');
 
   openContainer(ref);
+}
+
+/**
+ * Closes the search modal and opens one note, so the stack ends Home -> Editor.
+ *
+ * The same ordering as `leaveSearchFor`, and for the same reason: dismissing and pushing in one
+ * frame lets the push land first on native, which leaves the modal sitting on top of the editor.
+ * It exists so the search screen neither pushes the editor from inside the modal nor keeps its own
+ * copy of the dismissal.
+ */
+export function leaveSearchForNote(id: number): void {
+  if (router.canDismiss()) router.dismissTo('/');
+
+  openEditor(id);
 }

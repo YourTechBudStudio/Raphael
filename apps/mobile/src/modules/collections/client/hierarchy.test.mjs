@@ -81,7 +81,7 @@ describe('pagination', () => {
     const hierarchy = await fetchHierarchy(source.list);
 
     assert.equal(source.calls.length, 2);
-    assert.deepEqual(source.calls[0].parent, { path: '/' });
+    assert.deepEqual(source.calls[0].scopes, [{ path: '/' }]);
     assert.equal(source.calls[0].recursive, true);
     assert.equal(source.calls[0].limit, PAGE_LIMIT);
     assert.equal(source.calls[1].skip, 2, 'the second page starts where the first ended');
@@ -344,11 +344,11 @@ describe('the widened server vocabulary', () => {
     const backing = server([node(1, 'area', null, 'Work')]);
     await fetchHierarchy(backing.list);
 
-    // The server's default filter is now every node type, which includes notes. A hierarchy built
-    // from a list containing leaves would be a tree this app cannot hold, so the filter is named.
+    // An unfiltered list is every node type, which includes notes. A hierarchy built from a list
+    // containing leaves would be a tree this app cannot hold, so the filter is named.
     assert.ok(backing.calls.length > 0);
     for (const request of backing.calls) {
-      assert.deepEqual([...request.types].sort(), ['area', 'project']);
+      assert.deepEqual([...request.filter.type.$in].sort(), ['area', 'project']);
       assert.equal(request.recursive, true);
     }
   });
