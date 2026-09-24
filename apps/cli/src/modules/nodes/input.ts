@@ -154,6 +154,29 @@ export const selectorFrom = (
 };
 
 /**
+ * A move's destination, checked for grammar only and returned exactly as typed.
+ *
+ * `parsePath` here is the reasoning `scopesFrom` gives: the same verdict the request decoder would
+ * reach, early enough to say what was wrong with *this* argument. Nothing else is decided. Whether the
+ * destination exists, and whether it names a container or a new address, is the server's to decide
+ * against its current state, so the string is neither split nor resolved - `splitCreatePath` is the
+ * create command's grammar and deliberately not used.
+ */
+export const destinationFrom = (raw: string | undefined, command: string): string => {
+  if (raw === undefined) {
+    throw new UsageError(
+      'Give a destination: an existing area or project, or the new full path.',
+      command,
+    );
+  }
+  const parsed = parsePath(raw);
+  if (Either.isLeft(parsed)) {
+    throw new UsageError(`destination "${raw}": ${describePathRejection(parsed.left)}`, command);
+  }
+  return raw;
+};
+
+/**
  * Parse an id strictly.
  *
  * `Number()` would accept `4.0`, `4e0`, ` 4 `, and `0x4`, all of which would then be sent as a

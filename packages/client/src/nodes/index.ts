@@ -18,6 +18,7 @@ import {
   type GetPathRequestInput,
   type GetRequestInput,
   type ListRequestInput,
+  type MoveRequestInput,
   type SearchRequestInput,
   type UpdateRequestInput,
   decodeCreateRequest,
@@ -28,6 +29,8 @@ import {
   decodeGetResponse,
   decodeListRequest,
   decodeListResponse,
+  decodeMoveRequest,
+  decodeMoveResponse,
   decodeSearchRequest,
   decodeSearchResponse,
   decodeUpdateRequest,
@@ -36,6 +39,7 @@ import {
   type GetPathResponse,
   type GetResponse,
   type ListResponse,
+  type MoveResponse,
   type SearchResponse,
   type UpdateResponse,
 } from '@raphael/contracts/nodes';
@@ -138,6 +142,30 @@ export const update = (
     NODE_ROUTES.update,
     decodeUpdateRequest as Decoder<unknown>,
     decodeUpdateResponse,
+    request,
+    200,
+    true,
+    signal,
+  );
+
+/**
+ * Move one existing area, project, or note, optionally under a new address. Answers 200.
+ *
+ * `mutating`, and without an idempotency key for the reason `update` gives: the revision is the safety,
+ * and a lost answer is reported as `mutationOutcome: 'unknown'` for the caller to reconcile by
+ * re-reading. The destination travels exactly as decoded; whether a path names a container or a new
+ * address is the server's decision, made against its current state.
+ */
+export const move = (
+  transport: Transport,
+  request: MoveRequestInput,
+  signal?: AbortSignal,
+): Promise<ClientResult<MoveResponse>> =>
+  run(
+    transport,
+    NODE_ROUTES.move,
+    decodeMoveRequest as Decoder<unknown>,
+    decodeMoveResponse,
     request,
     200,
     true,

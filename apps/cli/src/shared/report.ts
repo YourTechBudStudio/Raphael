@@ -24,14 +24,15 @@ export interface AttemptContext {
    *
    * Explicit rather than defaulted, because the alternative is that a report reads as a creation by
    * omission. The wording for an uncertain creation and an uncertain update is genuinely different -
-   * a creation has a key to replay, an update has only a revision to re-read - and the difference is
-   * not something a reader of this file should have to infer from which fields happen to be set.
+   * a creation has a key to replay, an update has only a revision to re-read, and a move may have
+   * taken the path it was addressed by with it - and the difference is not something a reader of this
+   * file should have to infer from which fields happen to be set.
    *
    * Names the mutation that was being attempted, including when the failure belongs to a read taken
    * on its behalf - see `beforeDispatch`. Absent only for a plain read command, whose outcome is
    * never `unknown` and which therefore never reaches the wording at all.
    */
-  readonly operation?: 'create' | 'update';
+  readonly operation?: 'create' | 'update' | 'move';
   /**
    * Set when this failure happened while *preparing* the mutation, so the mutation itself never left.
    *
@@ -42,6 +43,12 @@ export interface AttemptContext {
    * the person than the uncertain case that gets a full paragraph.
    */
   readonly beforeDispatch?: boolean;
+  /**
+   * Present for a move whose target identifier is known: given with --id, or learned by the
+   * convenience read. Used only to word the recovery guidance, and deliberately not part of the
+   * machine report, whose shape does not change for one operation.
+   */
+  readonly targetId?: number;
   /** Present for creations. The key this invocation used. */
   readonly idempotencyKey?: string;
   /** When this invocation handed the request to the network. */
@@ -121,6 +128,26 @@ const detailLines = (details: object): string[] =>
   );
 
 /**
+ * What to do after a move whose answer was lost.
+ *
+ * A move that did apply takes its old path with it, so "read it again at the path you typed" would
+ * answer `node_not_found` and suggest the thing is gone. With the identifier known, the advice names
+ * the two reads that settle it; without one, it says why the old path is not evidence either way.
+ */
+const moveGuidance = (targetId: number | undefined): string[] =>
+  targetId === undefined
+    ? [
+        '',
+        'Could not confirm whether this was moved.',
+        'The old path may no longer name it if the move was applied. Check the destination, and compare the revision before sending the move again. Raphael does not retry a change on its own.',
+      ]
+    : [
+        '',
+        'Could not confirm whether this was moved.',
+        `Check where it is with "raphael path --id ${targetId}" and its revision with "raphael get --id ${targetId}" before sending the move again. Raphael does not retry a change on its own.`,
+      ];
+
+/**
  * Recovery guidance, chosen by outcome and by which operation was attempted.
  *
  * Deliberately non-assertive for `unknown`: it says what could not be established and what to do, and
@@ -159,9 +186,11 @@ const guidanceFor = (failure: ClientFailure, context: AttemptContext): string[] 
           'Could not confirm whether this change was applied.',
           'Read it again with "raphael get" and compare the revision before sending the change again. Raphael does not retry a change on its own.',
         ]
-      : context.operation === 'create'
-        ? ['', 'Could not confirm whether this was created.']
-        : ['', 'Could not confirm whether this was applied.'];
+      : context.operation === 'move'
+        ? moveGuidance(context.targetId)
+        : context.operation === 'create'
+          ? ['', 'Could not confirm whether this was created.']
+          : ['', 'Could not confirm whether this was applied.'];
 
   // Kept under its existing guard rather than broadened to every `unknown`. An `internal_error` or a
   // non-shutdown `storage_busy` is also `unknown`, and there the server answered and failed inside
