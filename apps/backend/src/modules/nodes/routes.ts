@@ -8,6 +8,7 @@ import { toPublicError, type NodeError } from './errors.ts';
 import { getNodePath } from './get-path.ts';
 import { getNode } from './get.ts';
 import { listNodes } from './list.ts';
+import { moveNode } from './move.ts';
 import { searchNodes } from './search.ts';
 import { updateNode } from './update.ts';
 
@@ -56,8 +57,8 @@ const adapt =
  * be enforced in one place and forgotten in the other.
  *
  * Creation answers 201, including a replay - a replay is a success that reports the entity that
- * exists, not a distinct outcome with a status of its own. Reads answer 200, and so does an update: it
- * changed an entity that already existed rather than bringing one into being.
+ * exists, not a distinct outcome with a status of its own. Reads answer 200, and so do an update and a move:
+ * each changed an entity that already existed rather than bringing one into being.
  */
 export const nodeRoutes: readonly OperationRoute[] = [
   {
@@ -86,4 +87,5 @@ export const nodeRoutes: readonly OperationRoute[] = [
     successStatus: 200,
     run: adapt(updateNode),
   },
+  { descriptor: NODE_ROUTES.move, label: 'nodes.move', successStatus: 200, run: adapt(moveNode) },
 ];

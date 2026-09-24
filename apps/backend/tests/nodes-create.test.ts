@@ -286,7 +286,12 @@ test('the parentage matrix is enforced as a product rule', () => {
       expectLeft(create(connection, { type: 'project', parent: { path: '/' }, title: 'Rootless' })),
     );
     assert.equal(atRoot.code, 'invalid_parent');
-    assert.deepEqual(atRoot.details, { field: 'parent', parentType: 'root', childType: 'project' });
+    assert.deepEqual(atRoot.details, {
+      field: 'parent',
+      reason: 'parentage',
+      parentType: 'root',
+      childType: 'project',
+    });
 
     for (const childType of ['area', 'project'] as const) {
       const underProject = publicOf(
@@ -295,6 +300,7 @@ test('the parentage matrix is enforced as a product rule', () => {
       assert.equal(underProject.code, 'invalid_parent');
       assert.deepEqual(underProject.details, {
         field: 'parent',
+        reason: 'parentage',
         parentType: 'project',
         childType,
       });
@@ -307,7 +313,7 @@ test('the parentage matrix is enforced as a product rule', () => {
       assert.equal(underResource.code, 'invalid_parent');
       assert.deepEqual(
         underResource.details,
-        { field: 'parent', parentType: 'resource', childType },
+        { field: 'parent', reason: 'parentage', parentType: 'resource', childType },
         'a resource exists and cannot contain anything - that is not the same as it being absent',
       );
     }
@@ -534,6 +540,7 @@ test('the parentage matrix is the full rule now that resources can be created', 
     assert.equal(atRoot.code, 'invalid_parent');
     assert.deepEqual(atRoot.details, {
       field: 'parent',
+      reason: 'parentage',
       parentType: 'root',
       childType: 'resource',
     });
@@ -546,6 +553,7 @@ test('the parentage matrix is the full rule now that resources can be created', 
     assert.equal(underNote.code, 'invalid_parent');
     assert.deepEqual(underNote.details, {
       field: 'parent',
+      reason: 'parentage',
       parentType: 'resource',
       childType: 'resource',
     });

@@ -305,6 +305,32 @@ export const UpdateRequest = UpdateRequestFields.pipe(
   Schema.filter((request) => noTagInBothLists(request) || 'a tag cannot be both added and removed'),
 );
 
+/**
+ * Where an entity goes. Two members, each the honest shape of one caller.
+ *
+ * `{ path }` is decided by core against current state: a path naming a container (or the root) is the
+ * parent and the target keeps its slug; a path naming nothing is an address whose last segment is the
+ * new slug; a path naming a resource is a taken address. It is a plain `ScopePath`, whose segments are
+ * deliberately not length-bounded so it can still name a stored slug written under an older bound;
+ * core applies the slug bound only when the last segment is about to be *written*. `{ parent, slug? }`
+ * is explicit: an omitted slug means "keep mine". Strict request decoding refuses a `{ path }` carrying
+ * `slug`, a selector carrying both `id` and `path`, and anything else.
+ */
+export const MoveDestination = Schema.Union(
+  Schema.Struct({ path: ScopePath }),
+  Schema.Struct({ parent: ScopeSelector, slug: Schema.optionalWith(SlugInput, { exact: true }) }),
+);
+
+/**
+ * Relocating one entity, against the revision the caller last read (ADR 0002). There is no
+ * idempotency key: as with an update, a move's safety is the revision it names.
+ */
+export const MoveRequest = Schema.Struct({
+  target: EntitySelector,
+  revision: NodeRevision,
+  destination: MoveDestination,
+});
+
 export type ContainerCreateRequest = Schema.Schema.Type<typeof ContainerCreateRequest>;
 export type ResourceCreateRequest = Schema.Schema.Type<typeof ResourceCreateRequest>;
 export type CreateRequest = Schema.Schema.Type<typeof CreateRequest>;
@@ -313,6 +339,8 @@ export type ListRequest = Schema.Schema.Type<typeof ListRequest>;
 export type SearchRequest = Schema.Schema.Type<typeof SearchRequest>;
 export type GetPathRequest = Schema.Schema.Type<typeof GetPathRequest>;
 export type UpdateRequest = Schema.Schema.Type<typeof UpdateRequest>;
+export type MoveDestination = Schema.Schema.Type<typeof MoveDestination>;
+export type MoveRequest = Schema.Schema.Type<typeof MoveRequest>;
 
 /**
  * Response projections. Every field is always present: `parentId` is a positive ID or `null` for a
@@ -409,6 +437,14 @@ export const CreateResponse = Schema.Struct({ entity: NodeEntity });
 export const GetResponse = Schema.Struct({ entity: NodeEntity });
 export const UpdateResponse = Schema.Struct({ entity: NodeEntity });
 
+/**
+ * A move publishes a summary, not an entity: everything it changes - `parentId`, `slug`, `revision` -
+ * is already in `NodeSummary`, and a body projection inside the write lock would buy nothing. Named
+ * `node` rather than `entity` so the shape difference from `UpdateResponse` is visible at the call
+ * site, as `SearchHit.node` is.
+ */
+export const MoveResponse = Schema.Struct({ node: NodeSummary });
+
 export const ListResponse = Schema.Struct({
   items: Schema.Array(NodeSummary),
   skip: NonNegativeSafeInt,
@@ -457,6 +493,7 @@ export type ListResponse = Schema.Schema.Type<typeof ListResponse>;
 export type SearchHit = Schema.Schema.Type<typeof SearchHit>;
 export type SearchResponse = Schema.Schema.Type<typeof SearchResponse>;
 export type GetPathResponse = Schema.Schema.Type<typeof GetPathResponse>;
+export type MoveResponse = Schema.Schema.Type<typeof MoveResponse>;
 
 /**
  * What a caller passes in, as opposed to what a decoder hands back.
@@ -476,6 +513,7 @@ export type ListRequestInput = Schema.Schema.Encoded<typeof ListRequest>;
 export type SearchRequestInput = Schema.Schema.Encoded<typeof SearchRequest>;
 export type GetPathRequestInput = Schema.Schema.Encoded<typeof GetPathRequest>;
 export type UpdateRequestInput = Schema.Schema.Encoded<typeof UpdateRequest>;
+export type MoveRequestInput = Schema.Schema.Encoded<typeof MoveRequest>;
 
 export const decodeCreateRequest = requestDecoder(CreateRequest);
 export const decodeGetRequest = requestDecoder(GetRequest);
@@ -483,6 +521,7 @@ export const decodeListRequest = requestDecoder(ListRequest);
 export const decodeSearchRequest = requestDecoder(SearchRequest);
 export const decodeGetPathRequest = requestDecoder(GetPathRequest);
 export const decodeUpdateRequest = requestDecoder(UpdateRequest);
+export const decodeMoveRequest = requestDecoder(MoveRequest);
 
 export const decodeCreateResponse = responseDecoder(CreateResponse);
 export const decodeGetResponse = responseDecoder(GetResponse);
@@ -490,6 +529,7 @@ export const decodeListResponse = responseDecoder(ListResponse);
 export const decodeSearchResponse = responseDecoder(SearchResponse);
 export const decodeGetPathResponse = responseDecoder(GetPathResponse);
 export const decodeUpdateResponse = responseDecoder(UpdateResponse);
+export const decodeMoveResponse = responseDecoder(MoveResponse);
 
 export const NODE_ROUTES = {
   create: { method: 'POST', path: '/api/nodes/create' },
@@ -498,4 +538,5 @@ export const NODE_ROUTES = {
   search: { method: 'POST', path: '/api/nodes/search' },
   getPath: { method: 'POST', path: '/api/nodes/get-path' },
   update: { method: 'POST', path: '/api/nodes/update' },
+  move: { method: 'POST', path: '/api/nodes/move' },
 } as const satisfies Record<string, RouteDescriptor>;

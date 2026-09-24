@@ -79,7 +79,11 @@ export interface FailureContext {
    * storage one, so a parser or projection fault is not diagnosed as a database problem.
    */
   readonly stage: string;
-  /** The slug being inserted, so a recognized unique violation can name the address that clashed. */
+  /**
+   * The slug being written, so a recognized unique violation can name the address that clashed. Only
+   * supplied around a statement that writes a slug, so an unrelated unique violation is never
+   * misreported as an address clash.
+   */
   readonly slug?: string;
 }
 
@@ -112,7 +116,7 @@ export const classifyFailure = (context: FailureContext, cause: unknown): NodeEr
     sqlite.code === 'SQLITE_CONSTRAINT_UNIQUE' &&
     context.slug !== undefined
   ) {
-    return new SlugConflict({ slug: context.slug, scope });
+    return new SlugConflict({ field: 'slug', slug: context.slug, scope });
   }
 
   return new InternalFailure({

@@ -171,6 +171,34 @@ describe('operations over HTTP', () => {
     });
   });
 
+  test('a move answers 200 with the summary under node', async () => {
+    await withServer('http-move', async (server) => {
+      const created = await call(server, '/api/nodes/create', {
+        body: JSON.stringify({ type: 'project', parent: { path: '/work' }, title: 'Ship it' }),
+      });
+      const entity = (created.json as { entity: { id: number; revision: number } }).entity;
+
+      const moved = await call(server, '/api/nodes/move', {
+        body: JSON.stringify({
+          target: { id: entity.id },
+          revision: entity.revision,
+          destination: { path: '/personal/shipped' },
+        }),
+      });
+      // 200, not 201: a move changed an entity that already existed.
+      assert.equal(moved.status, 200);
+      const node = (
+        moved.json as {
+          node: { id: number; parentId: number; slug: string; revision: number };
+        }
+      ).node;
+      assert.equal(node.id, entity.id);
+      assert.equal(node.slug, 'shipped');
+      assert.equal(node.revision, entity.revision + 1);
+      assert.equal('body' in node, false, 'a move publishes a summary, not an entity');
+    });
+  });
+
   test('an update answers 200, and a stale one 409 with the revision to re-read', async () => {
     await withServer('http-update', async (server) => {
       const created = await call(server, '/api/nodes/create', {

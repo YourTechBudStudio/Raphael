@@ -306,6 +306,12 @@ describe('identity immutability', () => {
       one<{ parent_id: number }>(db, 'SELECT parent_id FROM nodes WHERE id = ?', project).parent_id,
       subArea,
     );
+    // The child links to its immediate parent only, so relocating the parent leaves the child's row alone.
+    assert.equal(
+      one<{ parent_id: number }>(db, 'SELECT parent_id FROM nodes WHERE id = ?', resource)
+        .parent_id,
+      project,
+    );
     db.prepare('UPDATE nodes SET parent_id = ?, parent_type = ? WHERE id = ?').run(
       WORK,
       'area',

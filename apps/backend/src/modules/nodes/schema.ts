@@ -42,7 +42,7 @@ const safeEpochMillis = (column: string) =>
  * type so that a plain CHECK can decide whether the pairing is legal, and the composite foreign key
  * to `(id, type)` is what keeps that duplicate honest: it cannot name a type the parent does not
  * actually have. The two constraints solve different problems and neither replaces the other. Neither
- * detects a multi-node cycle; that belongs to future move validation.
+ * detects a multi-node cycle; `move.ts` refuses one before writing.
  *
  * This table also backs `nodes_fts`, the lexical search index, which is declared only in
  * `drizzle/0004_search_index.sql` because Drizzle cannot express a virtual table. Three triggers there

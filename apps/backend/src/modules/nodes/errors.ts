@@ -51,6 +51,9 @@ export class InvalidInput extends Data.TaggedError('InvalidInput')<{
   readonly limit?: number;
 }> {}
 
+/** The request fields a selector can be named under when it does not resolve. */
+export type SelectorField = 'target' | 'parent' | 'scopes' | 'destination';
+
 /**
  * `index` is the position of the offending element in a submitted list, and is present only for a
  * field that *is* a list - `scopes` today. A position is not content: it says which of the caller's
@@ -58,20 +61,34 @@ export class InvalidInput extends Data.TaggedError('InvalidInput')<{
  * multi-scope request actionable rather than merely refused.
  */
 export class NodeNotFound extends Data.TaggedError('NodeNotFound')<{
-  readonly field: 'target' | 'parent' | 'scopes';
+  readonly field: SelectorField;
   readonly index?: number;
 }> {}
 
 /**
- * Parentage is a product rule, not a schema accident, so the reason says which rule was broken.
- * `parent_type` is the type that cannot hold the requested child; `root` is the virtual root.
+ * A parent that cannot hold this entity, for one of two reasons under one code.
+ *
+ * `parentage` is the product type rule (`root -> area`, ...): `parentType` is the type that cannot hold
+ * the requested child, and `root` is the virtual root. `cycle` is a move destination that is the
+ * target or lies inside it; the types may be perfectly legal, and the useful truth is "you cannot
+ * move something inside itself". Both types are always published, because a cycle's parent has a real
+ * type and one detail shape is simpler than an optional one. `field` is the request field that named
+ * the parent.
  */
 export class InvalidParent extends Data.TaggedError('InvalidParent')<{
+  readonly field: 'parent' | 'destination';
+  readonly reason: 'parentage' | 'cycle';
   readonly parentType: NodeType | 'root';
   readonly childType: NodeType;
 }> {}
 
+/**
+ * An address that is already taken. `field` says which input to change: `slug` for an address the
+ * write would have produced - submitted or retained - and `destination` for a move whose destination
+ * path already names a resource.
+ */
 export class SlugConflict extends Data.TaggedError('SlugConflict')<{
+  readonly field: 'slug' | 'destination';
   readonly slug: string;
   readonly scope: 'root' | 'sibling';
 }> {}
@@ -145,7 +162,7 @@ const INVALID_INPUT_MESSAGES: Readonly<Record<InvalidInputReason, string>> = {
   title_required: 'A title is required.',
   title_too_long: 'The title is longer than the limit.',
   slug_underivable: 'No address could be derived from this title.',
-  slug_too_long: 'The address derived from this title is longer than the limit.',
+  slug_too_long: 'The address is longer than the limit.',
   tags_too_many: 'Too many tags.',
   active_requires_project: 'Only a project can be marked active.',
   query_malformed: 'The search query is not well formed.',
@@ -180,18 +197,25 @@ export const toPublicError = (error: NodeError): PublicApiError => {
       return {
         code: 'invalid_parent',
         message:
-          error.parentType === 'root'
-            ? 'Only areas can exist at the root.'
-            : error.parentType === 'resource'
-              ? 'A note holds nothing, so it cannot be a parent.'
-              : 'That parent cannot contain this kind of entity.',
-        details: { field: 'parent', parentType: error.parentType, childType: error.childType },
+          error.reason === 'cycle'
+            ? 'Something cannot be moved inside itself.'
+            : error.parentType === 'root'
+              ? 'Only areas can exist at the root.'
+              : error.parentType === 'resource'
+                ? 'A note holds nothing, so it cannot be a parent.'
+                : 'That parent cannot contain this kind of entity.',
+        details: {
+          field: error.field,
+          reason: error.reason,
+          parentType: error.parentType,
+          childType: error.childType,
+        },
       };
     case 'SlugConflict':
       return {
         code: 'slug_conflict',
         message: 'Something here already uses that address.',
-        details: { field: 'slug', slug: error.slug, scope: error.scope },
+        details: { field: error.field, slug: error.slug, scope: error.scope },
       };
     case 'IdempotencyConflict':
       return {

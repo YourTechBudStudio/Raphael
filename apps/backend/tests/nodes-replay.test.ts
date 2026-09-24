@@ -244,8 +244,8 @@ test('a replay returns the historical result even after the entity has moved', (
       'personal',
     ).id;
 
-    // Move and rename the node behind core's back. Move is not an operation this release exposes, so the
-    // only way to reach the case is direct SQL - test setup for a future-lifecycle scenario.
+    // Move, rename and retitle the node behind core's back. No single operation changes all three, and
+    // the case needs only the resulting stored state, so direct SQL is the setup.
     connection.db
       .prepare('UPDATE nodes SET parent_id = ?, parent_type = ?, slug = ?, title = ? WHERE id = ?')
       .run(personal, 'area', 'relocated', 'Relocated', first.entity.id);

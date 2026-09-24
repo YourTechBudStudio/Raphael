@@ -54,6 +54,28 @@ describe('recovery detail projection', () => {
       );
     });
 
+    it('keeps why a parent was refused, so a cycle is distinguishable from a type mismatch', () => {
+      assert.deepEqual(
+        project('invalid_parent', {
+          field: 'destination',
+          reason: 'cycle',
+          parentType: 'area',
+          childType: 'area',
+        }),
+        { field: 'destination', reason: 'cycle', parentType: 'area', childType: 'area' },
+      );
+      // An identifier-violating reason is dropped; the rest of the envelope survives.
+      assert.deepEqual(
+        project('invalid_parent', {
+          field: 'parent',
+          reason: 'Cycle!\u001b[31m',
+          parentType: 'root',
+          childType: 'project',
+        }),
+        { field: 'parent', parentType: 'root', childType: 'project' },
+      );
+    });
+
     it('keeps the conflicting address and its scope', () => {
       assert.deepEqual(
         project('slug_conflict', { field: 'slug', slug: 'backend', scope: 'sibling' }),

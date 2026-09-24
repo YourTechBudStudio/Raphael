@@ -2,7 +2,13 @@ import { parsePath } from '@raphael/contracts/nodes';
 import { and, eq, isNull } from 'drizzle-orm';
 import { Either } from 'effect';
 
-import { InternalFailure, InvalidInput, InvalidParent, NodeNotFound } from './errors.ts';
+import {
+  InternalFailure,
+  InvalidInput,
+  InvalidParent,
+  NodeNotFound,
+  type SelectorField,
+} from './errors.ts';
 import { nodes } from './schema.ts';
 import { raise } from './storage-failures.ts';
 import type { Orm } from './store.ts';
@@ -13,6 +19,7 @@ import {
   type ResolvedScopes,
   type StoredEntity,
   type StoredNode,
+  type StoredSummary,
 } from './types.ts';
 
 /**
@@ -96,35 +103,27 @@ const byPath = (
 
 export type Selector = { readonly id: number } | { readonly path: string };
 
-/**
- * Resolves a selector to a scope. A root path is the root scope; anything else must resolve to a row.
- *
- * The path grammar was already validated by the request decoder, so re-parsing here is about obtaining
- * segments rather than re-deciding validity - but it is still checked, because an internal caller
- * reaches these operations through the same decode boundary and a malformed path must not become a
- * silent empty walk.
- */
-export type SelectorField = 'target' | 'parent' | 'scopes';
+export type { SelectorField };
 
 /**
- * `index` is carried in rather than recovered afterwards because `raise` throws: a caller cannot
- * observe *which* selector failed once the failure is in flight, so the position has to be attached
- * where the failure is built. Single-selector callers pass nothing and keep reporting no position.
+ * Resolves a selector without deciding what its absence means: `undefined` is "nothing is there".
+ * `resolveScope` raises `NodeNotFound` over this; the move operation reads `undefined` as "an address
+ * rather than a container".
+ *
+ * A root path is the root scope. The path grammar was already validated by the request decoder, so
+ * re-parsing here is about obtaining segments rather than re-deciding validity - but it is still
+ * checked, because an internal caller reaches these operations through the same decode boundary and a
+ * malformed path must not become a silent empty walk.
  */
-export const resolveScope = (
+export const lookupScope = (
   orm: Orm,
   selector: Selector,
   field: SelectorField,
   operation: string,
-  index?: number,
-): ResolvedScope => {
-  const notFound = (): never =>
-    raise(new NodeNotFound({ field, ...(index === undefined ? {} : { index }) }));
-
+): ResolvedScope | undefined => {
   if ('id' in selector) {
     const node = byId(orm, selector.id, operation);
-    if (node === undefined) return notFound();
-    return { kind: 'node', node };
+    return node === undefined ? undefined : { kind: 'node', node };
   }
 
   // No index on this one, deliberately. `ScopePath` is refined by `isCanonicalPath`, which is
@@ -135,9 +134,25 @@ export const resolveScope = (
   if (segments.right.length === 0) return { kind: 'root' };
 
   const node = byPath(orm, segments.right, operation);
-  if (node === undefined) return notFound();
-  return { kind: 'node', node };
+  return node === undefined ? undefined : { kind: 'node', node };
 };
+
+/**
+ * Resolves a selector to a scope that must exist.
+ *
+ * `index` is carried in rather than recovered afterwards because `raise` throws: a caller cannot
+ * observe *which* selector failed once the failure is in flight, so the position has to be attached
+ * where the failure is built. Single-selector callers pass nothing and keep reporting no position.
+ */
+export const resolveScope = (
+  orm: Orm,
+  selector: Selector,
+  field: SelectorField,
+  operation: string,
+  index?: number,
+): ResolvedScope =>
+  lookupScope(orm, selector, field, operation) ??
+  raise(new NodeNotFound({ field, ...(index === undefined ? {} : { index }) }));
 
 /**
  * Resolves the scope union both page operations take.
@@ -192,14 +207,16 @@ export const resolveEntity = (
 };
 
 /**
- * The columns an entity response is built from.
+ * The columns a summary and an entity response are built from.
  *
- * Exactly the set `StoredEntity` declares and `entityProjection` publishes, named once. Two operations
- * load this row and a third will when lifecycle lands, and a column list copied per caller is a list
- * that drifts: adding a field to the entity contract would mean editing selects that share no symbol,
- * and the one that was missed would fail its own response decode rather than saying what went wrong.
+ * Exactly the sets `StoredSummary` and `StoredEntity` declare and the projections publish, named once:
+ * the entity list is the summary list plus the two stored JSON documents, so the two cannot drift. A
+ * column list copied per caller is a list that drifts: adding a field to the contract would mean
+ * editing selects that share no symbol, and the one that was missed would fail its own response decode
+ * rather than saying what went wrong. (`projection.ts::SUMMARY_COLUMNS` is the raw-SQL aliasing of the
+ * same summary set for the page queries; both are held to `StoredSummary`.)
  */
-const ENTITY_COLUMNS = {
+const SUMMARY_COLUMNS_OF_NODES = {
   id: nodes.id,
   type: nodes.type,
   kind: nodes.kind,
@@ -210,6 +227,10 @@ const ENTITY_COLUMNS = {
   description: nodes.description,
   tags: nodes.tags,
   active: nodes.active,
+} as const;
+
+const ENTITY_COLUMNS = {
+  ...SUMMARY_COLUMNS_OF_NODES,
   body: nodes.body,
   metadata: nodes.metadata,
 } as const;
@@ -239,6 +260,69 @@ export const loadEntity = (
 };
 
 /**
+ * `loadEntity` without the body and metadata, for a write that must not read a document under the
+ * immediate writer's lock and has no use for one. The move is that write.
+ */
+export const loadSummary = (
+  orm: Orm,
+  selector: Selector,
+  field: SelectorField,
+  operation: string,
+): StoredSummary => {
+  const node = resolveEntity(orm, selector, field, operation);
+  const summary = orm
+    .select(SUMMARY_COLUMNS_OF_NODES)
+    .from(nodes)
+    .where(eq(nodes.id, node.id))
+    .get();
+  if (summary === undefined) {
+    return raise(new InternalFailure({ operation, detail: 'a resolved node did not load' }));
+  }
+  return summary as StoredSummary;
+};
+
+/**
+ * `start` and every ancestor above it, nearest first, ending at a root-level node.
+ *
+ * Iterative, with the visited set as the cycle detector. That choice is for legibility rather than
+ * necessity - SQL could terminate a recursive walk by deduplicating identities - but it detects a cycle
+ * *exactly*, at the row that closes it, without a depth cap. There is no product limit on how deep a
+ * hierarchy may be, so a guessed cap would have invented one.
+ *
+ * Ordinary writes cannot form a cycle - creation cannot, and a move refuses one - and the parent
+ * foreign key is `RESTRICT`, so neither a cycle nor a missing ancestor should be reachable. Both are
+ * therefore integrity failures in data we wrote, not caller errors, and neither is repaired here. Two
+ * callers: `getNodePath` maps the chain to slugs; `moveNode` asks whether the target is in it.
+ */
+export const ancestorChain = (
+  orm: Orm,
+  start: StoredNode,
+  operation: string,
+): readonly StoredNode[] => {
+  const chain: StoredNode[] = [start];
+  const seen = new Set<number>([start.id]);
+  let parentId = start.parentId;
+  while (parentId !== null) {
+    if (seen.has(parentId)) {
+      return raise(new InternalFailure({ operation, detail: 'stored ancestry contains a cycle' }));
+    }
+    seen.add(parentId);
+    const ancestor = byId(orm, parentId, operation);
+    if (ancestor === undefined) {
+      return raise(
+        new InternalFailure({
+          operation,
+          detail: 'stored ancestry names a node that does not exist',
+        }),
+      );
+    }
+    chain.push(ancestor);
+    parentId = ancestor.parentId;
+  }
+  return chain;
+};
+
+/**
  * The parentage rules, as a product decision rather than a schema accident.
  *
  * ```text
@@ -255,17 +339,24 @@ export const loadEntity = (
  * created. Storage already permitted every pairing below through `nodes_allowed_parentage`; what
  * changed is that the operation stopped refusing things the schema was always willing to accept.
  *
- * This runs before the insert, which is not merely tidier: SQLite reports a foreign-key violation
+ * This runs before the write, which is not merely tidier: SQLite reports a foreign-key violation
  * without saying which constraint or column failed, so a violation discovered afterwards could not be
- * attributed to the caller's choice of parent even if we wanted to.
+ * attributed to the caller's choice of parent even if we wanted to. `field` is the request field that
+ * named the parent: `parent` for a creation, `destination` for a move.
  */
-export const validateParentage = (scope: ResolvedScope, childType: NodeType): void => {
+export const validateParentage = (
+  scope: ResolvedScope,
+  childType: NodeType,
+  field: 'parent' | 'destination',
+): void => {
+  const refuse = (parentType: NodeType | 'root'): never =>
+    raise(new InvalidParent({ field, reason: 'parentage', parentType, childType }));
   if (scope.kind === 'root') {
-    if (childType !== 'area') raise(new InvalidParent({ parentType: 'root', childType }));
+    if (childType !== 'area') refuse('root');
     return;
   }
   const parentType = scope.node.type;
   if (parentType === 'area') return;
   if (parentType === 'project' && childType === 'resource') return;
-  raise(new InvalidParent({ parentType, childType }));
+  refuse(parentType);
 };

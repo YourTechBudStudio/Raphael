@@ -201,6 +201,7 @@ export const projectRecoveryDetails = (code: string, details: JsonObject): Recov
     case 'invalid_parent':
       return present({
         field: requestField(read('field')),
+        reason: identifier(read('reason')),
         parentType: identifier(read('parentType')),
         childType: identifier(read('childType')),
       });

@@ -81,6 +81,16 @@ export const UPDATE_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
 ]);
 
 /**
+ * A malformed slug inside the explicit destination form has issue path `['destination', 'slug']`;
+ * `failedField` reads the head, so it is attributed to `destination`, the field the caller edited.
+ */
+export const MOVE_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
+  'target',
+  'revision',
+  'destination',
+]);
+
+/**
  * Reads one own data property.
  *
  * The three outcomes are deliberately distinct. An **absent** property is information - a missing title

@@ -229,7 +229,7 @@ const commit = (
   }
 
   const scope = resolveScope(handle, prepared.parent, 'parent', OPERATION);
-  validateParentage(scope, prepared.type);
+  validateParentage(scope, prepared.type, 'parent');
   const parent = scope.kind === 'root' ? undefined : scope.node;
 
   const inserted = handle
