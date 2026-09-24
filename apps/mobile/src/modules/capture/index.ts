@@ -27,8 +27,6 @@ export { CaptureScreen, type CaptureScreenProps } from './components/CaptureScre
 export { EditScreen, type EditScreenProps } from './components/EditScreen';
 export { RecoveryScreen } from './components/RecoveryScreen';
 export { StorageGate } from './components/StorageGate';
-// Temporary: move mock for story #7. Delete with `components/move-mock` and `app/mocks`.
-export { MoveMockEditor } from './components/move-mock/MoveMockEditor';
 
 /** The app-lifetime composition. Opened once, above the connection gate. */
 export { useCaptureLifetime, useCaptureSession } from './client/owner.ts';

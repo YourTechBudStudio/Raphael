@@ -25,6 +25,7 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
+import { createTransport } from '@raphael/client';
 import { get, update } from '@raphael/client/nodes';
 import { QueryClient } from '@tanstack/react-query';
 
@@ -41,6 +42,7 @@ import {
   cliJson,
   editOver,
   hierarchyOver,
+  KEY,
   runCli,
   temporaryDir,
   withServer,
@@ -878,6 +880,227 @@ describe('one entity, edited by both clients', () => {
       } finally {
         await kit.owner.getState().close();
       }
+    });
+  });
+});
+
+describe('one entity, moved by either client', () => {
+  /** Created at a terminal, so each case starts from server-shaped entities. */
+  const created = async (endpoint, args) =>
+    (await cliJson(['create', ...args], { endpoint })).entity;
+  const entityOf = async (endpoint, id) =>
+    (await cliJson(['get', '--id', String(id)], { endpoint })).entity;
+  const pathOf = async (endpoint, id) => {
+    const ran = await runCli(['path', '--id', String(id)], { endpoint });
+
+    assert.equal(ran.code, 0, ran.stderr);
+
+    return ran.stdout.trim();
+  };
+  /** What the phone reads of a container: where it hangs, its address, and its revision. */
+  const placed = (hierarchy, id) => {
+    const node = hierarchy.byId.get(id);
+
+    return { parentId: node.parentId, slug: node.slug, revision: node.revision };
+  };
+
+  it('moves a note from the phone, keeping its ID, and the terminal finds it at the new address', async () => {
+    const dir = await temporaryDir('move-phone-');
+
+    await withServer(async ({ endpoint }) => {
+      const note = await created(endpoint, [
+        'resource.note',
+        `${WORK.path}/moved-by-phone`,
+        '--title',
+        'Moved by the phone',
+        '--body-literal',
+        'Stays exactly as it is',
+      ]);
+      const kit = await editOver(endpoint, path.join(dir, 'capture.db'));
+      const key = kit.keyFor(note.id);
+
+      try {
+        await kit.owner.getState().initialize();
+        assert.equal((await kit.owner.getState().open(note.id, kit.session)).kind, 'ready');
+        // Attached as the edit screen attaches it, so the record outlives the acknowledgement.
+        kit.owner.getState().attachEditor(key, fakeEditor().port);
+        assert.deepEqual(kit.owner.getState().locations[key], { kind: 'known', parentId: WORK.id });
+
+        const outcome = await kit.owner.getState().move(key, { parentId: PERSONAL.id });
+
+        assert.deepEqual(outcome, { kind: 'moved', parentId: PERSONAL.id });
+        // The owner advanced its own location and revision on the server's word, and cleared the move.
+        assert.deepEqual(kit.owner.getState().locations[key], {
+          kind: 'known',
+          parentId: PERSONAL.id,
+        });
+        assert.equal(kit.record(note.id).baseRevision, note.revision + 1);
+        assert.equal(kit.record(note.id).inflight, null);
+        assert.equal(kit.record(note.id).content.slug, 'moved-by-phone');
+
+        // The terminal: same identity, same slug, same body, one revision on, at the new address.
+        assert.equal(await pathOf(endpoint, note.id), `${PERSONAL.path}/moved-by-phone`);
+
+        const moved = await entityOf(endpoint, note.id);
+
+        assert.equal(moved.id, note.id);
+        assert.equal(moved.parentId, PERSONAL.id);
+        assert.equal(moved.slug, note.slug);
+        assert.equal(moved.revision, note.revision + 1);
+        assert.deepEqual(moved.body, note.body);
+        assert.equal(moved.title, note.title);
+
+        const old = await runCli(['get', `${WORK.path}/moved-by-phone`], { endpoint });
+
+        assert.equal(old.code, 1);
+        assert.match(old.stderr, /node_not_found/);
+      } finally {
+        await kit.owner.getState().close();
+      }
+    });
+  });
+
+  it('moves an area at the terminal, and the phone reads its whole subtree in the new place', async () => {
+    await withServer(async ({ endpoint }) => {
+      const outer = await created(endpoint, [
+        'area',
+        `${WORK.path}/move-outer`,
+        '--title',
+        'Outer',
+      ]);
+      const plans = await created(endpoint, [
+        'project',
+        `${WORK.path}/move-outer/plans`,
+        '--title',
+        'Plans',
+      ]);
+      const inside = await created(endpoint, [
+        'resource.note',
+        `${WORK.path}/move-outer/plans/inside`,
+        '--title',
+        'Inside',
+        '--body-literal',
+        'Deep down',
+      ]);
+      const transport = createTransport({ endpoint, apiKey: KEY, fetch });
+
+      const before = await hierarchyOver(transport);
+
+      assert.equal(before.byId.get(outer.id).parentId, WORK.id);
+
+      const ran = await runCli(['move', `${WORK.path}/move-outer`, PERSONAL.path], { endpoint });
+
+      assert.equal(ran.code, 0, ran.stderr);
+
+      // The phone re-reads the hierarchy, as its cache does after invalidation.
+      const reread = await hierarchyOver(transport);
+
+      assert.deepEqual(placed(reread, outer.id), {
+        parentId: PERSONAL.id,
+        slug: 'move-outer',
+        revision: outer.revision + 1,
+      });
+      assert.ok(reread.byId.get(PERSONAL.id).children.some((child) => child.id === outer.id));
+      assert.ok(!reread.byId.get(WORK.id).children.some((child) => child.id === outer.id));
+      // A descendant is not rewritten: same parent, same revision. Only its computed path changed.
+      assert.deepEqual(placed(reread, plans.id), placed(before, plans.id));
+
+      const note = unwrap(await get(transport, { target: { id: inside.id } })).entity;
+
+      assert.equal(note.parentId, plans.id);
+      assert.equal(note.revision, inside.revision);
+      assert.deepEqual(note.body, inside.body);
+      assert.equal(await pathOf(endpoint, inside.id), `${PERSONAL.path}/move-outer/plans/inside`);
+    });
+  });
+
+  it('refuses a collision, a cycle, a wrong parent and a stale revision from either client, changing nothing', async () => {
+    const dir = await temporaryDir('move-refused-');
+
+    await withServer(async ({ endpoint }) => {
+      const outer = await created(endpoint, ['area', `${WORK.path}/refuse-a`, '--title', 'A']);
+      const inner = await created(endpoint, ['area', `${WORK.path}/refuse-a/b`, '--title', 'B']);
+      const project = await created(endpoint, ['project', `${WORK.path}/refuse-p`, '--title', 'P']);
+      const note = await created(endpoint, [
+        'resource.note',
+        `${WORK.path}/taken`,
+        '--title',
+        'Here',
+        '--body-literal',
+        'Mine',
+      ]);
+      const rival = await created(endpoint, [
+        'resource.note',
+        `${PERSONAL.path}/taken`,
+        '--title',
+        'There',
+        '--body-literal',
+        'Theirs',
+      ]);
+      const transport = createTransport({ endpoint, apiKey: KEY, fetch });
+      const refused = async (args, code) => {
+        const ran = await runCli(['move', ...args], { endpoint });
+
+        assert.equal(ran.code, 1, `${args.join(' ')} should be refused`);
+        assert.match(ran.stderr, new RegExp(`code: ${code}`));
+
+        return ran;
+      };
+
+      // A stale revision needs a newer one: an ordinary edit at the terminal makes it.
+      await cliJson(['update', '--id', String(note.id), '--title', 'Here, edited'], { endpoint });
+
+      const hierarchyBefore = await hierarchyOver(transport);
+      const entitiesBefore = await Promise.all(
+        [outer, inner, project, note, rival].map((each) => entityOf(endpoint, each.id)),
+      );
+
+      const cycle = await refused(
+        [`${WORK.path}/refuse-a`, `${WORK.path}/refuse-a/b`],
+        'invalid_parent',
+      );
+
+      assert.match(cycle.stderr, /reason: cycle/);
+      await refused([`${WORK.path}/refuse-a`, `${WORK.path}/refuse-p`], 'invalid_parent');
+      await refused([`${WORK.path}/taken`, PERSONAL.path], 'slug_conflict');
+      await refused(
+        [`${WORK.path}/taken`, `${PERSONAL.path}/fresh`, '--revision', String(note.revision)],
+        'revision_conflict',
+      );
+
+      // The phone meets the same collision through its owner: refused, and nothing local moves.
+      const kit = await editOver(endpoint, path.join(dir, 'capture.db'));
+      const key = kit.keyFor(note.id);
+
+      try {
+        await kit.owner.getState().initialize();
+        assert.equal((await kit.owner.getState().open(note.id, kit.session)).kind, 'ready');
+
+        const revision = kit.record(note.id).baseRevision;
+        const outcome = await kit.owner.getState().move(key, { parentId: PERSONAL.id });
+
+        assert.equal(outcome.kind, 'refused');
+        assert.equal(outcome.failure.error.code, 'slug_conflict');
+        assert.deepEqual(kit.owner.getState().locations[key], { kind: 'known', parentId: WORK.id });
+        assert.equal(kit.record(note.id).baseRevision, revision);
+        assert.equal(kit.record(note.id).inflight, null);
+      } finally {
+        await kit.owner.getState().close();
+      }
+
+      // No partial write anywhere: every entity and the phone's tree read exactly as before.
+      const entitiesAfter = await Promise.all(
+        [outer, inner, project, note, rival].map((each) => entityOf(endpoint, each.id)),
+      );
+
+      assert.deepEqual(entitiesAfter, entitiesBefore);
+
+      const hierarchyAfter = await hierarchyOver(transport);
+
+      for (const id of hierarchyBefore.byId.keys()) {
+        assert.deepEqual(placed(hierarchyAfter, id), placed(hierarchyBefore, id));
+      }
+      assert.equal(hierarchyAfter.byId.size, hierarchyBefore.byId.size);
     });
   });
 });

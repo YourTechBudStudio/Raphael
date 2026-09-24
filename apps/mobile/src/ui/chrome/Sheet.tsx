@@ -59,6 +59,14 @@ export interface SheetProps {
   className?: string | undefined;
   /** Spoken name of the sheet, for the scrim's close action. */
   label?: string | undefined;
+  /**
+   * Why the sheet cannot be closed right now, when it cannot.
+   *
+   * While set, the handle does not drag, the scrim is a disabled control that says this, and Android
+   * back is held. The host is expected to disable its own close control with the same sentence, so
+   * no way out silently does nothing.
+   */
+  closeUnavailable?: string | undefined;
   testID?: string | undefined;
 }
 
@@ -79,8 +87,10 @@ export function Sheet({
   keyboardAvoiding = false,
   className,
   label,
+  closeUnavailable,
   testID,
 }: SheetProps) {
+  const closable = closeUnavailable === undefined;
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const reducedMotion = useReducedMotion();
@@ -150,6 +160,7 @@ export function Sheet({
   const dragGesture = useMemo(
     () =>
       Gesture.Pan()
+        .enabled(closable)
         .activeOffsetY(DRAG_ACTIVATION)
         .onUpdate((event) => {
           translateY.value = Math.max(0, event.translationY);
@@ -165,7 +176,7 @@ export function Sheet({
           }
           translateY.value = withSpring(0, ENTER_SPRING);
         }),
-    [onClose, sheetHeight, translateY],
+    [closable, onClose, sheetHeight, translateY],
   );
 
   const sheetStyle = useAnimatedStyle(() => ({
@@ -212,7 +223,9 @@ export function Sheet({
     <Modal
       animationType="none"
       navigationBarTranslucent
-      onRequestClose={onClose}
+      onRequestClose={() => {
+        if (closable) onClose();
+      }}
       statusBarTranslucent
       testID={testID}
       transparent
@@ -222,10 +235,14 @@ export function Sheet({
         <View className="flex-1 justify-end">
           <AnimatedSurface className="absolute inset-0 bg-scrim" style={scrimStyle}>
             <Pressable
-              accessibilityHint={label === undefined ? undefined : `Closes ${label}`}
+              accessibilityHint={
+                closeUnavailable ?? (label === undefined ? undefined : `Closes ${label}`)
+              }
               accessibilityLabel="Close"
               accessibilityRole="button"
+              accessibilityState={{ disabled: !closable }}
               className="flex-1"
+              disabled={!closable}
               onPress={onClose}
             />
           </AnimatedSurface>

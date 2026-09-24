@@ -332,7 +332,7 @@ describe('the composer', () => {
    *
    * A request in the air comes back, so the eyebrow stays a button and says it is unavailable. A
    * request that has answered never gives the choice back: the note is on the server at that place,
-   * and moving it is not in this story.
+   * and moving it from there is a move, made from the edit screen's eyebrow.
    */
   it('keeps the eyebrow a disabled button only while a request is in the air', () => {
     const screen = render(composer({ view: view({ saving: true }) }));

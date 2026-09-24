@@ -21,11 +21,20 @@ import {
   CONFLICT_NOTICE,
   EDIT_PROBLEM_COPY,
   OFFLINE_STATUS,
+  MOVE_EYEBROW_HINT,
+  MOVE_LOCKED_HINT,
+  MOVE_UNCONFIRMED_HINT,
   PENDING_STATUS,
   UNCONFIRMED_EDIT_STATUS,
   editCardSentence,
   editComposerView,
   idLabelOf,
+  moveControl,
+  moveNotSentSentence,
+  moveRefusalSentence,
+  movedNotice,
+  movedNoticeHolds,
+  movedStatus,
   refusedStatus,
 } from '../src/modules/capture/edit-composer.ts';
 import { STANDING_ORDER } from '../src/modules/capture/edit-unfinished.ts';
@@ -319,5 +328,170 @@ describe('the interface never says "slug"', () => {
     ];
 
     for (const text of texts) assert.ok(!/slug/i.test(text), text);
+  });
+});
+
+describe('moving', () => {
+  const control = (over = {}) =>
+    moveControl({
+      locationKnown: true,
+      locked: false,
+      leaving: false,
+      moveInflight: false,
+      ...over,
+    });
+
+  it('offers the eyebrow as Move only where the location is known', () => {
+    assert.equal(control({ locationKnown: false }), null);
+    assert.deepEqual(control(), { disabled: false, hint: MOVE_EYEBROW_HINT });
+  });
+
+  it('disables it while writing is protected or the screen is leaving, and says when it comes back', () => {
+    assert.deepEqual(control({ locked: true }), { disabled: true, hint: MOVE_LOCKED_HINT });
+    assert.deepEqual(control({ leaving: true }), { disabled: true, hint: MOVE_LOCKED_HINT });
+  });
+
+  it('names the unanswered move before anything else that holds it', () => {
+    assert.deepEqual(control({ moveInflight: true, locked: true }), {
+      disabled: true,
+      hint: MOVE_UNCONFIRMED_HINT,
+    });
+  });
+
+  describe('the moved status', () => {
+    const notice = { place: 'Raphael', revision: 8 };
+
+    it('says where it went, at the revision the record is synced at', () => {
+      assert.deepEqual(view({ kind: 'synced', revision: 8 }, { moved: notice }).status, {
+        text: 'Moved to Raphael · revision 8',
+        tone: 'quiet',
+      });
+      assert.equal(movedStatus('the top level', 3), 'Moved to the top level · revision 3');
+    });
+
+    it('holds only while the record is synced at exactly that revision', () => {
+      assert.equal(movedNoticeHolds(notice, { kind: 'synced', revision: 8 }), true);
+      assert.equal(movedNoticeHolds(notice, { kind: 'synced', revision: 9 }), false);
+      assert.equal(movedNoticeHolds(notice, { kind: 'pending' }), false);
+      assert.equal(
+        view({ kind: 'synced', revision: 9 }, { moved: notice }).status.text,
+        serverStatus(9),
+      );
+      assert.equal(view({ kind: 'pending' }, { moved: notice }).status.text, PENDING_STATUS);
+    });
+
+    it('names the place as the eyebrow names it now, so a rename elsewhere is followed', () => {
+      const went = { parentId: 5, revision: 8 };
+      const there = { kind: 'known', parentId: 5 };
+
+      assert.deepEqual(movedNotice(went, there, 'Raphael'), { place: 'Raphael', revision: 8 });
+      // Another client renamed the destination; the next reading names it, and so does the line.
+      assert.deepEqual(movedNotice(went, there, 'Raphael app'), {
+        place: 'Raphael app',
+        revision: 8,
+      });
+      assert.equal(movedNotice(null, there, 'Raphael'), null);
+    });
+
+    it('claims no name it cannot back', () => {
+      const went = { parentId: 5, revision: 8 };
+
+      // Not yet named, or the owner's location is no longer where the move went.
+      assert.equal(
+        movedNotice(went, { kind: 'known', parentId: 5 }, undefined).place,
+        'its new place',
+      );
+      assert.equal(
+        movedNotice(went, { kind: 'known', parentId: 6 }, 'Elsewhere').place,
+        'its new place',
+      );
+      assert.equal(movedNotice(went, { kind: 'unknown' }, 'Raphael').place, 'its new place');
+      assert.equal(
+        movedNotice({ parentId: null, revision: 3 }, { kind: 'known', parentId: null }, 'Areas')
+          .place,
+        'the top level',
+      );
+    });
+
+    it('never outranks protection', () => {
+      const drawn = view(
+        { kind: 'synced', revision: 8 },
+        { moved: notice, protection: protection({ failedWrite: true }) },
+      );
+
+      assert.deepEqual(drawn.status, { text: PROTECTION_COPY.failed_write, tone: 'alert' });
+    });
+
+    it('is not cleared by the lock a sheet holds', () => {
+      const drawn = view(
+        { kind: 'synced', revision: 8 },
+        { moved: notice, protection: protection({ locked: true }) },
+      );
+
+      assert.equal(drawn.status.text, 'Moved to Raphael · revision 8');
+    });
+  });
+
+  describe('refusals', () => {
+    const apiError = (code, details = {}) => ({
+      kind: 'api_error',
+      status: 409,
+      mutationOutcome: 'not_applied',
+      message: `server said ${code}`,
+      error: { code, message: code },
+      details,
+    });
+    const context = { idLabel: 'note ID', place: 'Raphael', slug: 'sync-notes' };
+
+    it('points a collision to Details, naming the place and the ID', () => {
+      assert.equal(
+        moveRefusalSentence(apiError('slug_conflict', { field: 'destination' }), context),
+        'Something in Raphael already uses the note ID “sync-notes”. Change this note ID in Details, then move it.',
+      );
+    });
+
+    it('tells a cycle from a place that cannot hold this', () => {
+      assert.equal(
+        moveRefusalSentence(apiError('invalid_parent', { reason: 'cycle' }), context),
+        'Something cannot move inside itself.',
+      );
+      assert.equal(
+        moveRefusalSentence(apiError('invalid_parent', { reason: 'parent_type' }), context),
+        'That place cannot hold this.',
+      );
+    });
+
+    it('says which side is missing', () => {
+      assert.notEqual(
+        moveRefusalSentence(apiError('node_not_found', { field: 'target' }), context),
+        moveRefusalSentence(apiError('node_not_found', { field: 'destination' }), context),
+      );
+    });
+
+    it('says what the client said for anything else', () => {
+      assert.equal(
+        moveRefusalSentence(
+          { kind: 'transport', mutationOutcome: 'not_applied', message: 'No route' },
+          context,
+        ),
+        'No route',
+      );
+    });
+
+    it('has a sentence for every reason a move was not sent', () => {
+      for (const reason of [
+        'unsent_writing',
+        'no_session',
+        'conflicted',
+        'refused',
+        'unconfirmed',
+        'unknown_location',
+      ]) {
+        const sentence = moveNotSentSentence(reason);
+
+        assert.ok(sentence.length > 0 && !/slug/i.test(sentence), reason);
+      }
+      assert.equal(moveNotSentSentence('conflicted'), CONFLICT_NOTICE);
+    });
   });
 });

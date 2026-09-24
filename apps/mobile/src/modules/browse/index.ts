@@ -8,6 +8,11 @@
  */
 
 export { BrowseScreen, type BrowseScreenProps } from './components/BrowseScreen';
-export { SelectableTree, type SelectableTreeProps } from './components/SelectableTree';
+export {
+  SelectableTree,
+  type SelectableRoot,
+  type SelectableRowCopy,
+  type SelectableTreeProps,
+} from './components/SelectableTree';
 /** Pruning a tree to what matches, keeping ancestors visible. The picker filters the same way. */
 export { filterTree } from './components/tree';

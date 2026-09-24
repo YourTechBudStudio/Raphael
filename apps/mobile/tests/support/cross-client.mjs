@@ -25,6 +25,7 @@ import {
   create as createNode,
   get as getNode,
   list as listNodes,
+  move as moveNode,
   update as updateNode,
 } from '@raphael/client/nodes';
 import { Effect, Exit, Scope } from 'effect';
@@ -263,6 +264,7 @@ export const editOver = async (endpoint, localDbFile, options = {}) => {
     openStore: async () => openCaptureStore(await openNodeDatabase(localDbFile), () => Date.now()),
     get: (activeTransport, request) => getNode(activeTransport, request),
     update: (activeTransport, request) => updateNode(activeTransport, request),
+    move: (activeTransport, request) => moveNode(activeTransport, request),
     now: options.now ?? (() => Date.now()),
     applyUpdate: async (ref, activation) => {
       applied.push({ ref, activation });
