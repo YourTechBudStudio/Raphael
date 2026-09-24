@@ -18,14 +18,15 @@
  * **`inflight` is the envelope that was dispatched for `inflightVersion`, exactly as sent.** A lost
  * answer is reconciled by comparing the server's entity to what was sent, and after a process death
  * `content` may already be newer than that. `base` is never rewritten while an envelope is in flight,
- * so base plus envelope is exactly what was sent, with no second copy of the content.
+ * so base plus envelope is exactly what was sent, with no second copy of the content. A move is the
+ * other thing that can be in flight; it changes where the entity sits, never what it says.
  *
  * There is no attempt record and no idempotency key. An update's safety is its base revision.
  */
 
 import type { NodeType, RequestField, ResourceKind } from '@raphael/contracts/nodes';
 
-import type { UpdateEnvelope } from './edit-envelope.ts';
+import type { InflightEnvelope } from './edit-envelope.ts';
 
 /** One entity being edited on one connection. The pair is the identity; neither half alone is. */
 export interface EditKey {
@@ -92,8 +93,11 @@ export interface EntityEditRecord {
   /** The highest version an acknowledgement has answered for. Zero before the first one. */
   readonly acknowledgedVersion: number;
   readonly inflightVersion: number | null;
-  /** The envelope sent for `inflightVersion`. Present exactly when that version is. */
-  readonly inflight: UpdateEnvelope | null;
+  /**
+   * The envelope sent for `inflightVersion`, or the move that was dispatched, as sent. Present exactly
+   * when that version is.
+   */
+  readonly inflight: InflightEnvelope | null;
   readonly syncState: EditSyncState;
   /**
    * The last refusal, where one could be read.

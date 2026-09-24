@@ -6,6 +6,10 @@
  * acknowledged; `matchesSubmitted` says whether an entity read back after a lost answer is what
  * sending that envelope would have produced.
  *
+ * What is in flight has a second kind besides an update: a move, which carries the parent it asked for
+ * and no authored field at all. A mobile move never renames, so it has nothing for `applyEnvelope` to
+ * apply; only `matchesSubmitted` has to tell whether one landed.
+ *
  * The rule the loop turns on: **the base is what this phone sent, never what the server echoed
  * back.** So `diff` and `applyEnvelope` work in the editor's raw values and never normalize anything.
  * A base re-seeded from the server's form - trimmed title, NFC tags, canonicalized document - while
@@ -39,6 +43,19 @@ export type UpdateEnvelope = Pick<
   UpdateRequestInput,
   'title' | 'description' | 'slug' | 'body' | 'addTags' | 'removeTags'
 >;
+
+/**
+ * What is in flight for a record: an authored update, or a move, each exactly as sent.
+ *
+ * A move carries the parent it asked for and never a slug: on this phone an ID changes only through an
+ * ordinary update. `expectsWrite` is whether the requested parent differed from the owner's confirmed
+ * one, decided at dispatch and kept with the envelope. A same-location move writes nothing and leaves
+ * the revision alone, so after a lost answer a revision above the base can only be someone else's
+ * write - and after a process death the envelope is the only place that fact survives.
+ */
+export type InflightEnvelope =
+  | { readonly kind: 'update'; readonly envelope: UpdateEnvelope }
+  | { readonly kind: 'move'; readonly parentId: number | null; readonly expectsWrite: boolean };
 
 /** Serialized document equality. Both sides come from the editor, so this is a local comparison. */
 const sameDocument = (left: unknown, right: unknown): boolean =>
@@ -135,7 +152,7 @@ export const applyEnvelope = (base: EditContent, envelope: UpdateEnvelope): Edit
  * Failure direction is the safe one for the bytes: any mismatch is a conflict, which keeps the
  * person's writing.
  */
-export const matchesSubmitted = (
+const matchesAuthored = (
   entity: NodeEntity,
   envelope: UpdateEnvelope,
   base: EditContent,
@@ -161,6 +178,88 @@ export const matchesSubmitted = (
 
   return expected.length === stored.length && expected.every((tag, index) => tag === stored[index]);
 };
+
+/**
+ * Whether the server's entity is what sending `inflight` over `base` would have produced.
+ *
+ * Asked only when an answer was lost, and answered so that the person's own applied change is
+ * recognized as applied rather than reported as a conflict. It compares under the normalization the
+ * server applies, so a trimmed title or an NFC-normalized tag is a match and not a difference.
+ *
+ * **The revision is a precondition, not decoration.** Exactly one write has happened since the base,
+ * and every carried field says what we sent: together those mean the write was ours. Without it, the
+ * fields could match by coincidence after a third party's write, and acknowledging would advance
+ * `baseRevision` past a change this phone never read.
+ *
+ * **The body is only compared when the envelope carried one.** A body we did not submit is not
+ * evidence about whether our envelope applied, and comparing the base's editor-form document against
+ * the server's canonical form would report a conflict for every title-only save whose answer was lost.
+ * A third party's concurrent body change is caught by the next revision-guarded write, which is the
+ * answer for every other concurrent change.
+ *
+ * **A move is matched by its parent, over unchanged authored fields.** One that expected no write can
+ * never match: it cannot have produced a revision above the base, and a rival's body-only write at
+ * base + 1 would otherwise pass every comparison, since a move carries no body to compare.
+ *
+ * Failure direction is the safe one for the bytes: any mismatch is a conflict, which keeps the
+ * person's writing.
+ */
+export const matchesSubmitted = (
+  entity: NodeEntity,
+  inflight: InflightEnvelope,
+  base: EditContent,
+  baseRevision: number,
+): boolean => {
+  if (inflight.kind === 'update') {
+    return matchesAuthored(entity, inflight.envelope, base, baseRevision);
+  }
+
+  if (!inflight.expectsWrite) return false;
+  if (entity.parentId !== inflight.parentId) return false;
+
+  return matchesAuthored(entity, {}, base, baseRevision);
+};
+
+/** Every property a stored move may have. */
+const MOVE_FIELDS = new Set(['kind', 'parentId', 'expectsWrite']);
+
+/**
+ * The persisted grammar of the `inflight` column, exactly.
+ *
+ * - no `kind` property: a legacy update envelope, stored bare, as every row written before moves is;
+ * - `kind: 'move'`: a move, whose `parentId` is null or a positive safe integer, whose `expectsWrite`
+ *   is a boolean, and which carries nothing else this build would have to ignore - a `slug` included,
+ *   because this phone never sends one with a move;
+ * - any other present `kind`, `null` among them: not something this build wrote.
+ *
+ * Null means the row is retained as unreadable rather than reinterpreted as an update. `UpdateEnvelope`
+ * has no `kind` field, so a bare update can never be mistaken for a tagged value.
+ */
+export const readInflight = (value: object): InflightEnvelope | null => {
+  if (!Object.hasOwn(value, 'kind')) return { kind: 'update', envelope: value as UpdateEnvelope };
+
+  const candidate = value as { kind?: unknown; parentId?: unknown; expectsWrite?: unknown };
+
+  if (candidate.kind !== 'move') return null;
+  if (Object.keys(value).some((field) => !MOVE_FIELDS.has(field))) return null;
+
+  const { parentId, expectsWrite } = candidate;
+  const parentOk =
+    parentId === null ||
+    (typeof parentId === 'number' && Number.isSafeInteger(parentId) && parentId > 0);
+
+  if (!parentOk || typeof expectsWrite !== 'boolean') return null;
+
+  return { kind: 'move', parentId, expectsWrite };
+};
+
+/** `readInflight`'s inverse: an update is stored bare, exactly as before moves; a move is tagged. */
+export const serializeInflight = (inflight: InflightEnvelope): string =>
+  JSON.stringify(
+    inflight.kind === 'update'
+      ? inflight.envelope
+      : { kind: 'move', parentId: inflight.parentId, expectsWrite: inflight.expectsWrite },
+  );
 
 /**
  * An entity as content, for seeding a record. Null when its body is not one this build can open.

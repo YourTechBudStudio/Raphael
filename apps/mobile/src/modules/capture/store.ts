@@ -39,7 +39,7 @@ import { Either } from 'effect';
 
 import { migrate } from '../../infrastructure/sqlite/migrate.ts';
 import type { SqlConnection, SqlParam, SqlTransaction } from '../../infrastructure/sqlite/port.ts';
-import type { UpdateEnvelope } from './edit-envelope.ts';
+import { readInflight, serializeInflight, type InflightEnvelope } from './edit-envelope.ts';
 import type {
   EditContent,
   EditKey,
@@ -416,10 +416,11 @@ type EditReading =
  * simply not something this build may open, and it must never be migrated or downgraded on the way to
  * being shown.
  *
- * The `inflight` envelope is validated only as far as being an object. What it means is the envelope
- * module's business, and a record whose current columns are perfectly readable must not be thrown away
- * because a reconciliation payload is odd; `matchesSubmitted` compares fields it finds and refuses
- * otherwise, which is the safe direction anyway.
+ * The `inflight` envelope is read through the envelope module's own grammar, `readInflight`. A bare
+ * object is an update and its fields are left to `matchesSubmitted`, which compares what it finds and
+ * refuses otherwise - the safe direction anyway. A present discriminator this build does not know, or a
+ * move that is not exactly what this build writes, is retained as `unreadable_row` rather than
+ * reinterpreted as an update.
  */
 const readEdit = (row: EditRow): EditReading => {
   const key: EditKey = { connectionId: row.connection_id, nodeId: row.node_id };
@@ -497,6 +498,11 @@ const readEdit = (row: EditRow): EditReading => {
     return unusable('unreadable_row');
   }
 
+  // Proved an object just above whenever the column is present.
+  const inflightEnvelope = row.inflight === null ? null : readInflight(inflight as object);
+
+  if (row.inflight !== null && inflightEnvelope === null) return unusable('unreadable_row');
+
   return {
     kind: 'usable',
     record: {
@@ -517,7 +523,7 @@ const readEdit = (row: EditRow): EditReading => {
       draftVersion: row.draft_version,
       acknowledgedVersion: row.acknowledged_version,
       inflightVersion: row.inflight_version,
-      inflight: row.inflight === null ? null : (inflight as UpdateEnvelope),
+      inflight: inflightEnvelope,
       syncState: row.sync_state as EditSyncState,
       lastRefusal: toRefusal(parseJson(row.last_refusal)),
       createdAt: row.created_at,
@@ -525,6 +531,15 @@ const readEdit = (row: EditRow): EditReading => {
     },
   };
 };
+
+/**
+ * A guarded transition that says whether it applied, decided inside its own transaction, with the row
+ * as that transaction left it.
+ */
+export interface EditTransition {
+  readonly applied: boolean;
+  readonly record: EntityEditRecord | null;
+}
 
 export interface StoredEdits {
   readonly edits: readonly EntityEditRecord[];
@@ -708,13 +723,17 @@ export interface CaptureStore {
   markEditInflight(
     key: EditKey,
     version: number,
-    envelope: UpdateEnvelope,
+    envelope: InflightEnvelope,
     at: number,
   ): Promise<EntityEditRecord | null>;
   /**
    * An acknowledged update: `acknowledged_version` becomes the in-flight version, the base becomes what
    * was sent, and the envelope is cleared. One statement, because a base that advanced without its
    * revision - or the reverse - would describe a server state that never existed.
+   *
+   * Guarded on the envelope being an update. Only one envelope is in flight at a time and the owner
+   * dispatches on its kind, so a move reaching here is unreachable through the owner; the store still
+   * refuses it, because this is a durable boundary.
    */
   acknowledgeEdit(
     key: EditKey,
@@ -722,6 +741,42 @@ export interface CaptureStore {
     revision: number,
     at: number,
   ): Promise<EntityEditRecord | null>;
+  /**
+   * An acknowledged move: the base revision advances and the move is cleared.
+   *
+   * A move carries no authored field, so the base and every current column are left exactly as they
+   * are, and so are the version counters - a move is not an authored version. Guarded on *this* move
+   * being in flight: the envelope must be a move and its in-flight version the one the caller
+   * dispatched.
+   *
+   * Unlike the other writers, the answer says explicitly whether the transition applied, decided by
+   * reading the guard inside the same transaction as the `UPDATE` (the SQL port reports no change
+   * count). A caller must not infer it from `inflight === null` on the returned row: an envelope another
+   * path already cleared looks identical to one this call cleared.
+   */
+  acknowledgeMove(
+    key: EditKey,
+    inflightVersion: number,
+    revision: number,
+    at: number,
+  ): Promise<EditTransition>;
+  /**
+   * A lost move that expected no write, resolved against a server that has moved on, on a record with
+   * nothing outstanding: clear the move and adopt the server's entity as base and current together.
+   *
+   * One transaction rather than `clearEditInflight` then `rebaseEdit`, which would be two: a failure
+   * between them would leave the envelope gone over a stale base, a record that looks settled and never
+   * retries. Guarded on exactly the situation it resolves - this in-flight version, a move that expected
+   * no write, `syncing`, and `draft_version = acknowledged_version` - and answering `applied` as
+   * `acknowledgeMove` does.
+   */
+  adoptAfterNoopMove(
+    key: EditKey,
+    inflightVersion: number,
+    content: EditContent,
+    revision: number,
+    at: number,
+  ): Promise<EditTransition>;
   /**
    * For an empty envelope: nothing was sent, so only the acknowledged mark moves.
    *
@@ -871,6 +926,39 @@ export const createCaptureStore = (db: SqlConnection): CaptureStore => {
       await tx.run(sql, params);
 
       return readEditRow(tx, key);
+    });
+
+  /**
+   * A guarded edit transition that reports whether it applied.
+   *
+   * The guard is spelled once and asked twice inside one transaction: first as a `SELECT`, which is the
+   * verdict, then as the `UPDATE`'s own `WHERE`. Either the transaction commits both or neither, so the
+   * verdict is about the write that happened. `json_extract` on the string `kind` yields the string, so
+   * an absent property, a JSON null and an unknown discriminator all fail a comparison with `'move'`;
+   * on a JSON boolean it yields 0 or 1.
+   */
+  const transition = (
+    guard: string,
+    guardParams: readonly SqlParam[],
+    assignments: string,
+    assignmentParams: readonly SqlParam[],
+    key: EditKey,
+  ): Promise<EditTransition> =>
+    db.transaction(async (tx) => {
+      const hit = await tx.get<{ hit: number }>(
+        `SELECT 1 AS hit FROM ${EDITS_TABLE} WHERE ${guard}`,
+        guardParams,
+      );
+      const applied = hit !== undefined;
+
+      if (applied) {
+        await tx.run(`UPDATE ${EDITS_TABLE} SET ${assignments} WHERE ${guard}`, [
+          ...assignmentParams,
+          ...guardParams,
+        ]);
+      }
+
+      return { applied, record: await readEditRow(tx, key) };
     });
 
   const writeIntent = (
@@ -1239,7 +1327,7 @@ export const createCaptureStore = (db: SqlConnection): CaptureStore => {
          SET inflight_version = ?, inflight = ?, updated_at = ?
          WHERE connection_id = ? AND node_id = ?
            AND inflight_version IS NULL AND sync_state = 'syncing'`,
-        [version, JSON.stringify(envelope), at, key.connectionId, key.nodeId],
+        [version, serializeInflight(envelope), at, key.connectionId, key.nodeId],
         key,
       ),
 
@@ -1249,8 +1337,33 @@ export const createCaptureStore = (db: SqlConnection): CaptureStore => {
          SET acknowledged_version = inflight_version, base = ?, base_revision = ?,
              inflight_version = NULL, inflight = NULL, last_refusal = NULL,
              sync_state = 'syncing', updated_at = ?
-         WHERE connection_id = ? AND node_id = ? AND inflight_version IS NOT NULL`,
+         WHERE connection_id = ? AND node_id = ? AND inflight_version IS NOT NULL
+           AND json_type(inflight, '$.kind') IS NULL`,
         [JSON.stringify(base), revision, at, key.connectionId, key.nodeId],
+        key,
+      ),
+
+    acknowledgeMove: (key, inflightVersion, revision, at) =>
+      transition(
+        `connection_id = ? AND node_id = ? AND inflight_version = ?
+           AND json_extract(inflight, '$.kind') = 'move'`,
+        [key.connectionId, key.nodeId, inflightVersion],
+        `base_revision = ?, inflight_version = NULL, inflight = NULL, last_refusal = NULL,
+             updated_at = ?`,
+        [revision, at],
+        key,
+      ),
+
+    adoptAfterNoopMove: (key, inflightVersion, content, revision, at) =>
+      transition(
+        `connection_id = ? AND node_id = ? AND inflight_version = ?
+           AND json_extract(inflight, '$.kind') = 'move'
+           AND json_extract(inflight, '$.expectsWrite') = 0
+           AND sync_state = 'syncing' AND draft_version = acknowledged_version`,
+        [key.connectionId, key.nodeId, inflightVersion],
+        `base = ?, base_revision = ?, title = ?, description = ?, slug = ?, tags = ?, body = ?,
+             inflight_version = NULL, inflight = NULL, updated_at = ?`,
+        [JSON.stringify(content), revision, ...contentParams(content), at],
         key,
       ),
 

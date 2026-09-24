@@ -1,5 +1,5 @@
 /**
- * What an acknowledged edit does to what is cached.
+ * What an acknowledged edit or move does to what is cached.
  *
  * Its own file, and taking the client as a parameter, for the reason `creation-cache.ts` is: this is
  * the one piece of the composition with a decision in it, and it can be wrong quietly.
@@ -34,9 +34,9 @@ import { invalidateResources } from '../../resources';
  * A note invalidates the note feeds only. There is deliberately no note-detail invalidation: the
  * editor reads through the owner, so the detail query has no reader left.
  *
- * A container invalidates three things, because a container's title is read in three shapes: its own
- * entity, the hierarchy every screen draws its tree from, and the canonical paths the server composes
- * from its ancestors' titles.
+ * A container invalidates three things, because a container is read in three shapes: its own entity,
+ * the hierarchy every screen draws its tree from, and the canonical paths the server composes from its
+ * ancestors' slugs, which a move or a slug change alters for everything beneath it.
  */
 export const applyUpdateTo = (
   client: QueryClient,

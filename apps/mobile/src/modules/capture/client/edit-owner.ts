@@ -11,7 +11,7 @@
  * a database of its own.
  */
 
-import { get as getNode, update as updateNode } from '@raphael/client/nodes';
+import { get as getNode, move as moveNode, update as updateNode } from '@raphael/client/nodes';
 import { useEffect } from 'react';
 
 import { queryClient } from '../../../infrastructure/query/query-client';
@@ -25,6 +25,7 @@ export const useEditOwner = createEditOwner({
   openStore: openSharedStore,
   get: (transport, request) => getNode(transport, request),
   update: (transport, request) => updateNode(transport, request),
+  move: (transport, request) => moveNode(transport, request),
   now: () => Date.now(),
   // One consequence of one editing session, bound to the app's cache. Which queries it touches is
   // decided in `update-cache.ts`, where it can be driven without a connection.

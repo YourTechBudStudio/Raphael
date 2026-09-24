@@ -26,6 +26,8 @@ import {
   contentOf,
   diff,
   matchesSubmitted,
+  readInflight,
+  serializeInflight,
 } from '../src/modules/capture/edit-envelope.ts';
 
 const CANONICAL = JSON.parse(
@@ -44,6 +46,10 @@ const OTHER_DOCUMENT = {
   type: 'doc',
   content: [{ type: 'paragraph', content: [{ type: 'text', text: 'different' }] }],
 };
+
+/** `matchesSubmitted` for an update envelope, the only kind before moves. */
+const matchesUpdate = (entityRead, envelope, base, baseRevision) =>
+  matchesSubmitted(entityRead, { kind: 'update', envelope }, base, baseRevision);
 
 const content = (over = {}) => ({
   title: 'Contracts',
@@ -182,16 +188,16 @@ describe('matchesSubmitted', () => {
     const base = content();
     const envelope = { title: '  Contracts v2  ' };
 
-    assert.equal(matchesSubmitted(entity({ title: 'Contracts v2' }), envelope, base, 1), true);
+    assert.equal(matchesUpdate(entity({ title: 'Contracts v2' }), envelope, base, 1), true);
   });
 
   it('matches an uncarried base title that itself carries whitespace', () => {
     // The base holds what was sent, whitespace included; the server stored its trim.
     const base = content({ title: '  Contracts  ' });
 
-    assert.equal(matchesSubmitted(entity({ title: 'Contracts' }), { slug: 'x' }, base, 1), false);
+    assert.equal(matchesUpdate(entity({ title: 'Contracts' }), { slug: 'x' }, base, 1), false);
     assert.equal(
-      matchesSubmitted(entity({ title: 'Contracts', slug: 'x' }), { slug: 'x' }, base, 1),
+      matchesUpdate(entity({ title: 'Contracts', slug: 'x' }), { slug: 'x' }, base, 1),
       true,
     );
   });
@@ -205,7 +211,7 @@ describe('matchesSubmitted', () => {
 
     assert.notEqual(decomposed, composed);
     assert.equal(
-      matchesSubmitted(entity({ tags: [composed] }), { addTags: [decomposed] }, base, 1),
+      matchesUpdate(entity({ tags: [composed] }), { addTags: [decomposed] }, base, 1),
       true,
     );
   });
@@ -214,13 +220,13 @@ describe('matchesSubmitted', () => {
     const base = content({ tags: ['a', 'b'] });
     const envelope = { addTags: ['z'] };
 
-    assert.equal(matchesSubmitted(entity({ tags: ['a', 'b', 'z'] }), envelope, base, 1), true);
-    assert.equal(matchesSubmitted(entity({ tags: ['z', 'a', 'b'] }), envelope, base, 1), false);
+    assert.equal(matchesUpdate(entity({ tags: ['a', 'b', 'z'] }), envelope, base, 1), true);
+    assert.equal(matchesUpdate(entity({ tags: ['z', 'a', 'b'] }), envelope, base, 1), false);
   });
 
   it('matches a carried body the server stored unchanged', () => {
     assert.equal(
-      matchesSubmitted(
+      matchesUpdate(
         entity({ body: { format: 'tiptap', value: OTHER_DOCUMENT } }),
         { body: { format: 'tiptap', value: OTHER_DOCUMENT } },
         content(),
@@ -233,12 +239,7 @@ describe('matchesSubmitted', () => {
   it('refuses when a carried body differs from what the server holds', () => {
     // The safe direction: a body we sent and cannot recognize is a conflict, which keeps the writing.
     assert.equal(
-      matchesSubmitted(
-        entity(),
-        { body: { format: 'tiptap', value: OTHER_DOCUMENT } },
-        content(),
-        1,
-      ),
+      matchesUpdate(entity(), { body: { format: 'tiptap', value: OTHER_DOCUMENT } }, content(), 1),
       false,
     );
   });
@@ -250,27 +251,160 @@ describe('matchesSubmitted', () => {
     // lost.
     const base = content({ document: OTHER_DOCUMENT });
 
-    assert.equal(
-      matchesSubmitted(entity({ title: 'Renamed' }), { title: 'Renamed' }, base, 1),
-      true,
-    );
+    assert.equal(matchesUpdate(entity({ title: 'Renamed' }), { title: 'Renamed' }, base, 1), true);
   });
 
   it('requires exactly one write since the base', () => {
     const envelope = { title: 'Renamed' };
     const named = entity({ title: 'Renamed' });
 
-    assert.equal(matchesSubmitted({ ...named, revision: 2 }, envelope, content(), 1), true);
+    assert.equal(matchesUpdate({ ...named, revision: 2 }, envelope, content(), 1), true);
     // Two writes since the base: one of them was not ours, and acknowledging would advance past a
     // change this phone never read.
-    assert.equal(matchesSubmitted({ ...named, revision: 3 }, envelope, content(), 1), false);
+    assert.equal(matchesUpdate({ ...named, revision: 3 }, envelope, content(), 1), false);
     // No write at all: the update did not apply.
-    assert.equal(matchesSubmitted({ ...named, revision: 1 }, envelope, content(), 1), false);
+    assert.equal(matchesUpdate({ ...named, revision: 1 }, envelope, content(), 1), false);
   });
 
   it('refuses a description or slug the server does not hold exactly', () => {
-    assert.equal(matchesSubmitted(entity(), { description: ' spaced ' }, content(), 1), false);
-    assert.equal(matchesSubmitted(entity(), { slug: 'other' }, content(), 1), false);
+    assert.equal(matchesUpdate(entity(), { description: ' spaced ' }, content(), 1), false);
+    assert.equal(matchesUpdate(entity(), { slug: 'other' }, content(), 1), false);
+  });
+});
+
+/**
+ * A move carries a parent and nothing authored, and its answer can be lost like any other.
+ *
+ * The property defended here is that reconciliation never adopts someone else's write as this phone's
+ * move: a move is recognized only by the parent it asked for, one revision past the base, over
+ * authored fields that did not move - and a move that expected no write is never recognized at all.
+ */
+describe('matchesSubmitted for a move', () => {
+  const move = (over = {}) => ({ kind: 'move', parentId: 9, expectsWrite: true, ...over });
+
+  it('recognizes the parent it asked for, one write past the base, with its address kept', () => {
+    assert.equal(
+      matchesSubmitted(entity({ parentId: 9, revision: 2 }), move(), content(), 1),
+      true,
+    );
+  });
+
+  it('refuses another parent, or any count of writes but one', () => {
+    assert.equal(
+      matchesSubmitted(entity({ parentId: 4, revision: 2 }), move(), content(), 1),
+      false,
+    );
+    assert.equal(
+      matchesSubmitted(entity({ parentId: 9, revision: 3 }), move(), content(), 1),
+      false,
+    );
+    assert.equal(
+      matchesSubmitted(entity({ parentId: 9, revision: 1 }), move(), content(), 1),
+      false,
+    );
+  });
+
+  it('refuses a rival title change landing at the same revision', () => {
+    assert.equal(
+      matchesSubmitted(entity({ parentId: 9, revision: 2, title: 'Theirs' }), move(), content(), 1),
+      false,
+    );
+  });
+
+  it('refuses a move to the root when the server holds a parent', () => {
+    assert.equal(
+      matchesSubmitted(
+        entity({ parentId: 3, revision: 2 }),
+        move({ parentId: null }),
+        content(),
+        1,
+      ),
+      false,
+    );
+    assert.equal(
+      matchesSubmitted(
+        entity({ parentId: null, revision: 2 }),
+        move({ parentId: null }),
+        content(),
+        1,
+      ),
+      true,
+    );
+  });
+
+  /**
+   * The case `expectsWrite` exists for. A body is never compared for an envelope that did not carry
+   * one, so a rival's body-only write at base + 1 would pass every other comparison - and a move that
+   * expected no write cannot have produced any revision above the base.
+   */
+  it('never recognizes a move that expected no write, even over a rival body-only write', () => {
+    const rival = entity({
+      parentId: 3,
+      revision: 2,
+      body: { format: 'tiptap', value: OTHER_DOCUMENT },
+    });
+
+    assert.equal(
+      matchesSubmitted(rival, move({ parentId: 3, expectsWrite: false }), content(), 1),
+      false,
+    );
+  });
+});
+
+/**
+ * The persisted grammar of the `inflight` column.
+ *
+ * Every row written before moves holds a bare update envelope, and must still read as one. Anything
+ * tagged that this build did not write is retained unreadable rather than reinterpreted, which is the
+ * store's posture for every other column.
+ */
+describe('readInflight and serializeInflight', () => {
+  it('reads a bare envelope as an update, exactly as it was stored before moves', () => {
+    assert.deepEqual(readInflight({ title: 'x' }), { kind: 'update', envelope: { title: 'x' } });
+    assert.deepEqual(readInflight({}), { kind: 'update', envelope: {} });
+  });
+
+  it('reads a tagged move', () => {
+    assert.deepEqual(readInflight({ kind: 'move', parentId: 9, expectsWrite: true }), {
+      kind: 'move',
+      parentId: 9,
+      expectsWrite: true,
+    });
+    assert.deepEqual(readInflight({ kind: 'move', parentId: null, expectsWrite: false }), {
+      kind: 'move',
+      parentId: null,
+      expectsWrite: false,
+    });
+  });
+
+  it('refuses an unknown or null discriminator rather than reading it as an update', () => {
+    assert.equal(readInflight({ kind: 'rename', title: 'x' }), null);
+    assert.equal(readInflight({ kind: null, title: 'x' }), null);
+  });
+
+  it('refuses a malformed move', () => {
+    for (const parentId of [0, -1, 1.5, '9', undefined]) {
+      assert.equal(
+        readInflight({ kind: 'move', parentId, expectsWrite: true }),
+        null,
+        String(parentId),
+      );
+    }
+    assert.equal(readInflight({ kind: 'move', parentId: 9 }), null);
+    assert.equal(readInflight({ kind: 'move', parentId: 9, expectsWrite: 'yes' }), null);
+  });
+
+  it('refuses a move carrying a slug, which this phone never sends', () => {
+    assert.equal(readInflight({ kind: 'move', parentId: 9, expectsWrite: true, slug: 'x' }), null);
+  });
+
+  it('stores an update bare and a move tagged, and reads both back', () => {
+    const update = { kind: 'update', envelope: { title: 'x', addTags: ['a'] } };
+    const move = { kind: 'move', parentId: 9, expectsWrite: true };
+
+    assert.deepEqual(JSON.parse(serializeInflight(update)), { title: 'x', addTags: ['a'] });
+    assert.deepEqual(readInflight(JSON.parse(serializeInflight(update))), update);
+    assert.deepEqual(readInflight(JSON.parse(serializeInflight(move))), move);
   });
 });
 

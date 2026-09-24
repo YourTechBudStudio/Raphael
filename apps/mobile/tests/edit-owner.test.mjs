@@ -493,7 +493,7 @@ describe('an answer that never arrived', () => {
     const recovered = next.record(KEY);
 
     assert.equal(recovered.inflightVersion, 2, 'the envelope that was sent is on disk');
-    assert.deepEqual(recovered.inflight, { title: 'landed' });
+    assert.deepEqual(recovered.inflight, { kind: 'update', envelope: { title: 'landed' } });
     assert.equal(
       next.owner.getState().standingFor(KEY).kind,
       'unconfirmed',
