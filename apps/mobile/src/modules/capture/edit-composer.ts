@@ -20,6 +20,7 @@
  * and it appears in no sentence here: the interface says "note ID", "area ID" or "project ID".
  */
 
+import type { ClientFailure } from '@raphael/client';
 import type { NodeType, ResourceKind } from '@raphael/contracts/nodes';
 
 import {
@@ -32,6 +33,7 @@ import {
   type ProtectionInput,
   type ProtectionProblem,
 } from './composer.ts';
+import type { EditLocation, MoveNotSentReason } from './edit-owner.ts';
 import type { EditStanding } from './edit-policy.ts';
 import type { EditProblem, EditRefusal } from './edit-types.ts';
 
@@ -267,6 +269,8 @@ export interface EditComposerInput extends ProtectionInput {
   readonly standing: EditStanding;
   readonly nodeType: NodeType;
   readonly kind: ResourceKind | null;
+  /** The last acknowledged move, said on the status line while it still describes the record. */
+  readonly moved?: MovedNotice | null | undefined;
 }
 
 export interface EditComposerView {
@@ -308,7 +312,13 @@ export const editComposerView = (input: EditComposerInput): EditComposerView => 
       case 'pending':
         return { text: PENDING_STATUS, tone: 'quiet' };
       case 'synced':
-        return { text: serverStatus(standing.revision), tone: 'quiet' };
+        return {
+          text:
+            input.moved != null && movedNoticeHolds(input.moved, standing)
+              ? movedStatus(input.moved.place, standing.revision)
+              : serverStatus(standing.revision),
+          tone: 'quiet',
+        };
     }
   })();
 
@@ -320,4 +330,164 @@ export const editComposerView = (input: EditComposerInput): EditComposerView => 
     locked: input.protection?.locked ?? false,
     problem,
   };
+};
+
+/*
+ * Moving. Every sentence the move control, its sheet and the status line can say about a move.
+ *
+ * On this phone a move never changes the ID: the sheet offers places and nothing else, and changing
+ * the ID stays in Details as an ordinary edit. So the one refusal a place cannot repair, an ID already
+ * used where this is going, points there.
+ */
+
+export const MOVE_SHEET_TITLE = 'Where should this go?';
+export const moveSheetSubtitle = (current: string): string =>
+  `In ${current} now. Tap a place to move this there.`;
+export const moveBusySubtitle = (place: string): string => `Moving to ${place}…`;
+
+/** The root, as a row. "Areas" is what the eyebrow says for a root-level area. */
+export const MOVE_ROOT_LABEL = 'Areas';
+export const MOVE_ROOT_TAG = 'Top level';
+export const MOVE_ROOT_HINT = 'Moves this area to the top level';
+export const MOVE_ROOT_CURRENT_HINT = 'It is here now. Closes this sheet';
+/** The root, as a destination in a sentence. */
+export const MOVE_ROOT_PLACE = 'the top level';
+/** A destination the tree this phone read cannot name. What is certainly true of it. */
+export const MOVE_UNNAMED_PLACE = 'its new place';
+
+export const MOVE_EYEBROW_HINT = 'Moves this somewhere else';
+export const MOVE_LOCKED_HINT = 'Comes back once the writing is protected';
+export const MOVE_UNCONFIRMED_HINT = 'Comes back once your server has answered about the last move';
+/** Why the sheet cannot be closed while a move is out. The same words as the editor's own Close. */
+export const MOVE_CLOSE_WAITING_HINT = 'Available once your server has answered';
+
+export const MOVE_TREE_FAILED =
+  'Unable to load areas and projects. Where this is filed has not changed.';
+export const MOVE_TREE_NO_MATCH = 'Nothing here matches that. Try a shorter word.';
+export const MOVE_TREE_EMPTY = 'No area or project here can hold this.';
+
+export const movedStatus = (place: string, revision: number): string =>
+  `Moved to ${place} · revision ${String(revision)}`;
+
+/**
+ * An acknowledged move, as the status line says it.
+ *
+ * `revision` is the acknowledged record's own base revision, never an increment: a server that had
+ * nothing to change answers at the revision it already held. `place` is named from a current reading
+ * each time the line is drawn, by the screen, so it cannot name a destination that has since been
+ * renamed while the eyebrow names it correctly.
+ */
+export interface MovedNotice {
+  readonly place: string;
+  readonly revision: number;
+}
+
+/**
+ * The moved notice for the status line, with its place named from the current reading.
+ *
+ * `movedTo` is where the move went, held without a name. `currentName` is the last segment the
+ * eyebrow draws now. The eyebrow follows the owner's location, so while that is still where the move
+ * went the two name the same place, renamed or not. Otherwise the line claims no name it cannot back.
+ */
+export const movedNotice = (
+  movedTo: { readonly parentId: number | null; readonly revision: number } | null,
+  location: EditLocation,
+  currentName: string | undefined,
+): MovedNotice | null => {
+  if (movedTo === null) return null;
+
+  const here = location.kind === 'known' && location.parentId === movedTo.parentId;
+  const place = movedTo.parentId === null ? MOVE_ROOT_PLACE : here ? currentName : undefined;
+
+  return { revision: movedTo.revision, place: place ?? MOVE_UNNAMED_PLACE };
+};
+
+/**
+ * Whether the notice still describes the record: synced at exactly the revision the move left.
+ *
+ * Anything else - an edit waiting, a send, a verdict - is the standing changing, and from then on the
+ * ordinary status line speaks. The screen drops the notice at that point, so it cannot come back if
+ * the record later reads synced at the same revision again.
+ */
+export const movedNoticeHolds = (
+  notice: { readonly revision: number },
+  standing: EditStanding,
+): boolean => standing.kind === 'synced' && standing.revision === notice.revision;
+
+/**
+ * The eyebrow's Move control, or null where the eyebrow stays a label.
+ *
+ * Null for an unknown location: a phone that could not read where something is cannot judge a move
+ * from there. Disabled while a barrier is settling or the screen is leaving, and while the last move
+ * is unanswered, and each says when it comes back.
+ */
+export const moveControl = (input: {
+  readonly locationKnown: boolean;
+  readonly locked: boolean;
+  readonly leaving: boolean;
+  readonly moveInflight: boolean;
+}): { readonly disabled: boolean; readonly hint: string } | null => {
+  if (!input.locationKnown) return null;
+  if (input.moveInflight) return { disabled: true, hint: MOVE_UNCONFIRMED_HINT };
+  if (input.locked || input.leaving) return { disabled: true, hint: MOVE_LOCKED_HINT };
+
+  return { disabled: false, hint: MOVE_EYEBROW_HINT };
+};
+
+/** Row copy for the move picker, in the note picker's grammar. `word` is `editKindWord`, lowercased. */
+export const moveRowCopy = (word: string) => ({
+  hint: (title: string) => `Moves this ${word} into ${title}`,
+  chosen: (title: string) => `${title} is where this goes`,
+});
+
+/** Why a move was not sent, by the owner's reason. */
+export const moveNotSentSentence = (reason: MoveNotSentReason): string => {
+  switch (reason) {
+    case 'unsent_writing':
+      return 'Your changes need to reach your server before this can move.';
+    case 'no_session':
+      return 'Not connected to your server, so this cannot move right now.';
+    case 'conflicted':
+      return CONFLICT_NOTICE;
+    case 'refused':
+      return 'Your server refused the last change. Fix that before moving this.';
+    case 'unconfirmed':
+      return 'The last change has not been confirmed by your server yet. Try again once it has.';
+    case 'unknown_location':
+      return 'Where this is filed could not be read from your server, so it cannot move yet.';
+  }
+};
+
+/**
+ * A definite refusal of a move, from the bounded code and reason vocabulary the client projects.
+ *
+ * `place` is where the person tapped and `slug` the ID this keeps, which is what a collision is
+ * about: the sheet cannot change the ID, so the sentence says where it can be changed.
+ */
+export const moveRefusalSentence = (
+  failure: ClientFailure,
+  context: { readonly idLabel: string; readonly place: string; readonly slug: string },
+): string => {
+  if (failure.kind !== 'api_error') return failure.message;
+
+  const { code } = failure.error;
+  const { idLabel, place, slug } = context;
+
+  if (code === 'invalid_parent') {
+    return failure.details.reason === 'cycle'
+      ? 'Something cannot move inside itself.'
+      : 'That place cannot hold this.';
+  }
+  if (code === 'slug_conflict') {
+    return `Something in ${place} already uses the ${idLabel} “${slug}”. Change this ${idLabel} in Details, then move it.`;
+  }
+  if (code === 'node_not_found') {
+    // The server says which side is missing, and the advice differs: a missing destination is
+    // repaired by choosing another place; a missing target is not something a place can fix.
+    return failure.details.field === 'target'
+      ? 'This no longer exists on your server, so it cannot be moved.'
+      : 'That place no longer exists. Refresh and pick again.';
+  }
+
+  return failure.message;
 };

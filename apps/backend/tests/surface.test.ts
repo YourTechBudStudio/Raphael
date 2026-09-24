@@ -22,6 +22,7 @@ const OPERATIONS = [
   'getNode',
   'getNodePath',
   'listNodes',
+  'moveNode',
   'searchNodes',
   'updateNode',
 ] as const;

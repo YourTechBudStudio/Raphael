@@ -30,6 +30,11 @@ export interface EditViewProps {
   /** What the Details chip says and how it is spoken. Composed by `detailsChip`, never here. */
   details: DetailsChip;
   /**
+   * The Move control in the eyebrow, from `moveControl`. Null keeps the eyebrow a label: a location
+   * that could not be read cannot be moved from.
+   */
+  move: { readonly onPress: () => void; readonly disabled: boolean; readonly hint: string } | null;
+  /**
    * Leaving is waiting for the server, so Close is unavailable and visibly so.
    *
    * Separate from `view.locked`, which is a protection barrier settling and disables the writing
@@ -58,8 +63,9 @@ export interface EditViewProps {
  *
  * `ComposerShell` is the screen; this is the half of it that only an existing entity has. There is no
  * Save, because an existing entity autosaves and the status line beside the close cross carries the
- * whole sync state instead - and where a new note offers a destination, this names one and stops,
- * because moving an entity is a different operation with different rules and is not in this story.
+ * whole sync state instead. Where a new note offers a destination, this names where the entity is,
+ * and the same eyebrow is the one way to move it: a move is its own guarded write through the owner,
+ * never a field of the autosave.
  *
  * **The conflict band is the first row of the bar stack**, above the formatting row, on the bar's own
  * surface. It is a band rather than a pill because it is the one state this screen says with more than
@@ -74,6 +80,7 @@ export function EditView({
   view,
   location,
   details,
+  move,
   leaving,
   editorRef,
   onCommand,
@@ -90,16 +97,20 @@ export function EditView({
   testID,
 }: EditViewProps) {
   const segments = location.length > 2 ? ['…', ...location.slice(-2)] : location;
-  // Read-only, and there is nothing beside it that offers to move this: moving an entity is a
-  // different operation with different rules, and it is not in this story.
+  const spoken = `Filed in ${location.join(', ')}`;
   const eyebrow: ComposerEyebrow =
     segments.length === 0
       ? { kind: 'absent' }
-      : {
-          kind: 'label',
-          label: segments.join(' / '),
-          spoken: `Filed in ${location.join(', ')}`,
-        };
+      : move === null
+        ? { kind: 'label', label: segments.join(' / '), spoken }
+        : {
+            kind: 'button',
+            label: segments.join(' / '),
+            spoken,
+            hint: move.hint,
+            disabled: move.disabled,
+            onPress: move.onPress,
+          };
 
   return (
     <ComposerShell

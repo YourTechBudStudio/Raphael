@@ -1,4 +1,4 @@
-/** The hierarchy capability: identity, addressing, authored fields, and the five node operations. */
+/** The hierarchy capability: identity, addressing, authored fields, and the node operations. */
 export {
   BODY_FORMATS,
   BodyFormatSchema,
@@ -107,6 +107,9 @@ export {
   GetResponse,
   ListRequest,
   ListResponse,
+  MoveDestination,
+  MoveRequest,
+  MoveResponse,
   NODE_ROUTES,
   NodeEntity,
   NodeOrderBy,
@@ -125,6 +128,7 @@ export {
   type GetPathRequestInput,
   type GetRequestInput,
   type ListRequestInput,
+  type MoveRequestInput,
   type SearchRequestInput,
   type UpdateRequestInput,
   decodeCreateRequest,
@@ -135,6 +139,8 @@ export {
   decodeGetResponse,
   decodeListRequest,
   decodeListResponse,
+  decodeMoveRequest,
+  decodeMoveResponse,
   decodeSearchRequest,
   decodeSearchResponse,
   decodeUpdateRequest,

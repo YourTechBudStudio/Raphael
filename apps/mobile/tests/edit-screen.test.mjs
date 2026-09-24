@@ -26,8 +26,16 @@ after(() => dom.teardown());
 
 const { act, createElement } = await import('react');
 const { createRoot } = await import('react-dom/client');
-const { detailsChip, editComposerView, CONFLICT_NOTICE, CONFLICTED_STATUS } =
-  await import('../src/modules/capture/edit-composer.ts');
+const {
+  detailsChip,
+  editComposerView,
+  moveControl,
+  CONFLICT_NOTICE,
+  CONFLICTED_STATUS,
+  MOVE_EYEBROW_HINT,
+  MOVE_LOCKED_HINT,
+  MOVE_UNCONFIRMED_HINT,
+} = await import('../src/modules/capture/edit-composer.ts');
 const { EditView } = await import('../src/modules/capture/components/EditView.tsx');
 const { DetailsSheet } = await import('../src/modules/capture/components/DetailsSheet.tsx');
 const { EntityUnavailable } =
@@ -128,6 +136,7 @@ const editor = (over = {}) =>
       tagCount: 3,
     }),
     leaving: false,
+    move: null,
     selection: { active: [], available: [] },
     onSelectionChange: () => {},
     onCommand: () => {},
@@ -141,23 +150,115 @@ const editor = (over = {}) =>
   });
 
 describe('the editor over an existing entity', () => {
-  it('says where it stands, names where it is filed, and offers Details and nothing else', () => {
-    const screen = render(editor());
+  it('says where it stands, names where it is filed, and offers Details and Move', () => {
+    let moves = 0;
+    const screen = render(
+      editor({
+        move: {
+          ...moveControl({
+            locationKnown: true,
+            locked: false,
+            leaving: false,
+            moveInflight: false,
+          }),
+          onPress: () => {
+            moves += 1;
+          },
+        },
+      }),
+    );
 
     try {
       assert.equal(screen.byTestId('edit-status').textContent, 'On your server · revision 7');
       assert.equal(screen.byTestId('edit-details').textContent, 'autosave-loop-notes · 3 tags');
-      // The location eyebrow, in the slot where a new note offers a destination - and a label rather
-      // than a control, because moving an entity is a different operation and is not in this story.
+      // The location eyebrow, in the slot where a new note offers a destination, is the Move control.
       const eyebrow = screen.byTestId('edit-eyebrow');
 
-      assert.equal(eyebrow.textContent, 'Raphael / Sync notes');
-      assert.notEqual(eyebrow.getAttribute('role'), 'button');
-      // No Save on an existing entity, and nothing that offers to move it.
+      assert.ok(eyebrow.textContent.includes('Raphael / Sync notes'));
+      assert.equal(eyebrow.getAttribute('role'), 'button');
+      assert.equal(eyebrow.getAttribute('aria-description'), MOVE_EYEBROW_HINT);
+      assert.notEqual(eyebrow.getAttribute('aria-disabled'), 'true');
+      screen.pressTestId('edit-eyebrow');
+      assert.equal(moves, 1);
+      // No Save on an existing entity, and no destination picker of the new-note kind.
       assert.equal(screen.byTestId('capture-action'), null);
       assert.equal(screen.byTestId('capture-destination'), null);
     } finally {
       screen.unmount();
+    }
+  });
+
+  it('keeps the eyebrow a label where there is no Move to offer', () => {
+    const screen = render(editor({ move: null }));
+
+    try {
+      const eyebrow = screen.byTestId('edit-eyebrow');
+
+      assert.equal(eyebrow.textContent, 'Raphael / Sync notes');
+      assert.notEqual(eyebrow.getAttribute('role'), 'button');
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('draws Move disabled, with the reason it comes back, while it cannot be used', () => {
+    for (const [state, hint] of [
+      [{ locked: true }, MOVE_LOCKED_HINT],
+      [{ leaving: true }, MOVE_LOCKED_HINT],
+      [{ moveInflight: true }, MOVE_UNCONFIRMED_HINT],
+    ]) {
+      let moves = 0;
+      const screen = render(
+        editor({
+          move: {
+            ...moveControl({
+              locationKnown: true,
+              locked: false,
+              leaving: false,
+              moveInflight: false,
+              ...state,
+            }),
+            onPress: () => {
+              moves += 1;
+            },
+          },
+        }),
+      );
+
+      try {
+        const eyebrow = screen.byTestId('edit-eyebrow');
+
+        assert.equal(eyebrow.getAttribute('aria-disabled'), 'true', hint);
+        assert.equal(eyebrow.getAttribute('aria-description'), hint);
+        screen.pressTestId('edit-eyebrow');
+        assert.equal(moves, 0, 'a disabled Move does nothing');
+      } finally {
+        screen.unmount();
+      }
+    }
+  });
+
+  it('draws the moved status the view derives, and the ordinary one once the standing moves on', () => {
+    const moved = { place: 'Raphael', revision: 8 };
+    const acknowledged = render(
+      editor({ view: viewFor({ kind: 'synced', revision: 8 }, { moved }) }),
+    );
+
+    try {
+      assert.equal(
+        acknowledged.byTestId('edit-status').textContent,
+        'Moved to Raphael · revision 8',
+      );
+    } finally {
+      acknowledged.unmount();
+    }
+
+    const later = render(editor({ view: viewFor({ kind: 'synced', revision: 9 }, { moved }) }));
+
+    try {
+      assert.equal(later.byTestId('edit-status').textContent, 'On your server · revision 9');
+    } finally {
+      later.unmount();
     }
   });
 
@@ -486,6 +587,45 @@ describe('the Edit action on a container', () => {
       assert.ok(screen.byLabel('Edit this project') !== null);
     } finally {
       screen.unmount();
+    }
+  });
+});
+
+describe('the location the screen reads, from the owner', () => {
+  it('follows a location the owner advances later, with no prop change', async () => {
+    const { useEditLocation, useEditOwner } =
+      await import('../src/modules/capture/client/edit-owner.ts');
+    const seen = [];
+    const Probe = () => {
+      const location = useEditLocation('c1/42', { kind: 'known', parentId: 3 });
+
+      seen.push(location.kind === 'known' ? location.parentId : 'unknown');
+
+      return null;
+    };
+    const screen = render(createElement(Probe));
+
+    try {
+      // Before the owner says anything, the open's answer.
+      assert.equal(seen.at(-1), 3);
+
+      // A move acknowledged by reconciliation, with no sheet on screen.
+      act(() => {
+        useEditOwner.setState((state) => ({
+          locations: { ...state.locations, 'c1/42': { kind: 'known', parentId: 5 } },
+        }));
+      });
+      assert.equal(seen.at(-1), 5);
+
+      act(() => {
+        useEditOwner.setState((state) => ({
+          locations: { ...state.locations, 'c1/42': { kind: 'known', parentId: null } },
+        }));
+      });
+      assert.equal(seen.at(-1), null, 'the top level is a location, not a missing one');
+    } finally {
+      screen.unmount();
+      useEditOwner.setState({ locations: {} });
     }
   });
 });

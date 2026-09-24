@@ -420,6 +420,14 @@ test('no throwaway mock surface survives', () => {
       // to stay gone, the same rule the sweep above applies to the gallery.
       'mock-active',
       'Design mocks',
+      // Story #7's move mock: the invented editor and sheet, their route and the Settings door to it.
+      // The production move sheet replaced them, and only its reused parts remain.
+      'move-mock',
+      'MoveMockEditor',
+      'MockMoveSheet',
+      'app/mocks',
+      "'/mocks/",
+      'Temporary: move mock',
     ]) {
       assert.ok(!source.includes(name), `${file}: still reaches the retired mock surface ${name}`);
     }
@@ -430,6 +438,11 @@ test('no throwaway mock surface survives', () => {
   assert.ok(
     !existsSync(path.join(root, 'app', 'mock-active.tsx')),
     'the active projects mock route is gone',
+  );
+  assert.ok(!existsSync(path.join(root, 'app', 'mocks')), 'the move mock route is gone');
+  assert.ok(
+    !existsSync(path.join(root, 'modules', 'capture', 'components', 'move-mock')),
+    'the move mock components are gone',
   );
 });
 

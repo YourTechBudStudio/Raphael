@@ -85,10 +85,11 @@ export function invalidateContainer(
 }
 
 /**
- * A title changed, so every computed path that may contain it is stale.
+ * An address changed, so every computed path that may contain it is stale.
  *
  * Every path on this activation, not just this container's: the server composes a path from its
- * ancestors' titles, so renaming an area changes the canonical path of everything beneath it.
+ * ancestors' slugs, so moving or re-addressing an area changes the canonical path of everything beneath
+ * it.
  */
 export function invalidatePaths(client: QueryClient, activation: number): Promise<void> {
   return client.invalidateQueries({

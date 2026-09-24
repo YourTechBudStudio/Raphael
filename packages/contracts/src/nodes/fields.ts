@@ -82,6 +82,7 @@ export const REQUEST_FIELDS = [
   'parent',
   'target',
   'revision',
+  'destination',
   'title',
   'slug',
   'description',

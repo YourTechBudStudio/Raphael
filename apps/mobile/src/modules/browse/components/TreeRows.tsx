@@ -41,6 +41,8 @@ export interface TreeRowsProps {
   onToggle: (id: number) => void;
   onSelect: (node: HierarchyNode) => void;
   stateFor: (node: HierarchyNode) => TreeRowState;
+  /** A virtual row before the tree, in the rows' own grammar. */
+  header?: ReactNode;
   /** A virtual row after the tree, in the rows' own grammar. */
   footer?: ReactNode;
 }
@@ -61,10 +63,12 @@ export function TreeRows({
   onToggle,
   onSelect,
   stateFor,
+  header,
   footer,
 }: TreeRowsProps) {
   return (
     <View>
+      {header}
       {nodes.map((node) => (
         <TreeBranch
           expandedIds={expandedIds}
@@ -81,7 +85,7 @@ export function TreeRows({
   );
 }
 
-interface TreeBranchProps extends Omit<TreeRowsProps, 'nodes' | 'footer'> {
+interface TreeBranchProps extends Omit<TreeRowsProps, 'nodes' | 'header' | 'footer'> {
   node: HierarchyNode;
 }
 

@@ -8,13 +8,14 @@ import { fileURLToPath } from 'node:url';
 
 import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
 import { createTransport, type FetchLike, type Transport } from '@raphael/client';
-import { update as updateDirect } from '@raphael/client/nodes';
+import { move as moveDirect, update as updateDirect } from '@raphael/client/nodes';
 import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
-import { decodeUpdateResponse } from '@raphael/contracts/nodes';
+import { decodeMoveResponse, decodeUpdateResponse } from '@raphael/contracts/nodes';
 import { Effect, Either, Exit, Scope } from 'effect';
 
 import { run as runCli } from '../src/main.ts';
 import { runLogin } from '../src/modules/connection/login.ts';
+import { MOVE_HELP } from '../src/modules/nodes/commands.ts';
 import { buildFailureReport } from '../src/shared/report.ts';
 
 /**
@@ -1869,5 +1870,248 @@ describe('search', () => {
 
     const root = await run(['--help']);
     assert.match(root.stdout, /^ {2}search {12}Find areas, projects and notes by their text\.$/m);
+  });
+});
+
+describe('moving', () => {
+  const created = async (args: readonly string[]): Promise<any> => {
+    const ran = await run([...args, '--json']);
+    assert.equal(ran.code, 0, ran.stderr);
+    return jsonOf(ran).entity;
+  };
+  const seedArea = (path: string): Promise<any> =>
+    created(['create', 'area', path, '--title', 'Area']);
+  const seedProject = (path: string): Promise<any> =>
+    created(['create', 'project', path, '--title', 'Project']);
+  const seedNote = (path: string): Promise<any> =>
+    created(['create', 'resource.note', path, '--title', 'Moving note', '--body', '# Kept\n']);
+
+  const entityAt = async (path: string): Promise<any> =>
+    jsonOf(await run(['get', path, '--json'])).entity;
+
+  it('moves into an existing container and keeps the slug', async () => {
+    const note = await seedNote('/work/move-keep');
+    const personal = await entityAt('/personal');
+
+    const ran = await run(['move', '/work/move-keep', '/personal']);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.equal(
+      ran.stdout,
+      [
+        `Moved resource.note ${note.id}: Moving note`,
+        `  revision: ${note.revision + 1}`,
+        '  slug: move-keep',
+        `  parent: ${personal.id}`,
+        '',
+      ].join('\n'),
+    );
+
+    // Same identifier, same body, reachable only at the new address.
+    const moved = await entityAt('/personal/move-keep');
+    assert.equal(moved.id, note.id);
+    assert.deepEqual(moved.body, note.body);
+    const old = await run(['get', '/work/move-keep']);
+    assert.equal(old.code, 1);
+    assert.match(old.stderr, /node_not_found/);
+  });
+
+  it('takes an absent last segment as the new slug under an existing parent', async () => {
+    const note = await seedNote('/work/move-rename');
+    const ran = await run(['move', '/work/move-rename', '/personal/move-renamed']);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.match(ran.stdout, /\n {2}slug: move-renamed\n/);
+
+    const path = await run(['path', '--id', String(note.id)]);
+    assert.equal(path.stdout.trim(), '/personal/move-renamed');
+    assert.equal((await run(['get', '/work/move-rename'])).code, 1);
+  });
+
+  it('carries a moved container’s descendants with it', async () => {
+    const outer = await seedArea('/work/move-outer');
+    const note = await seedNote('/work/move-outer/inside');
+    const ran = await run(['move', '/work/move-outer', '/personal']);
+    assert.equal(ran.code, 0, ran.stderr);
+
+    const inside = await entityAt('/personal/move-outer/inside');
+    assert.equal(inside.id, note.id);
+    assert.equal(inside.parentId, outer.id);
+    assert.equal(inside.revision, note.revision);
+  });
+
+  it('moves by --id against an explicit revision, and prints the response as JSON', async () => {
+    const note = await seedNote('/work/move-by-id');
+    const ran = await run([
+      'move',
+      '--id',
+      String(note.id),
+      '/personal',
+      '--revision',
+      String(note.revision),
+      '--json',
+    ]);
+    assert.equal(ran.code, 0, ran.stderr);
+    const decoded = decodeMoveResponse(jsonOf(ran));
+    assert.equal(Either.isRight(decoded), true);
+    if (Either.isRight(decoded)) {
+      assert.equal(decoded.right.node.id, note.id);
+      assert.equal(decoded.right.node.slug, 'move-by-id');
+      assert.equal(decoded.right.node.revision, note.revision + 1);
+    }
+  });
+
+  it('reads the current revision for itself when none is given', async () => {
+    const note = await seedNote('/work/move-pinned');
+    // Advance the revision first, so a move that did not read it would be stale.
+    const updated = await run(['update', '/work/move-pinned', '--title', 'Renamed', '--json']);
+    assert.equal(updated.code, 0, updated.stderr);
+
+    const ran = await run(['move', '/work/move-pinned', '/personal', '--json']);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.equal(jsonOf(ran).node.revision, note.revision + 2);
+  });
+
+  it('refuses a stale revision, moves nothing, and names the revision to re-read', async () => {
+    const note = await seedNote('/work/move-stale');
+    await run(['update', '/work/move-stale', '--title', 'Newer']);
+
+    const ran = await run(['move', '/work/move-stale', '/personal', '--revision', '1']);
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /code: revision_conflict \(409\)/);
+    assert.match(ran.stderr, new RegExp(`--revision ${note.revision + 1}`));
+    assert.equal(ran.stderr.includes('Could not confirm'), false);
+    assert.equal((await entityAt('/work/move-stale')).id, note.id);
+  });
+
+  it('reports a move to where it already is as an ordinary success at the same revision', async () => {
+    const note = await seedNote('/work/move-noop');
+    const ran = await run(['move', '/work/move-noop', '/work']);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.match(ran.stdout, new RegExp(`^Moved resource.note ${note.id}: Moving note\\n`));
+    assert.match(ran.stdout, new RegExp(`\\n {2}revision: ${note.revision}\\n`));
+  });
+
+  it('moves an area to the top level', async () => {
+    await seedArea('/work/move-to-top');
+    const ran = await run(['move', '/work/move-to-top', '/']);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.match(ran.stdout, /\n {2}parent: top level\n$/);
+    assert.equal((await run(['path', '/move-to-top'])).stdout.trim(), '/move-to-top');
+  });
+
+  it('refuses anything but an area at the top level, as a parentage problem', async () => {
+    await seedProject('/work/move-project-top');
+    const ran = await run(['move', '/work/move-project-top', '/']);
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /code: invalid_parent \(422\)/);
+    assert.match(ran.stderr, /field: destination/);
+    assert.match(ran.stderr, /reason: parentage/);
+    assert.match(ran.stderr, /parentType: root/);
+  });
+
+  it('refuses a destination held by a note, and never overwrites it', async () => {
+    const mover = await seedNote('/work/move-collide-a');
+    const holder = await seedNote('/work/move-collide-b');
+    const ran = await run(['move', '/work/move-collide-a', '/work/move-collide-b']);
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /code: slug_conflict \(409\)/);
+    assert.match(ran.stderr, /field: destination/);
+    assert.equal((await entityAt('/work/move-collide-a')).id, mover.id);
+    assert.equal((await entityAt('/work/move-collide-b')).id, holder.id);
+  });
+
+  it('refuses a container moved inside itself as a cycle', async () => {
+    await seedArea('/work/move-cycle');
+    await seedArea('/work/move-cycle/child');
+    const ran = await run(['move', '/work/move-cycle', '/work/move-cycle/child']);
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /code: invalid_parent \(422\)/);
+    assert.match(ran.stderr, /reason: cycle/);
+    assert.match(ran.stderr, /field: destination/);
+    assert.equal((await run(['path', '/work/move-cycle/child'])).code, 0);
+  });
+
+  it('refuses malformed, missing and extra arguments before anything is sent', async () => {
+    // Pointed at a closed port: a usage error must be decided before any request is attempted.
+    const env = { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' };
+    const cases: readonly [readonly string[], RegExp][] = [
+      [['move'], /Give a path, or --id\./],
+      [['move', '/work/x'], /Give a destination/],
+      [['move', '--id', '5'], /Give a destination/],
+      [['move', '/work/x', 'personal'], /destination "personal": /],
+      [['move', '/work/x', '/personal/'], /destination "\/personal\/": /],
+      [['move', '/work/x', '/a', '/b'], /Unexpected argument "\/b"/],
+      // With --id the one positional is the destination, so a second one is extra, not a source.
+      [['move', '--id', '5', '/a', '/b'], /Unexpected argument "\/b"/],
+      [['move', '/work/x', '/a', '--revision', '0'], /--revision/],
+    ];
+    for (const [args, message] of cases) {
+      const ran = await run(args, { env });
+      assert.equal(ran.code, 2, args.join(' '));
+      assert.match(ran.stderr, message, args.join(' '));
+      assert.match(ran.stderr, /raphael move --help/, args.join(' '));
+    }
+  });
+
+  it('says the move was not sent when the revision could not be read', async () => {
+    const ran = await run(['move', '/work/anything', '/personal'], {
+      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+    });
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /The change was not sent\./);
+    assert.equal(ran.stderr.includes('Could not confirm'), false);
+  });
+
+  it('reports a lost answer by --id as uncertain, naming the reads that settle it', async () => {
+    const ran = await run(['move', '--id', '5', '/personal', '--revision', '1'], {
+      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+    });
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /Could not confirm whether this was moved\./);
+    assert.match(ran.stderr, /"raphael path --id 5"/);
+    assert.match(ran.stderr, /"raphael get --id 5"/);
+    assert.match(ran.stderr, /does not retry a change on its own/);
+    assert.match(ran.stderr, /Check the server address/);
+    assert.equal(ran.stderr.includes('idempotency-key'), false);
+  });
+
+  it('reports a lost answer by path without sending anyone back to the old path', async () => {
+    const ran = await run(['move', '/work/anything', '/personal', '--revision', '1'], {
+      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+    });
+    assert.equal(ran.code, 1);
+    assert.match(ran.stderr, /Could not confirm whether this was moved\./);
+    assert.match(ran.stderr, /old path may no longer name it/);
+    assert.equal(ran.stderr.includes('--id'), false);
+  });
+
+  it('keeps the identifier out of the machine report, which is the same for every operation', async () => {
+    // The identifier only words the guidance. A real lost answer, asserted where the report is built.
+    const transport = createTransport({
+      endpoint: 'http://127.0.0.1:1',
+      apiKey: KEY,
+      fetch: fetch as unknown as FetchLike,
+    }) as Transport;
+    const result = await moveDirect(transport, {
+      target: { id: 5 },
+      revision: 1,
+      destination: { path: '/personal' },
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) {
+      const report = buildFailureReport(result.failure, { operation: 'move', targetId: 5 });
+      assert.equal(report.mutationOutcome, 'unknown');
+      assert.deepEqual(Object.keys(report).sort(), ['kind', 'message', 'mutationOutcome']);
+    }
+  });
+
+  it('is listed in the root help and documents itself', async () => {
+    const root = await run(['help']);
+    assert.match(
+      root.stdout,
+      /\n {2}move {14}Move an area, a project, or a note somewhere else\.\n/,
+    );
+    const own = await run(['move', '--help']);
+    assert.equal(own.code, 0);
+    assert.equal(own.stdout.trim(), MOVE_HELP);
   });
 });

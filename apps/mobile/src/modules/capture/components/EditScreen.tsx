@@ -24,10 +24,19 @@ import type {
 } from '../../editor';
 import { goBack, openHome } from '../../navigation';
 import { useBackgroundFlush } from '../client/background.ts';
-import { useEditOwner } from '../client/edit-owner.ts';
+import { useEditLocation, useEditOwner } from '../client/edit-owner.ts';
 import { useCaptureSession } from '../client/owner.ts';
 import { problemFor, type ProtectionProblem } from '../composer.ts';
-import { EDIT_PROBLEM_COPY, detailsChip, editComposerView, idLabelOf } from '../edit-composer.ts';
+import {
+  EDIT_PROBLEM_COPY,
+  MOVE_ROOT_LABEL,
+  detailsChip,
+  editComposerView,
+  idLabelOf,
+  moveControl,
+  movedNotice,
+  movedNoticeHolds,
+} from '../edit-composer.ts';
 import { isFatalEditorProblem, unavailableReasonOf } from '../edit-display.ts';
 import type { EditLocation, EditOpenOutcome } from '../edit-owner.ts';
 import { editKeyOf, type EditProblem } from '../edit-types.ts';
@@ -35,6 +44,7 @@ import type { AttachmentToken, CaptureSession } from '../owner.ts';
 import { DetailsSheet } from './DetailsSheet';
 import { EditView } from './EditView';
 import { EntityUnavailable } from './EntityUnavailable';
+import { MoveSheet } from './MoveSheet';
 import { ProtectSheet } from './ProtectSheet';
 
 export interface EditScreenProps {
@@ -52,9 +62,9 @@ export interface EditScreenProps {
  * recovery card about what a record means.
  *
  * **It mounts no query for the entity it edits.** The owner's own Get is the read; the one query here
- * is the shared hierarchy, behind the eyebrow that names where this is filed. There is no read-only
- * mode, no Save on an existing entity and nothing that offers to move one - autosave, and the status
- * line beside the close cross says where the writing stands.
+ * is the shared hierarchy, behind the eyebrow that names where this is filed - and that eyebrow is the
+ * one Move control, opening the move sheet. There is no read-only mode and no Save on an existing
+ * entity - autosave, and the status line beside the close cross says where the writing stands.
  */
 export function EditScreen({ id }: EditScreenProps) {
   const session = useCaptureSession();
@@ -127,8 +137,8 @@ export function EditScreen({ id }: EditScreenProps) {
   return (
     <Composer
       editKey={outcome.editKey}
+      initialLocation={outcome.location}
       key={outcome.editKey}
-      location={outcome.location}
       onDiscarded={reopen}
       session={session}
     />
@@ -218,12 +228,13 @@ const useEntityLocation = (location: EditLocation): readonly string[] => {
 
 function Composer({
   editKey,
-  location,
+  initialLocation,
   session,
   onDiscarded,
 }: {
   editKey: string;
-  location: EditLocation;
+  /** The open's answer, for the first render only. The owner's confirmed location follows it. */
+  initialLocation: EditLocation;
   session: CaptureSession;
   onDiscarded: () => void;
 }) {
@@ -244,6 +255,7 @@ function Composer({
     [standingFor, editKey, edits, sending, checking],
   );
 
+  const location = useEditLocation(editKey, initialLocation);
   const segments = useEntityLocation(location);
 
   const [title, setTitle] = useState(record?.content.title ?? '');
@@ -260,6 +272,27 @@ function Composer({
   const [detailsOpen, setDetailsOpen] = useState(false);
   /** Bumped per opening, so the sheet seeds its drafts from that moment and from nothing since. */
   const [detailsSession, setDetailsSession] = useState(0);
+  const [moveOpen, setMoveOpen] = useState(false);
+  /** Bumped per opening of the move sheet, which seeds its selection from that moment. */
+  const [moveSession, setMoveSession] = useState(0);
+  const moveOpenings = useRef(0);
+  /**
+   * The move sheet opening that is the current transition, or null. A late answer closes the sheet
+   * only if it belongs to the opening still on screen, never a sheet opened since.
+   */
+  const moveTransition = useRef<number | null>(null);
+  /**
+   * The last acknowledged move, said on the status line until the standing next changes.
+   *
+   * Dropped the first time the standing stops matching it, so it cannot come back if the record later
+   * reads synced at the same revision again. The sheet's own lock is not a standing and leaves it be.
+   * It holds where the entity went, not what that place was called: the name is read when the line is
+   * drawn, from the same current reading the eyebrow draws.
+   */
+  const [movedTo, setMovedTo] = useState<{
+    readonly parentId: number | null;
+    readonly revision: number;
+  } | null>(null);
   const [leaving, setLeaving] = useState(false);
   /**
    * The renderer reported something that leaves it holding nothing, before it ever answered.
@@ -277,7 +310,7 @@ function Composer({
 
   const port = useRef<EditorPort>(null);
   const token = useRef<AttachmentToken | null>(null);
-  /** Held while the details sheet is open, so the lock taken for it is given back when it closes. */
+  /** Held while a sheet is open, so the lock taken for it is given back when it closes. */
   const sheetLock = useRef<(() => void) | null>(null);
   /** One controlled transition at a time, decided in the same turn as the press. See `CaptureScreen`. */
   const transitioning = useRef(false);
@@ -313,6 +346,12 @@ function Composer({
     setTitle(record.content.title);
     setDescription(record.content.description);
   }, [record]);
+
+  useEffect(() => {
+    if (movedTo !== null && (standing === null || !movedNoticeHolds(movedTo, standing))) {
+      setMovedTo(null);
+    }
+  }, [movedTo, standing]);
 
   useEffect(() => {
     const live = port.current;
@@ -443,6 +482,7 @@ function Composer({
     lastRejection,
     nodeType: record.nodeType,
     kind: record.kind,
+    moved: movedNotice(movedTo, location, segments.at(-1)),
   });
 
   const edit = (fields: { title?: string; description?: string }) => {
@@ -514,6 +554,75 @@ function Composer({
     })();
   };
 
+  /**
+   * Opening the move sheet is the same controlled transition as Details: lock, flush, and keep the lock
+   * until the sheet closes. Writing that did not land does not open it, and a move would not be sent
+   * over it anyway.
+   */
+  const openMove = () => {
+    if (transitioning.current) return;
+    transitioning.current = true;
+
+    void (async () => {
+      const { result, release } = await owner.getState().beginControlledExit(editKey);
+
+      if (result.kind !== 'flushed') {
+        release();
+        transitioning.current = false;
+        setProtectProblem(problemFor(result));
+
+        return;
+      }
+
+      moveOpenings.current += 1;
+      const opening = moveOpenings.current;
+
+      sheetLock.current = release;
+      moveTransition.current = opening;
+      setMoveSession(opening);
+      setMoveOpen(true);
+    })();
+  };
+
+  /** Gives the editor back and admits the next transition, once, for the opening still on screen. */
+  const closeMove = (opening: number | null = moveTransition.current) => {
+    if (opening === null || moveTransition.current !== opening) return;
+
+    moveTransition.current = null;
+    sheetLock.current?.();
+    sheetLock.current = null;
+    transitioning.current = false;
+    setMoveOpen(false);
+  };
+
+  /**
+   * The owner moves; this only reads the answer.
+   *
+   * The location is the owner's to advance, and the eyebrow already follows it. The status line's
+   * revision is the acknowledged record's own, never a guess: a server that had nothing to change
+   * answers at the revision it held. On `unconfirmed` the location stays as it was, because this phone
+   * does not know. A refusal or a move never sent stays in the sheet, which says why.
+   */
+  const move = async (destination: { readonly parentId: number | null }) => {
+    const opening = moveTransition.current;
+    const outcome = await owner.getState().move(editKey, destination);
+
+    if (outcome.kind === 'refused' || outcome.kind === 'not_sent') return outcome;
+
+    if (outcome.kind === 'moved') {
+      const acknowledged = owner
+        .getState()
+        .edits.find((candidate) => editKeyOf(candidate.key) === editKey);
+
+      if (acknowledged !== undefined) {
+        setMovedTo({ parentId: outcome.parentId, revision: acknowledged.baseRevision });
+      }
+    }
+    closeMove(opening);
+
+    return outcome;
+  };
+
   /** Gives the editor back, whichever way the sheet was left, and admits the next transition. */
   const closeDetails = () => {
     sheetLock.current?.();
@@ -537,6 +646,16 @@ function Composer({
         editorRef={port}
         leaving={leaving}
         location={segments}
+        move={(() => {
+          const control = moveControl({
+            locationKnown: location.kind === 'known',
+            locked: view.locked,
+            leaving,
+            moveInflight: record.inflight?.kind === 'move',
+          });
+
+          return control === null ? null : { ...control, onPress: openMove };
+        })()}
         onClose={close}
         onCommand={(command) => {
           port.current?.send(command);
@@ -579,6 +698,25 @@ function Composer({
         tags={record.content.tags}
         visible={detailsOpen}
       />
+
+      {location.kind === 'known' ? (
+        <MoveSheet
+          currentName={segments.at(-1) ?? MOVE_ROOT_LABEL}
+          entity={{
+            id: record.key.nodeId,
+            type: record.nodeType,
+            kind: record.kind,
+            slug: record.content.slug,
+          }}
+          onClose={() => {
+            closeMove();
+          }}
+          onMove={move}
+          parentId={location.parentId}
+          sessionId={moveSession}
+          visible={moveOpen}
+        />
+      ) : null}
 
       {protectProblem === null ? null : (
         <ProtectSheet

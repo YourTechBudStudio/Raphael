@@ -11,12 +11,12 @@
  * a database of its own.
  */
 
-import { get as getNode, update as updateNode } from '@raphael/client/nodes';
+import { get as getNode, move as moveNode, update as updateNode } from '@raphael/client/nodes';
 import { useEffect } from 'react';
 
 import { queryClient } from '../../../infrastructure/query/query-client';
 import { useConnectionStore } from '../../connection';
-import { createEditOwner } from '../edit-owner.ts';
+import { createEditOwner, type EditLocation } from '../edit-owner.ts';
 import { openSharedStore } from './store-lifetime.ts';
 import { applyUpdateTo } from './update-cache.ts';
 
@@ -25,6 +25,7 @@ export const useEditOwner = createEditOwner({
   openStore: openSharedStore,
   get: (transport, request) => getNode(transport, request),
   update: (transport, request) => updateNode(transport, request),
+  move: (transport, request) => moveNode(transport, request),
   now: () => Date.now(),
   // One consequence of one editing session, bound to the app's cache. Which queries it touches is
   // decided in `update-cache.ts`, where it can be driven without a connection.
@@ -58,3 +59,13 @@ export const useEditLifetime = (): void => {
     void initialize();
   }, [initialize]);
 };
+
+/**
+ * Where the record being edited is filed, as the owner confirmed it.
+ *
+ * The owner advances a location on its own evidence - an acknowledged move, a later reconciliation, an
+ * adoption of the server - and the screen reads it rather than keeping a copy, so a move answered with
+ * no sheet on screen still moves the eyebrow. `initial` is the open's answer, for the first render only.
+ */
+export const useEditLocation = (editKey: string, initial: EditLocation): EditLocation =>
+  useEditOwner((state) => state.locations[editKey]) ?? initial;

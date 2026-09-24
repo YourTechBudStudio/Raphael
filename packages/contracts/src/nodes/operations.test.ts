@@ -35,6 +35,8 @@ import {
   decodeGetRequest,
   decodeListRequest,
   decodeListResponse,
+  decodeMoveRequest,
+  decodeMoveResponse,
   decodeSearchRequest,
   decodeSearchResponse,
   decodeUpdateRequest,
@@ -79,6 +81,7 @@ test('routes are the agreed POST vocabulary', () => {
     search: { method: 'POST', path: '/api/nodes/search' },
     getPath: { method: 'POST', path: '/api/nodes/get-path' },
     update: { method: 'POST', path: '/api/nodes/update' },
+    move: { method: 'POST', path: '/api/nodes/move' },
   });
 });
 
@@ -223,6 +226,70 @@ test('the request-field vocabulary matches the fields the operations now have', 
   assert.equal((REQUEST_FIELDS as readonly string[]).includes('types'), false);
   // `parent` survives because creation still has one.
   assert.ok((REQUEST_FIELDS as readonly string[]).includes('parent'));
+  // A move names where it goes under its own field.
+  assert.ok((REQUEST_FIELDS as readonly string[]).includes('destination'));
+});
+
+const move = (destination: unknown): Record<string, unknown> => ({
+  target: { id: 3 },
+  revision: 2,
+  destination,
+});
+
+test('a move destination is a path or an explicit parent, and nothing in between', () => {
+  for (const destination of [
+    { path: '/' },
+    { path: '/work/x' },
+    { parent: { id: 1 } },
+    { parent: { path: '/work' } },
+    { parent: { path: '/' }, slug: 'x' },
+  ]) {
+    assert.deepEqual(right(decodeMoveRequest(move(destination))).destination, destination);
+  }
+  for (const destination of [
+    { path: '/work', slug: 'x' },
+    { parent: { id: 1, path: '/w' } },
+    { parent: { id: 1 }, slug: 'Not A Slug' },
+    { parent: { id: 1 }, slug: 'a'.repeat(SLUG_MAX_CODE_POINTS + 1) },
+    { parent: { id: 1 }, extra: true },
+    { path: 'work' },
+    {},
+    { parentId: 1 },
+    '/work',
+  ]) {
+    const decoded = decodeMoveRequest(move(destination));
+    assert.equal(Either.isLeft(decoded), true, JSON.stringify(destination));
+    if (Either.isLeft(decoded)) {
+      assert.equal(decoded.left.issues[0]?.path[0], 'destination', JSON.stringify(destination));
+    }
+  }
+});
+
+test("a destination path is a plain scope path, so a stored slug past today's bound stays addressable", () => {
+  // The bound is core's, applied only to a segment it is about to write as a new slug.
+  const long = 'a'.repeat(SLUG_MAX_CODE_POINTS + 1);
+  assert.deepEqual(right(decodeMoveRequest(move({ path: `/work/${long}` }))).destination, {
+    path: `/work/${long}`,
+  });
+  assert.deepEqual(right(decodeMoveRequest(move({ path: '/' }))).destination, { path: '/' });
+});
+
+test('a move request requires target, revision and destination', () => {
+  const complete = move({ path: '/work' });
+  assert.equal(Either.isRight(decodeMoveRequest(complete)), true);
+  for (const field of ['target', 'revision', 'destination']) {
+    const { [field]: _omitted, ...rest } = complete;
+    assert.equal(Either.isLeft(decodeMoveRequest(rest)), true, field);
+  }
+  assert.equal(Either.isLeft(decodeMoveRequest({ ...complete, target: { path: '/' } })), true);
+  assert.equal(Either.isLeft(decodeMoveRequest({ ...complete, revision: 0 })), true);
+  assert.equal(Either.isLeft(decodeMoveRequest({ ...complete, format: 'markdown' })), true);
+});
+
+test('a move response is a summary under node', () => {
+  const { body: _body, metadata: _metadata, ...summary } = entity();
+  assert.equal(right(decodeMoveResponse({ node: summary })).node.id, 42);
+  assert.equal(Either.isLeft(decodeMoveResponse({ entity: summary })), true);
 });
 
 test('pagination rejects values outside the agreed range instead of clamping them', () => {

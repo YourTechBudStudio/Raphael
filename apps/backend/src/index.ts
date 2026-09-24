@@ -73,6 +73,7 @@ export {
   getNode,
   getNodePath,
   listNodes,
+  moveNode,
   searchNodes,
   toPublicError,
   updateNode,

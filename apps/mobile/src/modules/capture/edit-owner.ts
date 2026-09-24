@@ -36,6 +36,10 @@ import {
   isRequestField,
   type GetRequestInput,
   type GetResponse,
+  type MoveRequestInput,
+  type MoveResponse,
+  type NodeEntity,
+  type NodeSummary,
   type NodeType,
   type UpdateRequestInput,
   type UpdateResponse,
@@ -44,7 +48,13 @@ import { create as createStore } from 'zustand';
 
 import type { Transport } from '../../infrastructure/api/transport';
 import type { EditorPort, EditorSnapshot } from '../editor';
-import { applyEnvelope, contentOf, diff, matchesSubmitted } from './edit-envelope.ts';
+import {
+  applyEnvelope,
+  contentOf,
+  diff,
+  matchesSubmitted,
+  type InflightEnvelope,
+} from './edit-envelope.ts';
 import { editStandingOf, type EditStanding } from './edit-policy.ts';
 import {
   editKeyOf,
@@ -62,6 +72,7 @@ import {
   type AttachmentToken,
   type DraftProtection,
   type FlushResult,
+  type Lease,
   type SnapshotResult,
 } from './protection.ts';
 import type { CaptureStore, OpenOutcome, StoredEdits } from './store.ts';
@@ -102,6 +113,37 @@ export type EditLocation =
   | { readonly kind: 'known'; readonly parentId: number | null }
   | { readonly kind: 'unknown' };
 
+/**
+ * Why a move was never dispatched. The record is exactly as it was.
+ *
+ * `conflicted`, `refused` and `unconfirmed` are the autosave's own verdicts on the writing, reported as
+ * the autosave's rather than as the move's: a move is never sent over writing that is not settled on
+ * the server, and `unsent_writing` says the writing is still on its way there.
+ */
+export type MoveNotSentReason =
+  | 'unsent_writing'
+  | 'no_session'
+  | 'conflicted'
+  | 'refused'
+  | 'unconfirmed'
+  | 'unknown_location';
+
+/**
+ * How a move ended.
+ *
+ * `refused` carries the failure rather than a sentence, so the one place composing sentences about an
+ * edit stays `edit-composer.ts`; nothing local changed, and the writing's own standing is untouched.
+ * `conflicted` is the move itself meeting a stale revision, which the record now carries.
+ * `unconfirmed` is a move that was dispatched and whose outcome this phone cannot state: the record
+ * keeps it in flight and reconciliation answers it later.
+ */
+export type MoveOutcome =
+  | { readonly kind: 'moved'; readonly parentId: number | null }
+  | { readonly kind: 'refused'; readonly failure: ClientFailure }
+  | { readonly kind: 'conflicted' }
+  | { readonly kind: 'unconfirmed' }
+  | { readonly kind: 'not_sent'; readonly reason: MoveNotSentReason };
+
 export type EditOpenOutcome =
   | { readonly kind: 'ready'; readonly editKey: string; readonly location: EditLocation }
   /** A retained row this build cannot open. The screen names the problem and offers Discard. */
@@ -117,6 +159,7 @@ export interface EditPorts {
   openStore(): Promise<OpenOutcome>;
   get(transport: Transport, request: GetRequestInput): Promise<ClientResult<GetResponse>>;
   update(transport: Transport, request: UpdateRequestInput): Promise<ClientResult<UpdateResponse>>;
+  move(transport: Transport, request: MoveRequestInput): Promise<ClientResult<MoveResponse>>;
   /** Wall clock. */
   now(): number;
   /**
@@ -150,6 +193,16 @@ export interface EditState {
   /** Edit keys being reconciled by a Get. */
   readonly checking: readonly string[];
   readonly protection: Readonly<Record<string, DraftProtection>>;
+  /**
+   * Where each open record's entity sits, as far as the owner has confirmed.
+   *
+   * Seeded from the open's own Get and advanced by the owner alone: on an acknowledged move, whether
+   * its answer arrived or was recovered by reconciliation with no sheet on screen, and when a settled
+   * record adopts the server. The owner holds this because it is the one thing that knows when a move
+   * was acknowledged; a screen reads it rather than keeping a copy. In memory only: after a process
+   * death the next open's Get establishes it again, and every move is judged against it.
+   */
+  readonly locations: Readonly<Record<string, EditLocation>>;
 
   initialize(): Promise<void>;
   retryOpen(): Promise<void>;
@@ -174,6 +227,14 @@ export interface EditState {
   snapshotAccepted(token: AttachmentToken, snapshot: EditorSnapshot): SnapshotResult;
   flush(editKey: string, options?: { lock?: boolean }): Promise<FlushResult>;
   beginControlledExit(editKey: string): Promise<{ result: FlushResult; release: () => void }>;
+  /**
+   * Move the entity under another parent, keeping its slug. Always resolves.
+   *
+   * Serialized with the autosave loop and reconciliation for the record: writing is settled on the
+   * server first, the move is persisted before it is sent, and an answer that is lost stays in flight
+   * until a re-read can say what happened. The confirmed location advances only on an acknowledgement.
+   */
+  move(editKey: string, destination: { readonly parentId: number | null }): Promise<MoveOutcome>;
   /** Leaving: see `LeaveOutcome`. Resolves only once one of its three answers is true. */
   leave(editKey: string): Promise<LeaveOutcome>;
   /** Works for a usable and an unusable record alike; both are deleted by key. */
@@ -235,15 +296,22 @@ export const createEditOwner = (ports: EditPorts) =>
     const acknowledged = new Set<string>();
 
     /**
-     * The send and the reconciliation currently in the air, as joinable promises.
+     * The one piece of work in the air for a record - a send, a re-read, a move, or an open's
+     * read-and-reconcile - as a completion signal that never rejects.
      *
-     * This is what makes `leave` honest. Without it, an exit 200ms after the debounce fired would find
-     * the tick refusing itself for `sending` and resolve immediately - returning from the one case
-     * refinement 6 was written for. A caller that arrives while work is in the air joins it rather than
-     * starting a second one.
+     * One map rather than one per kind of work, because each of them reads or writes the record's
+     * in-flight state, and a read that predates a dispatch is not evidence about it: an open whose Get
+     * was in the air while a timer persisted and sent an envelope could otherwise clear that envelope
+     * through the unchanged-revision rule. It is also what makes `leave` honest: an exit 200ms after the
+     * debounce fired joins the send in the air rather than finding it refusing itself for `sending`.
      */
-    const ticks = new Map<string, Promise<void>>();
-    const checks = new Map<string, Promise<void>>();
+    const work = new Map<string, Promise<void>>();
+    /** The lease each controlled exit or barrier currently holds for a record, by identity. */
+    const heldLeases = new Map<string, Lease>();
+    /** The barrier in progress for a record, so a release requested meanwhile waits for it. */
+    const barriers = new Map<string, Promise<void>>();
+    /** Deferred releases in progress, so nothing acquires while a release is still owed. */
+    const releasing = new Map<string, Promise<void>>();
 
     let lifetime = 0;
     let opening: Promise<void> | null = null;
@@ -271,11 +339,43 @@ export const createEditOwner = (ports: EditPorts) =>
      * From what was written, never from a re-read: a failed refresh would otherwise leave the app
      * holding a row as it was before a success that has already committed.
      */
-    const publishRecord = (editKey: string, written: EntityEditRecord | null): void => {
+    const publishRecord = (
+      editKey: string,
+      written: EntityEditRecord | null,
+      location?: EditLocation,
+    ): void => {
       set((state) => {
         const without = state.edits.filter((record) => editKeyOf(record.key) !== editKey);
+        const edits = written === null ? without : [...without, written];
 
-        return written === null ? { edits: without } : { edits: [...without, written] };
+        // In the same `set` as the record it follows, so nothing can read a location ahead of it.
+        return location === undefined
+          ? { edits }
+          : { edits, locations: { ...state.locations, [editKey]: location } };
+      });
+    };
+
+    /**
+     * Take in what an open could establish about where the entity sits.
+     *
+     * A reading that could not be made replaces nothing already known: a failed Get says nothing about
+     * where the entity is, only that this open could not learn it.
+     */
+    const learnLocation = (editKey: string, location: EditLocation): void => {
+      set((state) =>
+        location.kind === 'unknown' && state.locations[editKey] !== undefined
+          ? {}
+          : { locations: { ...state.locations, [editKey]: location } },
+      );
+    };
+
+    /** Drop everything the owner holds about a record beside the record itself. */
+    const dropRecordState = (editKey: string): void => {
+      heldLeases.delete(editKey);
+      set((state) => {
+        const { [editKey]: _removed, ...rest } = state.locations;
+
+        return { locations: rest };
       });
     };
 
@@ -353,6 +453,192 @@ export const createEditOwner = (ports: EditPorts) =>
         sending: sending.has(editKey),
         sessionUsable: sessionUsableFor(editKey, record.key),
       });
+    };
+
+    /**
+     * Run `body` as the record's work, registered before it starts.
+     *
+     * The registration happens before `body` is invoked, so nothing `body` does synchronously - and
+     * nothing that runs after it - can find the record free. The entry is removed before its signal
+     * resolves, so a waiter woken by it finds the slot empty.
+     */
+    const occupy = <T>(editKey: string, body: () => Promise<T>): Promise<T> => {
+      let done: () => void = () => {};
+      const tracked = new Promise<void>((resolve) => {
+        done = resolve;
+      });
+
+      work.set(editKey, tracked);
+
+      let started: Promise<T>;
+
+      try {
+        started = body();
+      } catch (error) {
+        started = Promise.reject(error as Error);
+      }
+
+      void started
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .finally(() => {
+          if (work.get(editKey) === tracked) work.delete(editKey);
+          done();
+        });
+
+      return started;
+    };
+
+    /** Join whatever is in the air for the record, or start `body` as its work when nothing is. */
+    const joinOrStart = (editKey: string, body: () => Promise<void>): Promise<void> =>
+      work.get(editKey) ?? occupy(editKey, body);
+
+    /**
+     * Wait until nothing is in the air for the record, then run `body` as its work.
+     *
+     * The check and the registration are one synchronous segment, so a timer cannot start work in the
+     * gap between the wait and the read.
+     */
+    const claim = async <T>(editKey: string, body: () => Promise<T>): Promise<T> => {
+      for (;;) {
+        const running = work.get(editKey);
+
+        if (running === undefined) return occupy(editKey, body);
+        await running;
+      }
+    };
+
+    /**
+     * Acquire the record's lease through the owner, the one gate over who holds it.
+     *
+     * Waits for any barrier and any deferred release first, so a new lease can never replace the
+     * identity that protects a transition in progress - `core.takeLease` itself would silently
+     * overwrite it. Both maps hold completion signals that never reject, so a failed transition reopens
+     * the gate rather than poisoning it. Null when the entry is gone. A barrier acquiring for itself
+     * names its own signal as `own`, so it does not wait for its own completion.
+     */
+    const acquireLease = async (editKey: string, own?: Promise<void>): Promise<Lease | null> => {
+      for (;;) {
+        const barrier = barriers.get(editKey);
+        const busy = (barrier === own ? undefined : barrier) ?? releasing.get(editKey);
+
+        if (busy === undefined) break;
+        await busy;
+      }
+
+      const lease = core.takeLease(editKey);
+
+      if (lease !== null) heldLeases.set(editKey, lease);
+
+      return lease;
+    };
+
+    /**
+     * Release a lease this owner handed out, once any barrier using it has completed, however it did.
+     *
+     * The identity is dropped and the core released unconditionally: a leaked lock is a screen nobody
+     * can type into, which is the one outcome worse than any failed transition. With no barrier in
+     * progress this runs at once.
+     */
+    const releaseHeld = (editKey: string, lease: Lease, editable: boolean): void => {
+      const done = (async () => {
+        try {
+          const barrier = barriers.get(editKey);
+
+          if (barrier !== undefined) await barrier;
+        } finally {
+          if (heldLeases.get(editKey) === lease) heldLeases.delete(editKey);
+          core.releaseLease(editKey, lease, editable);
+        }
+      })().finally(() => {
+        if (releasing.get(editKey) === done) releasing.delete(editKey);
+      });
+
+      releasing.set(editKey, done);
+    };
+
+    /**
+     * Hold the record still while `body` rewrites its authored columns and the core's content.
+     *
+     * Binary: `body` runs only once the core's own predicate, `settledAt`, says the writing is at rest,
+     * and otherwise this answers `unsettled` without running it. Settlement is asked under a lease this
+     * owner handed out and can name, or with no editor at all:
+     * - a controlled exit already holds one: its version was recorded when its flush landed, and its
+     *   release defers until this finishes, so it stays the lease for the whole transition;
+     * - an editor is attached and no lease is held: take one, flush under it, record the flushed version
+     *   on it - exactly as `beginControlledExit` does - and release it afterwards;
+     * - no editor is attached: drain, then `settledAt(editKey, null, committed)`, which is the core's
+     *   complete statement for an unattached entry.
+     *
+     * The gate waits on completion, never on the result, so a body that throws still lets a deferred
+     * release and the next acquisition proceed. The throw reaches this caller alone.
+     */
+    const withBarrier = <T>(editKey: string, body: () => Promise<T>): Promise<T | 'unsettled'> => {
+      let complete: () => void = () => {};
+      const completed = new Promise<void>((resolve) => {
+        complete = resolve;
+      });
+      const run = async (): Promise<T | 'unsettled'> => {
+        if (!core.has(editKey)) return 'unsettled';
+
+        const held = heldLeases.get(editKey);
+
+        if (held !== undefined) {
+          if (held.version === null || !core.settledAt(editKey, held, held.version)) {
+            return 'unsettled';
+          }
+
+          return body();
+        }
+
+        if (!core.attached(editKey)) {
+          await core.drain(editKey);
+
+          const committed = core.committed(editKey);
+
+          if (committed === undefined || !core.settledAt(editKey, null, committed.version)) {
+            return 'unsettled';
+          }
+
+          return body();
+        }
+
+        const lease = await acquireLease(editKey, completed);
+
+        if (lease === null) return 'unsettled';
+
+        try {
+          const flushed = await core.flush(editKey, true);
+
+          if (flushed.kind !== 'flushed') return 'unsettled';
+          lease.version = flushed.version;
+          if (!core.settledAt(editKey, lease, lease.version)) return 'unsettled';
+
+          return await body();
+        } finally {
+          if (heldLeases.get(editKey) === lease) heldLeases.delete(editKey);
+          core.releaseLease(editKey, lease, true);
+        }
+      };
+
+      // Registered before `run` starts, so nothing it does can find the gate open.
+      barriers.set(editKey, completed);
+
+      const started = run();
+
+      void started
+        .then(
+          () => undefined,
+          () => undefined,
+        )
+        .finally(() => {
+          if (barriers.get(editKey) === completed) barriers.delete(editKey);
+          complete();
+        });
+
+      return started;
     };
 
     const cancelTimer = (editKey: string): void => {
@@ -455,6 +741,7 @@ export const createEditOwner = (ports: EditPorts) =>
       core.untrack(editKey);
       keys.delete(editKey);
       sessions.delete(editKey);
+      dropRecordState(editKey);
       publishRecord(editKey, null);
     };
 
@@ -499,7 +786,7 @@ export const createEditOwner = (ports: EditPorts) =>
 
       keys.set(editKey, key);
       core.track(editKey, seeded.content, seeded.draftVersion);
-      publishRecord(editKey, seeded);
+      publishRecord(editKey, seeded, locationOf(result));
       sessions.set(editKey, session);
       // Seeding usually has nothing to send, but `insertEdit` hands back an existing row rather than
       // throwing, and that row may hold writing this process has not seen yet.
@@ -535,6 +822,168 @@ export const createEditOwner = (ports: EditPorts) =>
 
       consequence(editKey);
       await forget(editKey);
+    };
+
+    /**
+     * The shared acknowledgement for a move, whether its answer arrived or was recovered by a re-read.
+     *
+     * Deliberately outside the protection barrier, as the ordinary update acknowledgement is: a move
+     * carries no authored field, so the store transition rewrites no current column and the core is not
+     * confirmed. A pending version that lands after it changes nothing it decided.
+     *
+     * True only when the store says its guarded transition applied. It is not inferred from the row: an
+     * envelope another path already cleared leaves a row that looks the same. A write that throws is a
+     * transaction that rolled back, so the move is still in flight and the loop asks again.
+     */
+    const acknowledgeMovement = async (
+      active: CaptureStore,
+      editKey: string,
+      key: EditKey,
+      record: EntityEditRecord,
+      node: NodeSummary,
+    ): Promise<boolean> => {
+      if (record.inflight?.kind !== 'move' || record.inflightVersion === null) return false;
+
+      let transition: Awaited<ReturnType<CaptureStore['acknowledgeMove']>>;
+
+      try {
+        transition = await active.acknowledgeMove(
+          key,
+          record.inflightVersion,
+          node.revision,
+          ports.now(),
+        );
+      } catch {
+        return false;
+      }
+
+      if (!current(active)) return false;
+
+      const { applied, record: written } = transition;
+
+      if (!applied || written === null) {
+        publishRecord(editKey, written);
+
+        return false;
+      }
+
+      // The server's answer is authoritative for where the entity now sits.
+      publishRecord(editKey, written, { kind: 'known', parentId: node.parentId });
+      // Now rather than at leave: a move changes where things are listed, and a screen showing where
+      // this entity lives re-derives it from the refreshed tree.
+      acknowledged.add(editKey);
+      consequence(editKey);
+
+      return true;
+    };
+
+    /**
+     * An acknowledged move's consequences for the session, after `acknowledgeMovement`.
+     *
+     * `afterAcknowledgement`'s two, without a second cache consequence: send at once if writing is
+     * waiting, and otherwise, with no editor attached, the session is over.
+     */
+    const afterMoveAcknowledgement = async (editKey: string): Promise<void> => {
+      const record = recordOf(editKey);
+
+      if (record === null) return;
+
+      if ((core.committed(editKey)?.version ?? 0) > record.acknowledgedVersion) {
+        scheduleTick(editKey, 0);
+
+        return;
+      }
+
+      if (core.attached(editKey)) return;
+
+      await forget(editKey);
+    };
+
+    /**
+     * Whether writing is outstanding on a record, as far as the durable row and the core can say.
+     *
+     * Accepted counts, not just committed: a version the core has accepted and not yet written is
+     * writing all the same.
+     */
+    const hasOutstandingWriting = (editKey: string, record: EntityEditRecord): boolean =>
+      record.draftVersion > record.acknowledgedVersion ||
+      (core.protectionOf(editKey)?.latestAcceptedVersion ?? record.draftVersion) >
+        record.acknowledgedVersion;
+
+    /**
+     * A lost move that expected no write, and a server whose revision has moved past the base.
+     *
+     * That move cannot have written, so the Get has proved someone else did. Two settled outcomes,
+     * decided by whether this phone has writing to keep:
+     * - **Writing outstanding**: the external-write case the loop already has one answer for. Marked
+     *   `conflicted`, which clears the move and keeps every byte - now rather than after a send the
+     *   server would refuse, since the Get already holds the proof.
+     * - **Nothing outstanding**: `conflicted` would say something false. The server is adopted in one
+     *   guarded transaction that clears the move and rewrites base and current together, under the
+     *   protection barrier, since it replaces the core's content: a pending version landing after it
+     *   would otherwise put writing nobody did back over the server's.
+     *
+     * Evidence of writing is enough to conflict without the barrier; only "nothing outstanding" needs
+     * the writing at rest. Anything unsettled, not applied or rolled back changes nothing: the move stays
+     * in flight and the retry asks again. Neither outcome schedules a send; the first has nothing to send
+     * and the second may never send again.
+     */
+    const resolveLostNoopMove = async (
+      active: CaptureStore,
+      editKey: string,
+      key: EditKey,
+      record: EntityEditRecord,
+      entity: NodeEntity,
+    ): Promise<void> => {
+      const conflict = async (): Promise<void> => {
+        cancelTimer(editKey);
+        publishRecord(editKey, await active.markEditConflicted(key, ports.now()));
+      };
+
+      if (hasOutstandingWriting(editKey, record)) {
+        await conflict();
+
+        return;
+      }
+
+      const inflightVersion = record.inflightVersion;
+      // A body this build cannot open cannot be adopted; the move stays in flight.
+      const content = contentOf(entity);
+
+      if (inflightVersion === null || content === null) return;
+
+      await withBarrier(editKey, async () => {
+        const settled = recordOf(editKey);
+
+        if (settled === null || settled.inflightVersion !== inflightVersion) return;
+        if (hasOutstandingWriting(editKey, settled)) {
+          await conflict();
+
+          return;
+        }
+
+        const { applied, record: adopted } = await active.adoptAfterNoopMove(
+          key,
+          inflightVersion,
+          content,
+          entity.revision,
+          ports.now(),
+        );
+
+        if (!current(active)) return;
+        if (!applied || adopted === null) {
+          publishRecord(editKey, adopted);
+
+          return;
+        }
+
+        publishRecord(editKey, adopted, { kind: 'known', parentId: entity.parentId });
+        // The row's authored content changed without its version moving, which is what `confirm`
+        // expresses; the next diff is then taken against what the server holds.
+        core.confirm(editKey, null, adopted.content);
+      }).catch(() => {
+        // A rolled-back transaction: the move is provably still in flight, and the retry asks again.
+      });
     };
 
     /**
@@ -578,11 +1027,34 @@ export const createEditOwner = (ports: EditPorts) =>
       const entity = result.value.entity;
 
       if (entity.revision === record.baseRevision) {
-        // Nothing has been written since the base, so the envelope never applied. Clear the mark and
-        // let the ordinary loop send it again.
+        // Nothing has been written since the base, so the envelope never applied - or it was a move
+        // the server answered as a no-op. Clear the mark and let the ordinary loop send any writing.
         publishRecord(editKey, await active.clearEditInflight(key, at));
         if (!current(active)) return;
         scheduleTick(editKey, 0);
+
+        return;
+      }
+
+      if (envelope.kind === 'move' && !envelope.expectsWrite) {
+        await resolveLostNoopMove(active, editKey, key, record, entity);
+
+        return;
+      }
+
+      if (envelope.kind === 'move') {
+        if (!matchesSubmitted(entity, envelope, record.base, record.baseRevision)) {
+          cancelTimer(editKey);
+          publishRecord(editKey, await active.markEditConflicted(key, at));
+
+          return;
+        }
+
+        // Ours: acknowledged at the entity's revision. On a store that did not apply it, the record
+        // is left as published and the retry asks again.
+        if (await acknowledgeMovement(active, editKey, key, record, entity)) {
+          await afterMoveAcknowledgement(editKey);
+        }
 
         return;
       }
@@ -594,7 +1066,7 @@ export const createEditOwner = (ports: EditPorts) =>
           editKey,
           await active.acknowledgeEdit(
             key,
-            applyEnvelope(record.base, envelope),
+            applyEnvelope(record.base, envelope.envelope),
             entity.revision,
             at,
           ),
@@ -631,32 +1103,24 @@ export const createEditOwner = (ports: EditPorts) =>
         publishWorking();
 
         await applyReconciliation(editKey, result);
-
-        // Still unresolved, and an editor is there to see it: ask again later. A detached record waits
-        // for its next open instead, which bounds background work to nothing.
-        if (recordOf(editKey)?.inflightVersion !== null && core.attached(editKey)) {
-          scheduleTick(editKey, autosaveRetryMs);
-        }
       } finally {
         checking.delete(editKey);
         publishWorking();
+
+        // Still unresolved, and an editor is there to see it: ask again later - including after a
+        // transition that threw. A detached record waits for its next open instead, which bounds
+        // background work to nothing.
+        const after = recordOf(editKey);
+
+        if (after !== null && after.inflightVersion !== null && core.attached(editKey)) {
+          scheduleTick(editKey, autosaveRetryMs);
+        }
       }
     };
 
-    /** One reconciliation at a time per record; a second caller joins the first. */
-    const reconcile = (editKey: string): Promise<void> => {
-      const running = checks.get(editKey);
-
-      if (running !== undefined) return running;
-
-      const started = runReconcile(editKey).finally(() => {
-        if (checks.get(editKey) === started) checks.delete(editKey);
-      });
-
-      checks.set(editKey, started);
-
-      return started;
-    };
+    /** One piece of work at a time per record; a reconciliation joins whatever is in the air. */
+    const reconcile = (editKey: string): Promise<void> =>
+      joinOrStart(editKey, () => runReconcile(editKey));
 
     /**
      * One pass of the autosave loop: what must be sent, sent, and its answer written down.
@@ -710,7 +1174,12 @@ export const createEditOwner = (ports: EditPorts) =>
 
       // Persisted before it is dispatched, so a process that dies mid-request reconciles on its next
       // open rather than running into a false conflict.
-      const written = await active.markEditInflight(key, committed.version, envelope, ports.now());
+      const written = await active.markEditInflight(
+        key,
+        committed.version,
+        { kind: 'update', envelope },
+        ports.now(),
+      );
 
       if (!current(active)) return;
       if (written === null || written.inflightVersion !== committed.version) return;
@@ -779,28 +1248,244 @@ export const createEditOwner = (ports: EditPorts) =>
       publishRecord(editKey, await active.markEditRefused(key, refusalOf(failure, at), at));
     };
 
-    /** One send at a time per record; a second caller joins the first rather than queueing behind it. */
-    const tick = (editKey: string): Promise<void> => {
-      const running = ticks.get(editKey);
+    /**
+     * One piece of work at a time per record; a send joins whatever is in the air rather than queueing
+     * behind it. A timer that fires into an open or a move therefore sends nothing, and whichever is
+     * running re-arms the loop when it finishes.
+     */
+    const tick = (editKey: string): Promise<void> => joinOrStart(editKey, () => runTick(editKey));
 
-      if (running !== undefined) return running;
-
-      const started = runTick(editKey).finally(() => {
-        if (ticks.get(editKey) === started) ticks.delete(editKey);
-      });
-
-      ticks.set(editKey, started);
-
-      return started;
-    };
-
-    /** Wait for whatever this record already has in the air, send or reconciliation, in either order. */
+    /** Wait for whatever this record already has in the air: a send, a re-read, a move, or an open. */
     const settleInFlight = async (editKey: string): Promise<void> => {
       for (;;) {
-        const running = ticks.get(editKey) ?? checks.get(editKey);
+        const running = work.get(editKey);
 
         if (running === undefined) return;
         await running;
+      }
+    };
+
+    /** A verdict the autosave already holds for the record, which a move must not be sent over. */
+    const standingReason = (record: EntityEditRecord): MoveNotSentReason | null => {
+      if (record.syncState === 'conflicted') return 'conflicted';
+      if (record.syncState === 'refused') return 'refused';
+      // An envelope from a dead process, or a lost answer: reconciliation resolves it, not a move.
+      if (record.inflightVersion !== null) return 'unconfirmed';
+
+      return null;
+    };
+
+    /**
+     * Whether every accepted version is written on this phone and acknowledged by the server.
+     *
+     * Asked of the core as well as the row, because `core.committed()` lags an accepted version still
+     * waiting for its write, and a failed write or a renderer that did not answer means there may be
+     * writing nobody has counted. None of those is settled writing.
+     */
+    const writingSettled = (editKey: string, record: EntityEditRecord): boolean => {
+      const protection = core.protectionOf(editKey);
+
+      return (
+        protection !== undefined &&
+        !protection.pending &&
+        !protection.writing &&
+        !protection.failedWrite &&
+        !protection.rendererUnknown &&
+        protection.latestAcceptedVersion === protection.committedVersion &&
+        protection.committedVersion <= record.acknowledgedVersion &&
+        record.draftVersion <= record.acknowledgedVersion
+      );
+    };
+
+    /**
+     * One move, run as the record's work (`move` holds the claim).
+     *
+     * Writing is settled on the server first, through `runTick` - never `tick`, which would join this
+     * very claim. The move is then persisted before it is dispatched, so a process that dies mid-request
+     * reconciles it on its next open, and the answer is read without guessing: only the store's own word
+     * acknowledges it, and only a response that agrees with the confirmed location is a no-op.
+     */
+    const runMove = async (editKey: string, parentId: number | null): Promise<MoveOutcome> => {
+      const notSent = (reason: MoveNotSentReason): MoveOutcome => ({ kind: 'not_sent', reason });
+      const active = store;
+      const key = keys.get(editKey);
+      const session = sessions.get(editKey);
+      let record = recordOf(editKey);
+
+      if (active === null || key === undefined || session === undefined || record === null) {
+        return notSent('no_session');
+      }
+      if (!sessionUsableFor(editKey, key)) return notSent('no_session');
+
+      const known = get().locations[editKey];
+
+      // A move cannot be judged against a location the phone never learned.
+      if (known === undefined || known.kind === 'unknown') return notSent('unknown_location');
+
+      cancelTimer(editKey);
+
+      const before = standingReason(record);
+
+      if (before !== null) return notSent(before);
+
+      if (!writingSettled(editKey, record)) {
+        try {
+          await core.drain(editKey);
+          if ((core.committed(editKey)?.version ?? 0) > record.acknowledgedVersion) {
+            await runTick(editKey);
+          }
+        } catch {
+          return notSent('unsent_writing');
+        }
+
+        record = recordOf(editKey);
+        if (record === null || !current(active)) return notSent('no_session');
+
+        // A verdict the autosave earned is reported as the autosave's, not the move's.
+        const after = standingReason(record);
+
+        if (after !== null) return notSent(after);
+        if (!writingSettled(editKey, record)) return notSent('unsent_writing');
+      }
+
+      const location = get().locations[editKey];
+
+      if (location === undefined || location.kind === 'unknown') {
+        return notSent('unknown_location');
+      }
+
+      const inflight: InflightEnvelope = {
+        kind: 'move',
+        parentId,
+        expectsWrite: parentId !== location.parentId,
+      };
+      const inflightVersion = record.acknowledgedVersion;
+      let written: EntityEditRecord | null;
+
+      try {
+        written = await active.markEditInflight(key, inflightVersion, inflight, ports.now());
+      } catch {
+        // Nothing was persisted, so nothing may be sent.
+        return notSent('unsent_writing');
+      }
+
+      if (!current(active)) return notSent('no_session');
+      if (
+        written === null ||
+        written.inflightVersion !== inflightVersion ||
+        written.inflight?.kind !== 'move' ||
+        written.inflight.parentId !== parentId
+      ) {
+        publishRecord(editKey, written);
+
+        return notSent('unsent_writing');
+      }
+      publishRecord(editKey, written);
+
+      sending.add(editKey);
+      publishWorking();
+
+      let result: ClientResult<MoveResponse>;
+
+      try {
+        result = await ports.move(session.transport, {
+          target: { id: key.nodeId },
+          // From the row just written: the revision on the wire is the one the durable record carries.
+          revision: written.baseRevision,
+          // Never a slug: on this phone an entity keeps its slug when it moves; its path may still change.
+          destination: { parent: parentId === null ? { path: '/' } : { id: parentId } },
+        });
+      } finally {
+        sending.delete(editKey);
+        publishWorking();
+      }
+
+      if (!current(active)) return { kind: 'unconfirmed' };
+
+      try {
+        return await answerMove(active, editKey, key, written, inflight, location, result);
+      } catch {
+        // A local transition that rolled back: the move is still in flight, and reconciliation will
+        // read what the server holds.
+        return { kind: 'unconfirmed' };
+      }
+    };
+
+    /** What a move's answer means for the record. Only the store's word acknowledges it. */
+    const answerMove = async (
+      active: CaptureStore,
+      editKey: string,
+      key: EditKey,
+      written: EntityEditRecord,
+      inflight: Extract<InflightEnvelope, { kind: 'move' }>,
+      location: Extract<EditLocation, { kind: 'known' }>,
+      result: ClientResult<MoveResponse>,
+    ): Promise<MoveOutcome> => {
+      const at = ports.now();
+
+      if (result.ok) {
+        const node = result.value.node;
+
+        if (node.revision === written.baseRevision) {
+          // The server wrote nothing. That is the no-op this phone expected only when it did not ask
+          // for a different parent and the server agrees on where the entity is; anything else is
+          // something this phone cannot explain, and reconciliation reads what is true.
+          if (inflight.expectsWrite || node.parentId !== location.parentId) {
+            return { kind: 'unconfirmed' };
+          }
+
+          publishRecord(editKey, await active.clearEditInflight(key, at));
+
+          return { kind: 'moved', parentId: location.parentId };
+        }
+
+        if (!(await acknowledgeMovement(active, editKey, key, written, node))) {
+          // The server applied the move; this process cannot say what the record now holds.
+          return { kind: 'unconfirmed' };
+        }
+
+        await afterMoveAcknowledgement(editKey);
+
+        return { kind: 'moved', parentId: node.parentId };
+      }
+
+      const failure = result.failure;
+
+      if (failure.kind === 'api_error' && failure.error.code === 'revision_conflict') {
+        cancelTimer(editKey);
+        publishRecord(editKey, await active.markEditConflicted(key, at));
+
+        return { kind: 'conflicted' };
+      }
+
+      // Lost: the move stays in flight and reconciliation answers it.
+      if (failure.mutationOutcome === 'unknown') return { kind: 'unconfirmed' };
+
+      // A definite refusal of the move, not of the writing: only the move is cleared, and the
+      // record's standing is untouched.
+      publishRecord(editKey, await active.clearEditInflight(key, at));
+
+      return { kind: 'refused', failure };
+    };
+
+    /**
+     * What the loop owes a record after a move, whichever step ended it: a re-read while a move is
+     * still in flight and an editor is there to see it, or a send for writing a move did not carry.
+     */
+    const rearmAfterMove = (editKey: string): void => {
+      const record = recordOf(editKey);
+
+      if (record === null) return;
+      if (record.inflightVersion !== null) {
+        if (core.attached(editKey)) scheduleTick(editKey, autosaveRetryMs);
+
+        return;
+      }
+      if (
+        record.syncState === 'syncing' &&
+        (core.committed(editKey)?.version ?? 0) > record.acknowledgedVersion
+      ) {
+        scheduleTick(editKey, autosaveDelayMs);
       }
     };
 
@@ -911,6 +1596,7 @@ export const createEditOwner = (ports: EditPorts) =>
       sending: [],
       checking: [],
       protection: {},
+      locations: {},
 
       initialize: ensureOpen,
 
@@ -933,8 +1619,10 @@ export const createEditOwner = (ports: EditPorts) =>
         sending.clear();
         checking.clear();
         acknowledged.clear();
-        ticks.clear();
-        checks.clear();
+        work.clear();
+        heldLeases.clear();
+        barriers.clear();
+        releasing.clear();
 
         set({
           status: 'idle',
@@ -944,6 +1632,7 @@ export const createEditOwner = (ports: EditPorts) =>
           sending: [],
           checking: [],
           protection: {},
+          locations: {},
         });
 
         if (pending !== null) {
@@ -983,96 +1672,109 @@ export const createEditOwner = (ports: EditPorts) =>
           return { kind: 'unusable', editKey, problem: unusable.problem };
         }
 
-        const result = await ports.get(session.transport, {
-          target: { id: nodeId },
-          format: 'tiptap',
-        });
-
-        if (!current(active)) return { kind: 'unavailable', failure: null };
-
-        const existing = recordOf(editKey);
-
-        if (existing === null) return await seed(active, key, editKey, session, result);
-
-        keys.set(editKey, key);
-        core.track(editKey, existing.content, existing.draftVersion);
-        sessions.set(editKey, session);
-
-        const settled =
-          existing.inflightVersion === null &&
-          existing.syncState === 'syncing' &&
-          existing.acknowledgedVersion >= existing.draftVersion &&
-          (core.committed(editKey)?.version ?? 0) <= existing.acknowledgedVersion;
-
         /**
-         * Bringing the record up to date, and neither half may take the editor down with it.
+         * The read and everything done with it, as the record's work.
          *
-         * Both branches are SQLite writes, and a write that throws must not reject `open`: the record
-         * is already tracked and published, so what a failed write leaves behind is precisely the
-         * state the standing already describes - an un-rebased base, or an envelope still in flight
-         * reading `unconfirmed`. Opening over local content is the same answer a failed Get gets, and
-         * it is the one that keeps someone's unsent writing reachable. Rejecting instead would leave
-         * the screen on its opening skeleton with nothing said, because a caller cannot render an
-         * outcome it was never given.
+         * Registered before the Get is issued and released only once the record is up to date, because
+         * a read that predates a dispatch is not evidence about it: a move or a send started while this
+         * Get was in the air could otherwise have its envelope cleared by the unchanged-revision rule.
+         * A timer that fires meanwhile joins this and sends nothing; the tick scheduled at the end
+         * picks it up.
          */
-        try {
-          if (settled && result.ok && result.value.entity.revision !== existing.baseRevision) {
-            // Nothing local is unsent, so adopting the server's newer state loses nothing. A body this
-            // build cannot open is the one case that is left alone: the stale base revision then makes
-            // any later send refuse as a conflict, which is the safe direction, and it can be discarded.
-            const content = contentOf(result.value.entity);
+        return claim(editKey, async (): Promise<EditOpenOutcome> => {
+          const result = await ports.get(session.transport, {
+            target: { id: nodeId },
+            format: 'tiptap',
+          });
 
-            if (content !== null) {
-              const rebased = await active.rebaseEdit(
-                key,
-                content,
-                result.value.entity.revision,
-                ports.now(),
-              );
+          if (!current(active)) return { kind: 'unavailable', failure: null };
 
-              if (!current(active)) return { kind: 'unavailable', failure: null };
-              if (rebased !== null) {
-                publishRecord(editKey, rebased);
-                // The row's authored content changed without its version moving, which is exactly what
-                // `confirm` expresses. Without it the core would keep the content it was tracking and
-                // the next diff would be taken against writing nobody did.
-                core.confirm(editKey, null, rebased.content);
+          const existing = recordOf(editKey);
+
+          if (existing === null) return await seed(active, key, editKey, session, result);
+
+          keys.set(editKey, key);
+          core.track(editKey, existing.content, existing.draftVersion);
+          sessions.set(editKey, session);
+
+          const settled =
+            existing.inflightVersion === null &&
+            existing.syncState === 'syncing' &&
+            existing.acknowledgedVersion >= existing.draftVersion &&
+            (core.committed(editKey)?.version ?? 0) <= existing.acknowledgedVersion;
+
+          /**
+           * Bringing the record up to date, and neither half may take the editor down with it.
+           *
+           * Both branches are SQLite writes, and a write that throws must not reject `open`: the record
+           * is already tracked and published, so what a failed write leaves behind is precisely the
+           * state the standing already describes - an un-rebased base, or an envelope still in flight
+           * reading `unconfirmed`. Opening over local content is the same answer a failed Get gets, and
+           * it is the one that keeps someone's unsent writing reachable. Rejecting instead would leave
+           * the screen on its opening skeleton with nothing said, because a caller cannot render an
+           * outcome it was never given.
+           */
+          try {
+            if (settled && result.ok && result.value.entity.revision !== existing.baseRevision) {
+              // Nothing local is unsent, so adopting the server's newer state loses nothing. A body this
+              // build cannot open is the one case that is left alone: the stale base revision then makes
+              // any later send refuse as a conflict, which is the safe direction, and it can be discarded.
+              const content = contentOf(result.value.entity);
+
+              if (content !== null) {
+                const rebased = await active.rebaseEdit(
+                  key,
+                  content,
+                  result.value.entity.revision,
+                  ports.now(),
+                );
+
+                if (!current(active)) return { kind: 'unavailable', failure: null };
+                if (rebased !== null) {
+                  publishRecord(editKey, rebased);
+                  // The row's authored content changed without its version moving, which is exactly what
+                  // `confirm` expresses. Without it the core would keep the content it was tracking and
+                  // the next diff would be taken against writing nobody did.
+                  core.confirm(editKey, null, rebased.content);
+                }
               }
+            } else if (existing.inflightVersion !== null) {
+              // An answer was lost. Reconciled from the entity this very call read, rather than by a
+              // second Get: it is strictly fresher, and two reads can disagree in ways these rules assume
+              // away. A failed Get leaves the record unconfirmed, and its standing says so.
+              await applyReconciliation(editKey, result);
+              if (!current(active)) return { kind: 'unavailable', failure: null };
             }
-          } else if (existing.inflightVersion !== null) {
-            // An answer was lost. Reconciled from the entity this very call read, rather than by a
-            // second Get: it is strictly fresher, and two reads can disagree in ways these rules assume
-            // away. A failed Get leaves the record unconfirmed, and its standing says so.
-            await applyReconciliation(editKey, result);
-            if (!current(active)) return { kind: 'unavailable', failure: null };
+          } catch {
+            // Whatever was written is what the standing already describes, so the record opens as it
+            // stands. The row is tracked and published before either branch runs, and neither leaves
+            // anything half-applied that a later read could misinterpret.
           }
-        } catch {
-          // Whatever was written is what the standing already describes, so the record opens as it
-          // stands. The row is tracked and published before either branch runs, and neither leaves
-          // anything half-applied that a later read could misinterpret.
-        }
 
-        /**
-         * The reconciliation may have ended the session it was reconciling, and then this is a first
-         * open after all.
-         *
-         * A lost answer that turns out to have landed is acknowledged, and an acknowledgement with no
-         * editor attached settles the record and forgets it - the background-flush and process-death
-         * path. **Nobody is attached here by construction**: the screen calls `open` first and attaches
-         * from an effect in the composer it mounts once this resolves, so the recovery path always
-         * takes that branch. Returning `ready` for the forgotten key would hand the screen a key with
-         * no record behind it, which it can only read as a failed read - "this could not be opened,
-         * nothing has changed" - over an entity that is intact and an edit that reached the server.
-         *
-         * So it seeds instead, from the entity this call already read. That entity is current by
-         * construction: `matchesSubmitted` only acknowledges when the server is exactly one revision
-         * past the base, which is the revision the acknowledgement then recorded.
-         */
-        if (recordOf(editKey) === null) return await seed(active, key, editKey, session, result);
+          /**
+           * The reconciliation may have ended the session it was reconciling, and then this is a first
+           * open after all.
+           *
+           * A lost answer that turns out to have landed is acknowledged, and an acknowledgement with no
+           * editor attached settles the record and forgets it - the background-flush and process-death
+           * path. **Nobody is attached here by construction**: the screen calls `open` first and attaches
+           * from an effect in the composer it mounts once this resolves, so the recovery path always
+           * takes that branch. Returning `ready` for the forgotten key would hand the screen a key with
+           * no record behind it, which it can only read as a failed read - "this could not be opened,
+           * nothing has changed" - over an entity that is intact and an edit that reached the server.
+           *
+           * So it seeds instead, from the entity this call already read. That entity is current by
+           * construction: `matchesSubmitted` only acknowledges when the server is exactly one revision
+           * past the base, which is the revision the acknowledgement then recorded.
+           */
+          if (recordOf(editKey) === null) return await seed(active, key, editKey, session, result);
 
-        scheduleTick(editKey, autosaveDelayMs);
+          scheduleTick(editKey, autosaveDelayMs);
 
-        return { kind: 'ready', editKey, location: locationOf(result) };
+          learnLocation(editKey, locationOf(result));
+
+          return { kind: 'ready', editKey, location: locationOf(result) };
+        }).catch((): EditOpenOutcome => ({ kind: 'unavailable', failure: null }));
       },
 
       resume: (editKey, session) => {
@@ -1109,6 +1811,10 @@ export const createEditOwner = (ports: EditPorts) =>
       attachEditor: (editKey, port) => core.attach(editKey, port),
 
       detachEditor: (token) => {
+        // A successful exit hands its lock to the unmount and never calls `release`, and `detach` drops
+        // the lease on its own. A tracked identity the core no longer holds would send every later
+        // barrier down the held-lease branch, where it could never settle.
+        heldLeases.delete(token.id);
         core.detach(token);
       },
 
@@ -1123,7 +1829,9 @@ export const createEditOwner = (ports: EditPorts) =>
       flush: (editKey, options) => core.flush(editKey, options?.lock ?? false),
 
       beginControlledExit: async (editKey) => {
-        const lease = core.takeLease(editKey);
+        // Through the owner's gate: a lease requested while a barrier or a deferred release is in
+        // progress waits for it rather than displacing the identity that protects it.
+        const lease = await acquireLease(editKey);
 
         if (lease === null) {
           return { result: { kind: 'unanswered' } as FlushResult, release: () => {} };
@@ -1135,15 +1843,25 @@ export const createEditOwner = (ports: EditPorts) =>
         // Always editable again: `locked` for an edit means a barrier is settling, never that a
         // request is in the air. Inheriting the creation owner's in-flight lock here would freeze the
         // editor every couple of seconds while someone types.
-        else core.releaseLease(editKey, lease, true);
+        else releaseHeld(editKey, lease, true);
 
         return {
           result,
+          // Deferred past any barrier using this lease, so the transition it protects finishes first.
           release: () => {
-            core.releaseLease(editKey, lease, true);
+            releaseHeld(editKey, lease, true);
           },
         };
       },
+
+      move: (editKey, destination) =>
+        claim(editKey, async () => {
+          try {
+            return await runMove(editKey, destination.parentId);
+          } finally {
+            rearmAfterMove(editKey);
+          }
+        }).catch((): MoveOutcome => ({ kind: 'unconfirmed' })),
 
       /**
        * Leaving, with a stated budget.
@@ -1200,9 +1918,26 @@ export const createEditOwner = (ports: EditPorts) =>
             record.acknowledgedVersion >= committedNow
           ) {
             consequence(editKey);
-            await forget(editKey);
+            // As the record's work: a move or send started meanwhile persists its envelope before it
+            // is marked as sending, and deleting the row in that interval would lose its intent.
+            await claim(editKey, () => forget(editKey));
 
-            return 'settled';
+            // The row was judged settled before this waited for its turn, and a move started in the
+            // meantime may have left it unconfirmed, conflicted, or refused. Answer from what it is
+            // now: gone, or still settled because the delete failed and Recovery keeps it, is
+            // `settled`; anything else goes round again against the remaining budget.
+            const after = recordOf(editKey);
+
+            if (
+              after === null ||
+              (after.inflightVersion === null &&
+                after.syncState === 'syncing' &&
+                after.acknowledgedVersion >= (core.committed(editKey)?.version ?? 0))
+            ) {
+              return 'settled';
+            }
+
+            continue;
           }
 
           if (!sessionUsableFor(editKey, record.key)) {
@@ -1235,41 +1970,54 @@ export const createEditOwner = (ports: EditPorts) =>
         // throwing away the record that knows what was sent would lose the ability to say so.
         if (sending.has(editKey)) return { kind: 'refused', problem: SENDING_PROBLEM };
 
-        const key =
-          keys.get(editKey) ??
-          get().unusableEdits.find((candidate) => editKeyOf(candidate.key) === editKey)?.key ??
-          null;
+        /**
+         * The deletion is the record's work, like a send or a move. A send persists its envelope before
+         * it is marked as sending, so between the two a record looks idle; deleting it then would let
+         * the request leave with no durable intent behind it to reconcile a lost answer. Waiting for
+         * the slot means a send or move that has begun is answered first, and nothing can mark the
+         * record while it is being deleted.
+         */
+        return claim(editKey, async (): Promise<ActionOutcome> => {
+          // The owner may have closed while this waited for its turn.
+          if (!current(active)) return { kind: 'refused', problem: NO_STORE_PROBLEM };
 
-        if (key === null) return { kind: 'refused', problem: NO_RECORD_PROBLEM };
+          const key =
+            keys.get(editKey) ??
+            get().unusableEdits.find((candidate) => editKeyOf(candidate.key) === editKey)?.key ??
+            null;
 
-        cancelTimer(editKey);
+          if (key === null) return { kind: 'refused', problem: NO_RECORD_PROBLEM };
 
-        try {
-          await active.deleteEdit(key);
-        } catch {
-          return { kind: 'refused', problem: NO_STORE_PROBLEM };
-        }
+          cancelTimer(editKey);
 
-        if (!current(active)) return { kind: 'done' };
+          try {
+            await active.deleteEdit(key);
+          } catch {
+            return { kind: 'refused', problem: NO_STORE_PROBLEM };
+          }
 
-        // Before anything this method needs is cleared. Discard is the *only* action a conflict
-        // offers, so the likely ordering is an acknowledged change, then a refused one, then this -
-        // and the acknowledged one really is on the server. Throwing away the local record is not a
-        // reason to leave the screens behind it showing a title the server no longer has.
-        consequence(editKey);
+          if (!current(active)) return { kind: 'done' };
 
-        core.untrack(editKey);
-        keys.delete(editKey);
-        sessions.delete(editKey);
-        acknowledged.delete(editKey);
-        publishRecord(editKey, null);
-        set((state) => ({
-          unusableEdits: state.unusableEdits.filter(
-            (candidate) => editKeyOf(candidate.key) !== editKey,
-          ),
-        }));
+          // Before anything this method needs is cleared. Discard is the *only* action a conflict
+          // offers, so the likely ordering is an acknowledged change, then a refused one, then this -
+          // and the acknowledged one really is on the server. Throwing away the local record is not a
+          // reason to leave the screens behind it showing a title the server no longer has.
+          consequence(editKey);
 
-        return { kind: 'done' };
+          core.untrack(editKey);
+          keys.delete(editKey);
+          sessions.delete(editKey);
+          acknowledged.delete(editKey);
+          dropRecordState(editKey);
+          publishRecord(editKey, null);
+          set((state) => ({
+            unusableEdits: state.unusableEdits.filter(
+              (candidate) => editKeyOf(candidate.key) !== editKey,
+            ),
+          }));
+
+          return { kind: 'done' };
+        });
       },
 
       standingFor: standingOf,

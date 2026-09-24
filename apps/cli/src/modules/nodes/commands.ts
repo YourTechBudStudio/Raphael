@@ -1,5 +1,5 @@
 /**
- * The six hierarchy commands.
+ * The seven hierarchy commands.
  *
  * Each one assembles a request, sends it, and renders the answer. No hierarchy rule is implemented
  * here and none may be: slug derivation, parentage, conflict detection, and content conversion all
@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ClientFailure, Transport } from '@raphael/client';
-import { create, get, getPath, list, search, update } from '@raphael/client/nodes';
+import { create, get, getPath, list, move, search, update } from '@raphael/client/nodes';
 import {
   BODY_FORMATS,
   FILTER_KEYS,
@@ -47,6 +47,7 @@ import {
 import { reportFailure } from '../../shared/report.ts';
 import {
   CREATE_TARGETS,
+  destinationFrom,
   parseCreateTarget,
   parseId,
   parseOrderBy,
@@ -419,7 +420,8 @@ interface PinnedTarget {
 }
 
 /**
- * Read the current revision for an update that did not name one, and pin the entity it belongs to.
+ * Read the current revision for an update or a move that did not name one, and pin the entity it
+ * belongs to.
  *
  * The identifier is carried forward deliberately, and it is the whole reason this returns a target
  * rather than a number. The server's guard answers "is this the version of entity 7 that I read?" -
@@ -579,6 +581,112 @@ export const runUpdate = async (
     );
     writeLine(context.streams.out, `  revision: ${entity.revision}`);
     writeLine(context.streams.out, `  slug: ${forTerminal(entity.slug)}`);
+  }
+  return EXIT_OK;
+};
+
+export const MOVE_HELP = `Usage: raphael move <path> <destination> [--revision <n>] [options]
+       raphael move --id <id> <destination> [--revision <n>] [options]
+
+Move an area, a project, or a note somewhere else, keeping its identifier and everything inside it.
+
+  raphael move /work/backend /engineering            into the area /engineering, keeping "backend"
+  raphael move /work/backend /engineering/platform   under /engineering, as "platform"
+  raphael move /work/inbox /                         an area to the top level
+
+If <destination> is an existing area or project, it is where this goes. Otherwise its last
+segment becomes the new address and the rest must already exist. Nothing is ever overwritten:
+an address that is taken, including one held by a note, is refused.
+
+Options:
+      --id <id>        Address the thing to move by identifier instead of by path.
+      --revision <n>   The revision you read. Without it, the current revision is read for you
+                       just before the move is sent.
+      --json           Print the result as JSON.
+  -h, --help           Show this help.`;
+
+export const runMove = async (
+  argv: readonly string[],
+  context: CommandContext,
+): Promise<ExitCode> => {
+  const parsed = parseArgs(
+    argv,
+    {
+      id: { type: 'string' },
+      revision: { type: 'string' },
+      json: { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+    },
+    'move',
+  );
+
+  // With --id the only positional is the destination; without it, the source path comes first. A
+  // positional beyond those is extra, not a second source, so it is reported as what it is.
+  const id = stringOption(parsed, 'id', 'move');
+  const positionals = [...parsed.positionals];
+  const source = id === undefined ? positionals.shift() : undefined;
+  const [destination, ...extra] = positionals;
+  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'move');
+
+  const target = selectorFrom(source, id, 'move');
+  const destinationPath = destinationFrom(destination, 'move');
+  const revisionFlag = integerOption(parsed, 'revision', 'move', {
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+  });
+
+  const transport = context.transport();
+
+  // The same convenience `update` takes for a change without a body, and for the same reason it pins
+  // by identifier. A move carries no content, so there is no older read for a newer revision to bless.
+  let sendTo: Selector = target;
+  let revision: number;
+  if (revisionFlag !== undefined) {
+    revision = revisionFlag;
+  } else {
+    const pinned = await pinTarget(transport, target);
+    if ('failure' in pinned) {
+      return reportFailure(context.streams, pinned.failure, {
+        operation: 'move',
+        beforeDispatch: true,
+      });
+    }
+    sendTo = pinned.target;
+    revision = pinned.revision;
+  }
+
+  const dispatchedAt = new Date();
+  const result = await move(transport, {
+    target: sendTo,
+    revision,
+    destination: { path: destinationPath },
+  });
+
+  if (!result.ok) {
+    return reportFailure(context.streams, result.failure, {
+      operation: 'move',
+      dispatchedAt,
+      ...('id' in sendTo ? { targetId: sendTo.id } : {}),
+    });
+  }
+
+  if (booleanOption(parsed, 'json')) {
+    writeJson(context.streams.out, result.value);
+  } else {
+    // A move to where it already is reads the same, with the revision unchanged: the server reported
+    // a success, not a separate outcome. The new full path is one `raphael path` away, not a second
+    // request made here.
+    const { node } = result.value;
+    writeLine(
+      context.streams.out,
+      `Moved ${qualifiedType(node)} ${node.id}: ${forTerminal(node.title)}`,
+    );
+    writeLine(context.streams.out, `  revision: ${node.revision}`);
+    writeLine(context.streams.out, `  slug: ${forTerminal(node.slug)}`);
+    writeLine(
+      context.streams.out,
+      `  parent: ${node.parentId === null ? 'top level' : node.parentId}`,
+    );
   }
   return EXIT_OK;
 };

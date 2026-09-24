@@ -36,6 +36,8 @@ const temporaryFile = async () => {
 };
 
 const T0 = 1_700_000_000_000;
+/** An update envelope as the edit owner persists it: bare on disk, tagged in memory. */
+const updateOf = (envelope) => ({ kind: 'update', envelope });
 const DESTINATION = { type: 'area', id: 3 };
 const DOCUMENT = {
   type: 'doc',
@@ -816,22 +818,22 @@ describe('entity_edits', () => {
       const { store } = await seeded();
       const envelope = { title: 'Renamed' };
 
-      const record = await store.markEditInflight(KEY, 1, envelope, T0 + 1);
+      const record = await store.markEditInflight(KEY, 1, updateOf(envelope), T0 + 1);
 
       assert.equal(record.inflightVersion, 1);
-      assert.deepEqual(record.inflight, envelope);
+      assert.deepEqual(record.inflight, updateOf(envelope));
 
       await store.close();
     });
 
     it('refuses a second envelope while one is in the air', async () => {
       const { store } = await seeded();
-      await store.markEditInflight(KEY, 1, { title: 'first' }, T0 + 1);
+      await store.markEditInflight(KEY, 1, updateOf({ title: 'first' }), T0 + 1);
 
-      const record = await store.markEditInflight(KEY, 2, { title: 'second' }, T0 + 2);
+      const record = await store.markEditInflight(KEY, 2, updateOf({ title: 'second' }), T0 + 2);
 
       assert.equal(record.inflightVersion, 1);
-      assert.deepEqual(record.inflight, { title: 'first' });
+      assert.deepEqual(record.inflight, updateOf({ title: 'first' }));
 
       await store.close();
     });
@@ -840,7 +842,224 @@ describe('entity_edits', () => {
       const { store } = await seeded();
       await store.markEditConflicted(KEY, T0 + 1);
 
-      assert.equal((await store.markEditInflight(KEY, 1, {}, T0 + 2)).inflightVersion, null);
+      assert.equal(
+        (await store.markEditInflight(KEY, 1, updateOf({}), T0 + 2)).inflightVersion,
+        null,
+      );
+
+      await store.close();
+    });
+  });
+
+  /**
+   * A move is the second thing that can be in flight, and each acknowledgement consumes only its own
+   * kind. The owner never crosses them - one envelope is in the air at a time and it dispatches on the
+   * kind - but these are durable boundaries, so the store refuses a mismatch rather than trusting that.
+   */
+  describe('moves in flight', () => {
+    const MOVE = { kind: 'move', parentId: 9, expectsWrite: true };
+    const NOOP = { kind: 'move', parentId: 3, expectsWrite: false };
+    const SERVER = { ...CONTENT, title: 'Theirs', tags: ['work', 'theirs'] };
+    const raw = (db) => db.get(`SELECT * FROM ${EDITS_TABLE} WHERE node_id = 7`);
+
+    it('stores a move tagged and reads it back as a move', async () => {
+      const { store, db } = await seeded();
+
+      const record = await store.markEditInflight(KEY, 1, MOVE, T0 + 1);
+
+      assert.deepEqual(record.inflight, MOVE);
+      assert.deepEqual(JSON.parse((await raw(db)).inflight), MOVE);
+      assert.deepEqual((await only(store)).inflight, MOVE);
+
+      await store.close();
+    });
+
+    it('acknowledges a move by advancing only the base revision and clearing it', async () => {
+      const { store } = await seeded();
+      await store.markEditInflight(KEY, 1, MOVE, T0 + 1);
+
+      const { applied, record } = await store.acknowledgeMove(KEY, 1, 5, T0 + 2);
+
+      assert.equal(applied, true);
+      assert.equal(record.baseRevision, 5);
+      assert.equal(record.inflight, null);
+      assert.equal(record.inflightVersion, null);
+      assert.deepEqual(
+        record.base,
+        CONTENT,
+        'a move carries nothing authored, so the base is kept',
+      );
+      assert.deepEqual(record.content, CONTENT);
+      assert.equal(record.draftVersion, 1, 'a move is not an authored version');
+      assert.equal(record.acknowledgedVersion, 1);
+      assert.equal(record.syncState, 'syncing');
+
+      await store.close();
+    });
+
+    it('does not acknowledge a move that is not the one dispatched', async () => {
+      for (const setUp of [
+        async () => {},
+        (store) => store.markEditInflight(KEY, 1, updateOf({ title: 'x' }), T0 + 1),
+        (store) => store.markEditInflight(KEY, 1, MOVE, T0 + 1),
+      ]) {
+        const { store, db } = await seeded();
+        await setUp(store);
+        const before = await raw(db);
+
+        // Version 2 is dispatched nowhere; the move above is at version 1.
+        const { applied, record } = await store.acknowledgeMove(KEY, 2, 5, T0 + 2);
+
+        assert.equal(applied, false);
+        assert.deepEqual(await raw(db), before, 'the row is exactly as it was');
+        assert.equal(record.baseRevision, 4);
+
+        await store.close();
+      }
+
+      const { store, db } = await seeded();
+      await store.markEditInflight(KEY, 1, updateOf({ title: 'x' }), T0 + 1);
+      const before = await raw(db);
+
+      assert.equal((await store.acknowledgeMove(KEY, 1, 5, T0 + 2)).applied, false);
+      assert.deepEqual(await raw(db), before, 'an update is not consumed as a move');
+
+      await store.close();
+    });
+
+    it('does not acknowledge a move, or an unknown kind, as an update', async () => {
+      const { store, db } = await seeded();
+      await store.markEditInflight(KEY, 1, MOVE, T0 + 1);
+      const before = await raw(db);
+
+      await store.acknowledgeEdit(KEY, { ...CONTENT, title: 'Renamed' }, 5, T0 + 2);
+
+      assert.deepEqual(await raw(db), before);
+
+      await db.run(`UPDATE ${EDITS_TABLE} SET inflight = ?`, ['{"kind":null,"title":"x"}']);
+      const tagged = await raw(db);
+
+      await store.acknowledgeEdit(KEY, { ...CONTENT, title: 'Renamed' }, 5, T0 + 3);
+
+      assert.deepEqual(await raw(db), tagged, 'a present null kind is not a bare update');
+
+      await store.close();
+    });
+
+    it('adopts the server over a lost no-op move, in one transition', async () => {
+      const { store } = await seeded();
+      await store.markEditInflight(KEY, 1, NOOP, T0 + 1);
+
+      const { applied, record } = await store.adoptAfterNoopMove(KEY, 1, SERVER, 5, T0 + 2);
+
+      assert.equal(applied, true);
+      assert.equal(record.inflight, null);
+      assert.equal(record.inflightVersion, null);
+      assert.equal(record.baseRevision, 5);
+      assert.deepEqual(record.base, SERVER);
+      assert.deepEqual(record.content, SERVER);
+      assert.equal(record.syncState, 'syncing');
+
+      await store.close();
+    });
+
+    it('adopts nothing outside exactly the situation it resolves', async () => {
+      const cases = [
+        [
+          'a move that expected a write',
+          (store) => store.markEditInflight(KEY, 1, MOVE, T0 + 1),
+          1,
+        ],
+        [
+          'an update',
+          (store) => store.markEditInflight(KEY, 1, updateOf({ title: 'x' }), T0 + 1),
+          1,
+        ],
+        ['another in-flight version', (store) => store.markEditInflight(KEY, 1, NOOP, T0 + 1), 2],
+        [
+          'unsent writing',
+          async (store) => {
+            await store.markEditInflight(KEY, 1, NOOP, T0 + 1);
+            await store.writeEditVersion({
+              key: KEY,
+              content: { ...CONTENT, title: 'mine' },
+              draftVersion: 2,
+              at: T0 + 2,
+            });
+          },
+          1,
+        ],
+      ];
+
+      for (const [name, setUp, version] of cases) {
+        const { store, db } = await seeded();
+        await setUp(store);
+        const before = await raw(db);
+
+        const { applied } = await store.adoptAfterNoopMove(KEY, version, SERVER, 5, T0 + 3);
+
+        assert.equal(applied, false, name);
+        assert.deepEqual(await raw(db), before, `${name}: the row is exactly as it was`);
+
+        await store.close();
+      }
+    });
+
+    /**
+     * The only proof that a failure inside either transition leaves the move in flight. A temporary
+     * trigger aborts the `UPDATE` after the guard has been read, and the SQL port must roll the whole
+     * transaction back: an envelope gone over a stale base would look settled and never retry.
+     */
+    it('rolls both transitions back entirely when their write fails', async () => {
+      for (const [envelope, attempt] of [
+        [NOOP, (store) => store.adoptAfterNoopMove(KEY, 1, SERVER, 5, T0 + 2)],
+        [MOVE, (store) => store.acknowledgeMove(KEY, 1, 5, T0 + 2)],
+      ]) {
+        const { store, db } = await seeded();
+        await store.markEditInflight(KEY, 1, envelope, T0 + 1);
+        await db.run(
+          `CREATE TEMP TRIGGER abort_edit BEFORE UPDATE OF base_revision ON ${EDITS_TABLE}
+           BEGIN SELECT RAISE(ABORT, 'forced'); END`,
+        );
+        const before = await raw(db);
+
+        await assert.rejects(attempt(store));
+        assert.deepEqual(await raw(db), before, 'byte for byte, envelope included');
+
+        await db.run('DROP TRIGGER abort_edit');
+        assert.equal((await attempt(store)).applied, true, 'and it applies once the fault is gone');
+
+        await store.close();
+      }
+    });
+
+    it('retains a row with an unknown kind, or a move with a slug, as unreadable and deletable', async () => {
+      for (const inflight of [
+        '{"kind":"rename","title":"x"}',
+        '{"kind":"move","parentId":9,"expectsWrite":true,"slug":"x"}',
+      ]) {
+        const { store, db } = await seeded();
+        await db.run(`UPDATE ${EDITS_TABLE} SET inflight_version = 1, inflight = ?`, [inflight]);
+
+        const { edits, unusableEdits } = await store.listEdits();
+
+        assert.equal(edits.length, 0, inflight);
+        assert.equal(unusableEdits[0].problem, 'unreadable_row');
+
+        await store.deleteEdit(KEY);
+        assert.deepEqual(await store.listEdits(), { edits: [], unusableEdits: [] });
+
+        await store.close();
+      }
+    });
+
+    it('still reads a stored bare envelope as an update', async () => {
+      const { store, db } = await seeded();
+      await db.run(`UPDATE ${EDITS_TABLE} SET inflight_version = 1, inflight = ?`, [
+        '{"title":"x"}',
+      ]);
+
+      assert.deepEqual((await only(store)).inflight, updateOf({ title: 'x' }));
 
       await store.close();
     });
@@ -855,7 +1074,7 @@ describe('entity_edits', () => {
         draftVersion: 2,
         at: T0 + 1,
       });
-      await store.markEditInflight(KEY, 2, { title: 'Renamed' }, T0 + 2);
+      await store.markEditInflight(KEY, 2, updateOf({ title: 'Renamed' }), T0 + 2);
 
       const record = await store.acknowledgeEdit(KEY, { ...CONTENT, title: 'Renamed' }, 5, T0 + 3);
 
@@ -887,7 +1106,7 @@ describe('entity_edits', () => {
         T0 + 1,
       );
       await store.writeEditVersion({ key: KEY, content: CONTENT, draftVersion: 2, at: T0 + 2 });
-      await store.markEditInflight(KEY, 2, { title: 'x' }, T0 + 3);
+      await store.markEditInflight(KEY, 2, updateOf({ title: 'x' }), T0 + 3);
 
       const record = await store.acknowledgeEdit(KEY, CONTENT, 5, T0 + 4);
 
@@ -917,7 +1136,7 @@ describe('entity_edits', () => {
   it('refuses to acknowledge locally while an envelope is in the air', async () => {
     const { store } = await seeded();
     await store.writeEditVersion({ key: KEY, content: CONTENT, draftVersion: 3, at: T0 + 1 });
-    await store.markEditInflight(KEY, 3, { title: 'x' }, T0 + 2);
+    await store.markEditInflight(KEY, 3, updateOf({ title: 'x' }), T0 + 2);
 
     const record = await store.acknowledgeEditLocally(KEY, 3, T0 + 3);
 
@@ -932,7 +1151,7 @@ describe('entity_edits', () => {
 
   it('clears an in-flight envelope without touching the verdict', async () => {
     const { store } = await seeded();
-    await store.markEditInflight(KEY, 1, { title: 'x' }, T0 + 1);
+    await store.markEditInflight(KEY, 1, updateOf({ title: 'x' }), T0 + 1);
 
     const record = await store.clearEditInflight(KEY, T0 + 2);
 
@@ -973,7 +1192,7 @@ describe('entity_edits', () => {
 
   it('records a refusal and drops the envelope with it', async () => {
     const { store } = await seeded();
-    await store.markEditInflight(KEY, 1, { slug: 'taken' }, T0 + 1);
+    await store.markEditInflight(KEY, 1, updateOf({ slug: 'taken' }), T0 + 1);
     const refusal = { code: 'slug_conflict', field: 'slug', reason: null, at: T0 + 2 };
 
     const record = await store.markEditRefused(KEY, refusal, T0 + 2);
@@ -1028,7 +1247,7 @@ describe('entity_edits', () => {
       draftVersion: 2,
       at: T0 + 1,
     });
-    await store.markEditInflight(KEY, 2, { title: 'mine' }, T0 + 2);
+    await store.markEditInflight(KEY, 2, updateOf({ title: 'mine' }), T0 + 2);
 
     const record = await store.markEditConflicted(KEY, T0 + 3);
 
@@ -1076,7 +1295,7 @@ describe('entity_edits', () => {
 
     it('refuses while an envelope is in flight', async () => {
       const { store } = await seeded();
-      await store.markEditInflight(KEY, 1, { title: 'x' }, T0 + 1);
+      await store.markEditInflight(KEY, 1, updateOf({ title: 'x' }), T0 + 1);
 
       assert.equal((await store.rebaseEdit(KEY, CONTENT, 9, T0 + 2)).baseRevision, 4);
 

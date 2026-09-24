@@ -46,7 +46,10 @@ export const clientFailure = (kind, code, mutationOutcome, details = {}) => ({
  *
  * `hold()` makes the next answer wait, so a test can have a request genuinely in the air. `lose()`
  * makes the next answer never arrive as an answer: the update is applied and the caller is told
- * nothing definite, which is the case reconciliation exists for.
+ * nothing definite, which is the case reconciliation exists for. Both apply to a move as well.
+ *
+ * A move follows core's rules for an explicit parent: a stale revision is refused, and a request for
+ * the parent the entity already has with no new slug writes nothing and keeps the revision.
  */
 export const serverModel = (seed = {}) => {
   let held = entity(seed);
@@ -70,6 +73,10 @@ export const serverModel = (seed = {}) => {
     /** Every Get request, as sent. The one field whose omission fails silently is asserted on it. */
     getRequests: [],
     updates: [],
+    /** Every move request, as sent. */
+    moves: [],
+    /** A definite answer the next move gets instead of being applied, then cleared. */
+    moveFailure: null,
     getFailure: null,
   };
 
@@ -121,6 +128,43 @@ export const serverModel = (seed = {}) => {
     return { ok: true, value: { entity: { ...held } } };
   };
 
+  /** A move publishes a summary: the entity without its body or metadata. */
+  const summaryOf = ({ body: _body, metadata: _metadata, ...summary }) => summary;
+
+  model.move = async (request) => {
+    model.moves.push(request);
+    await wait();
+
+    if (model.moveFailure !== null) {
+      const failure = model.moveFailure;
+
+      model.moveFailure = null;
+
+      return failure;
+    }
+
+    if (request.revision !== held.revision) {
+      return clientFailure('api_error', 'revision_conflict', 'rejected', {
+        currentRevision: held.revision,
+      });
+    }
+
+    const { parent, slug } = request.destination;
+    const parentId = parent.path === '/' ? null : parent.id;
+
+    if (parentId !== held.parentId || (slug !== undefined && slug !== held.slug)) {
+      held = { ...held, parentId, slug: slug ?? held.slug, revision: held.revision + 1 };
+    }
+
+    if (model.lose) {
+      model.lose = false;
+
+      return clientFailure('transport', null, 'unknown');
+    }
+
+    return { ok: true, value: { node: summaryOf(held) } };
+  };
+
   return model;
 };
 
@@ -153,6 +197,7 @@ export const editHarness = async (options = {}) => {
     }),
     get: (_transport, request) => server.get(request),
     update: (_transport, request) => server.update(request),
+    move: (_transport, request) => server.move(request),
     now: () => T0,
     applyUpdate: async (ref, activation) => {
       applied.push({ ref, activation });

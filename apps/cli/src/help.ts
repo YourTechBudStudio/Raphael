@@ -48,6 +48,7 @@ Commands:
   login             Connect this machine to a Raphael server.
   create            Create an area or a project.
   update            Change an area, a project, or a note.
+  move              Move an area, a project, or a note somewhere else.
   get               Read one area or project.
   path              Print the current full path of an area or project.
   list              List what is inside an area or project.
