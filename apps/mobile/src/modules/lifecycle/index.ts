@@ -6,11 +6,19 @@
  * any of them would be a cycle and would give the words a second owner.
  */
 
+export {
+  useLifecycleAction,
+  type LifecycleAction,
+  type LifecycleActionInput,
+  type LifecycleFailure,
+} from './client/actions';
 export { ArchiveIconToggle, type ArchiveIconToggleProps } from './components/ArchiveIconToggle';
+export { InheritedLine, type InheritedLineProps } from './components/InheritedLine';
 export {
   ARCHIVE_LABEL,
   ARCHIVED_LABEL,
   ARCHIVED_LEFT_OUT_SENTENCE,
+  ARCHIVED_PARENT_CREATION_SENTENCE,
   INCLUDE_ARCHIVED_HINT,
   INCLUDE_ARCHIVED_LABEL,
   READ_ONLY_DETAILS_HINT,
@@ -21,6 +29,7 @@ export {
   briefOutcome,
   iconToggleSpokenLabel,
   inheritedLine,
+  inheritedLineParts,
   inheritedLineHint,
   outcomeSentence,
   readOnlyDetailsSubtitle,

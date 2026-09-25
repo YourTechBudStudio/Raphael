@@ -62,6 +62,8 @@ export interface SearchDescriptor {
    * predicate at all, which is not the same request as asking for any one tag.
    */
   readonly tags: readonly string[];
+  /** Archived nodes are part of the answer. Off by default: Search is how archived things come back. */
+  readonly includeArchived: boolean;
 }
 
 /** Where to look: the chosen container, or the root. */
@@ -98,6 +100,7 @@ export const searchRequest = (descriptor: SearchDescriptor): SearchRequestInput 
     recursive: true,
     queries: [descriptor.query],
     ...(filter === undefined ? {} : { filter }),
+    ...(descriptor.includeArchived ? { includeArchived: true } : {}),
     skip: 0,
     limit: SEARCH_LIMIT,
   };
@@ -118,6 +121,7 @@ export const searchKey = (activation: number, descriptor: SearchDescriptor): rea
     descriptor.query,
     descriptor.type,
     [...descriptor.tags],
+    descriptor.includeArchived,
   );
 
 /** One hit as this app draws it: a container tile, or a note card. */
@@ -127,6 +131,8 @@ export type SearchResultItem =
       readonly ref: ContainerRef;
       readonly title: string;
       readonly description: string;
+      /** Effectively archived. Search draws the pill for it. */
+      readonly archived: boolean;
     }
   | { readonly kind: 'note'; readonly note: NoteSummaryItem };
 
@@ -149,6 +155,7 @@ export const toSearchResultItem = (hit: SearchHit): SearchResultItem | null => {
       ref: { type: summary.type, id: summary.id },
       title: summary.title,
       description: summary.description,
+      archived: summary.archived,
     };
   }
 
@@ -162,6 +169,11 @@ export interface SearchPage {
   readonly items: readonly SearchResultItem[];
   /** The server has more than it sent. Never a claim about coverage; only about this sequence. */
   readonly hasMore: boolean;
+  /**
+   * An archived node matched and was left out. Always false when archived nodes were included. What
+   * the left-out line is shown on, so pressing its button always adds results.
+   */
+  readonly archivedLeftOut: boolean;
 }
 
 /** Asks the server once. */
@@ -177,6 +189,7 @@ export const fetchSearchPage = async (
       .map((hit) => toSearchResultItem(hit))
       .filter((item): item is SearchResultItem => item !== null),
     hasMore: response.hasMore,
+    archivedLeftOut: response.archivedLeftOut,
   };
 };
 

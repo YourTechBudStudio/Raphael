@@ -12,7 +12,9 @@ import {
   archivedRefusalSentence,
   briefOutcome,
   iconToggleSpokenLabel,
+  ARCHIVED_PARENT_CREATION_SENTENCE,
   inheritedLine,
+  inheritedLineParts,
   outcomeSentence,
   readOnlyDetailsSubtitle,
   statusSentence,
@@ -117,6 +119,28 @@ test('the inherited line names the nearest container above, and nothing for your
   assert.equal(inheritedLine(inherited), 'Archived with Project “Auth rework”');
   assert.equal(inheritedLine(both), 'Also archived with Project “Auth rework”');
   assert.equal(inheritedLine(other), 'Archived by retention');
+});
+
+test('the inherited line splits at the name the screen draws as the part that opens it', () => {
+  assert.equal(inheritedLineParts(direct), null);
+  assert.deepEqual(inheritedLineParts(inherited), {
+    lead: 'Archived with ',
+    origin: 'Project “Auth rework”',
+  });
+  assert.deepEqual(inheritedLineParts(both), {
+    lead: 'Also archived with ',
+    origin: 'Project “Auth rework”',
+  });
+  // Another owner's cause names nowhere to go.
+  assert.deepEqual(inheritedLineParts(other), { lead: 'Archived by retention', origin: null });
+});
+
+test('a creation refused for an archived parent asks for nothing the form cannot do', () => {
+  assert.equal(
+    ARCHIVED_PARENT_CREATION_SENTENCE,
+    'That area was archived, so nothing can be added to it.',
+  );
+  assert.doesNotMatch(ARCHIVED_PARENT_CREATION_SENTENCE, /[Pp]ick/);
 });
 
 test('the status line says why the screen is read-only, the inherited reason first', () => {

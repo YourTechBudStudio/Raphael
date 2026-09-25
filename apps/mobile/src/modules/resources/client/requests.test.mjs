@@ -50,7 +50,7 @@ describe('the request Home sends', () => {
 
 describe("the request a container's notes send", () => {
   it('asks for that container only, in the default order', () => {
-    const request = noteListRequest(containerDescriptor(7, 0));
+    const request = noteListRequest(containerDescriptor(7, 0, false));
 
     assert.deepEqual(request.scopes, [{ id: 7 }]);
     assert.equal(request.recursive, false);
@@ -58,6 +58,14 @@ describe("the request a container's notes send", () => {
     // Omitted entirely rather than sent as null: omission is how the wire contract asks for slug
     // then id, and a container list has no recency to offer.
     assert.ok(!('orderBy' in request));
+    // The server's default leaves archived notes out, so an active container does not restate it.
+    assert.ok(!('includeArchived' in request));
+  });
+
+  it('includes archived notes for an archived container', () => {
+    // Every note filed in an archived container is archived with it; the default would read the
+    // section as empty.
+    assert.equal(noteListRequest(containerDescriptor(7, 0, true)).includeArchived, true);
   });
 });
 
@@ -82,24 +90,24 @@ describe('where the next page starts', () => {
 describe('cache keys', () => {
   it('separate two connections that both numbered a container 7', () => {
     assert.notEqual(
-      hash(noteListKey(1, containerDescriptor(7, 0))),
-      hash(noteListKey(2, containerDescriptor(7, 0))),
+      hash(noteListKey(1, containerDescriptor(7, 0, false))),
+      hash(noteListKey(2, containerDescriptor(7, 0, false))),
     );
   });
 
   it('separate Home from a container list, and one container from another', () => {
     assert.notEqual(
       hash(noteListKey(1, feedDescriptor(0))),
-      hash(noteListKey(1, containerDescriptor(7, 0))),
+      hash(noteListKey(1, containerDescriptor(7, 0, false))),
     );
     assert.notEqual(
-      hash(noteListKey(1, containerDescriptor(7, 0))),
-      hash(noteListKey(1, containerDescriptor(8, 0))),
+      hash(noteListKey(1, containerDescriptor(7, 0, false))),
+      hash(noteListKey(1, containerDescriptor(8, 0, false))),
     );
   });
 
   it('separate two orderings, and two priorities of the same clauses', () => {
-    const base = containerDescriptor(7, 0);
+    const base = containerDescriptor(7, 0, false);
     const bySlug = { ...base, orderBy: [{ field: 'slug', direction: 'asc' }] };
     const byUpdated = { ...base, orderBy: [{ field: 'updatedAt', direction: 'desc' }] };
 
@@ -114,8 +122,15 @@ describe('cache keys', () => {
     assert.notEqual(hash(noteListKey(1, first)), hash(noteListKey(1, second)));
   });
 
+  it('separate the archived and the active reading of one container', () => {
+    assert.notEqual(
+      hash(noteListKey(1, containerDescriptor(7, 0, false))),
+      hash(noteListKey(1, containerDescriptor(7, 0, true))),
+    );
+  });
+
   it('separate two page sizes and two starting offsets', () => {
-    const base = containerDescriptor(7, 0);
+    const base = containerDescriptor(7, 0, false);
 
     assert.notEqual(hash(noteListKey(1, base)), hash(noteListKey(1, { ...base, limit: 10 })));
     assert.notEqual(hash(noteListKey(1, base)), hash(noteListKey(1, { ...base, skip: 50 })));

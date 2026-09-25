@@ -97,6 +97,11 @@ export interface SearchView {
   readonly isEmpty: boolean;
   /** The page is full and the server has more. What is shown is a prefix, and says so. */
   readonly isCapped: boolean;
+  /**
+   * The server says an archived node matched and was left out, so turning "Include archived" on would
+   * add results. From the page on screen; never true when archived nodes were included.
+   */
+  readonly archivedLeftOut: boolean;
   readonly groups: SearchGroups;
 }
 
@@ -109,6 +114,7 @@ const nothing = (over: Partial<SearchView>): SearchView => ({
   isStale: false,
   isEmpty: false,
   isCapped: false,
+  archivedLeftOut: false,
   groups: EMPTY_GROUPS,
   ...over,
 });
@@ -144,6 +150,7 @@ export const deriveSearchView = (observation: SearchObservation): SearchView => 
     isStale: observation.isError,
     isEmpty: page.items.length === 0,
     isCapped: page.hasMore,
+    archivedLeftOut: page.archivedLeftOut,
     groups: groupSearchResults(page.items),
   });
 };

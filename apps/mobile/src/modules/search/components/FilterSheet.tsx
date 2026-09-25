@@ -1,5 +1,5 @@
 /**
- * Type and tag filters, kept off the search header and opened from one icon beside the field.
+ * Type, archive and tag filters, kept off the search header and opened from one icon beside the field.
  *
  * Chip rows under the field competed with it and did not align past the back button, so the filters
  * live in a sheet and the header says only whether any of them are narrowing the search. Changes
@@ -15,11 +15,12 @@
  */
 
 import { normalizeTag, type TagsRejection } from '@raphael/contracts/nodes';
-import { Plus, X } from 'lucide-react-native';
+import { Archive, Plus, X } from 'lucide-react-native';
 import { useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
 
 import { Chip, IconButton, SectionHeading, Sheet, SheetHeader } from '../../../ui';
+import { ARCHIVED_LABEL, INCLUDE_ARCHIVED_HINT, INCLUDE_ARCHIVED_LABEL } from '../../lifecycle';
 import type { SearchTypeFilter } from '../client/requests.ts';
 import { describeTagsRejection } from './filter-copy';
 
@@ -39,6 +40,9 @@ export interface FilterSheetProps {
   onTags: (tags: readonly string[]) => void;
   /** What `inspectTagsInput` says about the tags as they stand, or nothing. */
   rejection: TagsRejection | undefined;
+  /** Archived areas, projects and notes are part of the results. */
+  includeArchived: boolean;
+  onIncludeArchived: (includeArchived: boolean) => void;
 }
 
 export function FilterSheet({
@@ -49,6 +53,8 @@ export function FilterSheet({
   tags,
   onTags,
   rejection,
+  includeArchived,
+  onIncludeArchived,
 }: FilterSheetProps) {
   const [entry, setEntry] = useState('');
 
@@ -92,6 +98,21 @@ export function FilterSheet({
               selected={type === chip.key}
             />
           ))}
+        </View>
+      </View>
+      <View className="gap-3">
+        <SectionHeading>{ARCHIVED_LABEL}</SectionHeading>
+        <View className="flex-row flex-wrap gap-2">
+          <Chip
+            accessibilityHint={INCLUDE_ARCHIVED_HINT}
+            icon={Archive}
+            label={INCLUDE_ARCHIVED_LABEL}
+            onPress={() => {
+              onIncludeArchived(!includeArchived);
+            }}
+            selected={includeArchived}
+            testID="include-archived"
+          />
         </View>
       </View>
       <View className="gap-3">

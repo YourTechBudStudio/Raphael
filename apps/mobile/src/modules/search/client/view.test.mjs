@@ -25,7 +25,11 @@ const observation = (over = {}) => ({
   ...over,
 });
 
-const page = (items = [], hasMore = false) => ({ items, hasMore });
+const page = (items = [], hasMore = false, archivedLeftOut = false) => ({
+  items,
+  hasMore,
+  archivedLeftOut,
+});
 
 const containerItem = (id, type = 'area') => ({
   kind: 'container',
@@ -204,5 +208,29 @@ describe('reading the server', () => {
 
     onlyFlag(view, null);
     assert.equal(view.groups.areas.length, 1);
+    assert.equal(view.archivedLeftOut, false);
+  });
+});
+
+describe('archived matches that were left out', () => {
+  it('are carried from the page the server answered, with results or without', () => {
+    // The left-out line reads this, so it is only ever offered when turning the filter on adds
+    // something - including over an answer where nothing active matched.
+    assert.equal(
+      deriveSearchView(observation({ page: page([containerItem(3)], false, true) }))
+        .archivedLeftOut,
+      true,
+    );
+
+    const empty = deriveSearchView(observation({ page: page([], false, true) }));
+
+    onlyFlag(empty, 'isEmpty');
+    assert.equal(empty.archivedLeftOut, true);
+  });
+
+  it('are never claimed without a page to claim them from', () => {
+    assert.equal(deriveSearchView(observation({ isPending: true })).archivedLeftOut, false);
+    assert.equal(deriveSearchView(observation({ isError: true })).archivedLeftOut, false);
+    assert.equal(deriveSearchView(observation({ query: '' })).archivedLeftOut, false);
   });
 });

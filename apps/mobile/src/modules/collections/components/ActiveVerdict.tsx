@@ -1,5 +1,7 @@
+import type { RecoveryDetails } from '@raphael/contracts';
 import { Text } from 'react-native';
 
+import { archivedRefusalSentence } from '../../lifecycle';
 import type { ActiveFailure } from '../client/active';
 
 const COPY = {
@@ -9,6 +11,8 @@ const COPY = {
 
 interface ActiveVerdictProps {
   failure: ActiveFailure;
+  /** The refusal's details, which an `archived` failure is worded from. */
+  details: RecoveryDetails | null;
   className?: string | undefined;
 }
 
@@ -21,14 +25,16 @@ interface ActiveVerdictProps {
  * The two colours follow the app's existing rule rather than the two outcomes being equally bad. A
  * refusal is danger: the change did not happen and the person has to act. A conflict is soft ink:
  * the row moved under them, a refresh is already running, and that is information rather than a
- * failure of their write. The conflict sentence is careful not to claim the refresh has finished,
+ * failure of their write. An archive made elsewhere is soft ink for the same reason: the re-read that
+ * is already running shows the project archived, and the sentence only says why the tap did nothing.
+ * The conflict sentence is careful not to claim the refresh has finished,
  * because the error path deliberately does not wait for it.
  *
  * Nothing is drawn while a write is in flight. The control is disabled and carries a turning ring,
  * which says everything there is to say; a sentence beside it would be a second voice on one fact.
  * Callers pass `null` for that case rather than this file guessing at it.
  */
-export function ActiveVerdict({ failure, className }: ActiveVerdictProps) {
+export function ActiveVerdict({ failure, details, className }: ActiveVerdictProps) {
   if (failure === null) return null;
 
   return (
@@ -40,7 +46,7 @@ export function ActiveVerdict({ failure, className }: ActiveVerdictProps) {
         className ?? '',
       ].join(' ')}
     >
-      {COPY[failure]}
+      {failure === 'archived' ? archivedRefusalSentence(details ?? {}) : COPY[failure]}
     </Text>
   );
 }

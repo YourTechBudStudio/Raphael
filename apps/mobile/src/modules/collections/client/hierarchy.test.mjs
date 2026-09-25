@@ -16,6 +16,7 @@ import { ClientFailureError } from '../../../infrastructure/query/failure.ts';
 import {
   activeProjects,
   areaOptions,
+  fetchChildren,
   fetchHierarchy,
   HierarchyRefusedError,
   MAX_CONTAINERS,
@@ -350,6 +351,8 @@ describe('the widened server vocabulary', () => {
     for (const request of backing.calls) {
       assert.deepEqual([...request.filter.type.$in].sort(), ['area', 'project']);
       assert.equal(request.recursive, true);
+      // Archived containers stay out by the server's default: Home, Browse and the pickers read this.
+      assert.ok(!('includeArchived' in request));
     }
   });
 
@@ -368,5 +371,110 @@ describe('the widened server vocabulary', () => {
   it('still refuses a resource that arrives at the top level', async () => {
     const backing = server([node(1, 'resource', null, 'Loose note', 'loose-note')]);
     await assert.rejects(() => fetchHierarchy(backing.list), HierarchyRefusedError);
+  });
+});
+
+/**
+ * An archived area's children, read on their own.
+ *
+ * The hierarchy never contains an archived area, so its screen asks for what it holds directly. The
+ * same standard applies as for the tree: complete or refused, never a subset drawn as the whole.
+ */
+describe("an archived area's children", () => {
+  const AREA = 7;
+
+  it('asks for that area only, containers only, archived included, page by page', async () => {
+    const source = server(
+      [
+        node(9, 'project', AREA, 'Zeta', 'zeta'),
+        node(8, 'area', AREA, 'Clients'),
+        node(10, 'project', AREA, 'Alpha', 'alpha'),
+      ],
+      { pageSize: 2 },
+    );
+
+    const children = await fetchChildren(source.list, AREA);
+
+    assert.equal(source.calls.length, 2);
+    for (const request of source.calls) {
+      assert.deepEqual(request.scopes, [{ id: AREA }]);
+      assert.equal(request.recursive, false);
+      assert.deepEqual([...request.filter.type.$in].sort(), ['area', 'project']);
+      assert.equal(request.includeArchived, true);
+      assert.equal(request.limit, PAGE_LIMIT);
+    }
+    assert.equal(source.calls[1].skip, 2);
+    assert.deepEqual(
+      children.subareas.map((child) => child.id),
+      [8],
+    );
+    // Ordered the way the server orders siblings, as the tree does.
+    assert.deepEqual(
+      children.projects.map((child) => child.title),
+      ['Alpha', 'Zeta'],
+    );
+    assert.deepEqual(children.projects[0].children, []);
+  });
+
+  it('is empty, not an error, for an area that holds nothing', async () => {
+    assert.deepEqual(await fetchChildren(server([]).list, AREA), { subareas: [], projects: [] });
+  });
+
+  it('refuses the same container twice', async () => {
+    const twice = server([node(8, 'area', AREA, 'Clients'), node(8, 'area', AREA, 'Clients')]);
+
+    await assert.rejects(fetchChildren(twice.list, AREA), (error) => {
+      assert.ok(error instanceof HierarchyRefusedError);
+      assert.equal(error.retryable, true);
+      assert.match(error.message, /this area/);
+
+      return true;
+    });
+  });
+
+  it('refuses something that is not a container', async () => {
+    await assert.rejects(
+      fetchChildren(server([node(8, 'resource', AREA, 'A note', 'a-note')]).list, AREA),
+      HierarchyRefusedError,
+    );
+  });
+
+  it('refuses a container that is not in this area, and a project at the top level', async () => {
+    await assert.rejects(
+      fetchChildren(server([node(8, 'area', 99, 'Elsewhere')]).list, AREA),
+      HierarchyRefusedError,
+    );
+    await assert.rejects(
+      fetchChildren(server([node(8, 'project', null, 'Loose')]).list, AREA),
+      HierarchyRefusedError,
+    );
+  });
+
+  it('publishes nothing when a page fails', async () => {
+    await assert.rejects(fetchChildren(failing(TRANSPORT_FAILURE), AREA), ClientFailureError);
+  });
+
+  it('refuses a size it will not read, without offering a retry', async () => {
+    let next = 0;
+    const list = (request) => {
+      const items = Array.from({ length: PAGE_LIMIT }, () => {
+        next += 1;
+
+        return node(next, 'project', AREA, `P${next}`, `p${String(next).padStart(8, '0')}`);
+      });
+
+      return Promise.resolve({
+        ok: true,
+        value: { items, skip: request.skip, limit: request.limit, hasMore: true },
+      });
+    };
+
+    await assert.rejects(fetchChildren(list, AREA), (error) => {
+      assert.ok(error instanceof HierarchyRefusedError);
+      assert.equal(error.retryable, false);
+      assert.match(error.message, /This area holds more than/);
+
+      return true;
+    });
   });
 });

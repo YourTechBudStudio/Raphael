@@ -18,6 +18,7 @@ export { emblemFor } from './emblem-for';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
 export { GrowingTextInput, type GrowingTextInputProps } from './GrowingTextInput';
 export { FavoriteButton, type FavoriteButtonProps } from './FavoriteButton';
+export { StatePill, type StatePillProps } from './StatePill';
 export { ToggleLabel, type ToggleLabelProps } from './ToggleLabel';
 export { ACTIVE_MARK, ARCHIVE_MARK, FAVORITE_MARK, type ToggleMark } from './toggle-marks';
 export { IconButton, type IconButtonProps } from './IconButton';

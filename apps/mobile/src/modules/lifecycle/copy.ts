@@ -137,23 +137,35 @@ export const iconToggleSpokenLabel = (view: LifecycleView | null, noun: string):
   view?.canRestore === true ? `Restore this ${noun}` : `Archive this ${noun}`;
 
 /**
- * The quiet line under a container's toggles, or null when the filled toggle already says it all.
+ * The quiet line under a container's toggles, in two parts: the words, and the origin's name when it
+ * names a container, which the screen draws as the part that opens it. Null when the filled toggle
+ * already says it all.
  *
  * An inherited cause is named first, even beside the user's own: restoring your own cause leaves the
  * screen archived, and this is the line that says why.
  */
-export const inheritedLine = (view: LifecycleView): string | null => {
+export const inheritedLineParts = (
+  view: LifecycleView,
+): { readonly lead: string; readonly origin: string | null } | null => {
   const inherited = view.nearestInherited;
 
   if (inherited !== null) {
-    return view.canRestore
-      ? `Also archived with ${originName(inherited)}`
-      : `Archived with ${originName(inherited)}`;
+    return {
+      lead: view.canRestore ? 'Also archived with ' : 'Archived with ',
+      origin: originName(inherited),
+    };
   }
 
   const foreign = foreignOwnCause(view);
 
-  return foreign === null ? null : `Archived by ${foreign.owner}`;
+  return foreign === null ? null : { lead: `Archived by ${foreign.owner}`, origin: null };
+};
+
+/** The same line as one sentence, for its spoken label. */
+export const inheritedLine = (view: LifecycleView): string | null => {
+  const parts = inheritedLineParts(view);
+
+  return parts === null ? null : `${parts.lead}${parts.origin ?? ''}`;
 };
 
 /** The inherited line's spoken hint, when it opens the container it names. */
@@ -274,6 +286,13 @@ export const actionFailureSentence = (
       return message;
   }
 };
+
+/**
+ * Creating an area or a project inside an area that was archived while the form was open. The form's
+ * parent is fixed, so there is nowhere else to pick; the sentence is true whichever way it is archived.
+ */
+export const ARCHIVED_PARENT_CREATION_SENTENCE =
+  'That area was archived, so nothing can be added to it.';
 
 /**
  * A `node_archived` refusal, from the field and reason the server named.

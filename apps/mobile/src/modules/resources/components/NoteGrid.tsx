@@ -25,6 +25,8 @@ export interface NoteGridProps {
    */
   locationFor?: ((parentId: number) => string | undefined) | undefined;
   onOpen?: ((id: number) => void) | undefined;
+  /** Draw the Archived pill on archived notes. Only Search sets it (`NoteCard`). */
+  markArchived?: boolean | undefined;
   className?: string | undefined;
   testID?: string | undefined;
 }
@@ -38,7 +40,14 @@ export interface NoteGridProps {
  * 1, 3, 2, 4 while the eye reads 1, 2, 3, 4, and stacking is the only layout whose reading order and
  * visual order are guaranteed to agree.
  */
-export function NoteGrid({ items, locationFor, onOpen, className, testID }: NoteGridProps) {
+export function NoteGrid({
+  items,
+  locationFor,
+  onOpen,
+  markArchived,
+  className,
+  testID,
+}: NoteGridProps) {
   const { width, fontScale } = useWindowDimensions();
   const screenReader = useScreenReader();
   const stacked = shouldCollapseColumns(width, fontScale, screenReader);
@@ -52,6 +61,7 @@ export function NoteGrid({ items, locationFor, onOpen, className, testID }: Note
   const draw = (note: NoteSummaryItem): ReactNode => (
     <NoteCard
       location={locationFor?.(note.parentId)}
+      markArchived={markArchived}
       note={note}
       onOpen={
         onOpen === undefined

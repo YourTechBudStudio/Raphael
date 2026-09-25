@@ -1,5 +1,5 @@
 import { get as getNode, getPath, list } from '@raphael/client/nodes';
-import { CONTAINER_TYPES, type CreateResponse, type GetResponse } from '@raphael/contracts/nodes';
+import type { GetResponse } from '@raphael/contracts/nodes';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
@@ -7,12 +7,16 @@ import { unwrap } from '../../../infrastructure/query/failure';
 import { activationOf, scopeKey } from '../../../infrastructure/query/keys';
 import { useConnectionSession, type ConnectionSession } from '../../connection';
 import {
+  fetchChildren,
   fetchHierarchy,
   HierarchyRefusedError,
   pathTo,
+  type ContainerChildren,
   type Hierarchy,
   type HierarchyNode,
 } from './hierarchy';
+
+export type { ContainerChildren } from './hierarchy';
 
 /**
  * The hierarchy, one entity, and one canonical path: everything the container screens read.
@@ -39,6 +43,7 @@ const keys = {
   entity: (activation: number, ref: ContainerRef) =>
     scopeKey(activation, 'entity', ref.type, ref.id),
   path: (activation: number, id: number) => scopeKey(activation, 'path', id),
+  children: (activation: number, areaId: number) => scopeKey(activation, 'children', areaId),
 };
 
 /**
@@ -99,55 +104,39 @@ export function invalidatePaths(client: QueryClient, activation: number): Promis
 }
 
 /**
- * A creation landed: hold on to what the server said, and mark the hierarchy stale.
+ * A creation landed: the hierarchy is stale.
  *
- * Seeding is absent-only. That is not because a container we just created is usually the newest
- * thing known about it - it is because writing only where nothing is cached can never overwrite a
- * reading that is already there, and a replay can return a snapshot from days ago. Where something
- * is cached, this leaves it alone and lets the ordinary refetch decide.
+ * Nothing from the response is written into the entity cache. A Create answered from an idempotency
+ * replay is the creation as it was recorded, days ago perhaps, and the container may have been
+ * renamed, moved or archived since; seeding it would put a historical record on screen as current
+ * state. The container's own Get is what shows it.
  *
- * Kept beside the invalidation rather than exported separately: they are one consequence of one
- * event, and creation lives inside this capability, so neither needs to become a public API to be
- * reachable by the code that calls them.
+ * Kept in this capability rather than at the call site, so nothing outside it has to know the key.
  */
-export async function recordCreation(
-  client: QueryClient,
-  response: CreateResponse,
-  activation: number,
-): Promise<void> {
-  const entity = response.entity;
-
-  // The entity cache this seeds is keyed by a container reference, and every screen reading it expects
-  // an area or a project. A resource creation therefore seeds nothing here rather than being filed
-  // under a reference no reader can address - the note screens land in Phase 05 with their own key.
-  // The hierarchy is still invalidated either way: a creation happened, and a stale tree is a stale
-  // tree whatever was added to it.
-  if ((CONTAINER_TYPES as readonly string[]).includes(entity.type)) {
-    const key = keys.entity(activation, {
-      type: entity.type as (typeof CONTAINER_TYPES)[number],
-      id: entity.id,
-    });
-    if (client.getQueryData(key) === undefined) client.setQueryData(key, entity);
-  }
-
+export async function recordCreation(client: QueryClient, activation: number): Promise<void> {
   await invalidateHierarchy(client, activation);
 }
 
-export interface HierarchyQuery {
-  readonly hierarchy: Hierarchy | undefined;
+/**
+ * How one complete-or-error read is going, the half every such screen section reads.
+ *
+ * Shared by the hierarchy and an archived area's children, so `HierarchyError` and `HierarchyStale`
+ * present both the same way.
+ */
+export interface ReadStatus {
   readonly isPending: boolean;
   readonly isError: boolean;
   /** True while a refresh is running, including one that is replacing a failed read. */
   readonly isFetching: boolean;
   /**
-   * True when the hierarchy on screen came from an earlier successful read and the most recent
-   * refresh failed. What is shown is complete and was true; it is not current.
+   * True when what is on screen came from an earlier successful read and the most recent refresh
+   * failed. What is shown is complete and was true; it is not current.
    */
   readonly isStale: boolean;
   /**
    * What the server's answers were refused for, when they were refused rather than unreachable.
    *
-   * Set only when the pages arrived and did not describe a hierarchy this app can hold - too many
+   * Set only when the pages arrived and did not describe something this app can hold - too many
    * containers, or pages that contradict each other. It carries its own sentence because the
    * generic "did not load" is true of a timeout and of a 20,001st container alike, and only one of
    * those is worth trying again. Null for every ordinary transport failure, which the screens
@@ -155,6 +144,10 @@ export interface HierarchyQuery {
    */
   readonly refusal: { readonly message: string; readonly retryable: boolean } | null;
   readonly refetch: () => void;
+}
+
+export interface HierarchyQuery extends ReadStatus {
+  readonly hierarchy: Hierarchy | undefined;
 }
 
 /**
@@ -172,10 +165,13 @@ export function useHierarchy(): HierarchyQuery {
     enabled: session !== null,
   });
 
+  return { hierarchy: query.data, ...readStatusOf(query) };
+}
+
+const readStatusOf = (query: UseQueryResult<unknown>): ReadStatus => {
   const error = query.error;
 
   return {
-    hierarchy: query.data,
     isPending: query.isPending,
     isError: query.isError,
     isFetching: query.isFetching,
@@ -188,6 +184,39 @@ export function useHierarchy(): HierarchyQuery {
       void query.refetch();
     },
   };
+};
+
+export interface ChildrenQuery extends ReadStatus {
+  readonly children: ContainerChildren | undefined;
+}
+
+/**
+ * What an archived area holds, from its own List, complete or an error (`fetchChildren`).
+ *
+ * The hierarchy never contains an archived area, so its screen asks for this instead. Null asks
+ * nothing, and an active area passes null: its children come from the hierarchy, and a second read
+ * of the same fact could disagree with it. `refetch` still runs on a disabled query, so a caller
+ * refreshes this only when it passed an id.
+ */
+export function useContainerChildren(areaId: number | null): ChildrenQuery {
+  const session = useConnectionSession();
+  const query = useQuery({
+    queryKey: keys.children(session?.activation ?? -1, areaId ?? 0),
+    queryFn: ({ signal }) => {
+      if (session === null || areaId === null) throw new Error('No connection');
+
+      const { transport } = session;
+
+      return fetchChildren(
+        (request, pageSignal) => list(transport, request, pageSignal),
+        areaId,
+        signal,
+      );
+    },
+    enabled: session !== null && areaId !== null,
+  });
+
+  return { children: query.data, ...readStatusOf(query) };
 }
 
 const runHierarchy = (
@@ -205,18 +234,30 @@ const runHierarchy = (
 
 /** One container, with its body. Null `ref` means there is nothing to ask about. */
 export function useContainer(ref: ContainerRef | null): UseQueryResult<GetResponse['entity']> {
-  const session = useConnectionSession();
-
-  return useQuery({
-    queryKey: keys.entity(session?.activation ?? -1, ref ?? { type: 'area', id: 0 }),
-    queryFn: async ({ signal }) => {
-      if (session === null || ref === null) throw new Error('No connection');
-
-      return unwrap(await getNode(session.transport, { target: { id: ref.id } }, signal)).entity;
-    },
-    enabled: session !== null && ref !== null,
-  });
+  return useQuery(containerOptions(useConnectionSession(), ref));
 }
+
+/**
+ * Whether a container is archived, as its screen's own Get says, or null until that has answered.
+ *
+ * For the routes that mount the capture pair beside a container screen. It is the same query as
+ * `useContainer`'s - same key, same options - so it shares that cache entry and never asks twice.
+ */
+export function useContainerArchived(ref: ContainerRef | null): boolean | null {
+  const query = useQuery(containerOptions(useConnectionSession(), ref));
+
+  return query.data === undefined ? null : query.data.archived;
+}
+
+const containerOptions = (session: ConnectionSession | null, ref: ContainerRef | null) => ({
+  queryKey: keys.entity(session?.activation ?? -1, ref ?? { type: 'area', id: 0 }),
+  queryFn: async ({ signal }: { signal: AbortSignal }) => {
+    if (session === null || ref === null) throw new Error('No connection');
+
+    return unwrap(await getNode(session.transport, { target: { id: ref.id } }, signal)).entity;
+  },
+  enabled: session !== null && ref !== null,
+});
 
 /**
  * The canonical path text for one container, from the server.
@@ -247,11 +288,6 @@ export function useContainerPath(id: number | null): UseQueryResult<string> {
 }
 
 /* -------------------------------------------------------- reading children out of the hierarchy */
-
-export interface ContainerChildren {
-  readonly subareas: readonly HierarchyNode[];
-  readonly projects: readonly HierarchyNode[];
-}
 
 /** What an area holds, from the one complete hierarchy. Undefined until it is loaded. */
 export const childrenOf = (

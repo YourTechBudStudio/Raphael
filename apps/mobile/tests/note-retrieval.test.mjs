@@ -187,6 +187,7 @@ describe('notes on a real server, read back by the real queries', () => {
         slug: note.slug,
         revision: note.revision,
         parentId: area.id,
+        archived: false,
       });
       // A summary has no body and no timestamp, which is why no card fetches one and why nothing
       // on a card can claim when it was last touched.
@@ -206,7 +207,12 @@ describe('notes on a real server, read back by the real queries', () => {
       const client = freshClient();
       const here = drive(
         client,
-        notePagesOptions(1, transport, (skip) => containerDescriptor(kitchen.id, skip), true),
+        notePagesOptions(
+          1,
+          transport,
+          (skip) => containerDescriptor(kitchen.id, skip, false),
+          true,
+        ),
       );
       await settle(here);
 
@@ -233,7 +239,12 @@ describe('notes on a real server, read back by the real queries', () => {
       const client = freshClient();
       const handle = drive(
         client,
-        notePagesOptions(1, transport, (skip) => containerDescriptor(kitchen.id, skip), true),
+        notePagesOptions(
+          1,
+          transport,
+          (skip) => containerDescriptor(kitchen.id, skip, false),
+          true,
+        ),
       );
       await settle(handle);
 
@@ -251,7 +262,7 @@ describe('notes on a real server, read back by the real queries', () => {
       }
 
       // A page size of two, so paging is exercised without creating a hundred notes.
-      const twoAtATime = (skip) => ({ ...containerDescriptor(area.id, skip), limit: 2 });
+      const twoAtATime = (skip) => ({ ...containerDescriptor(area.id, skip, false), limit: 2 });
       const client = freshClient();
       const handle = drive(client, notePagesOptions(1, transport, twoAtATime, true));
       await settle(handle);

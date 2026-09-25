@@ -9,6 +9,7 @@ export const navigations = [];
 
 export const resetNavigations = () => {
   navigations.length = 0;
+  params = {};
 };
 
 const record = (method) => (target) => {
@@ -25,4 +26,11 @@ export const router = {
   canDismiss: () => false,
 };
 
-export const useLocalSearchParams = () => ({});
+let params = {};
+
+/** What the route being rendered was opened with. Reset with `resetNavigations`. */
+export const setLocalSearchParams = (next) => {
+  params = next;
+};
+
+export const useLocalSearchParams = () => params;

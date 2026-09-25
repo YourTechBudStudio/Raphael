@@ -132,32 +132,33 @@ const tooLarge = (message: string): never => {
   throw new HierarchyRefusedError(message, false);
 };
 
+/** What one paged read asks for; `fetchPages` adds the paging itself. */
+type PagedRequest = Omit<ListRequestInput, 'skip' | 'limit'>;
+
 /**
- * Every page, from the root, recursively.
+ * Every page of one List request.
  *
  * The progress checks are what stop a malformed answer from becoming an infinite loop. A page that
  * claims there is more and returns nothing would never advance `skip`; a page longer than the limit
  * it was given is not answering the question that was asked.
+ *
+ * Shared by the hierarchy and by an archived area's children, so both reads keep the same verdicts:
+ * complete, inconsistent (worth retrying), or too large (not). `tooLargeSentence` says which read
+ * outgrew the bound.
  */
-const fetchPages = async (list: ListFn, signal?: AbortSignal): Promise<NodeSummary[]> => {
+const fetchPages = async (
+  list: ListFn,
+  request: PagedRequest,
+  tooLargeSentence: string,
+  signal?: AbortSignal,
+): Promise<NodeSummary[]> => {
   const items: NodeSummary[] = [];
   let skip = 0;
 
   for (;;) {
-    const request: ListRequestInput = {
-      scopes: [{ path: ROOT_PATH }],
-      recursive: true,
-      // Asked for explicitly rather than left to the default. The server applies no type restriction
-      // of its own, so an unfiltered list carries notes, and a hierarchy built from a list containing
-      // leaves would be a tree this app cannot hold. Naming the filter is what keeps the wider
-      // vocabulary from reaching here.
-      filter: { type: { $in: [...CONTAINER_TYPES] } },
-      skip,
-      limit: PAGE_LIMIT,
-    };
     // `unwrap` throws the client failure, which ends the traversal without publishing what has been
     // collected so far. That is the whole point: there is no partial result to leak.
-    const page = unwrap(await list(request, signal));
+    const page = unwrap(await list({ ...request, skip, limit: PAGE_LIMIT }, signal));
 
     if (page.items.length > PAGE_LIMIT) {
       return inconsistent('The server returned more results than the page it was asked for.');
@@ -169,17 +170,30 @@ const fetchPages = async (list: ListFn, signal?: AbortSignal): Promise<NodeSumma
 
     items.push(...page.items);
 
-    if (items.length > MAX_CONTAINERS) {
-      return tooLarge(
-        `This server holds more than ${String(MAX_CONTAINERS)} areas and projects, which is more than Raphael reads on a phone in one go.`,
-      );
-    }
+    if (items.length > MAX_CONTAINERS) return tooLarge(tooLargeSentence);
 
     if (!page.hasMore) return items;
 
     skip += page.items.length;
   }
 };
+
+/**
+ * The hierarchy's request: every container from the root, recursively.
+ *
+ * The type filter is asked for explicitly rather than left to the default. The server applies no type
+ * restriction of its own, so an unfiltered list carries notes, and a hierarchy built from a list
+ * containing leaves would be a tree this app cannot hold. Naming the filter is what keeps the wider
+ * vocabulary from reaching here. Archived containers are left out by the server's default, which is
+ * what keeps them off Home, Browse and the pickers.
+ */
+const HIERARCHY_REQUEST: PagedRequest = {
+  scopes: [{ path: ROOT_PATH }],
+  recursive: true,
+  filter: { type: { $in: [...CONTAINER_TYPES] } },
+};
+
+const HIERARCHY_TOO_LARGE = `This server holds more than ${String(MAX_CONTAINERS)} areas and projects, which is more than Raphael reads on a phone in one go.`;
 
 /**
  * A summary already checked to be a container.
@@ -287,7 +301,76 @@ const assemble = (items: readonly NodeSummary[]): Hierarchy => {
 
 /** The whole hierarchy, or a throw. Never anything in between. */
 export const fetchHierarchy = async (list: ListFn, signal?: AbortSignal): Promise<Hierarchy> =>
-  assemble(await fetchPages(list, signal));
+  assemble(await fetchPages(list, HIERARCHY_REQUEST, HIERARCHY_TOO_LARGE, signal));
+
+export interface ContainerChildren {
+  readonly subareas: readonly HierarchyNode[];
+  readonly projects: readonly HierarchyNode[];
+}
+
+const toLeaf = (summary: ContainerSummary): HierarchyNode => ({
+  id: summary.id,
+  type: summary.type,
+  parentId: summary.parentId,
+  slug: summary.slug,
+  revision: summary.revision,
+  title: summary.title,
+  description: summary.description,
+  active: summary.active,
+  children: [],
+});
+
+/**
+ * What an archived area holds, read on its own, completely or not at all.
+ *
+ * The hierarchy never contains an archived area, so it cannot answer for one. This asks the server
+ * for the area's direct containers with archived ones included - everything inside an archived area is
+ * archived with it - and holds the answer to the same standard `assemble` holds the tree: a row that
+ * could not be one of this area's children ends the read as inconsistent rather than being dropped.
+ */
+export const fetchChildren = async (
+  list: ListFn,
+  areaId: number,
+  signal?: AbortSignal,
+): Promise<ContainerChildren> => {
+  const items = await fetchPages(
+    list,
+    {
+      scopes: [{ id: areaId }],
+      recursive: false,
+      filter: { type: { $in: [...CONTAINER_TYPES] } },
+      includeArchived: true,
+    },
+    `This area holds more than ${String(MAX_CONTAINERS)} areas and projects, which is more than Raphael reads on a phone in one go.`,
+    signal,
+  );
+  const seen = new Set<number>();
+  const children: ContainerSummary[] = [];
+
+  for (const summary of items) {
+    if (seen.has(summary.id)) {
+      return inconsistent('The same container arrived twice while this area was being read.');
+    }
+    seen.add(summary.id);
+
+    if (!isContainerType(summary.type)) {
+      return inconsistent('Something that is not an area or a project arrived in this area.');
+    }
+    // Also what refuses a project that is not in an area: this area is its only acceptable parent.
+    if (summary.parentId !== areaId) {
+      return inconsistent('A container arrived that is not in this area.');
+    }
+
+    children.push({ ...summary, type: summary.type });
+  }
+
+  const sorted = children.slice().sort(compareNodeOrder).map(toLeaf);
+
+  return {
+    subareas: sorted.filter((child) => child.type === 'area'),
+    projects: sorted.filter((child) => child.type === 'project'),
+  };
+};
 
 /* ------------------------------------------------------------------ reading an assembled tree */
 

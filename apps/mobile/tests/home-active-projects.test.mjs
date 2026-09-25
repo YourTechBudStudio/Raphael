@@ -38,6 +38,7 @@ const { useCaptureOwner } = await import('../src/modules/capture/client/owner.ts
 const { useEditOwner } = await import('../src/modules/capture/client/edit-owner.ts');
 const { useConnectionStore } = await import('../src/modules/connection/state/connection.ts');
 const { queryClient } = await import('../src/infrastructure/query/query-client.ts');
+const { invalidateActivation } = await import('../src/infrastructure/query/invalidate.ts');
 
 // `gcTime: 0` on mutations matters as much as on queries here: a settled mutation otherwise holds a
 // five-minute collection timer, and the test process stays alive for it.
@@ -121,8 +122,11 @@ const classify = (call) => {
  */
 const deferredTransport = () => {
   const waiting = [];
+  const asked = [];
 
   return {
+    /** Everything asked for so far, in order, as `{ what, body }`. */
+    asked,
     settle: (what, answer) => {
       const index = waiting.findIndex((call) => call.what === what);
       if (index === -1) throw new Error(`nothing in flight for ${what}`);
@@ -133,6 +137,7 @@ const deferredTransport = () => {
       timeoutMs: 1000,
       invoke: (call) =>
         new Promise((resolve) => {
+          asked.push({ what: classify(call), body: call.body });
           waiting.push({ what: classify(call), resolve });
         }),
     },
@@ -378,6 +383,52 @@ describe('a toggle from a card', () => {
       assert.ok(screen.text().includes('The most recent check did not reach the server'));
       // No sentence of its own beside the banner: one explanation of one failure is enough.
       assert.ok(!screen.text().includes('Active status did not update'));
+    } finally {
+      screen.unmount();
+    }
+  });
+});
+
+describe('an archived project', () => {
+  it('leaves the list without its selection being touched, and returns after restore', async () => {
+    const screen = await homeWith(CONTAINERS);
+
+    try {
+      // Home reads the hierarchy with the server's default, which leaves archived containers out.
+      const traversals = () => server.asked.filter((call) => call.what === TRAVERSAL);
+      assert.ok(traversals().every((call) => call.body.includeArchived !== true));
+
+      // Backend is archived elsewhere; the broad re-read an archive triggers asks again.
+      await flush(() => {
+        void invalidateActivation(queryClient, 1);
+      });
+      await flush(() => {
+        server.settle(
+          TRAVERSAL,
+          listed(CONTAINERS.filter((container) => container.title !== 'Backend')),
+        );
+      });
+
+      assert.deepEqual(
+        screen.titles().map((title) => title.replace(/\s+/g, ' ').trim()),
+        ['Kitchen'],
+      );
+      // Archiving clears nothing: no write to the selection went out from the phone.
+      assert.ok(!server.asked.some((call) => call.what === WRITE));
+
+      // Restored, it comes back still selected, because `active` was never cleared.
+      await flush(() => {
+        void invalidateActivation(queryClient, 1);
+      });
+      await flush(() => {
+        server.settle(TRAVERSAL, listed(CONTAINERS));
+      });
+
+      assert.deepEqual(
+        screen.titles().map((title) => title.replace(/\s+/g, ' ').trim()),
+        ['Backend', 'Kitchen'],
+      );
+      assert.ok(!server.asked.some((call) => call.what === WRITE));
     } finally {
       screen.unmount();
     }

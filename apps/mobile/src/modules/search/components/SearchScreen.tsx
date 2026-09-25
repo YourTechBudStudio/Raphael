@@ -17,12 +17,18 @@ import {
   Chip,
   emblemFor,
   IconButton,
+  PressableFeedback,
   Screen,
   SearchField,
   SectionError,
   SectionHeading,
 } from '../../../ui';
 import { CollectionTile, containerTitleLookup, useHierarchy } from '../../collections';
+import {
+  ARCHIVED_LEFT_OUT_SENTENCE,
+  INCLUDE_ARCHIVED_HINT,
+  INCLUDE_ARCHIVED_LABEL,
+} from '../../lifecycle';
 import { goBack, leaveSearchFor, leaveSearchForNote } from '../../navigation';
 import { NoteGrid } from '../../resources';
 import type {
@@ -118,6 +124,7 @@ function ContainerSection({
           description={item.description}
           emblem={emblemFor(item.ref.type, item.ref.id)}
           key={item.ref.id}
+          archived={item.archived}
           name={item.title}
           onPress={() => {
             leaveSearchFor(item.ref);
@@ -125,6 +132,30 @@ function ContainerSection({
           waveSeed={index}
         />
       ))}
+    </View>
+  );
+}
+
+/**
+ * The end of the results when the server says an archived node matched and was left out. Shown only
+ * then, so pressing its button always adds something: Search is the only way back to archived
+ * material on the phone, and someone who forgot the filter still learns something is hidden.
+ */
+function ArchivedLeftOut({ onInclude }: { onInclude: () => void }) {
+  return (
+    <View className="gap-1" testID="archived-left-out">
+      <Line>{ARCHIVED_LEFT_OUT_SENTENCE}</Line>
+      <PressableFeedback
+        accessibilityHint={INCLUDE_ARCHIVED_HINT}
+        accessibilityLabel={INCLUDE_ARCHIVED_LABEL}
+        accessibilityRole="button"
+        className="min-h-11 justify-center self-start pr-2"
+        onPress={onInclude}
+        testID="include-archived-inline"
+        treatment="button"
+      >
+        <Text className="font-body-medium text-[15px] text-primary">{INCLUDE_ARCHIVED_LABEL}</Text>
+      </PressableFeedback>
     </View>
   );
 }
@@ -151,6 +182,7 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
   const [debounced, setDebounced] = useState('');
   const [type, setType] = useState<SearchTypeFilter>('all');
   const [tags, setTags] = useState<readonly string[]>([]);
+  const [includeArchived, setIncludeArchived] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Local to this search, and deliberately not a rewrite of the route parameters: someone who
   // clears a gone scope has widened *this* search, not moved themselves in the hierarchy, so
@@ -171,8 +203,8 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
   const query = debounced.trim();
 
   const descriptor = useMemo(
-    (): SearchDescriptor => ({ scope: effectiveScope, query, type, tags }),
-    [effectiveScope, query, type, tags],
+    (): SearchDescriptor => ({ scope: effectiveScope, query, type, tags, includeArchived }),
+    [effectiveScope, query, type, tags, includeArchived],
   );
 
   const { view, refresh, isRefreshing } = useSearchResults(descriptor);
@@ -188,7 +220,17 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
         ? `Search in this ${effectiveScope.type}`
         : `Search in ${scopeTitle}`;
 
-  const filterActive = type !== 'all' || tags.length > 0;
+  const filterActive = type !== 'all' || tags.length > 0 || includeArchived;
+  // Checked against the filter as well as the page, so a reading taken before it was turned on can
+  // never offer to turn it on again.
+  const leftOut =
+    !includeArchived && view.archivedLeftOut ? (
+      <ArchivedLeftOut
+        onInclude={() => {
+          setIncludeArchived(true);
+        }}
+      />
+    ) : null;
   // A gone scope is only a sentence someone can act on while there is a scope to name and clear.
   // Reported against the root it would be an ordinary failed search, so it is drawn as one.
   const scopeGone = view.isScopeGone && effectiveScope !== null;
@@ -221,7 +263,7 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
           />
           {/* Fills violet while a filter is narrowing the search, so the header says so. */}
           <IconButton
-            accessibilityHint="Opens type and tag filters"
+            accessibilityHint="Opens type, archive and tag filters"
             filled={filterActive}
             icon={SlidersHorizontal}
             label={filterActive ? 'Filters, active' : 'Filters'}
@@ -269,11 +311,14 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
         ) : view.isEmpty ? (
           // The filters are named when any are on. "Nothing matches" on its own is a claim about
           // everything they have, and it would be false about the half this search excluded.
-          <Line>
-            {filterActive
-              ? `Nothing matches “${query}” with these filters.`
-              : `Nothing matches “${query}”.`}
-          </Line>
+          <View className="gap-4">
+            <Line>
+              {filterActive
+                ? `Nothing matches “${query}” with these filters.`
+                : `Nothing matches “${query}”.`}
+            </Line>
+            {leftOut}
+          </View>
         ) : hasResults ? (
           <View className="gap-4">
             <View className="gap-7">
@@ -289,6 +334,7 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
                   <NoteGrid
                     items={groups.notes}
                     locationFor={titleOf}
+                    markArchived
                     onOpen={leaveSearchForNote}
                   />
                 </View>
@@ -297,6 +343,7 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
             {view.isCapped ? (
               <Line>{`Showing the first ${String(SEARCH_LIMIT)}. Narrow the search to see the rest.`}</Line>
             ) : null}
+            {leftOut}
           </View>
         ) : null}
 
@@ -311,9 +358,11 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
       </View>
 
       <FilterSheet
+        includeArchived={includeArchived}
         onClose={() => {
           setFiltersOpen(false);
         }}
+        onIncludeArchived={setIncludeArchived}
         onTags={setTags}
         onType={setType}
         rejection={view.invalid?.source === 'tags' ? view.invalid.rejection : undefined}

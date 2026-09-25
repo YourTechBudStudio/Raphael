@@ -20,6 +20,8 @@ export interface NoteSummaryItem {
   readonly revision: number;
   /** The container the note sits in. Presentation looks its title up; nothing stores it. */
   readonly parentId: number;
+  /** Effectively archived, as the server computed it. Only Search draws it, with the pill. */
+  readonly archived: boolean;
 }
 
 /**
@@ -45,5 +47,6 @@ export const toNoteSummaryItem = (summary: NodeSummary): NoteSummaryItem | null 
     slug: summary.slug,
     revision: summary.revision,
     parentId: summary.parentId,
+    archived: summary.archived,
   };
 };

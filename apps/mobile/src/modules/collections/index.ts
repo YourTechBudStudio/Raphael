@@ -18,6 +18,7 @@ export {
   invalidateHierarchy,
   invalidatePaths,
   useContainer,
+  useContainerArchived,
 } from './client/queries';
 // The read-only hierarchy is published by `hierarchy.ts` as well, so a capability that needs only
 // that much can take it without depending on the screens this file also publishes. Re-exported here

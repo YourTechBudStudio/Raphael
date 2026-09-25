@@ -288,7 +288,7 @@ describe('a note the CLI wrote, read by the phone', () => {
 
       const inside = await allPages(
         client,
-        notePagesOptions(1, transport, (skip) => containerDescriptor(WORK.id, skip), true),
+        notePagesOptions(1, transport, (skip) => containerDescriptor(WORK.id, skip, false), true),
       );
       const insideTitles = inside.flatMap((page) => page.items.map((item) => item.title));
       for (const title of titles) {

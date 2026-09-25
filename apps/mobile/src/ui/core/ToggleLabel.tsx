@@ -24,6 +24,14 @@ export interface ToggleLabelProps {
    * press should say why rather than only that they cannot.
    */
   disabled?: boolean | undefined;
+  /**
+   * The control stays where it is but cannot be used, and this says why; it becomes the spoken hint.
+   *
+   * Distinct from `disabled`, which means a change is in flight: this draws no busy ring and is not
+   * announced as busy, and the mark keeps showing the saved state. Used while a container is archived,
+   * so nothing in the row moves and pressing the same spot again still reaches Archive.
+   */
+  unavailable?: string | undefined;
   className?: string | undefined;
   style?: StyleProp<ViewStyle> | undefined;
   testID?: string | undefined;
@@ -48,22 +56,30 @@ export function ToggleLabel({
   accessibilityLabel,
   accessibilityHint,
   disabled = false,
+  unavailable,
   className,
   style,
   testID,
 }: ToggleLabelProps) {
+  const off = unavailable !== undefined;
+
   return (
     <Pressable
-      accessibilityHint={accessibilityHint}
+      accessibilityHint={off ? unavailable : accessibilityHint}
       accessibilityLabel={accessibilityLabel}
       accessibilityRole="button"
-      accessibilityState={{ busy: disabled, checked: selected, disabled, selected }}
+      accessibilityState={{
+        busy: disabled && !off,
+        checked: selected,
+        disabled: disabled || off,
+        selected,
+      }}
       className={[
         'flex-row items-center gap-1 pr-2',
-        disabled ? 'opacity-60' : '',
+        off ? 'opacity-40' : disabled ? 'opacity-60' : '',
         className ?? '',
       ].join(' ')}
-      disabled={disabled}
+      disabled={disabled || off}
       hitSlop={8}
       onPress={onToggle}
       style={style}
@@ -76,7 +92,7 @@ export function ToggleLabel({
           path={mark.path}
           selected={selected}
         />
-        {disabled ? <BusyRing size={TARGET} /> : null}
+        {disabled && !off ? <BusyRing size={TARGET} /> : null}
       </View>
       <Text
         className={['font-body text-[15px]', selected ? 'text-ink' : 'text-ink-soft'].join(' ')}

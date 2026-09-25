@@ -102,6 +102,11 @@ export interface LocationTopBarProps {
    * left to suggest - a note - is what the capture pair on the same screen already does.
    */
   onAdd?: (() => void) | undefined;
+  /**
+   * The plus stays in place but cannot be used, and this says why; it becomes the spoken hint. Only
+   * meaningful with `onAdd`: the chip keeps the width it has beside a plus, so nothing moves.
+   */
+  addUnavailable?: string | undefined;
   testID?: string | undefined;
 }
 
@@ -119,6 +124,7 @@ export function LocationTopBar({
   onOpenBrowse,
   onSearch,
   onAdd,
+  addUnavailable,
   testID,
 }: LocationTopBarProps) {
   const label = formatPath(path);
@@ -142,8 +148,9 @@ export function LocationTopBar({
       <IconButton icon={Search} label="Search" onPress={onSearch} />
       {onAdd === undefined ? null : (
         <IconButton
-          accessibilityHint="Adds an area or a project inside this one"
+          accessibilityHint={addUnavailable ?? 'Adds an area or a project inside this one'}
           className="bg-primary-soft"
+          disabled={addUnavailable !== undefined}
           icon={Plus}
           label="Add"
           onPress={onAdd}

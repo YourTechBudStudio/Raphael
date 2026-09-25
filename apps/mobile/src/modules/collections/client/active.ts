@@ -1,4 +1,5 @@
 import { update } from '@raphael/client/nodes';
+import type { RecoveryDetails } from '@raphael/contracts';
 import { useMutation, useMutationState, useQueryClient } from '@tanstack/react-query';
 
 import { asClientFailure, unwrap } from '../../../infrastructure/query/failure';
@@ -50,7 +51,11 @@ export interface ActiveTarget {
   readonly active: boolean;
 }
 
-export type ActiveFailure = 'conflict' | 'failed' | null;
+/**
+ * `archived` is the server refusing because the project, or an area above it, was archived elsewhere
+ * while this screen showed it active. `failureDetails` carries what it is worded from.
+ */
+export type ActiveFailure = 'conflict' | 'failed' | 'archived' | null;
 
 export interface ProjectActive {
   /** Pending intent for this id, else the state the caller read. */
@@ -75,6 +80,8 @@ export interface ProjectActive {
    * when the control came back.
    */
   readonly failure: ActiveFailure;
+  /** The server's details for that refusal, or null with no failure. */
+  readonly failureDetails: RecoveryDetails | null;
 }
 
 /**
@@ -157,15 +164,23 @@ export function useProjectActive(): ProjectActive {
     // server saying "the row moved" looks like. Mutations do not retry (`query-client.ts`), so a
     // definite refusal is reported once.
     failure: failureOf(mutation.error),
+    failureDetails: detailsOf(mutation.error),
   };
 }
+
+const detailsOf = (error: unknown): RecoveryDetails | null => {
+  const failure = asClientFailure(error);
+
+  return failure?.kind === 'api_error' ? failure.details : null;
+};
 
 const failureOf = (error: unknown): ActiveFailure => {
   if (error === null || error === undefined) return null;
 
   const failure = asClientFailure(error);
 
-  return failure?.kind === 'api_error' && failure.error.code === 'revision_conflict'
-    ? 'conflict'
-    : 'failed';
+  if (failure?.kind !== 'api_error') return 'failed';
+  if (failure.error.code === 'revision_conflict') return 'conflict';
+
+  return failure.error.code === 'node_archived' ? 'archived' : 'failed';
 };

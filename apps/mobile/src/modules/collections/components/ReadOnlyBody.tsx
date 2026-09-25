@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Text, View } from 'react-native';
 
 import type { ContainerType } from '../../../infrastructure/api/contracts';
@@ -10,6 +11,8 @@ export interface ReadOnlyBodyProps {
   body: string;
   /** Which kind of container this is. It becomes the word in "About this …". */
   kind: ContainerType;
+  /** Drawn at the end of the heading row: the container's Edit action. */
+  action?: ReactNode;
 }
 
 /**
@@ -19,9 +22,8 @@ export interface ReadOnlyBodyProps {
  * kinds of fact and are not - both are prose someone wrote about this container. Together they are
  * one section, and moving the summary down is what lets the header hold identity alone.
  *
- * It follows that this renders whenever *either* exists. Keying it on the body alone, as it once
- * did, would now drop the summary of a container that has one and no body - which is most of them
- * early on.
+ * The heading always renders, and says so when there is no prose yet. Edit sits at the end of the
+ * heading row, so a section that disappeared with the prose would take the way to write some with it.
  *
  * Markdown source is presented as source rather than rendered: a heading marker or a list dash
  * stays visible. This is the safe representation for a body the app cannot edit yet, and it is
@@ -31,19 +33,25 @@ export interface ReadOnlyBodyProps {
  * It sits flat on the canvas with no card around it. A card says "separate object", and this is the
  * container's own words about itself, not a thing filed inside it.
  */
-export function ReadOnlyBody({ description, body, kind }: ReadOnlyBodyProps) {
+export function ReadOnlyBody({ description, body, kind, action }: ReadOnlyBodyProps) {
   const paragraphs = [description, ...body.split(/\n{2,}/)]
     .map((paragraph) => paragraph.trim())
     .filter((paragraph) => paragraph !== '');
 
-  if (paragraphs.length === 0) {
-    return null;
-  }
-
   return (
     <View className="mt-8 gap-4">
-      <SectionHeading>{`About this ${kind}`}</SectionHeading>
+      <View className="flex-row items-center">
+        <View className="flex-1">
+          <SectionHeading>{`About this ${kind}`}</SectionHeading>
+        </View>
+        {action}
+      </View>
       <View className="gap-3">
+        {paragraphs.length === 0 ? (
+          <Text className="font-body text-[16px] leading-[24px] text-ink-soft">
+            {`Nothing written about this ${kind} yet.`}
+          </Text>
+        ) : null}
         {paragraphs.map((paragraph, index) => (
           <Text
             className="font-body text-[16px] leading-[24px] text-ink"

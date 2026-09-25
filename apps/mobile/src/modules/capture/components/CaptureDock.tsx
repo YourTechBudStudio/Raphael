@@ -1,5 +1,6 @@
 import { Text } from 'react-native';
 
+import { UNAVAILABLE_WHILE_ARCHIVED_HINT } from '../../lifecycle/copy.ts';
 import { useSheetsStore } from '../../navigation';
 import { useNewNote } from '../client/new-note.ts';
 import { CaptureBar } from './CaptureBar';
@@ -7,6 +8,11 @@ import { CaptureBar } from './CaptureBar';
 export interface CaptureDockProps {
   /** Raised by a notice below it, so nothing covers the pair. */
   lift?: number | undefined;
+  /**
+   * The screen it sits on shows an archived container. The pair stays in place and is unavailable:
+   * the server refuses filing into it, and removing the pair would move what is under a thumb.
+   */
+  unavailable?: boolean | undefined;
   testID?: string | undefined;
 }
 
@@ -21,7 +27,7 @@ export interface CaptureDockProps {
  * pointing one way: capture reads the hierarchy to name a destination, and nothing in collections
  * needs to know that capture exists.
  */
-export function CaptureDock({ lift, testID }: CaptureDockProps) {
+export function CaptureDock({ lift, unavailable = false, testID }: CaptureDockProps) {
   const newNote = useNewNote();
   const openVoiceCapture = useSheetsStore((state) => state.openVoiceCapture);
 
@@ -41,6 +47,7 @@ export function CaptureDock({ lift, testID }: CaptureDockProps) {
         onNewNote={newNote.start}
         onVoice={openVoiceCapture}
         testID={testID}
+        unavailable={unavailable ? UNAVAILABLE_WHILE_ARCHIVED_HINT : undefined}
       />
     </>
   );

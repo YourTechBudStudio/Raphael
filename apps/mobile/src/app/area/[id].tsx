@@ -2,7 +2,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { View } from 'react-native';
 
 import { CaptureDock } from '../../modules/capture';
-import { AreaScreen } from '../../modules/collections';
+import { AreaScreen, useContainerArchived } from '../../modules/collections';
 import { parseNodeId } from '../../modules/navigation';
 
 /**
@@ -14,11 +14,14 @@ import { parseNodeId } from '../../modules/navigation';
  */
 export default function AreaRoute() {
   const { id } = useLocalSearchParams<{ id?: string }>();
+  const areaId = parseNodeId(id);
+  // The same Get the screen makes, so this asks nothing of its own.
+  const archived = useContainerArchived(areaId === null ? null : { type: 'area', id: areaId });
 
   return (
     <View className="flex-1">
-      <AreaScreen areaId={parseNodeId(id)} />
-      <CaptureDock />
+      <AreaScreen areaId={areaId} />
+      <CaptureDock unavailable={archived === true} />
     </View>
   );
 }

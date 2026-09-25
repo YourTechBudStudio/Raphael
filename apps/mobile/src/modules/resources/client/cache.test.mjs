@@ -20,7 +20,10 @@ const seeded = () => {
   const client = new QueryClient();
 
   client.setQueryData(noteListKey(1, feedDescriptor(0)), { pages: [], pageParams: [] });
-  client.setQueryData(noteListKey(1, containerDescriptor(7, 0)), { pages: [], pageParams: [] });
+  client.setQueryData(noteListKey(1, containerDescriptor(7, 0, false)), {
+    pages: [],
+    pageParams: [],
+  });
   client.setQueryData(noteListKey(2, feedDescriptor(0)), { pages: [], pageParams: [] });
   client.setQueryData(MEDIA_KEY(1), []);
   client.setQueryData(scopeKey(1, 'hierarchy'), { roots: [] });
@@ -41,7 +44,7 @@ describe('invalidating the notes this connection read', () => {
     const stale = staleKeys(client);
 
     assert.ok(stale.includes(JSON.stringify(noteListKey(1, feedDescriptor(0)))));
-    assert.ok(stale.includes(JSON.stringify(noteListKey(1, containerDescriptor(7, 0)))));
+    assert.ok(stale.includes(JSON.stringify(noteListKey(1, containerDescriptor(7, 0, false)))));
   });
 
   it('leaves another connection’s notes alone', async () => {
