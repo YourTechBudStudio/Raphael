@@ -1,5 +1,7 @@
 export { ActiveButton } from './ActiveButton';
 export { AnimatedSurface } from './animated-surface';
+export { BloomIcon, type BloomIconProps } from './BloomIcon';
+export { BusyRing, type BusyRingProps } from './BusyRing';
 export { Card, type CardProps, type CardVariant } from './Card';
 export { SearchField, type SearchFieldProps } from './SearchField';
 export { Chip, type ChipProps } from './Chip';
@@ -17,7 +19,7 @@ export { EmptyState, type EmptyStateProps } from './EmptyState';
 export { GrowingTextInput, type GrowingTextInputProps } from './GrowingTextInput';
 export { FavoriteButton, type FavoriteButtonProps } from './FavoriteButton';
 export { ToggleLabel, type ToggleLabelProps } from './ToggleLabel';
-export { ACTIVE_MARK, FAVORITE_MARK, type ToggleMark } from './toggle-marks';
+export { ACTIVE_MARK, ARCHIVE_MARK, FAVORITE_MARK, type ToggleMark } from './toggle-marks';
 export { IconButton, type IconButtonProps } from './IconButton';
 
 export { PressableFeedback, type PressableFeedbackProps } from './PressableFeedback';

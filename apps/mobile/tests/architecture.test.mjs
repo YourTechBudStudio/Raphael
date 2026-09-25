@@ -20,7 +20,7 @@ function resolveImport(source, specifier) {
  * The files a module publishes. `index.ts` everywhere, plus the declared exceptions below.
  *
  * A second entry point exists to stop one door forcing a dependency that has nothing to do with what
- * is being asked for. There are exactly two reasons on this list.
+ * is being asked for. There are exactly two reasons on this list, and three entries.
  *
  * `collections/hierarchy.ts` breaks an import cycle. `collections/index.ts` publishes the Area and
  * Project screens, and those screens render the resources capability's note sections. A note screen
@@ -34,6 +34,10 @@ function resolveImport(source, specifier) {
  * presentation, and runs in Node under its own unit tests, where reaching the renderer half is
  * impossible rather than merely heavy.
  *
+ * `lifecycle/copy.ts` is the same reason again. `lifecycle/index.ts` publishes the Archive toggle, a
+ * React Native component; capture's `edit-composer.ts` words a `node_archived` refusal through the
+ * one sentence table, and runs in Node under its own unit tests.
+ *
  * Both exceptions are narrow by construction and are checked below: a declared entry point must not
  * reach the capability that depends on it. Adding one for convenience, rather than for a reason of
  * this kind, is what this list exists to make visible.
@@ -41,6 +45,7 @@ function resolveImport(source, specifier) {
 const ENTRY_POINTS = new Map([
   ['collections', ['index.ts', 'hierarchy.ts']],
   ['resources', ['index.ts', 'summary.ts']],
+  ['lifecycle', ['index.ts', 'copy.ts']],
 ]);
 
 const entryPointsOf = (module) => ENTRY_POINTS.get(module) ?? ['index.ts'];
@@ -368,7 +373,7 @@ test('no container-attempt surface survives', () => {
  * ordinary import in a screen nobody thinks of as shared.
  */
 test('the capabilities capture depends on do not depend on capture', () => {
-  for (const module of ['browse', 'collections', 'resources', 'editor']) {
+  for (const module of ['browse', 'collections', 'resources', 'editor', 'lifecycle']) {
     const entry = path.join('modules', module, 'index.ts');
     const reached = [...reachable(entry)].filter((file) =>
       file.startsWith(path.join('modules', 'capture') + path.sep),
@@ -376,6 +381,24 @@ test('the capabilities capture depends on do not depend on capture', () => {
 
     assert.deepEqual(reached, [], `${entry} reaches capture, so the dependency is a cycle`);
   }
+});
+
+/**
+ * Lifecycle is read by the screens, never the other way round.
+ *
+ * Capture, collections, resources and search all draw lifecycle's toggle and words. If lifecycle
+ * reached any of them the words would stop having one owner - and the collections screens that import
+ * it would close a cycle. Broad invalidation lives in `infrastructure/query` for the same reason.
+ */
+test('lifecycle does not reach the screens that use it', () => {
+  const entry = path.join('modules', 'lifecycle', 'index.ts');
+  const reached = [...reachable(entry)].filter((file) =>
+    ['capture', 'collections', 'resources', 'search'].some((module) =>
+      file.startsWith(path.join('modules', module) + path.sep),
+    ),
+  );
+
+  assert.deepEqual(reached, [], `${entry} reaches a module that depends on it`);
 });
 
 /**
@@ -428,6 +451,13 @@ test('no throwaway mock surface survives', () => {
       'app/mocks',
       "'/mocks/",
       'Temporary: move mock',
+      // Story #8's archive mock: the invented note, container and search screens, their route and the
+      // Settings door to it. The real screens replaced them; `ARCHIVE_MARK` and the top bar's
+      // `statusTrailing` slot are what survived, as production code.
+      'mock-archive',
+      'archive-mock',
+      'ArchiveMock',
+      'Temporary: archive mock',
     ]) {
       assert.ok(!source.includes(name), `${file}: still reaches the retired mock surface ${name}`);
     }
@@ -443,6 +473,14 @@ test('no throwaway mock surface survives', () => {
   assert.ok(
     !existsSync(path.join(root, 'modules', 'capture', 'components', 'move-mock')),
     'the move mock components are gone',
+  );
+  assert.ok(
+    !existsSync(path.join(root, 'app', 'mock-archive.tsx')),
+    'the archive mock route is gone',
+  );
+  assert.ok(
+    !existsSync(path.join(root, 'modules', 'capture', 'components', 'archive-mock')),
+    'the archive mock components are gone',
   );
 });
 

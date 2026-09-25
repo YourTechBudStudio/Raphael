@@ -130,6 +130,7 @@ export const ScrollView = passThrough('div', 'data-scrollview');
  */
 export const TextInput = function TextInput({
   children,
+  editable,
   multiline,
   onChangeText,
   onSubmitEditing,
@@ -146,6 +147,8 @@ export const TextInput = function TextInput({
     {
       'data-textinput': true,
       ...toDomProps(rest),
+      // A field that takes no writing is one a test has to be able to tell apart.
+      ...(editable === false ? { readOnly: true } : {}),
       ...(flattened.maxHeight === undefined ? {} : { 'data-max-height': flattened.maxHeight }),
       value: value ?? '',
       onChange:

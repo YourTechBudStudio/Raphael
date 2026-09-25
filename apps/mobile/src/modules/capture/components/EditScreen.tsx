@@ -22,23 +22,50 @@ import type {
   EditorSelectionState,
   EditorSnapshot,
 } from '../../editor';
+import {
+  archivedAlongside,
+  briefOutcome,
+  lifecycleView,
+  outcomeSentence,
+  readOnlyDetailsSubtitle,
+  statusSentence,
+  type LifecycleVerb,
+  type LifecycleView,
+} from '../../lifecycle';
 import { goBack, openHome } from '../../navigation';
 import { useBackgroundFlush } from '../client/background.ts';
-import { useEditLocation, useEditOwner } from '../client/edit-owner.ts';
+import {
+  useEditContentEpoch,
+  useEditLifecycle,
+  useEditLocation,
+  useEditOwner,
+} from '../client/edit-owner.ts';
 import { useCaptureSession } from '../client/owner.ts';
-import { problemFor, type ProtectionProblem } from '../composer.ts';
+import {
+  problemFor,
+  type ComposerStatus as StatusLine,
+  type ProtectionProblem,
+} from '../composer.ts';
 import {
   EDIT_PROBLEM_COPY,
   MOVE_ROOT_LABEL,
   detailsChip,
   editComposerView,
+  editKindWord,
   idLabelOf,
+  lifecycleBesideKept,
+  lifecycleNotSentSentence,
   moveControl,
   movedNotice,
   movedNoticeHolds,
 } from '../edit-composer.ts';
 import { isFatalEditorProblem, unavailableReasonOf } from '../edit-display.ts';
-import type { EditLocation, EditOpenOutcome } from '../edit-owner.ts';
+import type {
+  EditLifecycle,
+  EditLocation,
+  EditOpenOutcome,
+  LifecycleOutcome,
+} from '../edit-owner.ts';
 import { editKeyOf, type EditProblem } from '../edit-types.ts';
 import type { AttachmentToken, CaptureSession } from '../owner.ts';
 import { DetailsSheet } from './DetailsSheet';
@@ -63,8 +90,12 @@ export interface EditScreenProps {
  *
  * **It mounts no query for the entity it edits.** The owner's own Get is the read; the one query here
  * is the shared hierarchy, behind the eyebrow that names where this is filed - and that eyebrow is the
- * one Move control, opening the move sheet. There is no read-only mode and no Save on an existing
- * entity - autosave, and the status line beside the close cross says where the writing stands.
+ * one Move control, opening the move sheet. There is no Save on an existing entity - autosave, and
+ * the status line beside the close cross says where the writing stands.
+ *
+ * An archived entity opens read-only in the same layout, and the status line says why. Read-only is a
+ * screen mode over the causes the owner holds, never a standing of the writing; the Archive toggle at
+ * the end of the top bar is live in every standing.
  */
 export function EditScreen({ id }: EditScreenProps) {
   const session = useCaptureSession();
@@ -132,14 +163,159 @@ export function EditScreen({ id }: EditScreenProps) {
     return <Retained editKey={outcome.editKey} onDiscarded={reopen} problem={outcome.problem} />;
   }
 
-  // Keyed on the record, so the composer's own state - the fields, the captured document, the sheet -
-  // belongs to one entity and cannot be carried into another.
   return (
-    <Composer
+    <Opened
       editKey={outcome.editKey}
+      initialLifecycle={outcome.lifecycle}
       initialLocation={outcome.location}
       key={outcome.editKey}
+      nodeId={id}
       onDiscarded={reopen}
+      session={session}
+    />
+  );
+}
+
+/**
+ * What an archive or restore is doing, held above the composer's key.
+ *
+ * The composer remounts when the mode flips and when the owner adopts content under it, and both can
+ * become due while an action is still running. What the action says belongs to the screen, not to one
+ * mount of it, so it lives here.
+ */
+interface LifecycleSession {
+  readonly view: LifecycleView | null;
+  readonly readOnly: boolean;
+  readonly pending: LifecycleVerb | null;
+  /** The last action's outcome, until the next action or edit. */
+  readonly said: StatusLine | null;
+  /** The same outcome in a few words, when it failed, for beside a save status that outranks it. */
+  readonly brief: string | null;
+  begin(verb: LifecycleVerb): void;
+  /** The action never started: the flush did not land, and the screen says that instead. */
+  abandon(): void;
+  /**
+   * The action answered. `release` gives back the lock it took, and runs only once the screen has
+   * rendered the answer - after any remount it made due, so no editable composer shows in between.
+   */
+  finish(verb: LifecycleVerb, outcome: LifecycleOutcome, release: () => void): void;
+  /** An edit was made, so the last action's sentence no longer describes the screen. */
+  clear(): void;
+}
+
+/** A not-sent reason or an outcome, as the one line the status shows after an action. */
+const lifecycleLine = (
+  verb: LifecycleVerb,
+  outcome: LifecycleOutcome,
+  nodeId: number,
+): StatusLine | null => {
+  if (outcome.kind === 'not_sent') {
+    return { text: lifecycleNotSentSentence(verb, outcome.reason), tone: 'alert' };
+  }
+
+  const text = outcomeSentence(verb, outcome, nodeId);
+
+  return text === null ? null : { text, tone: outcome.kind === 'done' ? 'quiet' : 'alert' };
+};
+
+/**
+ * One opened record: its lifecycle, and the composer keyed on everything that must remount it.
+ *
+ * Keyed on the record, so the composer's own state - the fields, the captured document, the sheet -
+ * belongs to one entity and cannot be carried into another. Keyed on the mode as well, because the
+ * renderer reads whether it is editable only when it is created: remounting is how it becomes
+ * read-only after Archive and editable after Restore or a move out. And keyed on the content epoch,
+ * because a composer holds the document it first rendered, and content the owner adopted from the
+ * server underneath it must be what the next keystroke is written against.
+ *
+ * **Never while an action runs.** An action holds the edit lock on the composer it started from, and
+ * a remount would drop that lock and put an editable replacement on screen while the request is in the
+ * air - writing typed there could be lost to the read-only remount the answer then makes. So the key
+ * is held from the press, and whatever remount became due happens once the action has answered; the
+ * lock is given back only after that render, to the composer then on screen or to nobody.
+ */
+function Opened({
+  editKey,
+  nodeId,
+  initialLocation,
+  initialLifecycle,
+  session,
+  onDiscarded,
+}: {
+  editKey: string;
+  nodeId: number;
+  initialLocation: EditLocation;
+  initialLifecycle: EditLifecycle;
+  session: CaptureSession;
+  onDiscarded: () => void;
+}) {
+  const lifecycle = useEditLifecycle(editKey, initialLifecycle);
+  const epoch = useEditContentEpoch(editKey);
+  const [pending, setPending] = useState<LifecycleVerb | null>(null);
+  const [said, setSaid] = useState<StatusLine | null>(null);
+  const [brief, setBrief] = useState<string | null>(null);
+  /** The composer key an action started under, held until it answers. */
+  const [heldKey, setHeldKey] = useState<string | null>(null);
+  /** An answered action's lock, given back once the answer has rendered. */
+  const handedBack = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const release = handedBack.current;
+
+    if (release === null) return;
+    handedBack.current = null;
+    release();
+  });
+  useEffect(
+    () => () => {
+      handedBack.current?.();
+      handedBack.current = null;
+    },
+    [],
+  );
+
+  // An unknown lifecycle - a failed Get - stays editable over local content. The server remains the
+  // authority, and refuses an update to anything archived.
+  const view = lifecycle.kind === 'known' ? lifecycleView(nodeId, lifecycle.archiveCauses) : null;
+  const readOnly = view !== null && view.standing !== 'active';
+  const liveKey = `${editKey}:${readOnly ? 'read-only' : 'editable'}:${String(epoch)}`;
+
+  const actions: LifecycleSession = {
+    view,
+    readOnly,
+    pending,
+    said,
+    brief,
+    begin: (verb) => {
+      setSaid(null);
+      setBrief(null);
+      setPending(verb);
+      setHeldKey(liveKey);
+    },
+    abandon: () => {
+      setPending(null);
+      setHeldKey(null);
+    },
+    finish: (verb, outcome, release) => {
+      handedBack.current = release;
+      setPending(null);
+      setHeldKey(null);
+      setSaid(lifecycleLine(verb, outcome, nodeId));
+      setBrief(outcome.kind === 'done' ? null : briefOutcome(verb, outcome));
+    },
+    clear: () => {
+      setSaid(null);
+      setBrief(null);
+    },
+  };
+
+  return (
+    <Composer
+      editKey={editKey}
+      initialLocation={initialLocation}
+      key={heldKey ?? liveKey}
+      lifecycle={actions}
+      onDiscarded={onDiscarded}
       session={session}
     />
   );
@@ -229,12 +405,14 @@ const useEntityLocation = (location: EditLocation): readonly string[] => {
 function Composer({
   editKey,
   initialLocation,
+  lifecycle,
   session,
   onDiscarded,
 }: {
   editKey: string;
   /** The open's answer, for the first render only. The owner's confirmed location follows it. */
   initialLocation: EditLocation;
+  lifecycle: LifecycleSession;
   session: CaptureSession;
   onDiscarded: () => void;
 }) {
@@ -493,8 +671,78 @@ function Composer({
     pushed.current = next;
     if (fields.title !== undefined) setTitle(fields.title);
     if (fields.description !== undefined) setDescription(fields.description);
+    lifecycle.clear();
     owner.getState().editFields(editKey, fields);
   };
+
+  /**
+   * Archive and Restore take the same lock sequence as opening the move sheet: lock, flush, and act
+   * only on writing that landed on this phone. The owner then sends what can be sent before the
+   * request, pins its revision, and answers. The lock is always given back - harmlessly, if the
+   * composer that took it was remounted meanwhile, since the unmount already dropped it.
+   */
+  const runLifecycle = (verb: LifecycleVerb) => {
+    if (transitioning.current || lifecycle.pending !== null) return;
+    transitioning.current = true;
+    lifecycle.begin(verb);
+
+    void (async () => {
+      const { result, release } = await owner.getState().beginControlledExit(editKey);
+
+      if (result.kind !== 'flushed') {
+        release();
+        transitioning.current = false;
+        lifecycle.abandon();
+        setProtectProblem(problemFor(result));
+
+        return;
+      }
+
+      // The owner's actions always resolve; the lock is held until the answer has rendered.
+      const outcome: LifecycleOutcome = await (verb === 'archive'
+        ? owner.getState().archive(editKey)
+        : owner.getState().restore(editKey));
+
+      lifecycle.finish(verb, outcome, () => {
+        release();
+        transitioning.current = false;
+      });
+    })();
+  };
+
+  /**
+   * What the status line says instead of the save status, or null to leave the save status standing.
+   *
+   * In order: the request running; then writing that is not on the server, which outranks everything
+   * else a lifecycle action could say, because it is the one fact about this person's work that
+   * nothing else on a read-only screen would show - so the save status stays, marked as archived
+   * where it is, or, after a failed action, that action in a few words and that the writing is kept
+   * here - short enough that neither is cut off; then what the last action
+   * came to, in full; then, while archived, why nothing can change.
+   * An outcome that claims to show what the server holds is therefore only ever said over a record
+   * whose content is the server's.
+   */
+  const lifecycleStatus = ((): StatusLine | null => {
+    const running = statusSentence(lifecycle.view, lifecycle.pending);
+
+    if (lifecycle.pending !== null && running !== null) return { text: running, tone: 'quiet' };
+    if (view.problem !== null || standing.kind !== 'synced') {
+      // A failed action is still said, briefly and first, so it cannot pass in silence - unless the
+      // writing is not even safe on this phone, which outranks everything, as it does everywhere.
+      if (lifecycle.brief !== null && view.problem === null) {
+        return { text: lifecycleBesideKept(lifecycle.brief), tone: 'alert' };
+      }
+
+      return lifecycle.readOnly
+        ? { text: archivedAlongside(view.status.text), tone: view.status.tone }
+        : null;
+    }
+    if (lifecycle.said !== null) return lifecycle.said;
+
+    const why = lifecycle.readOnly ? statusSentence(lifecycle.view, null) : null;
+
+    return why === null ? null : { text: why, tone: 'quiet' };
+  })();
 
   const repair = () => {
     void (async () => {
@@ -645,10 +893,25 @@ function Composer({
         documentId={editKey}
         editorRef={port}
         leaving={leaving}
+        lifecycle={{
+          view: lifecycle.view,
+          busy: lifecycle.pending !== null,
+          noun: editKindWord(record.nodeType, record.kind).toLowerCase(),
+          status: lifecycleStatus,
+          onArchive: () => {
+            runLifecycle('archive');
+          },
+          onRestore: () => {
+            runLifecycle('restore');
+          },
+        }}
         location={segments}
         move={(() => {
           const control = moveControl({
             locationKnown: location.kind === 'known',
+            // Archived by a cause of its own, it cannot move until that is restored. Archived only
+            // through a container above, moving somewhere active is exactly the way out.
+            archivedDirectly: lifecycle.view?.standing === 'direct',
             locked: view.locked,
             leaving,
             moveInflight: record.inflight?.kind === 'move',
@@ -676,6 +939,7 @@ function Composer({
         onTitleChange={(value) => {
           edit({ title: value });
         }}
+        readOnly={lifecycle.readOnly}
         selection={selection}
         testID="edit-screen"
         title={title}
@@ -686,7 +950,13 @@ function Composer({
         idLabel={idLabelOf(record.nodeType, record.kind)}
         sessionId={detailsSession}
         onClose={closeDetails}
+        readOnly={
+          lifecycle.readOnly && lifecycle.view !== null
+            ? { subtitle: readOnlyDetailsSubtitle(lifecycle.view) }
+            : null
+        }
         onDone={(details) => {
+          lifecycle.clear();
           // One write, not one per keystroke, so autosave can never send a half-typed ID.
           owner.getState().editFields(editKey, {
             ...(details.slug === null ? {} : { slug: details.slug }),

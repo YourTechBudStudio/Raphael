@@ -22,10 +22,12 @@ import { fileURLToPath } from 'node:url';
 import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
 import { createTransport } from '@raphael/client';
 import {
+  archive as archiveNode,
   create as createNode,
   get as getNode,
   list as listNodes,
   move as moveNode,
+  restore as restoreNode,
   update as updateNode,
 } from '@raphael/client/nodes';
 import { Effect, Exit, Scope } from 'effect';
@@ -259,15 +261,21 @@ export const editOver = async (endpoint, localDbFile, options = {}) => {
     fetch: options.fetch ?? fetch,
   });
   const applied = [];
+  const refreshed = [];
 
   const owner = createEditOwner({
     openStore: async () => openCaptureStore(await openNodeDatabase(localDbFile), () => Date.now()),
     get: (activeTransport, request) => getNode(activeTransport, request),
     update: (activeTransport, request) => updateNode(activeTransport, request),
     move: (activeTransport, request) => moveNode(activeTransport, request),
+    archive: (activeTransport, request) => archiveNode(activeTransport, request),
+    restore: (activeTransport, request) => restoreNode(activeTransport, request),
     now: options.now ?? (() => Date.now()),
     applyUpdate: async (ref, activation) => {
       applied.push({ ref, activation });
+    },
+    applyLifecycle: async (activation) => {
+      refreshed.push(activation);
     },
     sessionIsCurrent: options.sessionIsCurrent ?? ((session) => session.activation === 1),
     autosaveDelayMs: options.autosaveDelayMs ?? 0,
@@ -287,6 +295,7 @@ export const editOver = async (endpoint, localDbFile, options = {}) => {
     transport,
     session,
     applied,
+    refreshed,
     keyFor: (nodeId) => editKeyOf({ connectionId: session.connectionId, nodeId }),
     record: (nodeId) =>
       owner.getState().edits.find((candidate) => candidate.key.nodeId === nodeId) ?? null,

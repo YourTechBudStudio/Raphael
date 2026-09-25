@@ -23,6 +23,7 @@
 import type { ClientFailure } from '@raphael/client';
 import type { NodeType, ResourceKind } from '@raphael/contracts/nodes';
 
+import { archivedRefusalSentence } from '../lifecycle/copy.ts';
 import {
   KEPT_ON_PHONE,
   PROTECTION_COPY,
@@ -33,7 +34,7 @@ import {
   type ProtectionInput,
   type ProtectionProblem,
 } from './composer.ts';
-import type { EditLocation, MoveNotSentReason } from './edit-owner.ts';
+import type { EditLocation, LifecycleNotSentReason, MoveNotSentReason } from './edit-owner.ts';
 import type { EditStanding } from './edit-policy.ts';
 import type { EditProblem, EditRefusal } from './edit-types.ts';
 
@@ -114,6 +115,7 @@ export const detailsChip = (input: {
 const refusalReason = (refusal: EditRefusal, idLabel: string): string => {
   if (refusal.code === 'slug_conflict') return `that ${idLabel} is already used`;
   if (refusal.code === 'node_not_found') return 'it no longer exists on your server';
+  if (refusal.code === 'node_archived') return 'it is archived';
   if (refusal.code === 'unsupported_content') {
     return 'the body has something your server does not support';
   }
@@ -418,16 +420,19 @@ export const movedNoticeHolds = (
  * The eyebrow's Move control, or null where the eyebrow stays a label.
  *
  * Null for an unknown location: a phone that could not read where something is cannot judge a move
- * from there. Disabled while a barrier is settling or the screen is leaving, and while the last move
- * is unanswered, and each says when it comes back.
+ * from there. Null too for an entity archived by a cause of its own, which the server refuses to move
+ * until that is restored; archived only through a container above, it keeps the control, because
+ * moving somewhere active is exactly what undoes that. Disabled while a barrier is settling or the
+ * screen is leaving, and while the last move is unanswered, and each says when it comes back.
  */
 export const moveControl = (input: {
   readonly locationKnown: boolean;
+  readonly archivedDirectly: boolean;
   readonly locked: boolean;
   readonly leaving: boolean;
   readonly moveInflight: boolean;
 }): { readonly disabled: boolean; readonly hint: string } | null => {
-  if (!input.locationKnown) return null;
+  if (!input.locationKnown || input.archivedDirectly) return null;
   if (input.moveInflight) return { disabled: true, hint: MOVE_UNCONFIRMED_HINT };
   if (input.locked || input.leaving) return { disabled: true, hint: MOVE_LOCKED_HINT };
 
@@ -459,6 +464,37 @@ export const moveNotSentSentence = (reason: MoveNotSentReason): string => {
 };
 
 /**
+ * A failed archive or restore beside writing that is not on the server, in the status line's two
+ * lines. The save status is replaced by the one phrase that matters here - the writing is kept on this
+ * phone - so neither fact can be cut off; the refusal's detail returns once the line clears.
+ */
+export const lifecycleBesideKept = (brief: string): string =>
+  `${brief} · ${KEPT_ON_PHONE.toLowerCase()}`;
+
+/**
+ * Why an archive or restore was not sent, by the owner's reason.
+ *
+ * Only about the request. Nothing here says whether the entity is archived - one archived through a
+ * container above stays archived, and the status line already says so - or whether writing the settle
+ * step sent was saved, which the edit standing reports on its own.
+ */
+export const lifecycleNotSentSentence = (
+  verb: 'archive' | 'restore',
+  reason: LifecycleNotSentReason,
+): string => {
+  switch (reason) {
+    case 'no_session':
+      return `Not connected to your server, so the ${verb} request was not sent.`;
+    case 'unconfirmed':
+      return `The last change has not been confirmed by your server yet, so the ${verb} request was not sent. Try again once it has.`;
+    case 'unsent_writing':
+      return `Your changes need to reach your server first, so the ${verb} request was not sent.`;
+    case 'unread':
+      return `Raphael could not read this from your server, so the ${verb} request was not sent.`;
+  }
+};
+
+/**
  * A definite refusal of a move, from the bounded code and reason vocabulary the client projects.
  *
  * `place` is where the person tapped and `slug` the ID this keeps, which is what a collision is
@@ -481,6 +517,7 @@ export const moveRefusalSentence = (
   if (code === 'slug_conflict') {
     return `Something in ${place} already uses the ${idLabel} “${slug}”. Change this ${idLabel} in Details, then move it.`;
   }
+  if (code === 'node_archived') return archivedRefusalSentence(failure.details);
   if (code === 'node_not_found') {
     // The server says which side is missing, and the advice differs: a missing destination is
     // repaired by choosing another place; a missing target is not something a place can fix.

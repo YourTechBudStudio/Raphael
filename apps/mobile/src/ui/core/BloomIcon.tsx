@@ -49,7 +49,7 @@ function Drop({
   return <AnimatedCircle animatedProps={animatedProps} fill={color} />;
 }
 
-interface BloomIconProps {
+export interface BloomIconProps {
   selected: boolean;
   /** Closed outline in a 24 × 24 view box, used for both the stroke and fill mask. */
   path: string;

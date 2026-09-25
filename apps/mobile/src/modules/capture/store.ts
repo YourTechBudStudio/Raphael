@@ -719,6 +719,26 @@ export interface CaptureStore {
     revision: number,
     at: number,
   ): Promise<EntityEditRecord | null>;
+  /**
+   * The server's revision moved from `from` to `to` through a change that altered no authored content:
+   * only `base_revision` (and `updated_at`) changes.
+   *
+   * **Precondition, which the caller alone can know:** the base content still describes the server at
+   * `to`. That holds for exactly one kind of change - this phone's own archive or restore, sent at a
+   * revision a fresh read showed to be the record's base. Anything else could have changed content,
+   * and adopting its revision would make kept writing overwrite it.
+   *
+   * Unlike `rebaseEdit`, it replaces no content and does not need a settled record: a refused or
+   * conflicted record keeps its writing, its state and its refusal, and the writing then resumes
+   * against the right revision once new writing is accepted. Guarded on `base_revision = from` and
+   * nothing in flight. Like the other writers it returns the row as it stands, matched or not.
+   */
+  advanceEditRevision(
+    key: EditKey,
+    from: number,
+    to: number,
+    at: number,
+  ): Promise<EntityEditRecord | null>;
   /** Guarded on `inflight_version IS NULL AND sync_state = 'syncing'`: one envelope in the air at a time. */
   markEditInflight(
     key: EditKey,
@@ -1318,6 +1338,16 @@ export const createCaptureStore = (db: SqlConnection): CaptureStore => {
           key.connectionId,
           key.nodeId,
         ],
+        key,
+      ),
+
+    advanceEditRevision: (key, from, to, at) =>
+      writeEdit(
+        `UPDATE ${EDITS_TABLE}
+         SET base_revision = ?, updated_at = ?
+         WHERE connection_id = ? AND node_id = ? AND base_revision = ?
+           AND inflight_version IS NULL`,
+        [to, at, key.connectionId, key.nodeId, from],
         key,
       ),
 

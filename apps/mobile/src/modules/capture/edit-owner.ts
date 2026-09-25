@@ -34,8 +34,11 @@
 import type { ClientFailure, ClientResult } from '@raphael/client';
 import {
   isRequestField,
+  type ArchiveCause,
   type GetRequestInput,
   type GetResponse,
+  type LifecycleRequestInput,
+  type LifecycleResponse,
   type MoveRequestInput,
   type MoveResponse,
   type NodeEntity,
@@ -144,8 +147,48 @@ export type MoveOutcome =
   | { readonly kind: 'unconfirmed' }
   | { readonly kind: 'not_sent'; readonly reason: MoveNotSentReason };
 
+/**
+ * What the owner knows about why the entity is archived, if it is.
+ *
+ * Held beside `EditLocation` rather than inside the record's standing: archived is a fact about the
+ * server's entity, not about this phone's writing, so the standings in `edit-policy.ts` stay a pure
+ * statement about writing. `unknown` is a Get that failed; the screen then stays editable over local
+ * content and the server remains the authority.
+ */
+export type EditLifecycle =
+  | { readonly kind: 'known'; readonly archiveCauses: readonly ArchiveCause[] }
+  | { readonly kind: 'unknown' };
+
+/**
+ * Why an archive or restore was never dispatched. Nothing was sent.
+ *
+ * `unconfirmed` is an envelope whose answer is still pending: the one record state that cannot take a
+ * lifecycle action, because what the server holds is not known yet. `unread` is the fresh read that
+ * pins the request's revision failing.
+ */
+export type LifecycleNotSentReason = 'no_session' | 'unconfirmed' | 'unsent_writing' | 'unread';
+
+/**
+ * How an archive or restore ended.
+ *
+ * `done` carries the resulting state from the response, which is what the screen words - a restore
+ * can leave the entity archived through a container above. `reread` on the uncertain outcomes means a
+ * Get after the request succeeded and was adopted, so the screen now shows what the server holds; it
+ * is what lets the wording claim a refresh only when one happened.
+ */
+export type LifecycleOutcome =
+  | { readonly kind: 'done'; readonly archived: boolean; readonly causes: readonly ArchiveCause[] }
+  | { readonly kind: 'refused'; readonly failure: ClientFailure; readonly reread: boolean }
+  | { readonly kind: 'unconfirmed'; readonly reread: boolean }
+  | { readonly kind: 'not_sent'; readonly reason: LifecycleNotSentReason };
+
 export type EditOpenOutcome =
-  | { readonly kind: 'ready'; readonly editKey: string; readonly location: EditLocation }
+  | {
+      readonly kind: 'ready';
+      readonly editKey: string;
+      readonly location: EditLocation;
+      readonly lifecycle: EditLifecycle;
+    }
   /** A retained row this build cannot open. The screen names the problem and offers Discard. */
   | { readonly kind: 'unusable'; readonly editKey: string; readonly problem: EditProblem }
   /**
@@ -160,6 +203,21 @@ export interface EditPorts {
   get(transport: Transport, request: GetRequestInput): Promise<ClientResult<GetResponse>>;
   update(transport: Transport, request: UpdateRequestInput): Promise<ClientResult<UpdateResponse>>;
   move(transport: Transport, request: MoveRequestInput): Promise<ClientResult<MoveResponse>>;
+  archive(
+    transport: Transport,
+    request: LifecycleRequestInput,
+  ): Promise<ClientResult<LifecycleResponse>>;
+  restore(
+    transport: Transport,
+    request: LifecycleRequestInput,
+  ): Promise<ClientResult<LifecycleResponse>>;
+  /**
+   * The cache consequence of an archive or restore, or of moving something out of an archived
+   * container: every read made under the activation. Membership changes across lists, feeds, search
+   * and the hierarchy in ways the phone cannot enumerate. A failure is a failed refresh, never a
+   * failed action.
+   */
+  applyLifecycle(activation: number): Promise<void>;
   /** Wall clock. */
   now(): number;
   /**
@@ -203,6 +261,22 @@ export interface EditState {
    * death the next open's Get establishes it again, and every move is judged against it.
    */
   readonly locations: Readonly<Record<string, EditLocation>>;
+  /**
+   * Why each open record's entity is archived, as far as the owner has confirmed. Beside `locations`
+   * and advanced the same way: from an open's or a lifecycle action's Get, from a lifecycle response,
+   * and from an acknowledged move. In memory only.
+   */
+  readonly lifecycles: Readonly<Record<string, EditLifecycle>>;
+  /**
+   * How many times the owner replaced a record's content under the screen with the server's.
+   *
+   * A screen holds what it first rendered, so content adopted while an editor is attached - a lifecycle
+   * action's read finding someone else's newer edit - would otherwise sit behind stale text, and the
+   * next keystroke would send that text at the new revision. The edit screen keys its composer on this,
+   * which remounts it over the adopted content. Only a rebase moves it; acknowledging this phone's own
+   * writing does not, because the screen already shows that.
+   */
+  readonly contentEpochs: Readonly<Record<string, number>>;
 
   initialize(): Promise<void>;
   retryOpen(): Promise<void>;
@@ -235,6 +309,16 @@ export interface EditState {
    * until a re-read can say what happened. The confirmed location advances only on an acknowledgement.
    */
   move(editKey: string, destination: { readonly parentId: number | null }): Promise<MoveOutcome>;
+  /**
+   * Archive or restore the entity. Always resolves.
+   *
+   * Serialized with the autosave loop like `move`: sendable writing is sent first, then a fresh Get
+   * pins the revision the request carries - never the record's own base, which a refused or conflicted
+   * record can hold behind the server. A success is adopted from its response; a refusal or a lost
+   * answer is followed by a read-back.
+   */
+  archive(editKey: string): Promise<LifecycleOutcome>;
+  restore(editKey: string): Promise<LifecycleOutcome>;
   /** Leaving: see `LeaveOutcome`. Resolves only once one of its three answers is true. */
   leave(editKey: string): Promise<LeaveOutcome>;
   /** Works for a usable and an unusable record alike; both are deleted by key. */
@@ -274,6 +358,12 @@ const refusalOf = (failure: ClientFailure, at: number): EditRefusal => {
  */
 const locationOf = (result: ClientResult<GetResponse>): EditLocation =>
   result.ok ? { kind: 'known', parentId: result.value.entity.parentId } : { kind: 'unknown' };
+
+/** What a Get established about why the entity is archived. A failed Get establishes nothing. */
+const lifecycleOf = (result: ClientResult<GetResponse>): EditLifecycle =>
+  result.ok
+    ? { kind: 'known', archiveCauses: result.value.entity.archiveCauses }
+    : { kind: 'unknown' };
 
 export const createEditOwner = (ports: EditPorts) =>
   createStore<EditState>((set, get) => {
@@ -369,13 +459,33 @@ export const createEditOwner = (ports: EditPorts) =>
       );
     };
 
+    const bumpContentEpoch = (editKey: string): void => {
+      set((state) => ({
+        contentEpochs: {
+          ...state.contentEpochs,
+          [editKey]: (state.contentEpochs[editKey] ?? 0) + 1,
+        },
+      }));
+    };
+
+    /** `learnLocation`'s twin: an unknown reading never replaces a known one. */
+    const learnLifecycle = (editKey: string, lifecycle: EditLifecycle): void => {
+      set((state) =>
+        lifecycle.kind === 'unknown' && state.lifecycles[editKey] !== undefined
+          ? {}
+          : { lifecycles: { ...state.lifecycles, [editKey]: lifecycle } },
+      );
+    };
+
     /** Drop everything the owner holds about a record beside the record itself. */
     const dropRecordState = (editKey: string): void => {
       heldLeases.delete(editKey);
       set((state) => {
-        const { [editKey]: _removed, ...rest } = state.locations;
+        const { [editKey]: _location, ...locations } = state.locations;
+        const { [editKey]: _lifecycle, ...lifecycles } = state.lifecycles;
+        const { [editKey]: _epoch, ...contentEpochs } = state.contentEpochs;
 
-        return { locations: rest };
+        return { locations, lifecycles, contentEpochs };
       });
     };
 
@@ -787,12 +897,18 @@ export const createEditOwner = (ports: EditPorts) =>
       keys.set(editKey, key);
       core.track(editKey, seeded.content, seeded.draftVersion);
       publishRecord(editKey, seeded, locationOf(result));
+      learnLifecycle(editKey, lifecycleOf(result));
       sessions.set(editKey, session);
       // Seeding usually has nothing to send, but `insertEdit` hands back an existing row rather than
       // throwing, and that row may hold writing this process has not seen yet.
       scheduleTick(editKey, autosaveDelayMs);
 
-      return { kind: 'ready', editKey, location: locationOf(result) };
+      return {
+        kind: 'ready',
+        editKey,
+        location: locationOf(result),
+        lifecycle: lifecycleOf(result),
+      };
     };
 
     /**
@@ -875,6 +991,32 @@ export const createEditOwner = (ports: EditPorts) =>
       consequence(editKey);
 
       return true;
+    };
+
+    /**
+     * What an acknowledged move says about the entity's archive.
+     *
+     * Nothing can move into an archived place, so an entity the server reports active after the move
+     * has no causes at all. One it still reports archived is a race this phone cannot explain, so the
+     * causes it knew are kept. Moving out of an archived container changes what lists and feeds hold,
+     * and the ordinary move consequence refreshes no feed for a container, so the broad one runs too.
+     */
+    const learnMovedLifecycle = (editKey: string, node: NodeSummary): void => {
+      const before = get().lifecycles[editKey];
+      const wasArchived = before?.kind === 'known' && before.archiveCauses.length > 0;
+
+      learnLifecycle(
+        editKey,
+        node.archived ? { kind: 'unknown' } : { kind: 'known', archiveCauses: [] },
+      );
+
+      const session = sessions.get(editKey);
+
+      if (wasArchived && session !== undefined) {
+        void ports.applyLifecycle(session.activation).catch(() => {
+          // A failed refresh, never a failed move.
+        });
+      }
     };
 
     /**
@@ -1053,6 +1195,7 @@ export const createEditOwner = (ports: EditPorts) =>
         // Ours: acknowledged at the entity's revision. On a store that did not apply it, the record
         // is left as published and the retry asks again.
         if (await acknowledgeMovement(active, editKey, key, record, entity)) {
+          learnMovedLifecycle(editKey, entity);
           await afterMoveAcknowledgement(editKey);
         }
 
@@ -1444,6 +1587,7 @@ export const createEditOwner = (ports: EditPorts) =>
           return { kind: 'unconfirmed' };
         }
 
+        learnMovedLifecycle(editKey, node);
         await afterMoveAcknowledgement(editKey);
 
         return { kind: 'moved', parentId: node.parentId };
@@ -1487,6 +1631,253 @@ export const createEditOwner = (ports: EditPorts) =>
       ) {
         scheduleTick(editKey, autosaveDelayMs);
       }
+    };
+
+    /**
+     * One archive or restore, run as the record's work (`lifecycleAction` holds the claim).
+     *
+     * The request carries the revision of a Get made here, after sendable writing was sent - never the
+     * record's own base. That base is the server's revision only while the record is settled; a refused
+     * or conflicted record, or one whose earlier lifecycle answer was lost, can sit behind the server
+     * for good, and a request made from it would refuse as a conflict forever. Archive and restore carry
+     * no content, so all the guard needs to bind is "the entity this phone just read".
+     *
+     * `live()` is asked after every await that precedes the dispatch. `close` retires the store and the
+     * sessions while work is pending, and a pin that resolved after a connection switch must not lead
+     * to an archive on the old server with the old transport. A session replaced through `resume` fails
+     * it too: nothing was sent, and the next press runs under the current one.
+     */
+    const runLifecycle = async (
+      editKey: string,
+      verb: 'archive' | 'restore',
+    ): Promise<LifecycleOutcome> => {
+      const notSent = (reason: LifecycleNotSentReason): LifecycleOutcome => ({
+        kind: 'not_sent',
+        reason,
+      });
+      const active = store;
+      const key = keys.get(editKey);
+      const session = sessions.get(editKey);
+      let record = recordOf(editKey);
+
+      if (active === null || key === undefined || session === undefined || record === null) {
+        return notSent('no_session');
+      }
+
+      const live = (): boolean =>
+        current(active) && sessions.get(editKey) === session && sessionUsableFor(editKey, key);
+
+      if (!live()) return notSent('no_session');
+      // An answer still owed: what the server holds is not known until reconciliation says.
+      if (record.inflightVersion !== null) return notSent('unconfirmed');
+
+      // Only writing that can still be sent is sent first. A refused or conflicted record keeps its
+      // writing and goes on: the pin supplies the revision, so its stale base does not matter here.
+      if (record.syncState === 'syncing' && !writingSettled(editKey, record)) {
+        try {
+          await core.drain(editKey);
+          if ((core.committed(editKey)?.version ?? 0) > record.acknowledgedVersion) {
+            await runTick(editKey);
+          }
+        } catch {
+          return notSent('unsent_writing');
+        }
+
+        if (!live()) return notSent('no_session');
+
+        record = recordOf(editKey);
+        if (record === null) return notSent('no_session');
+        // The send's answer was lost, so the record is not known yet.
+        if (record.inflightVersion !== null) return notSent('unconfirmed');
+        // A send refused here (the entity was archived elsewhere, say) makes the record `refused`,
+        // which goes on to the pin; only writing still waiting to be sent stops the action.
+        if (record.syncState === 'syncing' && !writingSettled(editKey, record)) {
+          return notSent('unsent_writing');
+        }
+      }
+
+      const pin = await ports.get(session.transport, {
+        target: { id: key.nodeId },
+        format: 'tiptap',
+      });
+
+      if (!live()) return notSent('no_session');
+      if (!pin.ok) return notSent('unread');
+      // A pin whose content could not be adopted still names the revision; the advance below then
+      // sees a base behind it and leaves the record alone.
+      if ((await adoptRead(active, editKey, key, pin)) === 'ended' || !live()) {
+        return notSent('no_session');
+      }
+
+      const before = recordOf(editKey);
+
+      if (before === null) return notSent('no_session');
+
+      const revision = pin.value.entity.revision;
+      const request: LifecycleRequestInput = { target: { id: key.nodeId }, revision };
+      const result = await (verb === 'archive'
+        ? ports.archive(session.transport, request)
+        : ports.restore(session.transport, request));
+
+      if (!current(active)) return { kind: 'unconfirmed', reread: false };
+
+      const refresh = (): void => {
+        void ports.applyLifecycle(session.activation).catch(() => {
+          // A failed refresh, never a failed action.
+        });
+      };
+
+      if (result.ok) {
+        const { node, archiveCauses } = result.value;
+
+        // The pin showed the base current, and the server's only change since is this one, which
+        // altered no content: the base content still describes the server at the new revision.
+        if (before.baseRevision === revision && node.revision !== revision) {
+          try {
+            const advanced = await active.advanceEditRevision(
+              key,
+              revision,
+              node.revision,
+              ports.now(),
+            );
+
+            if (advanced !== null && current(active)) publishRecord(editKey, advanced);
+          } catch {
+            // Nothing is stranded: the next lifecycle action pins afresh, and kept writing that is
+            // sent at the old revision conflicts rather than overwriting.
+          }
+        }
+        if (current(active)) learnLifecycle(editKey, { kind: 'known', archiveCauses });
+        refresh();
+
+        return { kind: 'done', archived: node.archived, causes: archiveCauses };
+      }
+
+      const failure = result.failure;
+      const lost = failure.mutationOutcome === 'unknown';
+      // Neither a refusal nor a lost answer says what the server holds now, so it is read back the
+      // way an open reads it. A failed read-back leaves the previous state, and says so.
+      let reread = false;
+
+      if (live()) {
+        const back = await ports.get(session.transport, {
+          target: { id: key.nodeId },
+          format: 'tiptap',
+        });
+
+        // A refresh is claimed only when the screen now shows what this read found.
+        reread = back.ok && live() && (await adoptRead(active, editKey, key, back)) === 'adopted';
+      }
+      if (lost) refresh();
+
+      return lost ? { kind: 'unconfirmed', reread } : { kind: 'refused', failure, reread };
+    };
+
+    /** `runLifecycle` as the record's work, re-armed afterwards like a move. */
+    const lifecycleAction = (
+      editKey: string,
+      verb: 'archive' | 'restore',
+    ): Promise<LifecycleOutcome> =>
+      claim(editKey, async () => {
+        try {
+          return await runLifecycle(editKey, verb);
+        } finally {
+          rearmAfterMove(editKey);
+        }
+      }).catch((): LifecycleOutcome => ({ kind: 'unconfirmed', reread: false }));
+
+    /**
+     * Bring an existing record up to date with a Get its own work just made.
+     *
+     * `open`'s reconciliation, factored out so a lifecycle action can apply its pin and its read-back
+     * the same way: rebase a settled record whose revision moved, otherwise answer an envelope in
+     * flight from the entity just read. Then take in what the read established about the entity.
+     *
+     * Never rejects. `ended` is the owner stopping being current along the way, so the caller answers
+     * as though the work had been cut short. `stale` is a newer server content this record should have
+     * adopted and did not - a body this build cannot open, or a write that failed - so what the screen
+     * shows is not what the server holds, and no caller may say it is. `adopted` is everything else,
+     * including a record that keeps unsent writing on purpose.
+     */
+    const adoptRead = async (
+      active: CaptureStore,
+      editKey: string,
+      key: EditKey,
+      result: ClientResult<GetResponse>,
+    ): Promise<'adopted' | 'stale' | 'ended'> => {
+      const existing = recordOf(editKey);
+
+      if (existing === null) return 'adopted';
+
+      let adopted: 'adopted' | 'stale' = 'adopted';
+
+      const settled =
+        existing.inflightVersion === null &&
+        existing.syncState === 'syncing' &&
+        existing.acknowledgedVersion >= existing.draftVersion &&
+        (core.committed(editKey)?.version ?? 0) <= existing.acknowledgedVersion;
+
+      /**
+       * Bringing the record up to date, and neither half may take the editor down with it.
+       *
+       * Both branches are SQLite writes, and a write that throws must not reject `open`: the record
+       * is already tracked and published, so what a failed write leaves behind is precisely the
+       * state the standing already describes - an un-rebased base, or an envelope still in flight
+       * reading `unconfirmed`. Opening over local content is the same answer a failed Get gets, and
+       * it is the one that keeps someone's unsent writing reachable. Rejecting instead would leave
+       * the screen on its opening skeleton with nothing said, because a caller cannot render an
+       * outcome it was never given.
+       */
+      try {
+        if (settled && result.ok && result.value.entity.revision !== existing.baseRevision) {
+          // Nothing local is unsent, so adopting the server's newer state loses nothing. A body this
+          // build cannot open is the one case that is left alone: the stale base revision then makes
+          // any later send refuse as a conflict, which is the safe direction, and it can be discarded.
+          const content = contentOf(result.value.entity);
+
+          adopted = 'stale';
+          if (content !== null) {
+            const rebased = await active.rebaseEdit(
+              key,
+              content,
+              result.value.entity.revision,
+              ports.now(),
+            );
+
+            if (!current(active)) return 'ended';
+            if (rebased !== null) {
+              if (rebased.baseRevision === result.value.entity.revision) adopted = 'adopted';
+              publishRecord(editKey, rebased);
+              // The row's authored content changed without its version moving, which is exactly what
+              // `confirm` expresses. Without it the core would keep the content it was tracking and
+              // the next diff would be taken against writing nobody did.
+              core.confirm(editKey, null, rebased.content);
+              // And the screen must show it. `open` rebases before any editor is attached, but a
+              // lifecycle action's read runs under one, which holds the text it first rendered.
+              bumpContentEpoch(editKey);
+            }
+          }
+        } else if (existing.inflightVersion !== null) {
+          // An answer was lost. Reconciled from the entity this very call read, rather than by a
+          // second Get: it is strictly fresher, and two reads can disagree in ways these rules assume
+          // away. A failed Get leaves the record unconfirmed, and its standing says so.
+          await applyReconciliation(editKey, result);
+          if (!current(active)) return 'ended';
+        }
+      } catch {
+        adopted = 'stale';
+        // Whatever was written is what the standing already describes, so the record opens as it
+        // stands. The row is tracked and published before either branch runs, and neither leaves
+        // anything half-applied that a later read could misinterpret.
+      }
+
+      // A reconciliation that settled and forgot the record leaves nothing to describe.
+      if (recordOf(editKey) !== null) {
+        learnLocation(editKey, locationOf(result));
+        learnLifecycle(editKey, lifecycleOf(result));
+      }
+
+      return adopted;
     };
 
     /** Take up what the store holds. An entry this process already has is kept, as `owner.ts` does. */
@@ -1597,6 +1988,8 @@ export const createEditOwner = (ports: EditPorts) =>
       checking: [],
       protection: {},
       locations: {},
+      lifecycles: {},
+      contentEpochs: {},
 
       initialize: ensureOpen,
 
@@ -1633,6 +2026,8 @@ export const createEditOwner = (ports: EditPorts) =>
           checking: [],
           protection: {},
           locations: {},
+          lifecycles: {},
+          contentEpochs: {},
         });
 
         if (pending !== null) {
@@ -1697,58 +2092,8 @@ export const createEditOwner = (ports: EditPorts) =>
           core.track(editKey, existing.content, existing.draftVersion);
           sessions.set(editKey, session);
 
-          const settled =
-            existing.inflightVersion === null &&
-            existing.syncState === 'syncing' &&
-            existing.acknowledgedVersion >= existing.draftVersion &&
-            (core.committed(editKey)?.version ?? 0) <= existing.acknowledgedVersion;
-
-          /**
-           * Bringing the record up to date, and neither half may take the editor down with it.
-           *
-           * Both branches are SQLite writes, and a write that throws must not reject `open`: the record
-           * is already tracked and published, so what a failed write leaves behind is precisely the
-           * state the standing already describes - an un-rebased base, or an envelope still in flight
-           * reading `unconfirmed`. Opening over local content is the same answer a failed Get gets, and
-           * it is the one that keeps someone's unsent writing reachable. Rejecting instead would leave
-           * the screen on its opening skeleton with nothing said, because a caller cannot render an
-           * outcome it was never given.
-           */
-          try {
-            if (settled && result.ok && result.value.entity.revision !== existing.baseRevision) {
-              // Nothing local is unsent, so adopting the server's newer state loses nothing. A body this
-              // build cannot open is the one case that is left alone: the stale base revision then makes
-              // any later send refuse as a conflict, which is the safe direction, and it can be discarded.
-              const content = contentOf(result.value.entity);
-
-              if (content !== null) {
-                const rebased = await active.rebaseEdit(
-                  key,
-                  content,
-                  result.value.entity.revision,
-                  ports.now(),
-                );
-
-                if (!current(active)) return { kind: 'unavailable', failure: null };
-                if (rebased !== null) {
-                  publishRecord(editKey, rebased);
-                  // The row's authored content changed without its version moving, which is exactly what
-                  // `confirm` expresses. Without it the core would keep the content it was tracking and
-                  // the next diff would be taken against writing nobody did.
-                  core.confirm(editKey, null, rebased.content);
-                }
-              }
-            } else if (existing.inflightVersion !== null) {
-              // An answer was lost. Reconciled from the entity this very call read, rather than by a
-              // second Get: it is strictly fresher, and two reads can disagree in ways these rules assume
-              // away. A failed Get leaves the record unconfirmed, and its standing says so.
-              await applyReconciliation(editKey, result);
-              if (!current(active)) return { kind: 'unavailable', failure: null };
-            }
-          } catch {
-            // Whatever was written is what the standing already describes, so the record opens as it
-            // stands. The row is tracked and published before either branch runs, and neither leaves
-            // anything half-applied that a later read could misinterpret.
+          if ((await adoptRead(active, editKey, key, result)) === 'ended') {
+            return { kind: 'unavailable', failure: null };
           }
 
           /**
@@ -1771,9 +2116,12 @@ export const createEditOwner = (ports: EditPorts) =>
 
           scheduleTick(editKey, autosaveDelayMs);
 
-          learnLocation(editKey, locationOf(result));
-
-          return { kind: 'ready', editKey, location: locationOf(result) };
+          return {
+            kind: 'ready',
+            editKey,
+            location: locationOf(result),
+            lifecycle: lifecycleOf(result),
+          };
         }).catch((): EditOpenOutcome => ({ kind: 'unavailable', failure: null }));
       },
 
@@ -1862,6 +2210,10 @@ export const createEditOwner = (ports: EditPorts) =>
             rearmAfterMove(editKey);
           }
         }).catch((): MoveOutcome => ({ kind: 'unconfirmed' })),
+
+      archive: (editKey) => lifecycleAction(editKey, 'archive'),
+
+      restore: (editKey) => lifecycleAction(editKey, 'restore'),
 
       /**
        * Leaving, with a stated budget.

@@ -28,6 +28,7 @@ import { create as createStore } from 'zustand';
 
 import type { Transport } from '../../infrastructure/api/transport';
 import type { EditorPort, EditorRejectionCode, EditorSnapshot } from '../editor';
+import { archivedRefusalSentence } from '../lifecycle/copy.ts';
 import { freezeNoteRequest, thawNoteRequest, UNUSABLE_PAYLOAD_MESSAGE } from './freeze.ts';
 import { deriveStanding, evaluateEligibility, type Standing } from './policy.ts';
 import {
@@ -291,7 +292,11 @@ const outcomeOf = (failure: ClientFailure, at: number): AttemptOutcome => ({
   // Only a well-formed Raphael envelope carries a code, and only its code is kept - never the
   // envelope, never an exception, never a decoder's own words.
   code: failure.kind === 'api_error' ? failure.error.code : null,
-  message: failure.message,
+  // An archived destination is worded by lifecycle's one table, like every other archived refusal.
+  message:
+    failure.kind === 'api_error' && failure.error.code === 'node_archived'
+      ? archivedRefusalSentence(failure.details)
+      : failure.message,
   at,
 });
 

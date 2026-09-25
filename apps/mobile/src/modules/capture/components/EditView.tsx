@@ -10,6 +10,8 @@ import type {
   EditorSelectionState,
   EditorSnapshot,
 } from '../../editor';
+import { ArchiveIconToggle, READ_ONLY_DETAILS_HINT, type LifecycleView } from '../../lifecycle';
+import type { ComposerStatus } from '../composer.ts';
 import { CONFLICT_NOTICE, type DetailsChip, type EditComposerView } from '../edit-composer.ts';
 import { ComposerShell, type ComposerEyebrow } from './ComposerShell';
 
@@ -41,6 +43,13 @@ export interface EditViewProps {
    * instead. The two are different facts about different things and are never merged.
    */
   leaving: boolean;
+  /**
+   * The entity is archived: the fields and the renderer take no writing, and Details opens read-only.
+   * Derived from the lifecycle the owner holds, never from the record's standing.
+   */
+  readOnly: boolean;
+  /** The Archive toggle at the end of the top bar, and what the status line says instead of saving. */
+  lifecycle: EditLifecycleProps;
   editorRef?: Ref<EditorPort> | undefined;
   /** Sends one formatting command to the renderer. The screen above holds the port. */
   onCommand: (command: EditorCommand) => void;
@@ -56,6 +65,22 @@ export interface EditViewProps {
   onDiscard: () => void;
   onClose: () => void;
   testID?: string | undefined;
+}
+
+export interface EditLifecycleProps {
+  /** Null when the phone could not read the causes: the toggle is unselected and still archives. */
+  readonly view: LifecycleView | null;
+  /** A request is running. */
+  readonly busy: boolean;
+  /** What is being edited, lowercased, for the toggle's spoken label. */
+  readonly noun: string;
+  /**
+   * Said on the status line in place of the save status: the running request, the last action's
+   * outcome, or why the screen is read-only. Null leaves the save status standing.
+   */
+  readonly status: ComposerStatus | null;
+  readonly onArchive: () => void;
+  readonly onRestore: () => void;
 }
 
 /**
@@ -82,6 +107,8 @@ export function EditView({
   details,
   move,
   leaving,
+  readOnly,
+  lifecycle,
   editorRef,
   onCommand,
   selection,
@@ -141,7 +168,8 @@ export function EditView({
       }
       barLeading={
         <Chip
-          accessibilityHint={details.hint}
+          // Still available while archived: the sheet opens read-only, and says so.
+          accessibilityHint={readOnly ? READ_ONLY_DETAILS_HINT : details.hint}
           accessibilityLabel={details.spoken}
           disabled={view.locked}
           icon={Tag}
@@ -170,8 +198,19 @@ export function EditView({
       onSelectionChange={onSelectionChange}
       onSnapshot={onSnapshot}
       onTitleChange={onTitleChange}
+      readOnly={readOnly}
       selection={selection}
-      status={view.status}
+      status={lifecycle.status ?? view.status}
+      statusTrailing={
+        <ArchiveIconToggle
+          busy={lifecycle.busy}
+          noun={lifecycle.noun}
+          onArchive={lifecycle.onArchive}
+          onRestore={lifecycle.onRestore}
+          testID="edit-archive"
+          view={lifecycle.view}
+        />
+      }
       testID={testID}
       title={title}
       titleLabel="Title"

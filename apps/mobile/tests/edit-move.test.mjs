@@ -357,6 +357,60 @@ describe('moving', () => {
   });
 });
 
+/**
+ * Moving out of an archived container.
+ *
+ * Something archived only through a container above keeps its Move control on the phone, and moving
+ * it anywhere active makes it active: nothing was ever written onto it, so there is nothing to clean
+ * up. The owner learns that from the acknowledgement, and refreshes every read, because feeds and the
+ * hierarchy gain what was moved out.
+ */
+describe('moving out of an archived container', () => {
+  const PROJECT_CAUSE = {
+    origin: { id: 3, type: 'project', title: 'Auth rework' },
+    owner: 'user',
+    reason: 'direct',
+  };
+
+  it('learns the entity is active at its new parent, and refreshes everything', async () => {
+    const kit = await opened({
+      server: serverModel({ archived: true, archiveCauses: [PROJECT_CAUSE] }),
+    });
+
+    assert.deepEqual(kit.state().lifecycles[KEY], {
+      kind: 'known',
+      archiveCauses: [PROJECT_CAUSE],
+    });
+
+    assert.deepEqual(await move(kit, 9), { kind: 'moved', parentId: 9 });
+    assert.deepEqual(kit.state().lifecycles[KEY], { kind: 'known', archiveCauses: [] });
+    assert.deepEqual(kit.refreshed, [1]);
+    assert.equal(kit.server.entity().archived, false);
+  });
+
+  it('learns it from a reconciled move too, with no sheet open', async () => {
+    const kit = await opened({
+      server: serverModel({ archived: true, archiveCauses: [PROJECT_CAUSE] }),
+    });
+
+    await lostMove(kit, 9);
+    fireRetry(kit);
+    await until(() => location(kit)?.parentId === 9, 'the reconciliation');
+
+    assert.deepEqual(kit.state().lifecycles[KEY], { kind: 'known', archiveCauses: [] });
+    assert.deepEqual(kit.refreshed, [1]);
+  });
+
+  it('refreshes nothing extra for an ordinary move between active places', async () => {
+    const kit = await opened();
+
+    await move(kit, 9);
+
+    assert.deepEqual(kit.refreshed, []);
+    assert.deepEqual(kit.state().lifecycles[KEY], { kind: 'known', archiveCauses: [] });
+  });
+});
+
 describe('a move whose answer never arrived', () => {
   it('is on disk before it is sent, and a later process reconciles it', async () => {
     const file = await temporaryFile();

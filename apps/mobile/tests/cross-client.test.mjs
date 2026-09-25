@@ -1211,4 +1211,59 @@ describe('archive and restore, across the two clients', () => {
       ]);
     });
   });
+
+  it('moves a note archived only through its project somewhere active, from the phone’s editor', async () => {
+    const dir = await temporaryDir('archive-move-out-');
+
+    await withServer(async ({ endpoint }) => {
+      const shelved = await containerAt(endpoint, 'project', '/work/shelf', 'Shelf');
+      const destination = await containerAt(endpoint, 'project', '/work/desk', 'Desk');
+      const { entity: note } = await cliJson(
+        ['create', 'resource.note', '/work/shelf/runbook', '--title', 'Runbook'],
+        { endpoint },
+      );
+
+      assert.equal((await runCli(['archive', shelved.at], { endpoint })).code, 0);
+
+      const kit = await editOver(endpoint, path.join(dir, 'capture.db'));
+
+      try {
+        await kit.owner.getState().initialize();
+
+        const outcome = await kit.owner.getState().open(note.id, kit.session);
+
+        assert.equal(outcome.kind, 'ready');
+        assert.deepEqual(outcome.lifecycle, {
+          kind: 'known',
+          archiveCauses: [
+            {
+              origin: { id: shelved.id, type: 'project', title: 'Shelf' },
+              owner: 'user',
+              reason: 'direct',
+            },
+          ],
+        });
+        kit.owner.getState().attachEditor(outcome.editKey, fakeEditor().port);
+
+        const moved = await kit.owner
+          .getState()
+          .move(outcome.editKey, { parentId: destination.id });
+
+        assert.deepEqual(moved, { kind: 'moved', parentId: destination.id });
+        assert.deepEqual(kit.owner.getState().lifecycles[outcome.editKey], {
+          kind: 'known',
+          archiveCauses: [],
+        });
+        assert.deepEqual(kit.refreshed, [kit.session.activation], 'every read is refreshed');
+
+        const atTerminal = await cliJson(['get', '--id', String(note.id)], { endpoint });
+
+        assert.equal(atTerminal.entity.archived, false, 'active at its new parent');
+        assert.deepEqual(atTerminal.entity.archiveCauses, []);
+        assert.equal(atTerminal.entity.parentId, destination.id);
+      } finally {
+        await kit.owner.getState().close();
+      }
+    });
+  });
 });

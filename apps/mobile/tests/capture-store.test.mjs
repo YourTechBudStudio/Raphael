@@ -1368,6 +1368,63 @@ describe('entity_edits', () => {
     });
   });
 
+  describe('advanceEditRevision', () => {
+    /** Refused, with writing: the record a phone archive most needs to leave intact. */
+    const refused = async () => {
+      const opening = await seeded();
+      const { store } = opening;
+
+      await store.writeEditVersion({
+        key: KEY,
+        content: { ...CONTENT, slug: 'taken' },
+        draftVersion: 2,
+        at: T0 + 1,
+      });
+      await store.markEditInflight(KEY, 2, updateOf({ slug: 'taken' }), T0 + 2);
+      await store.markEditRefused(
+        KEY,
+        { code: 'slug_conflict', field: 'slug', reason: null, at: T0 + 3 },
+        T0 + 3,
+      );
+
+      return opening;
+    };
+
+    it('moves only the base revision and the update time', async () => {
+      const { store } = await refused();
+      const before = await only(store);
+
+      const record = await store.advanceEditRevision(KEY, 4, 5, T0 + 9);
+
+      assert.deepEqual(record, { ...before, baseRevision: 5, updatedAt: T0 + 9 });
+      assert.equal(record.syncState, 'refused', 'the state is kept');
+      assert.deepEqual(record.lastRefusal, before.lastRefusal, 'with its refusal');
+      assert.equal(record.content.slug, 'taken', 'and its writing');
+      assert.deepEqual(record.base, CONTENT, 'the base content is untouched');
+
+      await store.close();
+    });
+
+    it('matches nothing when the base revision is not the one the caller pinned', async () => {
+      const { store } = await refused();
+      const before = await only(store);
+
+      assert.deepEqual(await store.advanceEditRevision(KEY, 3, 5, T0 + 9), before);
+
+      await store.close();
+    });
+
+    it('matches nothing while an envelope is in flight', async () => {
+      const { store } = await seeded();
+      await store.markEditInflight(KEY, 1, updateOf({ title: 'x' }), T0 + 1);
+      const before = await only(store);
+
+      assert.deepEqual(await store.advanceEditRevision(KEY, 4, 5, T0 + 9), before);
+
+      await store.close();
+    });
+  });
+
   describe('a row this build cannot open', () => {
     it('reports a foreign content schema, and never migrates it', async () => {
       const { store, db } = await seeded();

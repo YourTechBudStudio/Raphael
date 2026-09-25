@@ -1,4 +1,3 @@
-import { router } from 'expo-router';
 import { Text, View } from 'react-native';
 
 import { Chip, confirmDiscard, Screen, SectionHeading } from '../../../ui';
@@ -61,20 +60,6 @@ export function SettingsScreen() {
               accessibilityHint="Forgets this server and returns to setup"
               label="Disconnect"
               onPress={onDisconnect}
-            />
-          </View>
-        </View>
-
-        {/* Temporary: archive mock for story #8. Delete with the mock route. */}
-        <View className="gap-3">
-          <SectionHeading>Mocks</SectionHeading>
-          <View className="flex-row flex-wrap gap-2">
-            <Chip
-              accessibilityHint="Opens the presentation-only archive mock"
-              label="Archive"
-              onPress={() => {
-                router.push('/mock-archive');
-              }}
             />
           </View>
         </View>
