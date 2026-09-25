@@ -54,3 +54,6 @@ export const Strikethrough = icon('Strikethrough');
 export const Tag = icon('Tag');
 export const Undo2 = icon('Undo2');
 export const X = icon('X');
+// Temporary: archive mock for story #8.
+export const Archive = icon('Archive');
+export const SlidersHorizontal = icon('SlidersHorizontal');

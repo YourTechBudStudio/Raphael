@@ -68,6 +68,8 @@ export interface ComposerShellProps {
   barLeading: ReactNode;
   /** The pill on the right of the bar, where a screen has one. */
   barTrailing?: ReactNode | undefined;
+  /** Temporary: archive mock for story #8. A control at the end of the top bar, after the status. */
+  statusTrailing?: ReactNode | undefined;
   editorRef?: Ref<EditorPort> | undefined;
   /** Sends one formatting command to the renderer. The screen above holds the port. */
   onCommand: (command: EditorCommand) => void;
@@ -116,6 +118,7 @@ export function ComposerShell({
   barAbove,
   barLeading,
   barTrailing,
+  statusTrailing,
   editorRef,
   onCommand,
   selection,
@@ -177,9 +180,20 @@ export function ComposerShell({
         />
       }
       status={
-        <ComposerStatus testID={`${namespace}-status`} tone={status.tone}>
-          {status.text}
-        </ComposerStatus>
+        statusTrailing === undefined ? (
+          <ComposerStatus testID={`${namespace}-status`} tone={status.tone}>
+            {status.text}
+          </ComposerStatus>
+        ) : (
+          <View className="flex-row items-center">
+            <View className="flex-1">
+              <ComposerStatus testID={`${namespace}-status`} tone={status.tone}>
+                {status.text}
+              </ComposerStatus>
+            </View>
+            {statusTrailing}
+          </View>
+        )
       }
       testID={testID}
     >
