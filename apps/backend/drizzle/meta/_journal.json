@@ -36,6 +36,13 @@
       "when": 1789860371489,
       "tag": "0004_search_index",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790305125073,
+      "tag": "0005_archive_causes",
+      "breakpoints": true
     }
   ]
 }

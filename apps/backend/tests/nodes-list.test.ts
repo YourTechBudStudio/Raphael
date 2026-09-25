@@ -762,3 +762,150 @@ test('a listing says which projects are selected, and every other row says it is
     }
   });
 });
+
+/**
+ * A small archived fixture:
+ *
+ * ```text
+ * /work (active)                  /personal (cause)
+ *   shelf (area, cause)             trip (project)
+ *     apollo (project)                itinerary (note)
+ *       plan (note)
+ *   live (project)
+ *     draft (note)
+ *     hidden (note, cause)
+ * ```
+ */
+const archivedFixture = (connection: Parameters<typeof runNodes>[0]) => {
+  const create = (request: Record<string, unknown>) =>
+    expectRight(runNodes(connection, createNode(request), clockAt(T0))).entity;
+  const shelf = create({ type: 'area', parent: { path: '/work' }, title: 'Shelf' });
+  const apollo = create({ type: 'project', parent: { id: shelf.id }, title: 'Apollo' });
+  const plan = create({ type: 'resource', kind: 'note', parent: { id: apollo.id }, title: 'Plan' });
+  const live = create({ type: 'project', parent: { path: '/work' }, title: 'Live' });
+  const draft = create({ type: 'resource', kind: 'note', parent: { id: live.id }, title: 'Draft' });
+  const hidden = create({
+    type: 'resource',
+    kind: 'note',
+    parent: { id: live.id },
+    title: 'Hidden',
+  });
+  const trip = create({ type: 'project', parent: { path: '/personal' }, title: 'Trip' });
+  const itinerary = create({
+    type: 'resource',
+    kind: 'note',
+    parent: { id: trip.id },
+    title: 'Itinerary',
+  });
+  const personal = one<{ id: number }>(
+    connection.db,
+    `SELECT id FROM nodes WHERE parent_id IS NULL AND slug = 'personal'`,
+  ).id;
+  const cause = connection.db.prepare(
+    `INSERT INTO archive_causes (node_id, owner, reason, created_at) VALUES (?, 'user', 'direct', ?)`,
+  );
+  for (const id of [shelf.id, hidden.id, personal]) cause.run(id, T0);
+  return { shelf, apollo, plan, live, draft, hidden, trip, itinerary, personal };
+};
+
+const idsOf = (response: { items: readonly { id: number }[] }) =>
+  response.items.map((item) => item.id).sort((a, b) => a - b);
+
+test('an active root area and everything active under it stay listed while another container is archived', () => {
+  withMigrated('list-archived-root-guard', (connection) => {
+    const f = archivedFixture(connection);
+    const work = 1;
+
+    // Shape 2: the root's children. The active root area is there; the archived one is not.
+    const top = expectRight(list(connection, { scopes: [{ path: '/' }] }));
+    assert.deepEqual(slugsOf(top), ['work']);
+    assert.equal(top.items[0]?.id, work);
+
+    // Shape 1: everything under the root. Every active node, and nothing archived.
+    const everything = expectRight(list(connection, { scopes: [{ path: '/' }], recursive: true }));
+    assert.deepEqual(
+      idsOf(everything),
+      [work, f.live.id, f.draft.id].sort((a, b) => a - b),
+    );
+    assert.ok(everything.items.every((item) => !item.archived));
+  });
+});
+
+test('default exclusion holds in every membership shape, and inclusion marks exactly the archived', () => {
+  withMigrated('list-archived-shapes', (connection) => {
+    const f = archivedFixture(connection);
+
+    // Shape 2 with a node scope: a directly archived note in an active project is hidden.
+    const children = expectRight(list(connection, { scopes: [{ id: f.live.id }] }));
+    assert.deepEqual(idsOf(children), [f.draft.id]);
+
+    // Shape 3: a recursive walk from a node scope.
+    const work = expectRight(list(connection, { scopes: [{ path: '/work' }], recursive: true }));
+    assert.deepEqual(
+      idsOf(work),
+      [f.live.id, f.draft.id].sort((a, b) => a - b),
+    );
+
+    const included = expectRight(
+      list(connection, { scopes: [{ path: '/work' }], recursive: true, includeArchived: true }),
+    );
+    const marked = Object.fromEntries(included.items.map((item) => [item.id, item.archived]));
+    assert.deepEqual(marked, {
+      [f.shelf.id]: true,
+      [f.apollo.id]: true,
+      [f.plan.id]: true,
+      [f.live.id]: false,
+      [f.draft.id]: false,
+      [f.hidden.id]: true,
+    });
+
+    const everything = expectRight(
+      list(connection, { scopes: [{ path: '/' }], recursive: true, includeArchived: true }),
+    );
+    assert.equal(everything.items.find((item) => item.id === f.personal)?.archived, true);
+    assert.equal(everything.items.find((item) => item.id === f.itinerary.id)?.archived, true);
+    assert.equal(everything.items.find((item) => item.id === 1)?.archived, false);
+  });
+});
+
+test('a scope inside an archived subtree is an empty page by default and a marked one on request', () => {
+  withMigrated('list-archived-inside', (connection) => {
+    const f = archivedFixture(connection);
+
+    for (const recursive of [false, true]) {
+      const empty = expectRight(list(connection, { scopes: [{ id: f.apollo.id }], recursive }));
+      assert.deepEqual(empty.items, [], `recursive: ${recursive}`);
+
+      const shown = expectRight(
+        list(connection, { scopes: [{ id: f.apollo.id }], recursive, includeArchived: true }),
+      );
+      assert.deepEqual(idsOf(shown), [f.plan.id]);
+      assert.equal(shown.items[0]?.archived, true);
+    }
+  });
+});
+
+test('paging and hasMore hold under exclusion', () => {
+  withMigrated('list-archived-paging', (connection) => {
+    const work = 1;
+    const titles = ['a1', 'a2', 'a3', 'a4', 'a5', 'a6'];
+    const made = titles.map((title) => make(connection, 'project', { id: work }, title));
+    const cause = connection.db.prepare(
+      `INSERT INTO archive_causes (node_id, owner, reason, created_at) VALUES (?, 'user', 'direct', ?)`,
+    );
+    for (const index of [1, 3]) cause.run(made[index]?.id, T0);
+
+    const first = expectRight(list(connection, { scopes: [{ id: work }], limit: 2 }));
+    assert.deepEqual(slugsOf(first), ['a1', 'a3']);
+    assert.equal(first.hasMore, true);
+    const second = expectRight(list(connection, { scopes: [{ id: work }], skip: 2, limit: 2 }));
+    assert.deepEqual(slugsOf(second), ['a5', 'a6']);
+    assert.equal(second.hasMore, false);
+
+    const included = expectRight(
+      list(connection, { scopes: [{ id: work }], limit: 2, skip: 4, includeArchived: true }),
+    );
+    assert.deepEqual(slugsOf(included), ['a5', 'a6']);
+    assert.equal(included.hasMore, false);
+  });
+});

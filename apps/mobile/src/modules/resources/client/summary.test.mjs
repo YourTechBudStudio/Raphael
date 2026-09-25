@@ -21,6 +21,7 @@ const summary = (over = {}) => ({
   description: 'What it is about',
   tags: [],
   active: false,
+  archived: false,
   ...over,
 });
 

@@ -42,6 +42,7 @@ const summary = (id, over = {}) => ({
   description: '',
   tags: [],
   active: false,
+  archived: false,
   ...over,
 });
 
@@ -327,6 +328,8 @@ describe('the request that actually goes out', () => {
       orderBy: [{ field: 'updatedAt', direction: 'desc' }],
       skip: 0,
       limit: 50,
+      // The decoded request is what travels, so the read flag's default is spelled out on the wire.
+      includeArchived: false,
     });
     handle.stop();
   });

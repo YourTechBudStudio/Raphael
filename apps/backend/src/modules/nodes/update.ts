@@ -15,13 +15,8 @@ import { Effect, Either, type Clock } from 'effect';
 import { Db } from '../../infrastructure/database/index.ts';
 import { convertBody, type PreparedBody } from './content.ts';
 import { UPDATE_FIELDS, invalidInputFrom } from './diagnostics.ts';
-import {
-  InternalFailure,
-  InvalidInput,
-  NodeNotFound,
-  RevisionConflict,
-  type NodeError,
-} from './errors.ts';
+import { InternalFailure, InvalidInput, RevisionConflict, type NodeError } from './errors.ts';
+import { requireActive } from './lifecycle.ts';
 import {
   bodyProjection,
   checkedResponse,
@@ -45,13 +40,16 @@ const OPERATION = 'nodes.update';
  *   → deferred read transaction
  *       resolve the target, load the row
  *       require the row to be at the caller's revision   (a precondition, not the verdict)
+ *       require the target to be active                 (fail fast; not the verdict either)
  *   → convert content                (outside the transaction: the slow part, and it can fail)
  *   → project the response body      (and derive plain text, for a supplied body)
  *   → resolve the resulting tag set
  *   → assemble and validate the response    (nothing in it depends on the write)
  *   → immediate write transaction
  *       sample the clock
- *       one UPDATE guarded on the caller's revision      (this is the verdict)
+ *       re-select the revision; require the caller's
+ *       require the target to be active                 (this is the lifecycle verdict)
+ *       one UPDATE guarded on the caller's revision
  *     commit
  * ```
  *
@@ -63,22 +61,28 @@ const OPERATION = 'nodes.update';
  * lock is never held across a full contract decode.
  *
  * **Two raise sites, one verdict.** The read step requires `row.revision === request.revision` before
- * anything is computed from that row, and the `UPDATE`'s `WHERE` clause repeats the comparison. They are
- * not redundant. The read-time check is a precondition on *response correctness*: without it, a caller
- * supplying a revision one ahead of the row could have the compare-and-set match a row this operation
- * never read, so the returned entity and the resulting tag list would describe a state nobody inspected.
- * The write guard is the verdict for the case the read cannot see - the row moving between the two
- * transactions. Both produce the same `RevisionConflict` with the same details, because to a caller they
- * are the same fact: what you wrote against is not what is there.
+ * anything is computed from that row, and the write transaction re-selects the revision and compares it
+ * again. They are not redundant. The read-time check is a precondition on *response correctness*:
+ * without it, a caller supplying a revision one ahead of the row could have the compare-and-set match a
+ * row this operation never read, so the returned entity and the resulting tag list would describe a
+ * state nobody inspected. The write-time check is the verdict for the case the read cannot see - the
+ * row moving between the two transactions. Both produce the same `RevisionConflict` with the same
+ * details, because to a caller they are the same fact: what you wrote against is not what is there.
  *
  * Every successful update is a write. Submitting a value equal to the stored one still increments the
  * revision and advances `updated_at`; the server never compares submitted content to stored content,
  * which would make it a second content-equality authority. Clients that care about revision churn diff
  * locally before they send.
  *
- * There is no lifecycle check, because there is no lifecycle state yet. The write transaction is shaped
- * so one can be inserted between selector resolution and the `UPDATE`, atomically with the mutation as
- * ADR 0002 requires, but no placeholder is left for it.
+ * **Lifecycle is decided in the write transaction.** Something archived - by a cause of its own or
+ * through a container above it - cannot be updated, and that includes selecting or deselecting a
+ * project: the stored `active` is kept and returns to view on restore. The read step checks it after
+ * the revision and `active_requires_project`, only so an archived target fails before its body is
+ * converted. The verdict is the write transaction's own check, because the target's revision proves
+ * nothing about its ancestors: a container above it can be archived between the two transactions
+ * without this row changing. So the write transaction re-selects the revision first - a stale caller
+ * still hears `revision_conflict` first - and then re-checks lifecycle against the current ancestry,
+ * atomically with the `UPDATE` (ADR 0002).
  *
  * A title change never touches the slug: deriving an address from a title is a creation-only reflex
  * (ADR 0004), and re-deriving it here would silently move an entity someone else may have linked to.
@@ -103,7 +107,8 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
       const row = yield* Effect.try({
         try: () =>
           readTransaction(db, () => {
-            const entity = loadEntity(orm(db), prepared.target, 'target', OPERATION);
+            const handle = orm(db);
+            const entity = loadEntity(handle, prepared.target, 'target', OPERATION);
             if (entity.revision !== prepared.revision) {
               return raise(new RevisionConflict({ current: entity.revision }));
             }
@@ -129,6 +134,8 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
                 new InvalidInput({ field: 'active', reason: 'active_requires_project' }),
               );
             }
+            // Fail fast only: the write transaction's check is the verdict.
+            requireActive(handle, entity, 'target', OPERATION);
             return entity;
           }),
         catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'read' }, cause),
@@ -200,6 +207,9 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
                   active: prepared.active === undefined ? row.active : prepared.active ? 1 : 0,
                 },
                 projected.body,
+                // Active by construction: the write below happens only after `requireActive` passes
+                // inside its own transaction, so a published update always describes an active entity.
+                [],
                 OPERATION,
               ),
             },
@@ -327,18 +337,24 @@ const resultingTags = (storedJson: string, prepared: PreparedUpdate): readonly s
 };
 
 /**
- * The one statement that must be atomic, and the guard that decides whether it applied.
+ * The verdict and the write, atomically.
  *
- * This is now only the write: the response was assembled and validated before the transaction opened,
- * because nothing in it depends on the write. What is left is a clock sample, one guarded `UPDATE`, and
- * - only when that changed nothing - one re-select to say why.
+ * The response was assembled and validated before the transaction opened, because nothing in it
+ * depends on the write. What is left is a clock sample, the revision verdict, the lifecycle verdict,
+ * and one guarded `UPDATE`.
+ *
+ * The revision is re-selected first. A mismatch is the ordinary outcome of two clients editing the same
+ * entity, and reporting it before lifecycle keeps revision-first precedence. With the revision
+ * confirmed unchanged, `row.parentId` is current - any move bumps the revision - so `requireActive`
+ * judges the target's current ancestry. That closes the race an ancestor archived between the two
+ * transactions would otherwise open.
+ *
+ * After those two checks nothing else can have changed the row inside this immediate transaction, so a
+ * guard that matches nothing is our bug, as in `move.ts`. No operation removes rows (AC7), so a target
+ * that vanished is one too.
  *
  * `tags` is written even when neither tag list was supplied. The write is one statement and the
  * resulting list is already known, so this costs nothing and keeps one `set` shape rather than two.
- *
- * Zero changed rows is not a storage failure. It means the row moved between the read transaction and
- * this one, which is an ordinary outcome of two clients editing the same entity - the same reading
- * `derived-text.ts` gives its own revision-guarded write.
  */
 const commit = (
   db: Database.Database,
@@ -358,6 +374,24 @@ const commit = (
   // cannot happen in practice.
   const now = sampleNow(context.clock, OPERATION);
 
+  const current = handle
+    .select({ revision: nodes.revision })
+    .from(nodes)
+    .where(eq(nodes.id, row.id))
+    .get();
+  if (current === undefined) {
+    return raise(
+      new InternalFailure({
+        operation: OPERATION,
+        detail: 'an update target vanished inside its own transaction',
+      }),
+    );
+  }
+  if (current.revision !== prepared.revision) {
+    return raise(new RevisionConflict({ current: current.revision }));
+  }
+  requireActive(handle, row, 'target', OPERATION);
+
   const changed = handle
     .update(nodes)
     .set({
@@ -376,16 +410,12 @@ const commit = (
     .where(and(eq(nodes.id, row.id), eq(nodes.revision, prepared.revision)))
     .run().changes;
 
-  if (changed === 0) {
-    const current = handle
-      .select({ revision: nodes.revision })
-      .from(nodes)
-      .where(eq(nodes.id, row.id))
-      .get();
-    // Unreachable until there is an operation that removes rows (story #8). It is the honest answer to
-    // the caller about their target - the server has not failed, the entity is gone - so it stays,
-    // rather than becoming an internal failure that blames us for a state the caller can observe.
-    if (current === undefined) return raise(new NodeNotFound({ field: 'target' }));
-    return raise(new RevisionConflict({ current: current.revision }));
+  if (changed !== 1) {
+    return raise(
+      new InternalFailure({
+        operation: OPERATION,
+        detail: 'the guarded update matched no row inside its own transaction',
+      }),
+    );
   }
 };

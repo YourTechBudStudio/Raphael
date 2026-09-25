@@ -88,6 +88,9 @@ describe('a server that states it refused', () => {
     // An update's compare-and-set changed zero rows. The server read the row, found a different
     // revision, and wrote nothing - which is a refusal it can state with certainty.
     'revision_conflict',
+    // A mutation refused because its target, parent, or destination is archived. The lifecycle check
+    // runs inside the write transaction, before any write, so nothing was applied.
+    'node_archived',
   ];
 
   for (const code of definiteCodes) {

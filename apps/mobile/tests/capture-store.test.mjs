@@ -89,6 +89,8 @@ const entity = (over = {}) => ({
   description: '',
   tags: [],
   active: false,
+  archived: false,
+  archiveCauses: [],
   body: { format: 'tiptap', value: DOCUMENT },
   metadata: {},
   ...over,
@@ -383,6 +385,60 @@ describe('attempts', () => {
     // The point of the state is that it reports what the server actually created.
     assert.equal(stored.attempts.length, 0);
     assert.equal(stored.unreadableAttempts, 1);
+
+    await store.close();
+  });
+});
+
+describe('acknowledgements saved before archive existed', () => {
+  /**
+   * A capture file written by the previous build: the attempt is acknowledged with the Create response
+   * of that time, which had no lifecycle fields, and the file is at schema version 2.
+   */
+  const savedAtVersionTwo = async (acknowledged) => {
+    const file = await temporaryFile();
+    const first = await opened(file);
+    await first.store.insertDraft(newDraft());
+    await first.store.insertIntent(newIntent());
+    await first.store.acknowledge(acknowledgement());
+    await first.db.run(`UPDATE ${ATTEMPTS_TABLE} SET acknowledged = ? WHERE attempt_id = ?`, [
+      acknowledged,
+      'a1',
+    ]);
+    await first.db.run('PRAGMA user_version = 2');
+    await first.store.close();
+    return file;
+  };
+
+  it('reads an old-shape acknowledgement back after the migration, as active with no causes', async () => {
+    const { archived: _archived, archiveCauses: _causes, ...before } = entity();
+    const file = await savedAtVersionTwo(JSON.stringify({ entity: before }));
+
+    const { store } = await opened(file);
+    const stored = await one(store);
+
+    assert.equal(stored.attempts.length, 1);
+    assert.equal(stored.attempts[0].state, 'acknowledged');
+    assert.equal(stored.attempts[0].acknowledged.id, 42);
+    assert.equal(stored.attempts[0].acknowledged.entity.archived, false);
+    assert.deepEqual(stored.attempts[0].acknowledged.entity.archiveCauses, []);
+
+    await store.close();
+  });
+
+  it('leaves a saved answer with no entity exactly as it was, and still unreadable', async () => {
+    const unusable = '{ "entity" : "not an entity",  "kept": true }';
+    const file = await savedAtVersionTwo(unusable);
+
+    const { store, db } = await opened(file);
+    const stored = await store.list();
+
+    assert.equal(stored.attempts.length, 0);
+    assert.equal(stored.unreadableAttempts, 1);
+    const [row] = await db.all(`SELECT acknowledged FROM ${ATTEMPTS_TABLE} WHERE attempt_id = ?`, [
+      'a1',
+    ]);
+    assert.equal(row.acknowledged, unusable, 'not rewritten, not even reformatted');
 
     await store.close();
   });

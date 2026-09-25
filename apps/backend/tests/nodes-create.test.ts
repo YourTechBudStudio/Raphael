@@ -71,6 +71,8 @@ test('internal timestamps are stored but never returned', () => {
     const keys = Object.keys(response.entity).sort();
     assert.deepEqual(keys, [
       'active',
+      'archiveCauses',
+      'archived',
       'body',
       'description',
       'id',
@@ -745,5 +747,80 @@ test('a title is truncated at the limit by code points, not by UTF-16 units', ()
     const emoji = '😀'.repeat(TITLE_MAX_CODE_POINTS + 50);
     const response = expectRight(note(connection, { body: { value: emoji }, slug: 'emoji' }));
     assert.equal([...response.entity.title].length, TITLE_MAX_CODE_POINTS);
+  });
+});
+
+/** A cause written straight into storage: these tests ask what creation does, not how archive writes. */
+const causeOn = (connection: Parameters<typeof runNodes>[0], id: number) =>
+  connection.db
+    .prepare(
+      `INSERT INTO archive_causes (node_id, owner, reason, created_at) VALUES (?, 'user', 'direct', 1)`,
+    )
+    .run(id);
+
+test('nothing is created under something archived, directly or through a container', () => {
+  withMigrated('create-archived-parent', (connection) => {
+    const shelf = expectRight(
+      create(connection, { type: 'area', parent: { path: '/work' }, title: 'Shelf' }),
+    ).entity;
+    const inner = expectRight(
+      create(connection, { type: 'project', parent: { id: shelf.id }, title: 'Inner' }),
+    ).entity;
+    causeOn(connection, shelf.id);
+    const before = count(connection.db, 'SELECT count(*) AS c FROM nodes');
+
+    for (const [parent, reason] of [
+      [{ id: shelf.id }, 'direct'],
+      [{ path: '/work/shelf/inner' }, 'inherited'],
+    ] as const) {
+      const failure = publicOf(
+        expectLeft(
+          create(connection, { type: 'resource', kind: 'note', parent, title: 'Kept out' }),
+        ),
+      );
+      assert.equal(failure.code, 'node_archived');
+      assert.deepEqual(failure.details, { field: 'parent', reason });
+      assert.equal(failure.message, 'That parent is archived.');
+    }
+    assert.equal(count(connection.db, 'SELECT count(*) AS c FROM nodes'), before);
+    assert.equal(inner.archived, false, 'it was active when it was created');
+
+    // Parentage is decided before lifecycle: a project under a project is a parentage refusal even
+    // when the parent is archived.
+    const wrongType = publicOf(
+      expectLeft(create(connection, { type: 'project', parent: { id: inner.id }, title: 'X' })),
+    );
+    assert.equal(wrongType.code, 'invalid_parent');
+
+    // The root is never archived, and an archived sibling still reserves its slug (AC7).
+    causeOn(connection, rootId(connection, 'personal'));
+    expectRight(create(connection, { type: 'area', parent: { path: '/' }, title: 'Fresh' }));
+    const taken = publicOf(
+      expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title: 'Personal' })),
+    );
+    assert.equal(taken.code, 'slug_conflict');
+  });
+});
+
+test('a replay whose parent was archived afterwards answers with the saved success', () => {
+  withMigrated('create-archived-replay', (connection) => {
+    const request = {
+      type: 'project',
+      parent: { path: '/work' },
+      title: 'Kept',
+      idempotencyKey: 'archived-later',
+    };
+    const original = expectRight(create(connection, request));
+    causeOn(connection, rootId(connection, 'work'));
+
+    const replayed = expectRight(create(connection, request, clockAt(1_700_000_060_000)));
+    assert.deepEqual(replayed, original);
+    assert.equal(replayed.entity.archived, false, 'a replay is a historical snapshot');
+
+    // A new key under the same archived parent is a new request, and is refused.
+    const fresh = publicOf(
+      expectLeft(create(connection, { ...request, idempotencyKey: 'another', title: 'Other' })),
+    );
+    assert.equal(fresh.code, 'node_archived');
   });
 });

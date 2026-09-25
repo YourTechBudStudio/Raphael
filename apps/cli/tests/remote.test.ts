@@ -10,12 +10,16 @@ import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/ba
 import { createTransport, type FetchLike, type Transport } from '@raphael/client';
 import { move as moveDirect, update as updateDirect } from '@raphael/client/nodes';
 import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
-import { decodeMoveResponse, decodeUpdateResponse } from '@raphael/contracts/nodes';
+import {
+  decodeLifecycleResponse,
+  decodeMoveResponse,
+  decodeUpdateResponse,
+} from '@raphael/contracts/nodes';
 import { Effect, Either, Exit, Scope } from 'effect';
 
 import { run as runCli } from '../src/main.ts';
 import { runLogin } from '../src/modules/connection/login.ts';
-import { MOVE_HELP } from '../src/modules/nodes/commands.ts';
+import { ARCHIVE_HELP, MOVE_HELP, RESTORE_HELP } from '../src/modules/nodes/commands.ts';
 import { buildFailureReport } from '../src/shared/report.ts';
 
 /**
@@ -2113,5 +2117,216 @@ describe('moving', () => {
     const own = await run(['move', '--help']);
     assert.equal(own.code, 0);
     assert.equal(own.stdout.trim(), MOVE_HELP);
+  });
+});
+
+describe('archiving and restoring', () => {
+  const created = async (args: readonly string[]): Promise<any> => {
+    const ran = await run([...args, '--json']);
+    assert.equal(ran.code, 0, ran.stderr);
+    return jsonOf(ran).entity;
+  };
+  const entityAt = async (path: string): Promise<any> =>
+    jsonOf(await run(['get', path, '--json'])).entity;
+
+  it('archives by path, pinning the revision it read, and restores by --id against an explicit one', async () => {
+    const project = await created(['create', 'project', '/work/arch-basic', '--title', 'Basic']);
+
+    const archived = await run(['archive', '/work/arch-basic']);
+    assert.equal(archived.code, 0, archived.stderr);
+    assert.equal(
+      archived.stdout,
+      [
+        `Archived project ${project.id}: Basic`,
+        `  revision: ${project.revision + 1}`,
+        '  archived: yes',
+        '    directly (user)',
+        '',
+      ].join('\n'),
+    );
+
+    const restored = await run([
+      'restore',
+      '--id',
+      String(project.id),
+      '--revision',
+      String(project.revision + 1),
+    ]);
+    assert.equal(restored.code, 0, restored.stderr);
+    assert.equal(
+      restored.stdout,
+      [
+        `Restored project ${project.id}: Basic`,
+        `  revision: ${project.revision + 2}`,
+        '  archived: no',
+        '',
+      ].join('\n'),
+    );
+  });
+
+  it('says "Still archived" when a container above keeps it archived, and prints the response as JSON', async () => {
+    const shelf = await created(['create', 'area', '/work/arch-shelf', '--title', 'Shelf']);
+    const note = await created([
+      'create',
+      'resource.note',
+      '/work/arch-shelf/kept',
+      '--title',
+      'Kept',
+    ]);
+    assert.equal((await run(['archive', '/work/arch-shelf/kept'])).code, 0);
+    assert.equal((await run(['archive', '/work/arch-shelf'])).code, 0);
+
+    const still = await run(['restore', '/work/arch-shelf/kept']);
+    assert.equal(still.code, 0, still.stderr);
+    assert.equal(
+      still.stdout,
+      [
+        `Still archived resource.note ${note.id}: Kept`,
+        `  revision: ${note.revision + 2}`,
+        '  archived: yes',
+        `    through area ${shelf.id} "Shelf" (user)`,
+        '',
+      ].join('\n'),
+    );
+
+    const json = await run(['restore', '--id', String(shelf.id), '--json']);
+    assert.equal(json.code, 0, json.stderr);
+    const decoded = decodeLifecycleResponse(jsonOf(json));
+    assert.equal(Either.isRight(decoded), true);
+    if (Either.isRight(decoded)) {
+      assert.equal(decoded.right.node.archived, false);
+      assert.deepEqual(decoded.right.archiveCauses, []);
+    }
+  });
+
+  it('prints the archive causes in get only when something is archived', async () => {
+    const shelf = await created(['create', 'area', '/work/arch-get', '--title', 'Shelf']);
+    await created(['create', 'project', '/work/arch-get/inner', '--title', 'Inner']);
+
+    const active = await run(['get', '/work/arch-get/inner']);
+    assert.equal(active.stdout.includes('archived'), false);
+
+    assert.equal((await run(['archive', '/work/arch-get'])).code, 0);
+    const inherited = await run(['get', '/work/arch-get/inner']);
+    assert.match(
+      inherited.stdout,
+      /\nactive: no\narchived: yes\n {2}through area \d+ "Shelf" \(user\)\n/,
+    );
+    assert.equal(inherited.stdout.includes(`area ${shelf.id}`), true);
+  });
+
+  it('hides archived things from list and search unless asked, and marks them when shown', async () => {
+    await created(['create', 'area', '/work/arch-list', '--title', 'Listing']);
+    await created(['create', 'project', '/work/arch-list/zephyr', '--title', 'Zephyr one']);
+    await created(['create', 'project', '/work/arch-list/breeze', '--title', 'Zephyr two']);
+    assert.equal((await run(['archive', '/work/arch-list/zephyr'])).code, 0);
+
+    const hidden = await run(['list', '/work/arch-list']);
+    assert.equal(hidden.stdout.includes('zephyr'), false);
+    assert.match(hidden.stdout, /breeze\n/);
+
+    const shown = await run(['list', '/work/arch-list', '--include-archived']);
+    assert.match(shown.stdout, /zephyr {2}archived\n/);
+    assert.match(shown.stdout, /breeze\n/);
+
+    const searched = await run(['search', '/work/arch-list', '-q', 'zephyr']);
+    assert.equal(searched.stdout.includes('Zephyr one'), false);
+    const included = await run(['search', '/work/arch-list', '-q', 'zephyr', '--include-archived']);
+    assert.match(included.stdout, /Zephyr one {2}archived\n/);
+  });
+
+  it('guides each refusal of something archived by what is archived and how', async () => {
+    await created(['create', 'area', '/work/arch-refuse', '--title', 'Refuse']);
+    await created(['create', 'project', '/work/arch-refuse/inner', '--title', 'Inner']);
+    const direct = await created(['create', 'project', '/work/arch-direct', '--title', 'Direct']);
+    assert.equal((await run(['archive', '/work/arch-refuse'])).code, 0);
+    assert.equal((await run(['archive', '/work/arch-direct'])).code, 0);
+
+    const onDirect = await run(['update', '--id', String(direct.id), '--title', 'X']);
+    assert.equal(onDirect.code, 1);
+    assert.match(onDirect.stderr, /code: node_archived \(409\)/);
+    assert.match(onDirect.stderr, /field: target\n {2}reason: direct\n/);
+    assert.match(onDirect.stderr, /Restore it first with "raphael restore", then try again\./);
+
+    const onInherited = await run(['update', '/work/arch-refuse/inner', '--active']);
+    assert.equal(onInherited.code, 1);
+    assert.match(
+      onInherited.stderr,
+      /archived through a container above it\. Move it somewhere active/,
+    );
+
+    const underArchived = await run([
+      'create',
+      'resource.note',
+      '/work/arch-refuse/inner/n',
+      '--title',
+      'N',
+    ]);
+    assert.equal(underArchived.code, 1);
+    // The parent is archived only through the area above it, so restoring the parent would change
+    // nothing: the guidance points at that container instead.
+    assert.match(underArchived.stderr, /field: parent\n {2}reason: inherited\n/);
+    assert.match(
+      underArchived.stderr,
+      /That place is archived through a container above it\. Choose an active one, or restore that container\./,
+    );
+    assert.equal(underArchived.stderr.includes('restore it first'), false);
+
+    const note = await created(['create', 'resource.note', '/work/arch-mover', '--title', 'M']);
+    const toArchived = await run(['move', '--id', String(note.id), '/work/arch-refuse']);
+    assert.equal(toArchived.code, 1);
+    assert.match(toArchived.stderr, /field: destination\n {2}reason: direct\n/);
+    assert.match(
+      toArchived.stderr,
+      /That place is archived\. Choose an active one, or restore it first\./,
+    );
+
+    // An inherited-only item moves out, and is active once it is somewhere active.
+    const out = await run(['move', '/work/arch-refuse/inner', '/work/arch-rescued']);
+    assert.equal(out.code, 0, out.stderr);
+    assert.equal((await entityAt('/work/arch-rescued')).archived, false);
+  });
+
+  it('says nothing was sent when the pre-read fails, and cannot confirm a lost answer', async () => {
+    for (const verb of ['archive', 'restore'] as const) {
+      const unread = await run([verb, '/work/anything'], {
+        env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+      });
+      assert.equal(unread.code, 1);
+      assert.match(unread.stderr, /The change was not sent\./);
+      assert.equal(unread.stderr.includes('Could not confirm'), false);
+
+      const lost = await run([verb, '/work/anything', '--revision', '1'], {
+        env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+      });
+      assert.equal(lost.code, 1);
+      assert.match(
+        lost.stderr,
+        new RegExp(
+          `Could not confirm whether this was ${verb === 'archive' ? 'archived' : 'restored'}\\.`,
+        ),
+      );
+      assert.match(lost.stderr, /Read it again with "raphael get" and compare the revision/);
+    }
+  });
+
+  it('refuses the root and an extra argument locally', async () => {
+    const root = await run(['archive', '/', '--revision', '1']);
+    assert.equal(root.code, 2);
+    const extra = await run(['restore', '/work/a', '/work/b']);
+    assert.equal(extra.code, 2);
+    assert.match(extra.stderr, /Unexpected argument/);
+  });
+
+  it('is listed in the root help and documents itself', async () => {
+    const root = await run(['help']);
+    assert.match(
+      root.stdout,
+      /\n {2}archive {11}Hide an area, a project, or a note from lists and search\.\n/,
+    );
+    assert.match(root.stdout, /\n {2}restore {11}Bring back something you archived\.\n/);
+    assert.equal((await run(['archive', '--help'])).stdout.trim(), ARCHIVE_HELP);
+    assert.equal((await run(['restore', '--help'])).stdout.trim(), RESTORE_HELP);
+    assert.match(MOVE_HELP, /archived directly must be restored before it moves/);
   });
 });

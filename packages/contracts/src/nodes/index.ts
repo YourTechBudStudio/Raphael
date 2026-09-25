@@ -73,6 +73,15 @@ export {
   normalizeTag,
 } from './fields.ts';
 export {
+  ArchiveCause,
+  ArchiveIdentifier,
+  DIRECT_ARCHIVE_REASON,
+  USER_ARCHIVE_OWNER,
+  archiveStandingOf,
+  hasDirectUserCause,
+  type ArchiveStanding,
+} from './archive.ts';
+export {
   FILTER_KEYS,
   NodeFilter,
   describeFilterRejection,
@@ -105,6 +114,8 @@ export {
   GetPathResponse,
   GetRequest,
   GetResponse,
+  LifecycleRequest,
+  LifecycleResponse,
   ListRequest,
   ListResponse,
   MoveDestination,
@@ -127,6 +138,7 @@ export {
   type CreateRequestInput,
   type GetPathRequestInput,
   type GetRequestInput,
+  type LifecycleRequestInput,
   type ListRequestInput,
   type MoveRequestInput,
   type SearchRequestInput,
@@ -137,6 +149,8 @@ export {
   decodeGetPathResponse,
   decodeGetRequest,
   decodeGetResponse,
+  decodeLifecycleRequest,
+  decodeLifecycleResponse,
   decodeListRequest,
   decodeListResponse,
   decodeMoveRequest,

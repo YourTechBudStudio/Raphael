@@ -87,6 +87,24 @@ describe('recovery detail projection', () => {
       );
     });
 
+    it('keeps which field is archived and why, and nothing else', () => {
+      assert.deepEqual(
+        project('node_archived', {
+          field: 'destination',
+          reason: 'inherited',
+          origin: 12,
+          title: 'Backend',
+        }),
+        { field: 'destination', reason: 'inherited' },
+      );
+      // An unfamiliar reason is preserved for display; one that is not an identifier is dropped.
+      assert.deepEqual(project('node_archived', { field: 'target', reason: 'held_by_ext' }), {
+        field: 'target',
+        reason: 'held_by_ext',
+      });
+      assert.deepEqual(project('node_archived', { field: 'nowhere', reason: 'Direct\u001b' }), {});
+    });
+
     it('keeps the revision the server holds now, so a stale write knows what to re-read', () => {
       assert.deepEqual(project('revision_conflict', { field: 'revision', currentRevision: 9 }), {
         field: 'revision',

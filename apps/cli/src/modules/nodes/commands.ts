@@ -1,5 +1,5 @@
 /**
- * The seven hierarchy commands.
+ * The nine hierarchy commands.
  *
  * Each one assembles a request, sends it, and renders the answer. No hierarchy rule is implemented
  * here and none may be: slug derivation, parentage, conflict detection, and content conversion all
@@ -10,15 +10,27 @@
 import { randomUUID } from 'node:crypto';
 
 import type { ClientFailure, Transport } from '@raphael/client';
-import { create, get, getPath, list, move, search, update } from '@raphael/client/nodes';
+import {
+  archive,
+  create,
+  get,
+  getPath,
+  list,
+  move,
+  restore,
+  search,
+  update,
+} from '@raphael/client/nodes';
 import {
   BODY_FORMATS,
+  DIRECT_ARCHIVE_REASON,
   FILTER_KEYS,
   LIST_LIMIT_MAX,
   LIST_LIMIT_MIN,
   NODE_ORDER_FIELDS,
   ORDER_DIRECTIONS,
   SCOPES_MAX_COUNT,
+  type ArchiveCause,
   type NodeEntity,
   type NodeFilterInput,
   type NodeSummary,
@@ -70,6 +82,34 @@ import {
  */
 const qualifiedType = (entity: Pick<NodeEntity | NodeSummary, 'type' | 'kind'>): string =>
   entity.kind === null ? entity.type : `${entity.type}.${entity.kind}`;
+
+/**
+ * Why something is archived: `archived: yes` and one line per cause, nearest first. Nothing at all when
+ * it is active - the caller decides whether "archived: no" is worth saying.
+ *
+ * One helper for `get` and for archive and restore, so the two cannot describe causes differently. A
+ * cause on the node itself reads "directly"; one on a container above it names that container, because
+ * that is where it is restored. The reason is printed only when it is not the ordinary direct one, and
+ * an owner or reason this build does not recognize is printed as it came rather than interpreted.
+ */
+const writeLifecycle = (
+  out: Streams['out'],
+  nodeId: number,
+  causes: readonly ArchiveCause[],
+  indent = '',
+): void => {
+  if (causes.length === 0) return;
+  writeLine(out, `${indent}archived: yes`);
+  for (const cause of causes) {
+    const where =
+      cause.origin.id === nodeId
+        ? 'directly'
+        : `through ${cause.origin.type} ${cause.origin.id} "${forTerminal(cause.origin.title)}"`;
+    const who =
+      cause.reason === DIRECT_ARCHIVE_REASON ? cause.owner : `${cause.owner}, ${cause.reason}`;
+    writeLine(out, `${indent}  ${where} (${who})`);
+  }
+};
 
 /**
  * The page footer both `list` and `search` print.
@@ -145,6 +185,7 @@ const SCOPE_PAGE_OPTIONS = {
   filter: { type: 'string' },
   skip: { type: 'string' },
   limit: { type: 'string' },
+  'include-archived': { type: 'boolean' },
   json: { type: 'boolean' },
   help: { type: 'boolean', short: 'h' },
 } as const satisfies OptionConfig;
@@ -152,8 +193,8 @@ const SCOPE_PAGE_OPTIONS = {
 /**
  * Adapt the shared half of a scope-page request, for either command.
  *
- * Returns the request fragment ready to spread, and the assembled scopes beside it, because a failure
- * The archive flag #8 brings, and any other field both operations come to share, lands here once.
+ * Returns the request fragment ready to spread. `--include-archived`, and any other field both
+ * operations come to share, lands here once.
  *
  * The fragment carries its own scopes, which is also what a failure is reported against: the list a
  * caller sends *is* the list the server indexes into, so `reportScopeFailure` reads it back off the
@@ -168,6 +209,7 @@ const scopePageFrom = (
   readonly filter?: NodeFilterInput;
   readonly skip?: number;
   readonly limit?: number;
+  readonly includeArchived?: boolean;
 } => {
   // Every positional is a scope. There is no "unexpected argument" case, because a second path is a
   // second place to look rather than a mistake.
@@ -179,6 +221,7 @@ const scopePageFrom = (
     min: LIST_LIMIT_MIN,
     max: LIST_LIMIT_MAX,
   });
+  const includeArchived = booleanOption(parsed, 'include-archived');
 
   return {
     scopes,
@@ -186,6 +229,7 @@ const scopePageFrom = (
     ...(filter === undefined ? {} : { filter }),
     ...(skip === undefined ? {} : { skip }),
     ...(limit === undefined ? {} : { limit }),
+    ...(includeArchived ? { includeArchived } : {}),
   };
 };
 
@@ -420,8 +464,8 @@ interface PinnedTarget {
 }
 
 /**
- * Read the current revision for an update or a move that did not name one, and pin the entity it
- * belongs to.
+ * Read the current revision for an update, a move, an archive or a restore that did not name one, and
+ * pin the entity it belongs to.
  *
  * The identifier is carried forward deliberately, and it is the whole reason this returns a target
  * rather than a number. The server's guard answers "is this the version of entity 7 that I read?" -
@@ -598,6 +642,9 @@ If <destination> is an existing area or project, it is where this goes. Otherwis
 segment becomes the new address and the rest must already exist. Nothing is ever overwritten:
 an address that is taken, including one held by a note, is refused.
 
+Something archived directly must be restored before it moves. Something archived only because a
+container above it is archived can move somewhere active.
+
 Options:
       --id <id>        Address the thing to move by identifier instead of by path.
       --revision <n>   The revision you read. Without it, the current revision is read for you
@@ -691,6 +738,119 @@ export const runMove = async (
   return EXIT_OK;
 };
 
+export const ARCHIVE_HELP = `Usage: raphael archive <path> [--revision <n>] [options]
+       raphael archive --id <id> [--revision <n>] [options]
+
+Hide an area, a project, or a note from lists and search. Nothing is deleted: everything inside
+an archived area or project is hidden with it, keeps its address, and comes back on restore.
+A project's selection is kept too.
+
+Archiving something that is already archived because a container above it is, keeps it
+archived when that container is restored.
+
+Options:
+      --id <id>        Address by identifier instead of by path.
+      --revision <n>   The revision you read. Without it, the current revision is read for you
+                       just before the archive is sent.
+      --json           Print the result as JSON.
+  -h, --help           Show this help.`;
+
+export const RESTORE_HELP = `Usage: raphael restore <path> [--revision <n>] [options]
+       raphael restore --id <id> [--revision <n>] [options]
+
+Bring back something you archived. Only your own archive of this item is removed: if a container
+above it is archived too, it stays archived, and the answer says which container to restore.
+
+Options:
+      --id <id>        Address by identifier instead of by path.
+      --revision <n>   The revision you read. Without it, the current revision is read for you
+                       just before the restore is sent.
+      --json           Print the result as JSON.
+  -h, --help           Show this help.`;
+
+export const runArchive = (argv: readonly string[], context: CommandContext): Promise<ExitCode> =>
+  runLifecycle('archive', argv, context);
+
+export const runRestore = (argv: readonly string[], context: CommandContext): Promise<ExitCode> =>
+  runLifecycle('restore', argv, context);
+
+/**
+ * Archive or restore: one command shape with a direction.
+ *
+ * The headline is worded by the resulting state, never by the verb alone. A restore that leaves the
+ * item archived through a container above it is a success, and says "Still archived" with the causes
+ * that remain, so nobody reads "Restored" and assumes it is back in their lists.
+ */
+const runLifecycle = async (
+  verb: 'archive' | 'restore',
+  argv: readonly string[],
+  context: CommandContext,
+): Promise<ExitCode> => {
+  const parsed = parseArgs(
+    argv,
+    {
+      id: { type: 'string' },
+      revision: { type: 'string' },
+      json: { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+    },
+    verb,
+  );
+  const [path, ...extra] = parsed.positionals;
+  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, verb);
+
+  const target = selectorFrom(path, stringOption(parsed, 'id', verb), verb);
+  const revisionFlag = integerOption(parsed, 'revision', verb, {
+    min: 1,
+    max: Number.MAX_SAFE_INTEGER,
+  });
+
+  const transport = context.transport();
+
+  // The convenience read `update` and `move` take, pinning by identifier for the same reason.
+  let sendTo: Selector = target;
+  let revision: number;
+  if (revisionFlag !== undefined) {
+    revision = revisionFlag;
+  } else {
+    const pinned = await pinTarget(transport, target);
+    if ('failure' in pinned) {
+      return reportFailure(context.streams, pinned.failure, {
+        operation: verb,
+        beforeDispatch: true,
+      });
+    }
+    sendTo = pinned.target;
+    revision = pinned.revision;
+  }
+
+  const dispatchedAt = new Date();
+  const send = verb === 'archive' ? archive : restore;
+  const result = await send(transport, { target: sendTo, revision });
+  if (!result.ok) {
+    return reportFailure(context.streams, result.failure, { operation: verb, dispatchedAt });
+  }
+
+  if (booleanOption(parsed, 'json')) {
+    writeJson(context.streams.out, result.value);
+    return EXIT_OK;
+  }
+
+  const { node, archiveCauses } = result.value;
+  const { out } = context.streams;
+  // Archive always ends archived; restore ends either active or still archived by something else.
+  const headline = node.archived
+    ? verb === 'archive'
+      ? 'Archived'
+      : 'Still archived'
+    : 'Restored';
+  writeLine(out, `${headline} ${qualifiedType(node)} ${node.id}: ${forTerminal(node.title)}`);
+  writeLine(out, `  revision: ${node.revision}`);
+  if (node.archived) writeLifecycle(out, node.id, archiveCauses, '  ');
+  else writeLine(out, '  archived: no');
+  return EXIT_OK;
+};
+
 export const GET_HELP = `Usage: raphael get <path> [options]
        raphael get --id <id> [options]
 
@@ -741,6 +901,7 @@ export const runGet = async (
   // Only for a project. An area is never active, so printing `active: no` on one would answer a
   // question nobody can ask of it - `type` is what says the field does not apply.
   if (entity.type === 'project') writeLine(out, `active: ${entity.active ? 'yes' : 'no'}`);
+  writeLifecycle(out, entity.id, entity.archiveCauses);
   if (entity.description !== '') writeLine(out, `description: ${forTerminal(entity.description)}`);
   if (entity.tags.length > 0) {
     writeLine(out, `tags: ${entity.tags.map((tag) => forTerminal(tag)).join(', ')}`);
@@ -813,6 +974,7 @@ Options:
                       Directions: ${ORDER_DIRECTIONS.join(', ')}. Default slug:asc then id:asc.
       --skip <n>      How many to skip. Default 0.
       --limit <n>     How many to return, ${LIST_LIMIT_MIN} to ${LIST_LIMIT_MAX}.
+      --include-archived  Also show archived things, marked "archived".
       --json          Print the result as JSON.
   -h, --help          Show this help.`;
 
@@ -847,7 +1009,7 @@ export const runList = async (
       out,
       `${String(item.id).padStart(6)}  ${qualifiedType(item).padEnd(13)}  ${forTerminal(item.slug)}${
         item.active ? '  active' : ''
-      }`,
+      }${item.archived ? '  archived' : ''}`,
     );
   }
   writePageFooter(context.streams, page);
@@ -882,6 +1044,7 @@ Options:
                       A value is either the value itself or {"$in": [...]}.
       --skip <n>      How many to skip. Default 0.
       --limit <n>     How many to return, ${LIST_LIMIT_MIN} to ${LIST_LIMIT_MAX}.
+      --include-archived  Also show archived things, marked "archived".
       --json          Print the result as JSON.
   -h, --help          Show this help.
 
@@ -920,7 +1083,9 @@ export const runSearch = async (
       out,
       `${String(node.id).padStart(6)}  ${qualifiedType(node).padEnd(13)}  ${forTerminal(
         node.slug,
-      )}  ${forTerminal(node.title)}${node.active ? '  active' : ''}`,
+      )}  ${forTerminal(node.title)}${node.active ? '  active' : ''}${
+        node.archived ? '  archived' : ''
+      }`,
     );
   }
   writePageFooter(context.streams, page);

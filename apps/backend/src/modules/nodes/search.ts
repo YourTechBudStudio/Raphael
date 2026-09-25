@@ -5,7 +5,7 @@ import {
   type SearchQuery,
   type SearchResponse,
 } from '@raphael/contracts/nodes';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import { Effect, Either } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
@@ -14,15 +14,16 @@ import { InternalFailure, type NodeError } from './errors.ts';
 import { SUMMARY_COLUMNS, checkedResponse, summaryProjection } from './projection.ts';
 import { resolveScopes } from './resolve.ts';
 import {
-  membershipFragments,
+  pageFragments,
+  type PageFragments,
   predicateConditions,
   whereFragment,
   windowFragment,
 } from './scope-page.ts';
 import { SEARCH_WEIGHTS, matchExpression } from './search-match.ts';
 import { raise, unwrapFailure } from './storage-failures.ts';
-import { orm, readTransaction } from './store.ts';
-import type { StoredSummary } from './types.ts';
+import { orm, readTransaction, type Orm } from './store.ts';
+import type { StoredPageSummary } from './types.ts';
 
 const OPERATION = 'nodes.search';
 
@@ -50,6 +51,10 @@ const OPERATION = 'nodes.search';
  *
  * A search that matches nothing is a successful empty page. `hasMore: false` means the page sequence
  * ended; it never claims coverage.
+ *
+ * **Archived matches left out.** A default search excludes archived nodes, and answers
+ * `archivedLeftOut` so a client can offer to include them only when doing so adds results. It is one
+ * more statement in the same read transaction, so it describes the same snapshot as the page.
  */
 export const searchNodes = (input: unknown): Effect.Effect<SearchResponse, NodeError, Db> =>
   Effect.gen(function* () {
@@ -61,7 +66,7 @@ export const searchNodes = (input: unknown): Effect.Effect<SearchResponse, NodeE
         if (Either.isLeft(request)) {
           return raise(invalidInputFrom(request.left, SEARCH_FIELDS, input));
         }
-        const { scopes, recursive, filter, queries, skip, limit } = request.right;
+        const { scopes, recursive, filter, queries, skip, limit, includeArchived } = request.right;
 
         // The contract carries a query as a *string*, because the typed client puts the decoded
         // request on the wire and a decoded request must re-decode to itself. So it is parsed a second
@@ -85,32 +90,38 @@ export const searchNodes = (input: unknown): Effect.Effect<SearchResponse, NodeE
         const page = readTransaction(db, () => {
           const handle = orm(db);
           const resolved = resolveScopes(handle, scopes, OPERATION);
-          const membership = membershipFragments(resolved, recursive);
+          const fragments = pageFragments(resolved, recursive, includeArchived);
+          const matchCondition = sql`nodes_fts MATCH ${match}`;
+          const filterConditions = predicateConditions(filter);
 
-          const rows = handle.all<StoredSummary>(sql`
-            ${membership.with}
-            SELECT ${SUMMARY_COLUMNS},
+          const rows = handle.all<StoredPageSummary>(sql`
+            ${fragments.with}
+            SELECT ${SUMMARY_COLUMNS}, ${fragments.archivedColumn},
               bm25(nodes_fts, ${SEARCH_WEIGHTS.title}, ${SEARCH_WEIGHTS.description}, ${SEARCH_WEIGHTS.body}) AS score
-            FROM nodes n ${membership.join}
+            FROM nodes n ${fragments.join}
             JOIN nodes_fts ON nodes_fts.rowid = n.id
-            ${whereFragment([
-              sql`nodes_fts MATCH ${match}`,
-              ...membership.conditions,
-              ...predicateConditions(filter),
-            ])}
+            ${whereFragment([matchCondition, ...fragments.conditions, ...filterConditions])}
             ORDER BY score ASC, n.id ASC ${windowFragment(skip, limit)}`);
-          return { rows, skip, limit };
+
+          // With inclusion nothing was left out, and no second statement runs.
+          const archivedLeftOut =
+            !includeArchived &&
+            archivedMatchExists(handle, fragments, [matchCondition, ...filterConditions]);
+          return { rows, archivedLeftOut };
         });
 
-        const visible = page.rows.slice(0, page.limit);
+        const visible = page.rows.slice(0, limit);
         return checkedResponse(
           decodeSearchResponse,
           {
             // `summaryProjection` names its fields, so the `score` column never reaches the wire.
-            items: visible.map((row) => ({ node: summaryProjection(row, OPERATION) })),
-            skip: page.skip,
-            limit: page.limit,
-            hasMore: page.rows.length > page.limit,
+            items: visible.map((row) => ({
+              node: summaryProjection(row, row.archived === 1, OPERATION),
+            })),
+            skip,
+            limit,
+            hasMore: page.rows.length > limit,
+            archivedLeftOut: page.archivedLeftOut,
           },
           OPERATION,
         );
@@ -118,3 +129,25 @@ export const searchNodes = (input: unknown): Effect.Effect<SearchResponse, NodeE
       catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'page read' }, cause),
     });
   });
+
+/**
+ * Whether an archived node matches what a default page asked for: the same `WITH`, join, query, scope
+ * membership, and filter, with the page's archive exclusion replaced by the archive predicate itself.
+ *
+ * `EXISTS` stops at the first archived match. There is no ordering and no window, because the answer is
+ * about the whole match set rather than the returned page.
+ */
+const archivedMatchExists = (
+  handle: Orm,
+  fragments: PageFragments,
+  matchAndFilter: readonly SQL[],
+): boolean => {
+  const row = handle.get<{ found: number }>(sql`
+    ${fragments.with}
+    SELECT EXISTS (
+      SELECT 1 FROM nodes n ${fragments.join}
+      JOIN nodes_fts ON nodes_fts.rowid = n.id
+      ${whereFragment([...matchAndFilter, ...fragments.membershipConditions, fragments.archivedCondition])}
+    ) AS found`);
+  return row?.found === 1;
+};

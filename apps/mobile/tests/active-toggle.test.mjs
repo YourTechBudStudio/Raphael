@@ -26,6 +26,8 @@
 import assert from 'node:assert/strict';
 import { after, afterEach, beforeEach, describe, it } from 'node:test';
 
+import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
+
 import { installDom } from './support/browser-dom.mjs';
 import { installNativeStubs } from './support/native-stub-loader.mjs';
 
@@ -161,7 +163,7 @@ const connect = (activation, transport) => {
           connectionId: 'c1',
           base: 'https://raphael.example',
           origin: 'https://raphael.example',
-          protocolVersion: '2026-09-18',
+          protocolVersion: PROTOCOL_VERSION,
         },
       },
     },

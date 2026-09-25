@@ -18,11 +18,13 @@ import * as capability from '../src/modules/nodes/index.ts';
  */
 
 const OPERATIONS = [
+  'archiveNode',
   'createNode',
   'getNode',
   'getNodePath',
   'listNodes',
   'moveNode',
+  'restoreNode',
   'searchNodes',
   'updateNode',
 ] as const;
@@ -32,6 +34,7 @@ const ERROR_CONTRACT = [
   'InternalFailure',
   'InvalidInput',
   'InvalidParent',
+  'NodeArchived',
   'NodeNotFound',
   'RevisionConflict',
   'SlugConflict',

@@ -64,6 +64,8 @@ const entity = (over = {}) => ({
   description: '',
   tags: [],
   active: false,
+  archived: false,
+  archiveCauses: [],
   body: { format: 'markdown', value: '' },
   metadata: {},
   ...over,

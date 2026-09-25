@@ -33,6 +33,9 @@ import {
   decodeGetPathRequest,
   decodeGetPathResponse,
   decodeGetRequest,
+  decodeGetResponse,
+  decodeLifecycleRequest,
+  decodeLifecycleResponse,
   decodeListRequest,
   decodeListResponse,
   decodeMoveRequest,
@@ -68,8 +71,10 @@ const entity = (overrides: Record<string, unknown> = {}): Record<string, unknown
   description: '',
   tags: [],
   active: false,
+  archived: false,
   body: { format: 'markdown', value: '' },
   metadata: {},
+  archiveCauses: [],
   ...overrides,
 });
 
@@ -82,6 +87,8 @@ test('routes are the agreed POST vocabulary', () => {
     getPath: { method: 'POST', path: '/api/nodes/get-path' },
     update: { method: 'POST', path: '/api/nodes/update' },
     move: { method: 'POST', path: '/api/nodes/move' },
+    archive: { method: 'POST', path: '/api/nodes/archive' },
+    restore: { method: 'POST', path: '/api/nodes/restore' },
   });
 });
 
@@ -108,7 +115,13 @@ test('the root is a scope for create and list but never selects an entity', () =
 
 test('list defaults are materialized, and an omitted filter restricts nothing', () => {
   const decoded = right(decodeListRequest({ scopes: [{ id: 1 }] }));
-  assert.deepEqual(decoded, { scopes: [{ id: 1 }], recursive: false, skip: 0, limit: 50 });
+  assert.deepEqual(decoded, {
+    scopes: [{ id: 1 }],
+    recursive: false,
+    skip: 0,
+    limit: 50,
+    includeArchived: false,
+  });
   assert.equal('filter' in decoded, false);
 });
 
@@ -120,6 +133,7 @@ test('search is the same page with queries instead of an ordering', () => {
     recursive: false,
     skip: 0,
     limit: 50,
+    includeArchived: false,
   });
 
   // Each operation refuses the other's own field, rather than accepting and ignoring it.
@@ -195,7 +209,13 @@ test('the query list is bounded and each member must parse', () => {
 
 test('a search response is hits, and a hit tolerates an unknown sibling of node', () => {
   const page = right(
-    decodeSearchResponse({ items: [{ node: entity() }], skip: 0, limit: 10, hasMore: true }),
+    decodeSearchResponse({
+      items: [{ node: entity() }],
+      skip: 0,
+      limit: 10,
+      hasMore: true,
+      archivedLeftOut: false,
+    }),
   );
   assert.equal(page.items.length, 1);
   assert.equal(page.items[0]?.node.id, 42);
@@ -208,13 +228,22 @@ test('a search response is hits, and a hit tolerates an unknown sibling of node'
       skip: 0,
       limit: 10,
       hasMore: false,
+      archivedLeftOut: false,
     }),
   );
   assert.equal(widened.items[0]?.node.id, 42);
 
   // A hit is still a hit: a bare summary is not one.
   assert.equal(
-    Either.isLeft(decodeSearchResponse({ items: [entity()], skip: 0, limit: 10, hasMore: false })),
+    Either.isLeft(
+      decodeSearchResponse({
+        items: [entity()],
+        skip: 0,
+        limit: 10,
+        hasMore: false,
+        archivedLeftOut: false,
+      }),
+    ),
     true,
   );
 });
@@ -658,6 +687,7 @@ test('selection carries no count, ordinal, timestamp or expiry on the wire eithe
   ).items[0] as unknown as Record<string, unknown>;
   assert.deepEqual(Object.keys(summary).sort(), [
     'active',
+    'archived',
     'description',
     'id',
     'kind',
@@ -669,14 +699,14 @@ test('selection carries no count, ordinal, timestamp or expiry on the wire eithe
     'type',
   ]);
 
-  // The entity is the summary plus a body and metadata, and nothing else.
+  // The entity is the summary plus a body, metadata, and its archive causes, and nothing else.
   const full = right(decodeCreateResponse({ entity: entity() })).entity as unknown as Record<
     string,
     unknown
   >;
   assert.deepEqual(
     Object.keys(full).sort(),
-    [...Object.keys(summary).sort(), 'body', 'metadata'].sort(),
+    [...Object.keys(summary).sort(), 'archiveCauses', 'body', 'metadata'].sort(),
   );
 });
 
@@ -1110,4 +1140,132 @@ test('exactness refuses an explicit undefined, so presence means supplied in pro
 test('an update answers with the resulting entity', () => {
   const decoded = right(decodeUpdateResponse({ entity: entity({ revision: 8 }) }));
   assert.equal(decoded.entity.revision, 8);
+});
+
+const directCause = {
+  origin: { id: 42, type: 'project', title: 'Backend' },
+  owner: 'user',
+  reason: 'direct',
+};
+
+test('an archive cause keeps an unfamiliar owner and reason, and refuses one that is not an identifier', () => {
+  const decoded = right(
+    decodeGetResponse({
+      entity: entity({
+        archived: true,
+        archiveCauses: [{ ...directCause, owner: 'ext_calendar', reason: 'expired' }],
+      }),
+    }),
+  );
+  assert.deepEqual(decoded.entity.archiveCauses[0], {
+    ...directCause,
+    owner: 'ext_calendar',
+    reason: 'expired',
+  });
+
+  for (const owner of ['User', 'ext calendar', '', 'x'.repeat(65), '9user']) {
+    assert.equal(
+      Either.isLeft(
+        decodeGetResponse({
+          entity: entity({ archived: true, archiveCauses: [{ ...directCause, owner }] }),
+        }),
+      ),
+      true,
+      JSON.stringify(owner),
+    );
+  }
+});
+
+test('an entity whose archived status contradicts its causes is refused, not believed', () => {
+  assert.equal(Either.isLeft(decodeGetResponse({ entity: entity({ archived: true }) })), true);
+  assert.equal(
+    Either.isLeft(decodeGetResponse({ entity: entity({ archiveCauses: [directCause] }) })),
+    true,
+  );
+  assert.equal(
+    Either.isRight(
+      decodeGetResponse({ entity: entity({ archived: true, archiveCauses: [directCause] }) }),
+    ),
+    true,
+  );
+  // Both fields are required: a missing status is not read as "active".
+  const { archived: _archived, ...withoutStatus } = entity();
+  assert.equal(Either.isLeft(decodeGetResponse({ entity: withoutStatus })), true);
+  const { archiveCauses: _causes, ...withoutCauses } = entity();
+  assert.equal(Either.isLeft(decodeGetResponse({ entity: withoutCauses })), true);
+});
+
+test('a lifecycle response whose summary contradicts its causes is refused', () => {
+  const summary = (archived: boolean) => {
+    const { body: _body, metadata: _metadata, archiveCauses: _causes, ...rest } = entity();
+    return { ...rest, archived };
+  };
+  assert.equal(
+    Either.isRight(decodeLifecycleResponse({ node: summary(true), archiveCauses: [directCause] })),
+    true,
+  );
+  assert.equal(
+    Either.isRight(decodeLifecycleResponse({ node: summary(false), archiveCauses: [] })),
+    true,
+  );
+  assert.equal(
+    Either.isLeft(decodeLifecycleResponse({ node: summary(false), archiveCauses: [directCause] })),
+    true,
+  );
+  assert.equal(
+    Either.isLeft(decodeLifecycleResponse({ node: summary(true), archiveCauses: [] })),
+    true,
+  );
+});
+
+test('a lifecycle request is a selector and a revision, and nothing else', () => {
+  assert.deepEqual(right(decodeLifecycleRequest({ target: { id: 4 }, revision: 2 })), {
+    target: { id: 4 },
+    revision: 2,
+  });
+  assert.equal(Either.isLeft(decodeLifecycleRequest({ target: { path: '/' }, revision: 2 })), true);
+  assert.equal(Either.isLeft(decodeLifecycleRequest({ target: { id: 4 } })), true);
+  assert.equal(
+    Either.isLeft(decodeLifecycleRequest({ target: { id: 4 }, revision: 2, reason: 'direct' })),
+    true,
+  );
+});
+
+test('archived nodes are left out of a page unless it asks for them', () => {
+  assert.equal(right(decodeListRequest({ scopes: [{ id: 1 }] })).includeArchived, false);
+  assert.equal(
+    right(decodeSearchRequest({ scopes: [{ id: 1 }], queries: ['a'] })).includeArchived,
+    false,
+  );
+  assert.equal(
+    right(decodeListRequest({ scopes: [{ id: 1 }], includeArchived: true })).includeArchived,
+    true,
+  );
+  for (const includeArchived of ['true', 1, null]) {
+    assert.equal(
+      Either.isLeft(decodeListRequest({ scopes: [{ id: 1 }], includeArchived })),
+      true,
+      JSON.stringify(includeArchived),
+    );
+    assert.equal(
+      Either.isLeft(decodeSearchRequest({ scopes: [{ id: 1 }], queries: ['a'], includeArchived })),
+      true,
+      JSON.stringify(includeArchived),
+    );
+  }
+});
+
+test('a search says whether archived matches were left out, and a list does not', () => {
+  const page = { items: [], skip: 0, limit: 10, hasMore: false };
+  assert.equal(
+    right(decodeSearchResponse({ ...page, archivedLeftOut: true })).archivedLeftOut,
+    true,
+  );
+  assert.equal(Either.isLeft(decodeSearchResponse(page)), true);
+  assert.equal(Either.isLeft(decodeSearchResponse({ ...page, archivedLeftOut: 'yes' })), true);
+  assert.equal('archivedLeftOut' in right(decodeListResponse(page)), false);
+  assert.equal(
+    'archivedLeftOut' in right(decodeListResponse({ ...page, archivedLeftOut: true })),
+    false,
+  );
 });

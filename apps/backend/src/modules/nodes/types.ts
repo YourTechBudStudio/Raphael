@@ -44,6 +44,29 @@ export interface StoredSummary extends StoredNode {
   readonly active: number;
 }
 
+/**
+ * A page row: the summary columns plus the page's computed `archived`, `0` or `1`. The page decides
+ * it, because only the page statement knows whether archived rows were excluded or marked.
+ */
+export interface StoredPageSummary extends StoredSummary {
+  readonly archived: number;
+}
+
+/**
+ * One stored archive cause as it applies to a node, from the lifecycle walk: the cause's origin - the
+ * node itself or an ancestor - and who put it there and why.
+ *
+ * Here rather than in `lifecycle.ts`, so `projection.ts` can name it without depending on the module
+ * that owns the rule.
+ */
+export interface EffectiveCause {
+  readonly originId: number;
+  readonly originType: NodeType;
+  readonly originTitle: string;
+  readonly owner: string;
+  readonly reason: string;
+}
+
 /** What Get needs: the summary columns plus the two stored JSON documents. */
 export interface StoredEntity extends StoredSummary {
   readonly body: string;

@@ -199,6 +199,47 @@ describe('operations over HTTP', () => {
     });
   });
 
+  test('archive and restore answer 200, and an archived target refuses an update with 409', async () => {
+    await withServer('http-archive', async (server) => {
+      const created = await call(server, '/api/nodes/create', {
+        body: JSON.stringify({ type: 'project', parent: { path: '/work' }, title: 'Ship it' }),
+      });
+      const entity = (created.json as { entity: { id: number; revision: number } }).entity;
+
+      const archived = await call(server, '/api/nodes/archive', {
+        body: JSON.stringify({ target: { id: entity.id }, revision: entity.revision }),
+      });
+      assert.equal(archived.status, 200);
+      const answer = archived.json as {
+        node: { archived: boolean; revision: number };
+        archiveCauses: { owner: string; reason: string }[];
+      };
+      assert.equal(answer.node.archived, true);
+      assert.deepEqual(
+        answer.archiveCauses.map((cause) => [cause.owner, cause.reason]),
+        [['user', 'direct']],
+      );
+
+      const refused = await call(server, '/api/nodes/update', {
+        body: JSON.stringify({
+          target: { id: entity.id },
+          revision: answer.node.revision,
+          title: 'Renamed',
+        }),
+      });
+      assert.equal(refused.status, 409);
+      const error = envelope(refused.json);
+      assert.equal(error.code, 'node_archived');
+      assert.deepEqual(error.details, { field: 'target', reason: 'direct' });
+
+      const restored = await call(server, '/api/nodes/restore', {
+        body: JSON.stringify({ target: { id: entity.id }, revision: answer.node.revision }),
+      });
+      assert.equal(restored.status, 200);
+      assert.equal((restored.json as { node: { archived: boolean } }).node.archived, false);
+    });
+  });
+
   test('an update answers 200, and a stale one 409 with the revision to re-read', async () => {
     await withServer('http-update', async (server) => {
       const created = await call(server, '/api/nodes/create', {

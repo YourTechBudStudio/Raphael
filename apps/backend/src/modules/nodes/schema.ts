@@ -4,6 +4,7 @@ import {
   foreignKey,
   index,
   integer,
+  primaryKey,
   sqliteTable,
   text,
   unique,
@@ -172,5 +173,41 @@ export const creationReplays = sqliteTable(
     check('creation_replays_expires_at_safe', safeEpochMillis('expires_at')),
     check('creation_replays_key_present', sql`length(key) > 0`),
     check('creation_replays_result_json', sql`json_valid(result_json)`),
+  ],
+);
+
+/**
+ * Why a node is archived: one row per cause, stored only at its origin (ADR 0003).
+ *
+ * - **Origin rows only.** Archiving a container writes one row on that container and nothing on its
+ *   descendants. Whether a node is archived is computed from the node and its current ancestors by
+ *   `lifecycle.ts`, which is the only module that reads or writes this table. That is what makes a move
+ *   out of an archived container need no cleanup, and a restore of an ancestor leave a descendant's own
+ *   cause standing.
+ * - **The primary key is the no-duplicate rule.** One owner cannot hold the same reason on one node
+ *   twice, so archiving something already archived by the user writes nothing.
+ * - **`owner` and `reason` are open strings**, bounded only by length. `('user', 'direct')` is the only
+ *   pair written today; the columns do not preclude an extension owning its own cause (#13).
+ * - **`RESTRICT`**, because no operation deletes a node. Should one arrive, it has to decide what
+ *   happens to the node's causes rather than having them vanish silently.
+ *
+ * Nothing here touches `nodes`: no column, trigger, or index is added there, which is what keeps this
+ * migration clear of the table rebuild `0004`'s header warns about.
+ */
+export const archiveCauses = sqliteTable(
+  'archive_causes',
+  {
+    nodeId: integer('node_id')
+      .notNull()
+      .references(() => nodes.id, { onDelete: 'restrict' }),
+    owner: text('owner').notNull(),
+    reason: text('reason').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ name: 'archive_causes_pk', columns: [t.nodeId, t.owner, t.reason] }),
+    check('archive_causes_owner_present', sql`length(owner) BETWEEN 1 AND 64`),
+    check('archive_causes_reason_present', sql`length(reason) BETWEEN 1 AND 64`),
+    check('archive_causes_created_at_safe', safeEpochMillis('created_at')),
   ],
 );

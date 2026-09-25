@@ -109,6 +109,20 @@ export class RevisionConflict extends Data.TaggedError('RevisionConflict')<{
   readonly current: number;
 }> {}
 
+/**
+ * A mutation that would change something archived, or put something under an archived container.
+ *
+ * `field` says which part of the request is archived: the target itself, the parent a creation names,
+ * or the destination a move names. `standing` says how: by a cause of its own (`direct`), or only
+ * through a container above it (`inherited`). The distinction is what recovery turns on - a direct
+ * target is restored first, while an inherited-only one can still move somewhere active. Archive and
+ * restore never raise it: they stay available under every standing.
+ */
+export class NodeArchived extends Data.TaggedError('NodeArchived')<{
+  readonly field: 'target' | 'parent' | 'destination';
+  readonly standing: 'direct' | 'inherited';
+}> {}
+
 /** A failure converting or validating *submitted* content. Stored content is never this error. */
 export class UnsupportedContent extends Data.TaggedError('UnsupportedContent')<{
   readonly failure: ContentFailure;
@@ -139,6 +153,7 @@ export type NodeError =
   | SlugConflict
   | IdempotencyConflict
   | RevisionConflict
+  | NodeArchived
   | UnsupportedContent
   | StorageBusy
   | InternalFailure;
@@ -228,6 +243,17 @@ export const toPublicError = (error: NodeError): PublicApiError => {
         code: 'revision_conflict',
         message: 'This has changed since that revision was read.',
         details: { field: 'revision', currentRevision: error.current },
+      };
+    case 'NodeArchived':
+      return {
+        code: 'node_archived',
+        message:
+          error.field === 'target'
+            ? 'This is archived.'
+            : error.field === 'parent'
+              ? 'That parent is archived.'
+              : 'That destination is archived.',
+        details: { field: error.field, reason: error.standing },
       };
     case 'UnsupportedContent':
       return {

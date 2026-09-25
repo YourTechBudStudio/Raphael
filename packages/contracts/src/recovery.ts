@@ -32,19 +32,11 @@
 import { isRequestField, type RequestField } from './nodes/fields.ts';
 import { SLUG_MAX_CODE_POINTS, isCanonicalSlugShape } from './nodes/slug.ts';
 import type { ApiErrorCode } from './shared/errors.ts';
+import { MACHINE_IDENTIFIER } from './shared/identifier.ts';
 import { codePointLength, type JsonObject, type JsonValue } from './shared/json.ts';
 
 /**
- * A lowercase machine identifier. Server-authored vocabularies - failure reasons, stored type names -
- * take this shape, and a newer server may add values this client has never heard of.
- *
- * The bound is what makes an unfamiliar value safe to render: no control characters, no escape
- * sequences, no whitespace, no direction-changing marks, and a length a terminal or a label can hold.
- */
-const IDENTIFIER = /^[a-z][a-z0-9_]{0,63}$/;
-
-/**
- * A document element name. Deliberately *not* `IDENTIFIER`: TipTap node and mark names are camelCase
+ * A document element name. Deliberately *not* `MACHINE_IDENTIFIER`: TipTap node and mark names are camelCase
  * (`codeBlock`, `horizontalRule`, `bulletList`), so the lowercase rule would silently discard exactly
  * the value that tells someone which element of their document was refused.
  *
@@ -110,7 +102,7 @@ const asString = (value: JsonValue | undefined): string | undefined =>
 
 const identifier = (value: JsonValue | undefined): string | undefined => {
   const text = asString(value);
-  return text !== undefined && IDENTIFIER.test(text) ? text : undefined;
+  return text !== undefined && MACHINE_IDENTIFIER.test(text) ? text : undefined;
 };
 
 const elementName = (value: JsonValue | undefined): string | undefined => {
@@ -215,6 +207,11 @@ export const projectRecoveryDetails = (code: string, details: JsonObject): Recov
       return present({
         field: requestField(read('field')),
         currentRevision: safeCount(read('currentRevision')),
+      });
+    case 'node_archived':
+      return present({
+        field: requestField(read('field')),
+        reason: identifier(read('reason')),
       });
     case 'idempotency_conflict':
       return present({

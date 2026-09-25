@@ -17,6 +17,7 @@ import {
   type CreateRequestInput,
   type GetPathRequestInput,
   type GetRequestInput,
+  type LifecycleRequestInput,
   type ListRequestInput,
   type MoveRequestInput,
   type SearchRequestInput,
@@ -27,6 +28,8 @@ import {
   decodeGetPathResponse,
   decodeGetRequest,
   decodeGetResponse,
+  decodeLifecycleRequest,
+  decodeLifecycleResponse,
   decodeListRequest,
   decodeListResponse,
   decodeMoveRequest,
@@ -38,6 +41,7 @@ import {
   type CreateResponse,
   type GetPathResponse,
   type GetResponse,
+  type LifecycleResponse,
   type ListResponse,
   type MoveResponse,
   type SearchResponse,
@@ -166,6 +170,52 @@ export const move = (
     NODE_ROUTES.move,
     decodeMoveRequest as Decoder<unknown>,
     decodeMoveResponse,
+    request,
+    200,
+    true,
+    signal,
+  );
+
+/**
+ * Archive one existing area, project, or note: add the user's own cause to it. Answers 200.
+ *
+ * `mutating`, and without an idempotency key for the reason `update` gives: the revision is the safety,
+ * and a lost answer is reported as `mutationOutcome: 'unknown'` for the caller to reconcile by
+ * re-reading. Archiving something the user already archived succeeds without a change. The response
+ * states the resulting status and the causes that apply, which is what a caller words its result by.
+ */
+export const archive = (
+  transport: Transport,
+  request: LifecycleRequestInput,
+  signal?: AbortSignal,
+): Promise<ClientResult<LifecycleResponse>> =>
+  run(
+    transport,
+    NODE_ROUTES.archive,
+    decodeLifecycleRequest as Decoder<unknown>,
+    decodeLifecycleResponse,
+    request,
+    200,
+    true,
+    signal,
+  );
+
+/**
+ * Restore one area, project, or note: remove the user's own cause from it. Answers 200.
+ *
+ * The same safety as `archive`. A restore can leave the node archived - through a container above it,
+ * or by another cause - and the response says so; a caller must not report "restored" from the verb.
+ */
+export const restore = (
+  transport: Transport,
+  request: LifecycleRequestInput,
+  signal?: AbortSignal,
+): Promise<ClientResult<LifecycleResponse>> =>
+  run(
+    transport,
+    NODE_ROUTES.restore,
+    decodeLifecycleRequest as Decoder<unknown>,
+    decodeLifecycleResponse,
     request,
     200,
     true,

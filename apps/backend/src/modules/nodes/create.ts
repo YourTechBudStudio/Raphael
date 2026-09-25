@@ -19,6 +19,7 @@ import {
   type PreparedCreate,
 } from './fingerprint.ts';
 import { allowsOmittedTitle } from './kinds.ts';
+import { requireActive } from './lifecycle.ts';
 import { bodyProjection, checkedResponse } from './projection.ts';
 import {
   REPLAY_TTL_MS,
@@ -51,7 +52,8 @@ const OPERATION = 'nodes.create';
  *   → immediate write transaction
  *       resample the clock
  *       authoritative replay recheck
- *       validate the parent, insert the node with its kind and derived text
+ *       validate the parent, and require it to be active
+ *       insert the node with its kind and derived text
  *       assemble and validate the response
  *       record the replay result
  *     commit
@@ -64,6 +66,11 @@ const OPERATION = 'nodes.create';
  * conversion does: a settled key must answer before any content work. And the response is validated
  * *before* the commit, so a projection bug cannot leave a committed entity behind an error telling the
  * caller their request failed.
+ *
+ * The replay recheck also precedes the parent's lifecycle check. A retried key whose parent was
+ * archived after the original creation answers with the saved historical success, lifecycle fields
+ * included, because that is a truthful statement about the original request (ADR 0002). A caller that
+ * needs the entity's status now reads it with Get.
  *
  * The consequence of that first placement is deliberate and observable: a retry whose input differs
  * conflicts on the key even when conversion would also have rejected its body. The key is the more
@@ -231,6 +238,7 @@ const commit = (
   const scope = resolveScope(handle, prepared.parent, 'parent', OPERATION);
   validateParentage(scope, prepared.type, 'parent');
   const parent = scope.kind === 'root' ? undefined : scope.node;
+  requireActive(handle, parent ?? null, 'parent', OPERATION);
 
   const inserted = handle
     .insert(nodes)
@@ -277,8 +285,11 @@ const commit = (
         // above writes, and is stated here because the hand-assembled entity is validated against the
         // same response contract every other node response is.
         active: false,
+        // Active by construction: creation requires an active parent, and a new node has no cause.
+        archived: false,
         body,
         metadata: prepared.metadata,
+        archiveCauses: [],
       },
     },
     OPERATION,

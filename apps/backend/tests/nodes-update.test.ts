@@ -374,12 +374,13 @@ test('the write guard is the verdict when the row moves between the read and the
   });
 });
 
-test('a target that disappears between the read and the write is a missing target', () => {
+test('a target that disappears inside the write is an internal failure, since nothing removes rows', () => {
   withMigrated('update-vanished', (connection) => {
     const created = note(connection, 'Draft');
 
-    // Unreachable in production until there is an operation that removes rows (story #8). The same
-    // clock seam reaches it at no cost, so the branch is exercised rather than merely reasoned about.
+    // No operation removes rows (AC7), so a target missing inside its own write transaction is data we
+    // did not write rather than something a caller can observe. The clock seam reaches the branch at no
+    // cost, so it is exercised rather than merely reasoned about.
     let samples = 0;
     const clock = controlledClock(() => {
       samples += 1;
@@ -398,8 +399,8 @@ test('a target that disappears between the read and the write is a missing targe
     );
 
     assert.equal(samples, 1, 'the row vanished inside the commit, not before the read');
-    assert.equal(error._tag, 'NodeNotFound');
-    assert.deepEqual(toPublicError(error).details, { field: 'target' });
+    assert.equal(error._tag, 'InternalFailure');
+    assert.equal(toPublicError(error).code, 'internal_error');
   });
 });
 
@@ -739,4 +740,158 @@ test('a revision conflict publishes the revision to re-read, and nothing else', 
   const published = toPublicError(new RevisionConflict({ current: 4 }));
   assert.equal(published.code, 'revision_conflict');
   assert.deepEqual(published.details, { field: 'revision', currentRevision: 4 });
+});
+
+const WORK = 1;
+
+/** A cause written straight into storage: these tests ask what update does, not how archive writes. */
+const causeOn = (connection: Connection, id: number) =>
+  connection.db
+    .prepare(
+      `INSERT INTO archive_causes (node_id, owner, reason, created_at) VALUES (?, 'user', 'direct', ?)`,
+    )
+    .run(id, AT);
+
+test('something archived directly or through a container is not updated, selection included', () => {
+  withMigrated('update-archived', (connection) => {
+    const direct = project(connection, 'Direct');
+    const container = create(connection, {
+      type: 'area',
+      parent: { path: '/work' },
+      title: 'Shelf',
+    });
+    const inherited = create(connection, {
+      type: 'project',
+      parent: { id: container.id },
+      title: 'Inherited',
+    });
+    const selected = expectRight(
+      update(connection, {
+        target: { id: inherited.id },
+        revision: inherited.revision,
+        active: true,
+      }),
+    ).entity;
+    causeOn(connection, direct.id);
+    causeOn(connection, container.id);
+
+    for (const [target, revision, reason] of [
+      [direct.id, direct.revision, 'direct'],
+      [inherited.id, selected.revision, 'inherited'],
+    ] as const) {
+      for (const change of [{ title: 'Renamed' }, { active: false }, { active: true }]) {
+        const before = stored(connection, target);
+        const failure = toPublicError(
+          expectLeft(update(connection, { target: { id: target }, revision, ...change })),
+        );
+        assert.equal(failure.code, 'node_archived', JSON.stringify(change));
+        assert.deepEqual(failure.details, { field: 'target', reason });
+        assert.deepEqual(stored(connection, target), before, 'nothing was written');
+      }
+    }
+    // The saved selection survives, and returns to view on restore.
+    assert.equal(stored(connection, inherited.id).active, 1);
+  });
+});
+
+test('revision, then active_requires_project, then lifecycle', () => {
+  withMigrated('update-archived-order', (connection) => {
+    const shelf = create(connection, { type: 'area', parent: { path: '/work' }, title: 'Shelf' });
+    causeOn(connection, shelf.id);
+
+    const stale = toPublicError(
+      expectLeft(
+        update(connection, {
+          target: { id: shelf.id },
+          revision: shelf.revision + 1,
+          active: true,
+        }),
+      ),
+    );
+    assert.equal(stale.code, 'revision_conflict');
+
+    const notProject = toPublicError(
+      expectLeft(
+        update(connection, { target: { id: shelf.id }, revision: shelf.revision, active: true }),
+      ),
+    );
+    assert.equal(notProject.code, 'invalid_input');
+    assert.equal(notProject.details['reason'], 'active_requires_project');
+
+    const archived = toPublicError(
+      expectLeft(
+        update(connection, { target: { id: shelf.id }, revision: shelf.revision, title: 'X' }),
+      ),
+    );
+    assert.equal(archived.code, 'node_archived');
+  });
+});
+
+test('an ancestor archived between the read and the write is refused by the write', () => {
+  withMigrated('update-archived-race', (connection) => {
+    const created = note(connection, 'Draft');
+    const before = stored(connection, created.id);
+
+    // The seam: the write transaction is the only one opened `.immediate()`, so wrapping that call lets
+    // a cause land on the target's parent after the read transaction has closed and before the write
+    // transaction runs its body - the interleaving the write-side lifecycle check exists for. The
+    // target's own row does not change, so its revision still matches.
+    const original = connection.db.transaction.bind(connection.db);
+    let archivedBetween = 0;
+    // better-sqlite3 defines `immediate` read-only, so the wrapper is a new object over the original
+    // transaction rather than a patched one.
+    connection.db.transaction = ((body: (...args: never[]) => unknown) => {
+      const transaction = original(body);
+      return {
+        deferred: transaction.deferred,
+        immediate: (...args: never[]) => {
+          archivedBetween += 1;
+          causeOn(connection, WORK);
+          return transaction.immediate(...args);
+        },
+      };
+    }) as unknown as typeof connection.db.transaction;
+
+    try {
+      const failure = expectLeft(
+        update(connection, {
+          target: { id: created.id },
+          revision: created.revision,
+          title: 'Renamed',
+        }),
+      );
+      assert.equal(archivedBetween, 1, 'the cause landed once, as the write transaction opened');
+      assert.deepEqual(toPublicError(failure).details, { field: 'target', reason: 'inherited' });
+      assert.equal(toPublicError(failure).code, 'node_archived');
+    } finally {
+      connection.db.transaction = original;
+    }
+    assert.deepEqual(stored(connection, created.id), before, 'the row is unchanged');
+  });
+});
+
+test('an update succeeds again once what archived it is restored, and answers active', () => {
+  withMigrated('update-after-restore', (connection) => {
+    const created = note(connection, 'Draft');
+    causeOn(connection, WORK);
+    assert.equal(
+      toPublicError(
+        expectLeft(
+          update(connection, {
+            target: { id: created.id },
+            revision: created.revision,
+            title: 'X',
+          }),
+        ),
+      ).code,
+      'node_archived',
+    );
+    connection.db.prepare('DELETE FROM archive_causes').run();
+
+    const updated = expectRight(
+      update(connection, { target: { id: created.id }, revision: created.revision, title: 'X' }),
+    ).entity;
+    assert.equal(updated.archived, false);
+    assert.deepEqual(updated.archiveCauses, []);
+  });
 });

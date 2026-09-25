@@ -26,7 +26,7 @@ import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { createTransport } from '@raphael/client';
-import { get, update } from '@raphael/client/nodes';
+import { get, restore, update } from '@raphael/client/nodes';
 import { QueryClient } from '@tanstack/react-query';
 
 import { asClientFailure, unwrap } from '../src/infrastructure/query/failure.ts';
@@ -314,6 +314,7 @@ describe('a note the CLI wrote, read by the phone', () => {
           description: '',
           tags: [],
           active: false,
+          archived: false,
         }),
         null,
         'a container is never mapped into a notes grid',
@@ -1101,6 +1102,113 @@ describe('one entity, moved by either client', () => {
         assert.deepEqual(placed(hierarchyAfter, id), placed(hierarchyBefore, id));
       }
       assert.equal(hierarchyAfter.byId.size, hierarchyBefore.byId.size);
+    });
+  });
+});
+
+describe('archive and restore, across the two clients', () => {
+  const containerAt = async (endpoint, type, at, title) => {
+    const { entity } = await cliJson(['create', type, at, '--title', title], { endpoint });
+
+    return { ...entity, at };
+  };
+
+  it('is archived by the terminal and leaves the phone’s hierarchy and Home, keeping its selection', async () => {
+    const dir = await temporaryDir('archive-cli-writes-');
+
+    await withServer(async ({ endpoint }) => {
+      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const project = await containerAt(endpoint, 'project', '/work/shelved', 'Shelved');
+      const selected = await runCli(['update', project.at, '--active'], { endpoint });
+      assert.equal(selected.code, 0, selected.stderr);
+      assert.deepEqual(
+        activeProjects(await hierarchyOver(transport)).map((found) => found.slug),
+        ['shelved'],
+      );
+
+      const archived = await runCli(['archive', project.at], { endpoint });
+      assert.equal(archived.code, 0, archived.stderr);
+      assert.match(archived.stdout, /^Archived project /);
+
+      const archivedTree = await hierarchyOver(transport);
+      assert.equal(archivedTree.byId.has(project.id), false, 'the phone’s tree no longer holds it');
+      assert.deepEqual(activeProjects(archivedTree), [], 'and Home no longer lists it');
+
+      // The selection itself was kept: archive hides, it does not deselect.
+      const shown = await runCli(['get', project.at], { endpoint });
+      assert.match(shown.stdout, /^active: yes$/m);
+      assert.match(shown.stdout, /^archived: yes$/m);
+    });
+  });
+
+  it('is restored by the phone at the revision it read, and the terminal sees it active and selected', async () => {
+    const dir = await temporaryDir('archive-phone-restores-');
+
+    await withServer(async ({ endpoint }) => {
+      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const project = await containerAt(endpoint, 'project', '/work/returning', 'Returning');
+      assert.equal((await runCli(['update', project.at, '--active'], { endpoint })).code, 0);
+      assert.equal((await runCli(['archive', project.at], { endpoint })).code, 0);
+
+      // What the phone reads is what it writes against: the Get revision, as the design requires.
+      const read = unwrap(await get(transport, { target: { id: project.id } })).entity;
+      assert.equal(read.archived, true);
+      assert.equal(read.active, true);
+
+      const answered = unwrap(
+        await restore(transport, { target: { id: read.id }, revision: read.revision }),
+      );
+      assert.equal(answered.node.archived, false);
+      assert.deepEqual(answered.archiveCauses, []);
+      assert.equal(answered.node.revision, read.revision + 1);
+
+      const atTerminal = await cliJson(['get', project.at], { endpoint });
+      assert.equal(atTerminal.entity.archived, false);
+      assert.equal(atTerminal.entity.active, true, 'still selected');
+      assert.equal(atTerminal.entity.revision, answered.node.revision);
+
+      const tree = await hierarchyOver(transport);
+      assert.equal(tree.byId.get(project.id)?.active, true, 'back in the phone’s tree');
+      assert.deepEqual(
+        activeProjects(tree).map((found) => found.slug),
+        ['returning'],
+      );
+    });
+  });
+
+  it('keeps an independent cause below a restored container (ADR 0003)', async () => {
+    const dir = await temporaryDir('archive-independent-');
+
+    await withServer(async ({ endpoint }) => {
+      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const project = await containerAt(endpoint, 'project', '/work/ten', 'Ten');
+      const plain = await cliJson(
+        ['create', 'resource.note', '/work/ten/eleven', '--title', 'Eleven'],
+        { endpoint },
+      );
+      const independent = await cliJson(
+        ['create', 'resource.note', '/work/ten/twelve', '--title', 'Twelve'],
+        { endpoint },
+      );
+
+      assert.equal((await runCli(['archive', '/work/ten/twelve'], { endpoint })).code, 0);
+      assert.equal((await runCli(['archive', project.at], { endpoint })).code, 0);
+      const restored = await runCli(['restore', project.at], { endpoint });
+      assert.equal(restored.code, 0, restored.stderr);
+      assert.match(restored.stdout, /^Restored project /);
+
+      const read = async (id) => unwrap(await get(transport, { target: { id } })).entity;
+      assert.equal((await read(project.id)).archived, false);
+      assert.equal((await read(plain.entity.id)).archived, false);
+      const kept = await read(independent.entity.id);
+      assert.equal(kept.archived, true);
+      assert.deepEqual(kept.archiveCauses, [
+        {
+          origin: { id: independent.entity.id, type: 'resource', title: 'Twelve' },
+          owner: 'user',
+          reason: 'direct',
+        },
+      ]);
     });
   });
 });

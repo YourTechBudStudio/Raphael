@@ -291,8 +291,9 @@ export const loadSummary = (
  *
  * Ordinary writes cannot form a cycle - creation cannot, and a move refuses one - and the parent
  * foreign key is `RESTRICT`, so neither a cycle nor a missing ancestor should be reachable. Both are
- * therefore integrity failures in data we wrote, not caller errors, and neither is repaired here. Two
- * callers: `getNodePath` maps the chain to slugs; `moveNode` asks whether the target is in it.
+ * therefore integrity failures in data we wrote, not caller errors, and neither is repaired here.
+ * Three callers: `getNodePath` maps the chain to slugs; `moveNode` asks whether the target is in it;
+ * `lifecycle.ts::effectiveCauses` reads the archive causes on it.
  */
 export const ancestorChain = (
   orm: Orm,

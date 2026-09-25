@@ -10,7 +10,13 @@ import { Either } from 'effect';
 
 import { InternalFailure } from './errors.ts';
 import { raise } from './storage-failures.ts';
-import { isNodeType, type NodeType, type StoredEntity, type StoredSummary } from './types.ts';
+import {
+  isNodeType,
+  type EffectiveCause,
+  type NodeType,
+  type StoredEntity,
+  type StoredSummary,
+} from './types.ts';
 
 /**
  * Building responses, and refusing to publish anything that is not exactly what was intended.
@@ -150,8 +156,19 @@ export const SUMMARY_COLUMNS: SQL = sql`n.id AS id, n.type AS type, n.kind AS ki
   n.parent_id AS parentId, n.slug AS slug, n.revision AS revision, n.title AS title,
   n.description AS description, n.tags AS tags, n.active AS active`;
 
-/** The summary fields, every one of them named. */
-export const summaryProjection = (row: StoredSummary, operation: string): unknown => {
+/**
+ * The summary fields, every one of them named.
+ *
+ * `archived` is a parameter rather than a column, and it has no default. Each caller states it: a page
+ * computes it, Get and the lifecycle operations derive it from the causes they walked, and the
+ * mutations that can only succeed on something active pass `false` with a comment naming the rule
+ * that guarantees it. No call site can forget the field.
+ */
+export const summaryProjection = (
+  row: StoredSummary,
+  archived: boolean,
+  operation: string,
+): unknown => {
   const type = projectedType(row.type, operation);
   return {
     id: row.id,
@@ -167,8 +184,17 @@ export const summaryProjection = (row: StoredSummary, operation: string): unknow
     // vocabulary is open to drift, while `nodes_active_valid` closes this one to `0` and `1` and ties
     // `1` to a project, so there is no third value for a check here to catch.
     active: row.active === 1,
+    archived,
   };
 };
+
+/** Archive causes as the wire names them, in the order given: nearest origin first. */
+export const causeProjection = (causes: readonly EffectiveCause[]): unknown[] =>
+  causes.map((cause) => ({
+    origin: { id: cause.originId, type: cause.originType, title: cause.originTitle },
+    owner: cause.owner,
+    reason: cause.reason,
+  }));
 
 /**
  * The entity fields. `tags` and `metadata` are parsed but not otherwise inspected here: SQLite
@@ -178,9 +204,11 @@ export const summaryProjection = (row: StoredSummary, operation: string): unknow
 export const entityProjection = (
   row: StoredEntity,
   body: ReturnType<typeof bodyProjection>,
+  causes: readonly EffectiveCause[],
   operation: string,
 ): unknown => ({
-  ...(summaryProjection(row, operation) as Record<string, unknown>),
+  ...(summaryProjection(row, causes.length > 0, operation) as Record<string, unknown>),
   body,
   metadata: parseStored(row.metadata, operation, 'metadata'),
+  archiveCauses: causeProjection(causes),
 });

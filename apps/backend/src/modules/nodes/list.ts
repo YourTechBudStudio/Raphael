@@ -12,15 +12,10 @@ import { LIST_FIELDS, invalidInputFrom } from './diagnostics.ts';
 import type { NodeError } from './errors.ts';
 import { SUMMARY_COLUMNS, checkedResponse, summaryProjection } from './projection.ts';
 import { resolveScopes } from './resolve.ts';
-import {
-  membershipFragments,
-  predicateConditions,
-  whereFragment,
-  windowFragment,
-} from './scope-page.ts';
+import { pageFragments, predicateConditions, whereFragment, windowFragment } from './scope-page.ts';
 import { raise, unwrapFailure } from './storage-failures.ts';
 import { orm, readTransaction } from './store.ts';
-import type { StoredSummary } from './types.ts';
+import type { StoredPageSummary } from './types.ts';
 
 const OPERATION = 'nodes.list';
 
@@ -29,8 +24,8 @@ const OPERATION = 'nodes.list';
  *
  * Where to look, how deep, which nodes qualify and which slice to return all live in
  * `scope-page.ts`, together with the traversal invariants they carry - filtering never prunes the
- * walk, membership is deduplicated before anything is ordered, and `hasMore` is observed rather than
- * counted. What stays here is the only thing listing does not share with searching: the ordering.
+ * walk, membership is deduplicated before anything is ordered, archived nodes are left out unless the
+ * request includes them, and `hasMore` is observed rather than counted. What stays here is the only thing listing does not share with searching: the ordering.
  *
  * Ordering is global and is applied *before* pagination, whichever clauses were asked for. Sorting an
  * already-limited page, or sorting per branch, would produce a page that is ordered internally and
@@ -56,30 +51,29 @@ export const listNodes = (input: unknown): Effect.Effect<ListResponse, NodeError
         if (Either.isLeft(request)) {
           return raise(invalidInputFrom(request.left, LIST_FIELDS, input));
         }
-        const { scopes, recursive, filter, orderBy, skip, limit } = request.right;
+        const { scopes, recursive, filter, orderBy, skip, limit, includeArchived } = request.right;
         const ordering = effectiveOrderBy(orderBy);
 
-        const page = readTransaction(db, () => {
+        const rows = readTransaction(db, () => {
           const handle = orm(db);
           const resolved = resolveScopes(handle, scopes, OPERATION);
-          const membership = membershipFragments(resolved, recursive);
+          const page = pageFragments(resolved, recursive, includeArchived);
 
-          const rows = handle.all<StoredSummary>(sql`
-            ${membership.with}
-            SELECT ${SUMMARY_COLUMNS} FROM nodes n ${membership.join}
-            ${whereFragment([...membership.conditions, ...predicateConditions(filter)])}
+          return handle.all<StoredPageSummary>(sql`
+            ${page.with}
+            SELECT ${SUMMARY_COLUMNS}, ${page.archivedColumn} FROM nodes n ${page.join}
+            ${whereFragment([...page.conditions, ...predicateConditions(filter)])}
             ORDER BY ${orderingFragment(ordering)} ${windowFragment(skip, limit)}`);
-          return { rows, skip, limit };
         });
 
-        const visible = page.rows.slice(0, page.limit);
+        const visible = rows.slice(0, limit);
         return checkedResponse(
           decodeListResponse,
           {
-            items: visible.map((row) => summaryProjection(row, OPERATION)),
-            skip: page.skip,
-            limit: page.limit,
-            hasMore: page.rows.length > page.limit,
+            items: visible.map((row) => summaryProjection(row, row.archived === 1, OPERATION)),
+            skip,
+            limit,
+            hasMore: rows.length > limit,
           },
           OPERATION,
         );

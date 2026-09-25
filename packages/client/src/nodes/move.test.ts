@@ -55,6 +55,7 @@ const node = {
   description: '',
   tags: [],
   active: false,
+  archived: false,
 };
 
 describe('move', () => {

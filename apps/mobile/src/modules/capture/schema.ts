@@ -156,4 +156,32 @@ export const CAPTURE_MIGRATIONS: readonly Migration[] = [
         CHECK (json_valid(tags) AND json_type(tags) = 'array')`,
     ],
   },
+  /**
+   * Saved creation answers gain the two lifecycle fields every entity now carries (story #8).
+   *
+   * `note_attempts.acknowledged` is the Create response exactly as the server sent it, and the store
+   * decodes it again on every read with the current contract, which now requires `archived` and
+   * `archiveCauses`. Without this step every acknowledgement saved before the change would read as
+   * unreadable - an integrity problem where there is none.
+   *
+   * The values written are historically true, not a guess: nothing could be archived before archive
+   * causes existed, so every entity acknowledged here was active, with no causes, when it was created.
+   * The server rewrites its own saved replays the same way for the same reason (R11). A Create
+   * response is a historical confirmation, never current state, so this does not claim anything about
+   * the entity now.
+   *
+   * A row the `WHERE` does not match is left exactly as it is. It already fails its decode, and
+   * inventing fields inside it would present an unreadable row as a plausible one.
+   */
+  {
+    version: 3,
+    statements: [
+      `UPDATE ${ATTEMPTS_TABLE}
+          SET acknowledged = json_set(acknowledged, '$.entity.archived', json('false'),
+                                                    '$.entity.archiveCauses', json('[]'))
+        WHERE acknowledged IS NOT NULL
+          AND json_valid(acknowledged)
+          AND json_type(acknowledged, '$.entity') = 'object'`,
+    ],
+  },
 ];

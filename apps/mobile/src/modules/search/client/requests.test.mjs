@@ -31,6 +31,7 @@ const summary = (id, type, over = {}) => ({
   description: '',
   tags: [],
   active: false,
+  archived: false,
   ...over,
 });
 
