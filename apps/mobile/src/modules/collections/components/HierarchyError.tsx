@@ -1,13 +1,14 @@
 import { Text, View } from 'react-native';
 
 import { Chip, SectionError } from '../../../ui';
-import type { HierarchyQuery } from '../client/queries';
+import type { ReadStatus } from '../client/queries';
 import { offersRetry, staleSentence } from './hierarchy-presentation';
 
 /**
  * Why the hierarchy is not what it should be, said the same way everywhere.
  *
- * Six surfaces read the hierarchy, and each of them has to answer the same two questions about a
+ * Six surfaces read the hierarchy, and an archived area reads its children the same complete-or-error
+ * way (`ReadStatus`), and each of them has to answer the same two questions about a
  * failure: does it carry a sentence of its own, and is trying again worth offering. Answering them
  * six times is six chances to answer differently, and the answers are not obvious - a refusal
  * carries a real explanation and may be settled for good, while an unreachable server carries
@@ -16,7 +17,7 @@ import { offersRetry, staleSentence } from './hierarchy-presentation';
  */
 
 export interface HierarchyErrorProps {
-  tree: HierarchyQuery;
+  tree: ReadStatus;
   /** What this screen was trying to show, so the message is about this section. */
   title: string;
 }
@@ -34,7 +35,7 @@ export function HierarchyError({ tree, title }: HierarchyErrorProps) {
 }
 
 export interface HierarchyStaleProps {
-  tree: HierarchyQuery;
+  tree: ReadStatus;
   className?: string | undefined;
 }
 

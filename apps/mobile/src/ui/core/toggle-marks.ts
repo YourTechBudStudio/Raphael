@@ -1,7 +1,7 @@
 import { colors } from '../theme';
 
 /**
- * The two state marks, as closed outlines in a 24 × 24 view box.
+ * The state marks, as closed outlines in a 24 × 24 view box.
  *
  * Each is drawn twice - once as the visible stroke, once as the clipping mask the bloom expands
  * inside - so the path and the colors that go with it live together rather than being restated at
@@ -32,4 +32,14 @@ export const ACTIVE_MARK: ToggleMark = {
   path: 'M15.914 4a1.5 1.5 0 00-2.474-1.561l-9 9A1.5 1.5 0 005.5 14h4.002a.5.5 0 01.471.666L8.086 20a1.5 1.5 0 002.475 1.56l9-9A1.5 1.5 0 0018.5 10h-3.997a.5.5 0 01-.472-.667z',
   dropColor: colors.primary,
   inactiveColor: colors.inkSoft,
+};
+
+/**
+ * Lucide Archive, redrawn as one closed outline so it blooms like the other two. Deep lilac drops,
+ * because archiving is a quiet state rather than a warm or an energetic one.
+ */
+export const ARCHIVE_MARK: ToggleMark = {
+  path: 'M3 3h18a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8H3a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z',
+  dropColor: colors.lilacDeep,
+  inactiveColor: colors.ink,
 };

@@ -422,3 +422,59 @@ describe('one controlled transition at a time', () => {
     }
   });
 });
+
+/**
+ * A refusal whose remedy is a different place, rather than different writing.
+ *
+ * The only `node_archived` a creation can meet is an archived destination, so the refusal sheet
+ * offers another place - in the words lifecycle's one table gives an archived place - and keeps the
+ * draft. A refusal about the writing itself offers no such thing.
+ */
+describe('a save refused because of where it was going', () => {
+  const refusedWith = (code, message) => {
+    const owner = heldOwner({ kind: 'flushed', version: 1, captured: 'editor' });
+
+    useCaptureOwner.setState({
+      standingFor: () =>
+        owner.saves.length === 0
+          ? { kind: 'save' }
+          : {
+              kind: 'save_replacing',
+              attempt: { lastOutcome: { kind: 'rejected', code, message, at: 1 } },
+            },
+    });
+
+    return owner;
+  };
+
+  it('offers another place for an archived destination', async () => {
+    const owner = refusedWith('node_archived', 'That place is archived. Pick another.');
+    const screen = render();
+
+    try {
+      screen.pressTogether('#capture-action');
+      await owner.settle();
+
+      assert.equal(owner.saves.length, 1);
+      assert.ok(screen.text().includes('That place is archived. Pick another.'));
+      assert.ok(screen.text().includes('Choose another place'));
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('offers no other place for a refusal about the writing', async () => {
+    const owner = refusedWith('invalid_input', 'A title is required.');
+    const screen = render();
+
+    try {
+      screen.pressTogether('#capture-action');
+      await owner.settle();
+
+      assert.ok(screen.text().includes('A title is required.'));
+      assert.ok(!screen.text().includes('Choose another place'));
+    } finally {
+      screen.unmount();
+    }
+  });
+});

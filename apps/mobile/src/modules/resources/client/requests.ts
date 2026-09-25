@@ -57,6 +57,11 @@ export interface NoteListDescriptor {
   readonly orderBy: NodeOrderBy | null;
   readonly skip: number;
   readonly limit: number;
+  /**
+   * Archived notes are part of the answer. Only an archived container's own section asks for it:
+   * everything filed in one is archived with it, so the default would read it as empty.
+   */
+  readonly includeArchived: boolean;
 }
 
 /** The descriptor for Home's feed at a given offset. */
@@ -66,6 +71,7 @@ export const feedDescriptor = (skip: number): NoteListDescriptor => ({
   orderBy: NEWEST_FIRST,
   skip,
   limit: NOTE_PAGE_SIZE,
+  includeArchived: false,
 });
 
 /**
@@ -75,12 +81,17 @@ export const feedDescriptor = (skip: number): NoteListDescriptor => ({
  * everything underneath it, and a container list has no recency to offer - ordering it by update
  * time would make the page sequence depend on edits happening elsewhere.
  */
-export const containerDescriptor = (parentId: number, skip: number): NoteListDescriptor => ({
+export const containerDescriptor = (
+  parentId: number,
+  skip: number,
+  includeArchived: boolean,
+): NoteListDescriptor => ({
   parent: { id: parentId },
   recursive: false,
   orderBy: null,
   skip,
   limit: NOTE_PAGE_SIZE,
+  includeArchived,
 });
 
 /**
@@ -99,6 +110,7 @@ export const noteListRequest = (descriptor: NoteListDescriptor): ListRequestInpu
     : { orderBy: descriptor.orderBy.map((clause) => ({ ...clause })) }),
   skip: descriptor.skip,
   limit: descriptor.limit,
+  ...(descriptor.includeArchived ? { includeArchived: true } : {}),
 });
 
 /**
@@ -123,6 +135,8 @@ export const noteListKey = (
     descriptor.orderBy === null ? null : descriptor.orderBy.map((clause) => ({ ...clause })),
     descriptor.skip,
     descriptor.limit,
+    // The archived and active readings of one container never share a cache entry.
+    descriptor.includeArchived,
   );
 
 /** One page of notes as this app holds it: mapped, guarded, and carrying the server's own offsets. */

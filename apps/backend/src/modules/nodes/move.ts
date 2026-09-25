@@ -22,6 +22,7 @@ import {
   SlugConflict,
   type NodeError,
 } from './errors.ts';
+import { requireActive, requireMovable } from './lifecycle.ts';
 import { checkedResponse, summaryProjection } from './projection.ts';
 import {
   ancestorChain,
@@ -49,6 +50,8 @@ const OPERATION = 'nodes.move';
  *       resolve the destination to (parent, slug)       (current state, not an earlier lookup)
  *       refuse a destination that is the target or inside it
  *       refuse a parent that cannot hold the target's type
+ *       refuse a target archived by a cause of its own
+ *       refuse an archived destination
  *       assemble and validate the response
  *       unchanged location → answer without writing
  *       one UPDATE of the parent pair, slug, revision and timestamp, guarded on the revision
@@ -71,9 +74,13 @@ const OPERATION = 'nodes.move';
  *
  * **Order is the contract.** A stale revision is reported before anything about the destination, so a
  * caller whose write is already lost hears that first. A cycle is reported before a type mismatch, so
- * "you cannot move something inside itself" is the answer whenever it is true. Lifecycle checks, when
- * they exist, belong after destination resolution and before the unchanged-location shortcut, so an
- * ineligible entity is refused rather than reported as a harmless no-op.
+ * "you cannot move something inside itself" is the answer whenever it is true. The two lifecycle checks
+ * come after parentage and before the unchanged-location shortcut, so an ineligible entity is refused
+ * rather than reported as a harmless no-op. First the target: something archived by a cause of its own
+ * is restored before it moves, while something archived only through a container above it may move -
+ * that is how it leaves the archived subtree (AC5). Then the destination, which must be active. An
+ * inherited-only target "moved" to its current, archived parent is therefore refused by the
+ * destination check, not answered as a no-op.
  *
  * **An unchanged location is a success that writes nothing.** When the destination resolves to the
  * target's current parent and slug, the revision and `updated_at` stay as they are. This is not the
@@ -236,6 +243,8 @@ const commit = (
     );
   }
   validateParentage(parentScope, target.type, 'destination');
+  requireMovable(handle, target, OPERATION);
+  requireActive(handle, nextParent, 'destination', OPERATION);
 
   const nextParentId = nextParent?.id ?? null;
   const unchanged = nextParentId === target.parentId && slug === target.slug;
@@ -247,7 +256,13 @@ const commit = (
   const response = checkedResponse(
     decodeMoveResponse,
     {
-      node: summaryProjection({ ...target, parentId: nextParentId, slug, revision }, OPERATION),
+      // Active by construction: the target carries no direct cause (`requireMovable`) and ends under an
+      // active parent (`requireActive`), so nothing above or on it archives it.
+      node: summaryProjection(
+        { ...target, parentId: nextParentId, slug, revision },
+        false,
+        OPERATION,
+      ),
     },
     OPERATION,
   );

@@ -32,7 +32,7 @@ export interface AttemptContext {
    * on its behalf - see `beforeDispatch`. Absent only for a plain read command, whose outcome is
    * never `unknown` and which therefore never reaches the wording at all.
    */
-  readonly operation?: 'create' | 'update' | 'move';
+  readonly operation?: 'create' | 'update' | 'move' | 'archive' | 'restore';
   /**
    * Set when this failure happened while *preparing* the mutation, so the mutation itself never left.
    *
@@ -157,6 +157,7 @@ const moveGuidance = (targetId: number | undefined): string[] =>
  * The conflict branch is first, and it has to be. A `revision_conflict` classifies as `'rejected'` -
  * the server's compare-and-set matched no row, so nothing was written and it can say so - which means
  * the `unknown` gate below would swallow the one sentence that tells someone how to recover from it.
+ * The archived branch follows it for the same reason: `node_archived` is `'rejected'` too.
  */
 const guidanceFor = (failure: ClientFailure, context: AttemptContext): string[] => {
   if (failure.kind === 'api_error' && failure.error.code === 'revision_conflict') {
@@ -167,6 +168,31 @@ const guidanceFor = (failure: ClientFailure, context: AttemptContext): string[] 
         ? 'Re-read it, apply your change to the current version, and send it again.'
         : `Re-read it, apply your change to the current version, and send it with --revision ${current}.`,
     ];
+  }
+
+  if (failure.kind === 'api_error' && failure.error.code === 'node_archived') {
+    const { field, reason } = failure.details;
+    if (field === 'target' && reason === 'direct') {
+      return ['', 'Restore it first with "raphael restore", then try again.'];
+    }
+    if (field === 'target' && reason === 'inherited') {
+      return [
+        '',
+        'It is archived through a container above it. Move it somewhere active, or restore that container. "raphael get" shows which.',
+      ];
+    }
+    if ((field === 'parent' || field === 'destination') && reason === 'direct') {
+      return ['', 'That place is archived. Choose an active one, or restore it first.'];
+    }
+    // Restoring the place itself would remove nothing: the cause is on a container above it.
+    if ((field === 'parent' || field === 'destination') && reason === 'inherited') {
+      return [
+        '',
+        'That place is archived through a container above it. Choose an active one, or restore that container. "raphael get" on the place shows which.',
+      ];
+    }
+    // An unfamiliar reason is displayed by the detail lines, not interpreted.
+    return [];
   }
 
   if (context.beforeDispatch === true) {
@@ -186,11 +212,17 @@ const guidanceFor = (failure: ClientFailure, context: AttemptContext): string[] 
           'Could not confirm whether this change was applied.',
           'Read it again with "raphael get" and compare the revision before sending the change again. Raphael does not retry a change on its own.',
         ]
-      : context.operation === 'move'
-        ? moveGuidance(context.targetId)
-        : context.operation === 'create'
-          ? ['', 'Could not confirm whether this was created.']
-          : ['', 'Could not confirm whether this was applied.'];
+      : context.operation === 'archive' || context.operation === 'restore'
+        ? [
+            '',
+            `Could not confirm whether this was ${context.operation === 'archive' ? 'archived' : 'restored'}.`,
+            'Read it again with "raphael get" and compare the revision before sending it again. Raphael does not retry a change on its own.',
+          ]
+        : context.operation === 'move'
+          ? moveGuidance(context.targetId)
+          : context.operation === 'create'
+            ? ['', 'Could not confirm whether this was created.']
+            : ['', 'Could not confirm whether this was applied.'];
 
   // Kept under its existing guard rather than broadened to every `unknown`. An `internal_error` or a
   // non-shutdown `storage_busy` is also `unknown`, and there the server answered and failed inside

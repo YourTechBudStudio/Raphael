@@ -21,6 +21,7 @@ const summary = (over = {}) => ({
   description: 'What it is about',
   tags: [],
   active: false,
+  archived: false,
   ...over,
 });
 
@@ -33,7 +34,13 @@ describe('a note summary', () => {
       slug: 'a-note',
       revision: 2,
       parentId: 3,
+      archived: false,
     });
+  });
+
+  it('carries the effective archived status the server computed', () => {
+    // Search draws the pill from this; nothing here decides it.
+    assert.equal(toNoteSummaryItem(summary({ archived: true })).archived, true);
   });
 
   it('keeps an empty description empty rather than filling it in', () => {

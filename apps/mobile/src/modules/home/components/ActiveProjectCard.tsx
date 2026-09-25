@@ -68,7 +68,7 @@ export function ActiveProjectCard({ project }: ActiveProjectCardProps) {
       </View>
       {verdict === null ? null : (
         <View className="px-1 pb-2 pt-1">
-          <ActiveVerdict failure={verdict} />
+          <ActiveVerdict details={active.failureDetails} failure={verdict} />
         </View>
       )}
     </Card>

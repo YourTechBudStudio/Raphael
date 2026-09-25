@@ -245,7 +245,10 @@ describe('the capability schemas', () => {
   it('reaches version 2, which is where entity_edits and the drafts tag column arrive', async () => {
     const db = await openNodeDatabase();
 
-    assert.deepEqual(await migrate(db, CAPTURE_MIGRATIONS), { kind: 'ready', version: 2 });
+    assert.deepEqual(await migrate(db, CAPTURE_MIGRATIONS.slice(0, 2)), {
+      kind: 'ready',
+      version: 2,
+    });
     assert.equal(await version(db), 2);
     assert.equal((await db.all('SELECT * FROM entity_edits')).length, 0);
     assert.equal((await db.all('SELECT tags FROM note_drafts')).length, 0);
@@ -270,7 +273,7 @@ describe('the capability schemas', () => {
 
     const second = await openNodeDatabase(location);
 
-    assert.deepEqual(await migrate(second, CAPTURE_MIGRATIONS), { kind: 'ready', version: 2 });
+    assert.deepEqual(await migrate(second, CAPTURE_MIGRATIONS), { kind: 'ready', version: 3 });
 
     const rows = await second.all('SELECT draft_id, title, draft_version, tags FROM note_drafts');
 
@@ -281,6 +284,16 @@ describe('the capability schemas', () => {
     assert.equal(rows[0].tags, '[]');
 
     await second.close();
+  });
+
+  it('reaches version 3, which is where saved acknowledgements gain their lifecycle fields', async () => {
+    const db = await openNodeDatabase();
+
+    assert.deepEqual(await migrate(db, CAPTURE_MIGRATIONS), { kind: 'ready', version: 3 });
+    assert.equal(CAPTURE_MIGRATIONS.length, 3);
+    assert.equal(await version(db), 3);
+
+    await db.close();
   });
 
   it('rolls a failed capture step back to the version before it', async () => {

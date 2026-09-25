@@ -30,6 +30,8 @@ const { createTransport } = await import('@raphael/client');
 const { useContainerCreationSession } =
   await import('../src/modules/collections/client/container-creation.ts');
 const { useConnectionStore } = await import('../src/modules/connection/state/connection.ts');
+const { scopeKey } = await import('../src/infrastructure/query/keys.ts');
+const { ARCHIVED_PARENT_CREATION_SENTENCE } = await import('../src/modules/lifecycle/copy.ts');
 
 /** Wait for something the transport is doing, rather than counting awaits in the implementation. */
 const until = async (condition, what) => {
@@ -44,8 +46,7 @@ const until = async (condition, what) => {
 };
 const { queryClient } = await import('../src/infrastructure/query/query-client.ts');
 
-// A successful creation seeds the app's cache, and a seeded entry holds a garbage-collection timer
-// for minutes. Clearing it is what lets this file's process exit rather than idle until it fires.
+// Clearing the cache is what lets this file's process exit rather than idle on a collection timer.
 after(() => {
   queryClient.clear();
 });
@@ -64,6 +65,8 @@ const entity = (over = {}) => ({
   description: '',
   tags: [],
   active: false,
+  archived: false,
+  archiveCauses: [],
   body: { format: 'markdown', value: '' },
   metadata: {},
   ...over,
@@ -482,6 +485,105 @@ describe('a connection the form has outlived', () => {
       // are not portable, and a match would be a coincidence of numbers.
       assert.equal(outcome.kind, 'retired');
       assert.ok(outcome.message.includes('Check the other server'));
+    } finally {
+      form.unmount();
+    }
+  });
+});
+
+/** Every entity entry the cache holds, under any activation. */
+const entityEntries = () =>
+  queryClient.getQueryCache().findAll({ predicate: (query) => query.queryKey[2] === 'entity' });
+
+describe('what a creation writes into the cache', () => {
+  it('writes no entity, for an original or for a replay', async () => {
+    // The replay answers with the creation as it was recorded - here, before the container was
+    // renamed and archived. Seeding it would put that history on screen as current state.
+    const queue = [
+      { status: 201, body: { entity: entity() } },
+      'lost',
+      { status: 201, body: { entity: entity({ title: 'Reading (as it was created)' }) } },
+    ];
+    const { form } = sessionOver(queue);
+
+    try {
+      queryClient.clear();
+
+      const original = await form.send({
+        containerType: 'area',
+        parentAreaId: null,
+        title: 'Reading',
+      });
+
+      assert.equal(original.kind, 'created');
+      assert.deepEqual(entityEntries(), [], 'an original Create seeds nothing');
+
+      form.reopen();
+      await form.send({ containerType: 'area', parentAreaId: null, title: 'Writing' });
+      const replay = await form.send({
+        containerType: 'area',
+        parentAreaId: null,
+        title: 'Writing',
+      });
+
+      assert.equal(replay.kind, 'created');
+      assert.deepEqual(entityEntries(), [], 'and neither does a replay');
+    } finally {
+      form.unmount();
+    }
+  });
+});
+
+describe('a parent archived while the form was open', () => {
+  const archivedRefusal = {
+    status: 409,
+    body: {
+      error: {
+        code: 'node_archived',
+        message: 'the parent is archived',
+        details: { field: 'parent', reason: 'direct' },
+      },
+    },
+  };
+
+  it('is refused in words that fit a form whose parent is fixed', async () => {
+    const { form } = sessionOver([archivedRefusal]);
+
+    try {
+      const outcome = await form.send({
+        containerType: 'project',
+        parentAreaId: 3,
+        title: 'Tiles',
+      });
+
+      // "Pick another" would ask for something this form cannot do: its parent is where add was
+      // pressed. The same sentence holds whichever way the area is archived.
+      assert.equal(outcome.kind, 'refused');
+      assert.equal(outcome.message, ARCHIVED_PARENT_CREATION_SENTENCE);
+    } finally {
+      form.unmount();
+    }
+  });
+
+  it('marks every read under that connection stale, and no other', async () => {
+    const { form } = sessionOver([archivedRefusal]);
+    const here = scopeKey(1, 'entity', 'area', 3);
+    const elsewhere = scopeKey(2, 'entity', 'area', 3);
+
+    try {
+      queryClient.clear();
+      queryClient.setQueryData(here, { id: 3 });
+      queryClient.setQueryData(elsewhere, { id: 3 });
+
+      await form.send({ containerType: 'project', parentAreaId: 3, title: 'Tiles' });
+
+      // The area screen behind the form learns it is archived from its own re-read. Archiving
+      // changes more than the parent's Get, so the refresh is as broad as archive's own.
+      assert.equal(queryClient.getQueryCache().find({ queryKey: here })?.state.isInvalidated, true);
+      assert.equal(
+        queryClient.getQueryCache().find({ queryKey: elsewhere })?.state.isInvalidated,
+        false,
+      );
     } finally {
       form.unmount();
     }

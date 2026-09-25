@@ -12,17 +12,23 @@ import {
   readBundledMigrations,
 } from '../src/infrastructure/database/guard.ts';
 import { migrateToLatest, migrationsFolder } from '../src/infrastructure/database/migrate.ts';
+import { createNode } from '../src/modules/nodes/index.ts';
 import {
   EMPTY_BODY,
+  clockAt,
   count,
+  expectRight,
   insertNode,
   many,
   one,
   openMigrated,
   rejects,
+  runNodes,
   tempDatabase,
   withMigrated,
 } from './support.ts';
+
+const T_SAVED = 1_700_000_000_000;
 
 /**
  * The node ids the index matches for one term.
@@ -46,7 +52,7 @@ describe('migration assets', () => {
 
   test('the journal and its files agree', () => {
     const bundled = readBundledMigrations(migrationsFolder);
-    assert.equal(bundled.length, 5);
+    assert.equal(bundled.length, 6);
     assert.deepEqual(
       bundled.map((m) => m.tag),
       [
@@ -55,6 +61,7 @@ describe('migration assets', () => {
         '0002_resource_kind_and_body_text',
         '0003_active_projects',
         '0004_search_index',
+        '0005_archive_causes',
       ],
     );
     for (const migration of bundled) assert.match(migration.hash, /^[0-9a-f]{64}$/);
@@ -216,7 +223,7 @@ describe('initialization', () => {
           inspectMigrationHistory(second.db, readBundledMigrations(migrationsFolder)),
           {
             state: 'current',
-            applied: 5,
+            applied: 6,
           },
         );
       } finally {
@@ -472,15 +479,15 @@ describe('migration failure', () => {
       const journalPath = join(broken, 'meta', '_journal.json');
       const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
       journal.entries.push({
-        idx: 5,
+        idx: 6,
         version: '6',
         when: Date.now(),
-        tag: '0005_broken',
+        tag: '0006_broken',
         breakpoints: true,
       });
       writeFileSync(journalPath, JSON.stringify(journal));
       writeFileSync(
-        join(broken, '0005_broken.sql'),
+        join(broken, '0006_broken.sql'),
         'ALTER TABLE nodes ADD COLUMN experiment TEXT;\n--> statement-breakpoint\nTHIS IS NOT VALID SQL;',
       );
 
@@ -491,7 +498,7 @@ describe('migration failure', () => {
       );
       assert.ok(!columns.includes('experiment'), 'partial DDL must not survive');
       assert.equal(count(connection.db, `SELECT count(*) AS c FROM nodes WHERE slug = 'live'`), 1);
-      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 5);
+      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 6);
     } finally {
       connection.close();
       temp.cleanup();
@@ -572,6 +579,70 @@ describe('adding the active column to a populated database', () => {
         matching(connection.db, 'migration'),
         [project],
         'rebuild indexed rows that predate the index',
+      );
+    } finally {
+      connection.close();
+      temp.cleanup();
+    }
+  });
+});
+
+describe('saved creation replays across the archive migration', () => {
+  test('a replay saved before 0005 still replays, and states the entity was active', () => {
+    // A replay returns the saved response through the current decoder, which now requires the two
+    // lifecycle fields. `0005` adds them to every saved result, with the values that were true when it
+    // was saved: nothing could be archived before `archive_causes` existed.
+    const temp = tempDatabase('replay-archive');
+    const partial = join(temp.dir, 'through-0004');
+    cpSync(migrationsFolder, partial, { recursive: true });
+    const journalPath = join(partial, 'meta', '_journal.json');
+    const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
+      entries: { idx: number; tag: string }[];
+    };
+    // "Through 0004" as a rule, for the reason the `0003` backfill case above gives.
+    const dropped = journal.entries.filter((entry) => entry.idx > 4);
+    journal.entries = journal.entries.filter((entry) => entry.idx <= 4);
+    writeFileSync(journalPath, JSON.stringify(journal));
+    for (const entry of dropped) rmSync(join(partial, `${entry.tag}.sql`));
+
+    const connection = openDatabase({ databasePath: temp.file });
+    try {
+      migrateToLatest(connection.db, partial);
+      const request = {
+        type: 'area',
+        parent: { path: '/' },
+        title: 'Garden',
+        idempotencyKey: 'before-archive',
+      };
+      // A root area needs no lifecycle query, so today's operation can create one against a `0004`
+      // database. What it saves is then put back into the shape a `0004` server saved.
+      const original = expectRight(runNodes(connection, createNode(request), clockAt(T_SAVED)));
+      connection.db.exec(
+        `UPDATE creation_replays SET result_json =
+           json_remove(result_json, '$.entity.archived', '$.entity.archiveCauses')`,
+      );
+      // A record with no entity is not repaired into one.
+      connection.db
+        .prepare(
+          `INSERT INTO creation_replays (key, fingerprint, result_json, created_at, expires_at)
+           VALUES ('no-entity', 'x', '{"unexpected":true}', ?, ?)`,
+        )
+        .run(T_SAVED, T_SAVED + 60_000);
+
+      migrateToLatest(connection.db);
+
+      const replayed = expectRight(
+        runNodes(connection, createNode(request), clockAt(T_SAVED + 1_000)),
+      );
+      assert.deepEqual(replayed, original);
+      assert.equal(replayed.entity.archived, false);
+      assert.deepEqual(replayed.entity.archiveCauses, []);
+      assert.equal(
+        one<{ result_json: string }>(
+          connection.db,
+          `SELECT result_json FROM creation_replays WHERE key = 'no-entity'`,
+        ).result_json,
+        '{"unexpected":true}',
       );
     } finally {
       connection.close();
@@ -665,6 +736,9 @@ describe('generated artifact introspection', () => {
         'index:nodes_root_slug',
         'index:nodes_sibling_slug',
         'table:__drizzle_migrations',
+        // Archive causes, stored only at their origin. Its composite primary key is the only index it
+        // needs, and it adds nothing to `nodes`.
+        'table:archive_causes',
         'table:creation_replays',
         'table:nodes',
         // One virtual table and the four shadow tables FTS5 creates to back it. They are the storage

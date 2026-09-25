@@ -88,12 +88,24 @@ export function useNoteFeed(): NoteFeed {
   return usePagedNotes(feedDescriptor, true);
 }
 
-/** One container's own notes, in the server's default order. */
-export function useNotePages(parent: ContainerRef | null): NoteFeed {
+/**
+ * One container's own notes, in the server's default order.
+ *
+ * `includeArchived` is for a container that is itself archived, whose notes are all archived with it.
+ * An active container keeps the default, so a note archived inside it stays out of sight.
+ */
+export function useNotePages(
+  parent: ContainerRef | null,
+  options?: { readonly includeArchived?: boolean },
+): NoteFeed {
   const parentId = parent?.id ?? 0;
+  const includeArchived = options?.includeArchived ?? false;
 
   return usePagedNotes(
-    useCallback((skip: number) => containerDescriptor(parentId, skip), [parentId]),
+    useCallback(
+      (skip: number) => containerDescriptor(parentId, skip, includeArchived),
+      [parentId, includeArchived],
+    ),
     parent !== null,
   );
 }

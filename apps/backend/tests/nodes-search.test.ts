@@ -764,3 +764,189 @@ test('a search that matches nothing is a successful empty page', () => {
     assert.equal(page.skip, 0);
   });
 });
+
+/** A cause written straight into storage: these tests ask what search does, not how archive writes. */
+const causeOn = (connection: Connection, id: number) =>
+  connection.db
+    .prepare(
+      `INSERT INTO archive_causes (node_id, owner, reason, created_at) VALUES (?, 'user', 'direct', ?)`,
+    )
+    .run(id, T0);
+
+test('an active root area and everything active under it stay searchable while another container is archived', () => {
+  withMigrated('search-archived-root-guard', (connection) => {
+    const personal = idOf(connection, 'personal');
+    const work = idOf(connection, 'work');
+    connection.db.prepare(`UPDATE nodes SET title = 'Garden work' WHERE id = ?`).run(work);
+    const kept = create(connection, {
+      type: 'project',
+      parent: { id: work },
+      title: 'Garden plan',
+    });
+    create(connection, { type: 'project', parent: { id: personal }, title: 'Garden trip' });
+    causeOn(connection, personal);
+
+    // Shape 1 (root, recursive) and shape 2 (root, immediate children).
+    const everything = expectRight(
+      search(connection, { scopes: [{ path: '/' }], recursive: true, queries: ['garden'] }),
+    );
+    assert.deepEqual(
+      everything.items.map((hit) => hit.node.id).sort((a, b) => a - b),
+      [work, kept.id].sort((a, b) => a - b),
+    );
+    assert.equal(everything.archivedLeftOut, true);
+
+    const top = expectRight(search(connection, { scopes: [{ path: '/' }], queries: ['garden'] }));
+    assert.deepEqual(slugsOf(top), ['work']);
+    assert.equal(top.archivedLeftOut, false, 'the archived match is not an immediate child');
+  });
+});
+
+test('archived matches are excluded by default, in every shape, and marked on request', () => {
+  withMigrated('search-archived-shapes', (connection) => {
+    const work = idOf(connection, 'work');
+    const shelf = create(connection, { type: 'area', parent: { id: work }, title: 'Comet shelf' });
+    const inner = create(connection, { type: 'project', parent: { id: shelf.id }, title: 'Comet' });
+    const buried = create(connection, {
+      type: 'resource',
+      kind: 'note',
+      parent: { id: inner.id },
+      title: 'Comet notes',
+    });
+    const live = create(connection, { type: 'project', parent: { id: work }, title: 'Live' });
+    const hidden = create(connection, {
+      type: 'resource',
+      kind: 'note',
+      parent: { id: live.id },
+      title: 'Comet sighting',
+    });
+    const visible = create(connection, {
+      type: 'resource',
+      kind: 'note',
+      parent: { id: live.id },
+      title: 'Comet tail',
+    });
+    causeOn(connection, shelf.id);
+    causeOn(connection, hidden.id);
+
+    const ids = (request: Record<string, unknown>) =>
+      expectRight(search(connection, { queries: ['comet'], ...request }))
+        .items.map((hit) => hit.node.id)
+        .sort((a, b) => a - b);
+
+    assert.deepEqual(ids({ scopes: [{ path: '/' }], recursive: true }), [visible.id]);
+    assert.deepEqual(ids({ scopes: [{ id: live.id }] }), [visible.id]);
+    assert.deepEqual(ids({ scopes: [{ id: work }], recursive: true }), [visible.id]);
+    // A scope inside the archived subtree: empty by default, everything on request.
+    assert.deepEqual(ids({ scopes: [{ id: shelf.id }], recursive: true }), []);
+    assert.deepEqual(ids({ scopes: [{ id: shelf.id }], recursive: true, includeArchived: true }), [
+      inner.id,
+      buried.id,
+    ]);
+
+    const included = expectRight(
+      search(connection, {
+        scopes: [{ path: '/' }],
+        recursive: true,
+        queries: ['comet'],
+        includeArchived: true,
+      }),
+    );
+    assert.deepEqual(
+      Object.fromEntries(included.items.map((hit) => [hit.node.id, hit.node.archived])),
+      {
+        [shelf.id]: true,
+        [inner.id]: true,
+        [buried.id]: true,
+        [hidden.id]: true,
+        [visible.id]: false,
+      },
+    );
+    assert.equal(included.archivedLeftOut, false, 'nothing is left out when it was asked for');
+  });
+});
+
+test('archivedLeftOut is about the whole match set, within the same scope and filter', () => {
+  withMigrated('search-archived-left-out', (connection) => {
+    const work = idOf(connection, 'work');
+    const personal = idOf(connection, 'personal');
+    const holder = create(connection, { type: 'project', parent: { id: work }, title: 'Holder' });
+    const note = (title: string, parent = holder.id) =>
+      create(connection, { type: 'resource', kind: 'note', parent: { id: parent }, title });
+
+    // Nothing archived matches.
+    note('Nebula one');
+    const plain = expectRight(
+      search(connection, { scopes: [{ path: '/' }], recursive: true, queries: ['nebula'] }),
+    );
+    assert.equal(plain.archivedLeftOut, false);
+
+    // Only an archived node matches.
+    const lonely = note('Quasar');
+    causeOn(connection, lonely.id);
+    const only = expectRight(
+      search(connection, { scopes: [{ path: '/' }], recursive: true, queries: ['quasar'] }),
+    );
+    assert.deepEqual(only.items, []);
+    assert.equal(only.archivedLeftOut, true);
+
+    // An archived match that would rank outside the returned window still counts. Many strong active
+    // matches outrank a weak archived one (a description match loses to title matches).
+    for (let index = 0; index < 5; index += 1) note(`Pulsar ${index}`);
+    const weak = create(connection, {
+      type: 'resource',
+      kind: 'note',
+      parent: { id: holder.id },
+      title: 'Faint',
+      description: 'mentions pulsar once',
+    });
+    causeOn(connection, weak.id);
+    const windowed = expectRight(
+      search(connection, {
+        scopes: [{ path: '/' }],
+        recursive: true,
+        queries: ['pulsar'],
+        limit: 2,
+      }),
+    );
+    assert.equal(windowed.items.length, 2);
+    assert.equal(windowed.hasMore, true);
+    assert.equal(windowed.archivedLeftOut, true);
+    const beyond = expectRight(
+      search(connection, {
+        scopes: [{ path: '/' }],
+        recursive: true,
+        queries: ['pulsar'],
+        skip: 1,
+        limit: 1,
+        includeArchived: true,
+      }),
+    );
+    assert.equal(beyond.items[0]?.node.archived, false, 'the archived match is not near the top');
+
+    // An archived match outside the scope, or outside the filter, is not "left out".
+    const elsewhere = create(connection, {
+      type: 'project',
+      parent: { id: personal },
+      title: 'Nebula two',
+    });
+    causeOn(connection, elsewhere.id);
+    const scoped = expectRight(
+      search(connection, { scopes: [{ id: work }], recursive: true, queries: ['nebula'] }),
+    );
+    assert.equal(scoped.archivedLeftOut, false);
+    const filtered = expectRight(
+      search(connection, {
+        scopes: [{ path: '/' }],
+        recursive: true,
+        queries: ['nebula'],
+        filter: { type: 'resource' },
+      }),
+    );
+    assert.equal(filtered.archivedLeftOut, false);
+    const unfiltered = expectRight(
+      search(connection, { scopes: [{ path: '/' }], recursive: true, queries: ['nebula'] }),
+    );
+    assert.equal(unfiltered.archivedLeftOut, true);
+  });
+});

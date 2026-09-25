@@ -57,6 +57,12 @@ export interface ComposerShellProps {
   status: StatusLine;
   /** A barrier is settling: every field and the toolbar are disabled. */
   locked: boolean;
+  /**
+   * Nothing here can change: the entity is archived. The same layout, with the fields and the
+   * renderer not accepting writing. Separate from `locked`, which is a barrier that ends: the renderer
+   * reads this once, when it is created, so a screen that flips it remounts the shell.
+   */
+  readOnly?: boolean | undefined;
   /** The writing on screen is not safely on this phone, so the renderer is drawn unprotected. */
   unprotected: boolean;
   /** Close is unavailable, and visibly so. Separate from `locked`, which is about the writing. */
@@ -68,6 +74,11 @@ export interface ComposerShellProps {
   barLeading: ReactNode;
   /** The pill on the right of the bar, where a screen has one. */
   barTrailing?: ReactNode | undefined;
+  /**
+   * A control at the end of the top bar, after the status line: the edit screen's Archive toggle. It
+   * sits beside the status because the status is where an archived screen says why it is read-only.
+   */
+  statusTrailing?: ReactNode | undefined;
   editorRef?: Ref<EditorPort> | undefined;
   /** Sends one formatting command to the renderer. The screen above holds the port. */
   onCommand: (command: EditorCommand) => void;
@@ -110,12 +121,14 @@ export function ComposerShell({
   document,
   status,
   locked,
+  readOnly = false,
   unprotected,
   closeDisabled,
   closeHint,
   barAbove,
   barLeading,
   barTrailing,
+  statusTrailing,
   editorRef,
   onCommand,
   selection,
@@ -149,7 +162,7 @@ export function ComposerShell({
           {barAbove}
           <ComposerBar
             above={
-              bodyActive && !locked ? (
+              bodyActive && !locked && !readOnly ? (
                 <EditorToolbar
                   active={selection.active}
                   available={selection.available}
@@ -177,9 +190,20 @@ export function ComposerShell({
         />
       }
       status={
-        <ComposerStatus testID={`${namespace}-status`} tone={status.tone}>
-          {status.text}
-        </ComposerStatus>
+        statusTrailing === undefined ? (
+          <ComposerStatus testID={`${namespace}-status`} tone={status.tone}>
+            {status.text}
+          </ComposerStatus>
+        ) : (
+          <View className="flex-row items-center">
+            <View className="flex-1">
+              <ComposerStatus testID={`${namespace}-status`} tone={status.tone}>
+                {status.text}
+              </ComposerStatus>
+            </View>
+            {statusTrailing}
+          </View>
+        )
       }
       testID={testID}
     >
@@ -193,7 +217,7 @@ export function ComposerShell({
           <TextInput
             accessibilityLabel={titleLabel}
             className="font-heading text-[26px] leading-[32px] text-ink"
-            editable={!locked}
+            editable={!locked && !readOnly}
             multiline
             // Return already moves on rather than inserting a break; this is the other way one
             // arrives. A pasted break becomes a space here, where it is still visible and
@@ -221,7 +245,7 @@ export function ComposerShell({
           <TextInput
             accessibilityLabel="Description"
             className="mt-1 font-body text-[15px] leading-[22px] text-ink"
-            editable={!locked}
+            editable={!locked && !readOnly}
             onChangeText={onDescriptionChange}
             onFocus={() => {
               setBodyActive(false);
@@ -236,7 +260,9 @@ export function ComposerShell({
         <EditorHost
           document={document}
           documentId={documentId}
-          editable={!locked}
+          // Read once, when the host is created, and `false` is permanent for that host. A live lock
+          // goes through the lock protocol instead; only read-only decides what a host is born as.
+          editable={!readOnly}
           onLinkPress={onLinkPress}
           onProblem={onProblem}
           onSelectionChange={(state) => {

@@ -29,6 +29,8 @@ import {
   editCardSentence,
   editComposerView,
   idLabelOf,
+  lifecycleBesideKept,
+  lifecycleNotSentSentence,
   moveControl,
   moveNotSentSentence,
   moveRefusalSentence,
@@ -186,6 +188,10 @@ describe('refusedStatus', () => {
       refusedStatus({ code: 'node_not_found', field: null, reason: null, at }, 'note ID'),
       /no longer exists on your server/,
     );
+    assert.match(
+      refusedStatus({ code: 'node_archived', field: 'target', reason: 'inherited', at }, 'note ID'),
+      /it is archived/,
+    );
   });
 
   it('falls back to the code rather than inventing a cause', () => {
@@ -335,6 +341,7 @@ describe('moving', () => {
   const control = (over = {}) =>
     moveControl({
       locationKnown: true,
+      archivedDirectly: false,
       locked: false,
       leaving: false,
       moveInflight: false,
@@ -344,6 +351,15 @@ describe('moving', () => {
   it('offers the eyebrow as Move only where the location is known', () => {
     assert.equal(control({ locationKnown: false }), null);
     assert.deepEqual(control(), { disabled: false, hint: MOVE_EYEBROW_HINT });
+  });
+
+  it('keeps the eyebrow a label while archived by a cause of its own, which must be restored first', () => {
+    assert.equal(control({ archivedDirectly: true }), null);
+    // Archived only through a container above is not this: moving somewhere active is the way out.
+    assert.deepEqual(control({ archivedDirectly: false }), {
+      disabled: false,
+      hint: MOVE_EYEBROW_HINT,
+    });
   });
 
   it('disables it while writing is protected or the screen is leaving, and says when it comes back', () => {
@@ -468,6 +484,20 @@ describe('moving', () => {
       );
     });
 
+    it('words an archived target or destination from the one lifecycle table', () => {
+      assert.equal(
+        moveRefusalSentence(apiError('node_archived', { field: 'destination' }), context),
+        'That place is archived. Pick another.',
+      );
+      assert.equal(
+        moveRefusalSentence(
+          apiError('node_archived', { field: 'target', reason: 'direct' }),
+          context,
+        ),
+        'This is archived. Restore it first.',
+      );
+    });
+
     it('says what the client said for anything else', () => {
       assert.equal(
         moveRefusalSentence(
@@ -493,5 +523,52 @@ describe('moving', () => {
       }
       assert.equal(moveNotSentSentence('conflicted'), CONFLICT_NOTICE);
     });
+  });
+});
+
+/**
+ * An archive or restore that was never sent is said as that, and only that.
+ *
+ * Nothing here may claim the entity's state - one archived through a container above stays archived
+ * whatever happened to the request - or that writing the settle step sent was saved.
+ */
+describe('a lifecycle request that was not sent', () => {
+  const REASONS = ['no_session', 'unconfirmed', 'unsent_writing', 'unread'];
+
+  it('names the request by its verb, for every reason', () => {
+    for (const reason of REASONS) {
+      assert.match(lifecycleNotSentSentence('archive', reason), /the archive request was not sent/);
+      assert.match(lifecycleNotSentSentence('restore', reason), /the restore request was not sent/);
+    }
+    assert.equal(
+      lifecycleNotSentSentence('archive', 'unread'),
+      'Raphael could not read this from your server, so the archive request was not sent.',
+    );
+  });
+
+  it('makes no claim about the entity or about saved writing', () => {
+    for (const reason of REASONS) {
+      for (const verb of ['archive', 'restore']) {
+        const sentence = lifecycleNotSentSentence(verb, reason);
+
+        assert.doesNotMatch(sentence, /\b(is|still|now) (archived|active)\b|restored\b|saved\b/i);
+        assert.doesNotMatch(sentence, /slug/i);
+      }
+    }
+  });
+});
+
+describe('a failed lifecycle action beside writing kept on this phone', () => {
+  it('says both facts in few enough words for the status line’s two lines', () => {
+    assert.equal(
+      lifecycleBesideKept('Archive not confirmed'),
+      'Archive not confirmed · kept on this phone',
+    );
+
+    // The longest action phrase, which is still well inside what two lines hold at a large text size.
+    const longest = lifecycleBesideKept('Restore refused: this changed since you looked');
+
+    assert.ok(longest.length <= 70, longest);
+    assert.ok(longest.endsWith('kept on this phone'));
   });
 });

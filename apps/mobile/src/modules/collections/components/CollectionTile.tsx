@@ -1,8 +1,9 @@
 import clsx from 'clsx';
-import { ChevronRight } from 'lucide-react-native';
+import { Archive, ChevronRight } from 'lucide-react-native';
 import { Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
-import { Card, Emblem, type EmblemName, FavoriteButton, colors } from '../../../ui';
+import { Card, Emblem, type EmblemName, FavoriteButton, StatePill, colors } from '../../../ui';
+import { ARCHIVED_LABEL } from '../../lifecycle';
 
 /** The screen-reader action that stands in for the star nested inside the tile's press surface. */
 const TOGGLE_FAVORITE_ACTION = 'toggleFavorite';
@@ -25,6 +26,11 @@ export interface CollectionTileProps {
   favorited?: boolean | undefined;
   onToggleFavorite?: (() => void) | undefined;
   waveSeed?: number | undefined;
+  /**
+   * Draw the Archived pill between the name and the chevron. Only Search sets it: inside an archived
+   * area everything is archived with it, and the area's own toggle already says so.
+   */
+  archived?: boolean | undefined;
   className?: string | undefined;
   /** Layout for the outer element, which does not scale when the tile is pressed. */
   style?: StyleProp<ViewStyle> | undefined;
@@ -48,6 +54,7 @@ export function CollectionTile({
   favorited = false,
   onToggleFavorite,
   waveSeed = 0,
+  archived = false,
   className,
   style,
   accessibilityHint,
@@ -72,7 +79,7 @@ export function CollectionTile({
           : undefined
       }
       accessibilityHint={accessibilityHint ?? `Opens ${name}`}
-      accessibilityLabel={name}
+      accessibilityLabel={archived ? `${name}, ${ARCHIVED_LABEL}` : name}
       accessibilityValue={
         showsFavorite ? { text: favorited ? 'Starred' : 'Not starred' } : undefined
       }
@@ -113,6 +120,9 @@ export function CollectionTile({
             >
               {name}
             </Text>
+            {archived ? (
+              <StatePill icon={Archive} label={ARCHIVED_LABEL} testID="archived-pill" />
+            ) : null}
             {trailing === 'chevron' ? (
               <ChevronRight color={colors.ink} size={22} strokeWidth={2} />
             ) : null}

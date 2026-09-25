@@ -16,6 +16,11 @@ import {
 } from '../../../ui';
 import { RejectionNotice } from '../../connection';
 import {
+  lifecycleView,
+  UNAVAILABLE_WHILE_ARCHIVED_HINT,
+  useLifecycleAction,
+} from '../../lifecycle';
+import {
   goBack,
   openArea,
   openBrowse,
@@ -39,13 +44,16 @@ import {
   childrenOf,
   containerTitleLookup,
   useContainer,
+  useContainerChildren,
   useContainerPath,
   useHierarchy,
+  type ContainerChildren,
 } from '../client/queries';
 import { AddInsideSheet, type AddInsideTarget } from './AddInsideSheet';
+import { ArchiveLines, ArchiveToggle } from './ContainerArchive';
 import { ContainerEditAction } from './ContainerEditAction';
 import { ContainerHeader } from './ContainerHeader';
-import { HierarchyStale } from './HierarchyError';
+import { HierarchyError, HierarchyStale } from './HierarchyError';
 import { ReadOnlyBody } from './ReadOnlyBody';
 import { TileGrid, type TileGridItem } from './TileGrid';
 
@@ -73,6 +81,11 @@ export interface AreaScreenProps {
  * scroll reaches the end. Not everything underneath it - a project's notes belong to the project.
  * Media recorded in this session has no server operation and sits under its own heading, so one
  * word never covers two different promises.
+ *
+ * An archived area is the exception to reading children from the hierarchy: the hierarchy never
+ * contains one, so it reads its own children, complete or not at all, with archived ones included.
+ * Its notes are read the same way. Nothing moves while it is archived - Favorite, Edit, the add
+ * button and the capture pair stay in place, unavailable - and Archive stays live.
  */
 export function AreaScreen({ areaId }: AreaScreenProps) {
   const target = useMemo<ContainerRef | null>(
@@ -81,9 +94,14 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   );
 
   const favorite = useFavoriteToggle();
+  const lifecycle = useLifecycleAction();
   const areaQuery = useContainer(target);
   const tree = useHierarchy();
-  const notes = useNotePages(target);
+  // Only once the area's own Get says it is archived. An active area's children are the hierarchy's,
+  // and a second read of the same fact could disagree with it.
+  const archivedRead = areaQuery.data?.archived === true;
+  const childrenQuery = useContainerChildren(archivedRead ? areaId : null);
+  const notes = useNotePages(target, { includeArchived: archivedRead });
   const media = useSessionMedia();
 
   // The add sheet is opened from this screen and belongs to it while it is up; the creation sheet
@@ -122,6 +140,10 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
       : pathSegments(canonical.data).slice(0, -1);
   const chipPath = parents === undefined ? [] : parents.length > 0 ? parents : ['Areas'];
   const scope = notFound || failed ? null : target;
+  const view =
+    entity === undefined || wrongType ? null : lifecycleView(entity.id, entity.archiveCauses);
+  const unavailable =
+    view === null || view.standing === 'active' ? undefined : UNAVAILABLE_WHILE_ARCHIVED_HINT;
 
   const header = (
     <LocationTopBar
@@ -132,6 +154,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
               setAdding({ id: target.id, title: entity.title });
             }
       }
+      addUnavailable={unavailable}
       onBack={goBack}
       onOpenBrowse={() => {
         openBrowse(scope);
@@ -179,7 +202,9 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
     );
   }
 
-  const children = childrenOf(tree.hierarchy, areaId);
+  const children: ContainerChildren | undefined = archivedRead
+    ? childrenQuery.children
+    : childrenOf(tree.hierarchy, areaId);
   const subareas = children?.subareas ?? [];
   const projects = children?.projects ?? [];
   const sessionMedia = (media.data ?? []).filter(
@@ -207,6 +232,26 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
     },
   }));
 
+  // Subareas and projects appear only when there are some; the plus that adds them is in the top
+  // bar, so an empty section has nothing left to say. Drawn the same from either read.
+  const sections = (
+    <>
+      {subareas.length > 0 ? (
+        <View className="mt-8 gap-4">
+          <SectionHeading>Subareas</SectionHeading>
+          <TileGrid items={subareaTiles} />
+        </View>
+      ) : null}
+
+      {projectTiles.length > 0 ? (
+        <View className="mt-8 gap-4">
+          <SectionHeading>Projects</SectionHeading>
+          <TileGrid items={projectTiles} />
+        </View>
+      ) : null}
+    </>
+  );
+
   return (
     <View className="flex-1">
       <Screen
@@ -216,10 +261,18 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
         onRefresh={() => {
           tree.refetch();
           void areaQuery.refetch();
+          // Only when this screen asked for them: TanStack refetches a disabled query too, and an
+          // active area must make no children request.
+          if (archivedRead) childrenQuery.refetch();
           notes.refresh();
           void media.refetch();
         }}
-        refreshing={tree.isFetching || areaQuery.isFetching || notes.isRefreshing}
+        refreshing={
+          tree.isFetching ||
+          areaQuery.isFetching ||
+          (archivedRead && childrenQuery.isFetching) ||
+          notes.isRefreshing
+        }
       >
         <RejectionNotice className="mb-4" />
         <ContainerHeader
@@ -240,8 +293,17 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
                     favorite.toggle(target);
                   }}
                   selected={favorite.isFavorite(target)}
+                  unavailable={unavailable}
                 />
-                <ContainerEditAction id={areaId} kind="area" />
+                {view === null ? null : (
+                  <ArchiveToggle
+                    action={lifecycle}
+                    revision={entity.revision}
+                    target={target}
+                    title={entity.title}
+                    view={view}
+                  />
+                )}
               </>
             )
           }
@@ -251,16 +313,40 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
             Favorite did not update. Try again.
           </Text>
         ) : null}
+        {view === null ? null : <ArchiveLines action={lifecycle} view={view} />}
 
         {entity === undefined ? null : (
           <ReadOnlyBody
+            action={<ContainerEditAction id={areaId} kind="area" unavailable={unavailable} />}
             body={entity.body.format === 'markdown' ? entity.body.value : ''}
             description={entity.description}
             kind="area"
           />
         )}
 
-        {tree.isError && tree.hierarchy === undefined ? (
+        {archivedRead ? (
+          // The hierarchy never holds an archived area, so its own read answers here, drawn in the
+          // same four states: a failed read is never shown as an empty area.
+          childrenQuery.children === undefined ? (
+            childrenQuery.isError ? (
+              <View className="mt-8">
+                <HierarchyError tree={childrenQuery} title="Unable to load what this area holds." />
+              </View>
+            ) : (
+              <Text
+                accessibilityRole="text"
+                className="mt-8 font-body text-[16px] leading-[22px] text-ink-soft"
+              >
+                Loading what this area holds…
+              </Text>
+            )
+          ) : (
+            <>
+              <HierarchyStale className="mt-8" tree={childrenQuery} />
+              {sections}
+            </>
+          )
+        ) : tree.isError && tree.hierarchy === undefined ? (
           <Text
             accessibilityLiveRegion="polite"
             className="mt-8 font-body text-[16px] leading-[22px] text-ink-soft"
@@ -290,36 +376,25 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
         ) : (
           <>
             <HierarchyStale className="mt-8" tree={tree} />
-
-            {/* Subareas and projects appear only when there are some; the actions that make
-                them live beside Favorite, so an empty section has nothing left to say. */}
-            {subareas.length > 0 ? (
-              <View className="mt-8 gap-4">
-                <SectionHeading>Subareas</SectionHeading>
-                <TileGrid items={subareaTiles} />
-              </View>
-            ) : null}
-
-            {projectTiles.length > 0 ? (
-              <View className="mt-8 gap-4">
-                <SectionHeading>Projects</SectionHeading>
-                <TileGrid items={projectTiles} />
-              </View>
-            ) : null}
+            {sections}
           </>
         )}
 
-        {/* Notes are always here, whatever the hierarchy is doing. They are their own read: a tree
-            that will not load says nothing about what this area holds, and hiding the section
-            behind it would turn one failure into two. */}
-        <NoteSection
-          className="mt-8"
-          copy={CONTAINER_NOTES_COPY}
-          locationFor={containerTitleLookup(tree)}
-          onOpen={openEditor}
-          testID="area-notes"
-          view={notes.view}
-        />
+        {/* Notes are here whatever the hierarchy is doing. They are their own read: a tree that will
+            not load says nothing about what this area holds, and hiding the section behind it would
+            turn one failure into two. They wait only for the Get, which says whether the area is
+            archived and so which read to show: under the default an archived area's notes would
+            flash as an empty section. */}
+        {entity === undefined ? null : (
+          <NoteSection
+            className="mt-8"
+            copy={CONTAINER_NOTES_COPY}
+            locationFor={containerTitleLookup(tree)}
+            onOpen={openEditor}
+            testID="area-notes"
+            view={notes.view}
+          />
+        )}
 
         <SessionMediaSection className="mt-8" items={sessionMedia} testID="area-session-media" />
       </Screen>

@@ -101,6 +101,7 @@ export const REQUEST_FIELDS = [
   'skip',
   'limit',
   'orderBy',
+  'includeArchived',
 ] as const;
 
 export type RequestField = (typeof REQUEST_FIELDS)[number];

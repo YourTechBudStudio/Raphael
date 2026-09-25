@@ -26,6 +26,8 @@
 import assert from 'node:assert/strict';
 import { after, afterEach, beforeEach, describe, it } from 'node:test';
 
+import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
+
 import { installDom } from './support/browser-dom.mjs';
 import { installNativeStubs } from './support/native-stub-loader.mjs';
 
@@ -161,7 +163,7 @@ const connect = (activation, transport) => {
           connectionId: 'c1',
           base: 'https://raphael.example',
           origin: 'https://raphael.example',
-          protocolVersion: '2026-09-18',
+          protocolVersion: PROTOCOL_VERSION,
         },
       },
     },
@@ -377,6 +379,34 @@ describe('a write the server refuses', () => {
     assert.equal(screen.at('home').isActive(target()), false, 'reverted to what it last read');
     assert.equal(entity.inFlight(), 1);
     assert.equal(hierarchy.inFlight(), 1);
+
+    await flush(() => {
+      entity.settle();
+
+      hierarchy.settle();
+    });
+  });
+
+  it('reports an archive made elsewhere as archived, with what to word it from', async () => {
+    act(() => {
+      screen.at('home').toggle(target());
+    });
+    await flush();
+    await flush(() => {
+      server.settle(
+        refused({
+          kind: 'api_error',
+          status: 409,
+          mutationOutcome: 'rejected',
+          message: 'This project is archived.',
+          error: { code: 'node_archived', message: 'archived' },
+          details: { field: 'target', reason: 'inherited' },
+        }),
+      );
+    });
+
+    assert.equal(screen.at('home').failure, 'archived');
+    assert.deepEqual(screen.at('home').failureDetails, { field: 'target', reason: 'inherited' });
 
     await flush(() => {
       entity.settle();

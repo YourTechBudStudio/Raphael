@@ -58,8 +58,10 @@ const entity = {
   description: '',
   tags: ['reviewed'],
   active: false,
+  archived: false,
   body: { format: 'markdown', value: '# Contracts\n' },
   metadata: {},
+  archiveCauses: [],
 };
 
 describe('update', () => {

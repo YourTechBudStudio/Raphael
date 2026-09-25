@@ -49,6 +49,7 @@ export const LIST_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
   'orderBy',
   'skip',
   'limit',
+  'includeArchived',
 ]);
 
 /** The same page, with queries in place of an ordering. */
@@ -59,6 +60,7 @@ export const SEARCH_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
   'queries',
   'skip',
   'limit',
+  'includeArchived',
 ]);
 export const GET_PATH_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>(['target']);
 
@@ -88,6 +90,12 @@ export const MOVE_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
   'target',
   'revision',
   'destination',
+]);
+
+/** Archive and restore share one request shape, so they share one allowlist. */
+export const ARCHIVE_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
+  'target',
+  'revision',
 ]);
 
 /**

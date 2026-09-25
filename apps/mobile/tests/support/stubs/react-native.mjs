@@ -116,7 +116,17 @@ const passThrough = (tag, marker) =>
 
 export const View = passThrough('div', 'data-view');
 export const Text = passThrough('span', 'data-text');
-export const ScrollView = passThrough('div', 'data-scrollview');
+/**
+ * A scroll view that renders its refresh control, so a test can pull to refresh (`pullToRefresh`).
+ */
+export const ScrollView = function ScrollView({ children, refreshControl, ...rest }) {
+  return createElement(
+    'div',
+    { 'data-scrollview': true, ...toDomProps(rest) },
+    refreshControl ?? null,
+    children,
+  );
+};
 /**
  * A text field a test can actually type into.
  *
@@ -130,6 +140,7 @@ export const ScrollView = passThrough('div', 'data-scrollview');
  */
 export const TextInput = function TextInput({
   children,
+  editable,
   multiline,
   onChangeText,
   onSubmitEditing,
@@ -146,6 +157,8 @@ export const TextInput = function TextInput({
     {
       'data-textinput': true,
       ...toDomProps(rest),
+      // A field that takes no writing is one a test has to be able to tell apart.
+      ...(editable === false ? { readOnly: true } : {}),
       ...(flattened.maxHeight === undefined ? {} : { 'data-max-height': flattened.maxHeight }),
       value: value ?? '',
       onChange:
@@ -162,7 +175,28 @@ export const TextInput = function TextInput({
 };
 export const KeyboardAvoidingView = passThrough('div', 'data-kav');
 export const ActivityIndicator = passThrough('div', 'data-activity');
-export const RefreshControl = passThrough('div', 'data-refresh');
+/**
+ * The pull-to-refresh control: says whether it is refreshing, and holds the handler a pull would run.
+ * Nothing a person can click, because a pull is not a click.
+ */
+export const RefreshControl = ({ refreshing, onRefresh }) =>
+  createElement('div', {
+    'data-refresh': true,
+    'data-refreshing': String(refreshing === true),
+    ref: (node) => {
+      if (node !== null) node.pull = onRefresh;
+    },
+  });
+
+/** Pulls the first refresh control inside `container`, as a person dragging the screen down would. */
+export const pullToRefresh = (container) => {
+  const control = container.querySelector('[data-refresh]');
+
+  if (control === null || typeof control.pull !== 'function') {
+    throw new Error('nothing on screen can be pulled to refresh');
+  }
+  control.pull();
+};
 export const Image = passThrough('span', 'data-image');
 
 /** Renders inline rather than into a portal; `visible={false}` renders nothing, as it must. */

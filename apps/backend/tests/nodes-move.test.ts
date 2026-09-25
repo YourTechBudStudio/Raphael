@@ -5,6 +5,7 @@ import { SLUG_MAX_CODE_POINTS } from '@raphael/contracts/nodes';
 
 import {
   createNode,
+  getNode,
   getNodePath,
   moveNode,
   searchNodes,
@@ -517,5 +518,143 @@ test('corrupt stored ancestry above the destination is an integrity failure, not
     );
     assert.equal(internal._tag, 'InternalFailure');
     assert.equal((internal as { detail: string }).detail, 'stored ancestry contains a cycle');
+  });
+});
+
+/** A cause written straight into storage: these tests ask what a move does, not how archive writes. */
+const causeOn = (connection: Connection, id: number, owner = 'user') =>
+  connection.db
+    .prepare(
+      `INSERT INTO archive_causes (node_id, owner, reason, created_at) VALUES (?, ?, 'direct', ?)`,
+    )
+    .run(id, owner, T0);
+
+const causesOf = (connection: Connection, id: number) =>
+  expectRight(runNodes(connection, getNode({ target: { id } }))).entity.archiveCauses;
+
+test('something archived by a cause of its own is restored before it moves', () => {
+  withMigrated('move-archived-direct', (connection) => {
+    const apollo = project(connection, { path: '/work' }, 'Apollo');
+    causeOn(connection, apollo.id);
+
+    const failure = refusedUnchanged(connection, apollo.id, {
+      target: { id: apollo.id },
+      revision: apollo.revision,
+      destination: { path: '/personal' },
+    });
+    assert.equal(failure.code, 'node_archived');
+    assert.deepEqual(failure.details, { field: 'target', reason: 'direct' });
+  });
+});
+
+test('something archived only through a container moves out, and is active afterwards', () => {
+  withMigrated('move-archived-inherited', (connection) => {
+    const shelf = area(connection, { path: '/work' }, 'Shelf');
+    const apollo = project(connection, { id: shelf.id }, 'Apollo');
+    const kept = note(connection, { id: apollo.id }, 'Kept');
+    const plain = note(connection, { id: apollo.id }, 'Plain');
+    const second = note(connection, { id: shelf.id }, 'Second');
+    causeOn(connection, shelf.id);
+    causeOn(connection, kept.id);
+
+    const moved = expectRight(
+      move(connection, {
+        target: { id: apollo.id },
+        revision: apollo.revision,
+        destination: { path: '/personal' },
+      }),
+    ).node;
+    assert.equal(moved.archived, false);
+    assert.equal(moved.parentId, PERSONAL);
+    assert.deepEqual(causesOf(connection, apollo.id), []);
+    // Its subtree came along: the plain note is active, and the independent cause is kept.
+    assert.deepEqual(causesOf(connection, plain.id), []);
+    assert.deepEqual(
+      causesOf(connection, kept.id).map((cause) => cause.origin.id),
+      [kept.id],
+    );
+
+    // With a new slug, too.
+    const renamed = expectRight(
+      move(connection, {
+        target: { id: second.id },
+        revision: second.revision,
+        destination: { path: '/personal/rescued' },
+      }),
+    ).node;
+    assert.equal(renamed.slug, 'rescued');
+    assert.equal(renamed.archived, false);
+  });
+});
+
+test('an archived destination is refused, directly or through a container above it', () => {
+  withMigrated('move-archived-destination', (connection) => {
+    const shelf = area(connection, { path: '/personal' }, 'Shelf');
+    const inner = area(connection, { id: shelf.id }, 'Inner');
+    const target = project(connection, { path: '/work' }, 'Apollo');
+    causeOn(connection, shelf.id);
+
+    for (const [destination, reason] of [
+      [{ parent: { id: shelf.id } }, 'direct'],
+      [{ path: '/personal/shelf/inner' }, 'inherited'],
+      [{ path: '/personal/shelf/inner/renamed' }, 'inherited'],
+    ] as const) {
+      const failure = refusedUnchanged(connection, target.id, {
+        target: { id: target.id },
+        revision: target.revision,
+        destination,
+      });
+      assert.equal(failure.code, 'node_archived', JSON.stringify(destination));
+      assert.deepEqual(failure.details, { field: 'destination', reason });
+    }
+    assert.equal(inner.archived, false);
+  });
+});
+
+test('an inherited-only target "moved" to its current archived parent is refused, not a no-op', () => {
+  withMigrated('move-archived-unchanged', (connection) => {
+    const shelf = area(connection, { path: '/work' }, 'Shelf');
+    const target = note(connection, { id: shelf.id }, 'Stuck');
+    causeOn(connection, shelf.id);
+
+    const failure = refusedUnchanged(connection, target.id, {
+      target: { id: target.id },
+      revision: target.revision,
+      destination: { parent: { id: shelf.id } },
+    });
+    assert.equal(failure.code, 'node_archived');
+    assert.deepEqual(failure.details, { field: 'destination', reason: 'direct' });
+  });
+});
+
+test('lifecycle is decided after revision, destination, cycle and parentage, target first', () => {
+  withMigrated('move-archived-order', (connection) => {
+    const shelf = area(connection, { path: '/personal' }, 'Shelf');
+    const apollo = project(connection, { path: '/work' }, 'Apollo');
+    const other = project(connection, { path: '/work' }, 'Other');
+    const inside = area(connection, { path: '/work' }, 'Outer');
+    causeOn(connection, apollo.id);
+    causeOn(connection, shelf.id);
+    causeOn(connection, inside.id);
+
+    const at = (destination: object, revision = apollo.revision, id = apollo.id) =>
+      refused(connection, { target: { id }, revision, destination });
+
+    assert.equal(at({ parent: { id: shelf.id } }, apollo.revision + 1).code, 'revision_conflict');
+    assert.equal(at({ parent: { id: 999_999 } }).code, 'node_not_found');
+    assert.equal(
+      refused(connection, {
+        target: { id: inside.id },
+        revision: inside.revision,
+        destination: { parent: { id: inside.id } },
+      }).details['reason'],
+      'cycle',
+    );
+    assert.equal(at({ parent: { id: other.id } }).code, 'invalid_parent');
+    // Both the target and the destination are archived: the target is named.
+    assert.deepEqual(at({ parent: { id: shelf.id } }).details, {
+      field: 'target',
+      reason: 'direct',
+    });
   });
 });

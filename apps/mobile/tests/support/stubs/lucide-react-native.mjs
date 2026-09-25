@@ -16,6 +16,7 @@ const icon = (name) => {
 };
 
 export const AlertCircle = icon('AlertCircle');
+export const Archive = icon('Archive');
 export const Bold = icon('Bold');
 export const Check = icon('Check');
 export const ChevronDown = icon('ChevronDown');
@@ -47,6 +48,7 @@ export const Quote = icon('Quote');
 export const Redo2 = icon('Redo2');
 export const Search = icon('Search');
 export const Settings = icon('Settings');
+export const SlidersHorizontal = icon('SlidersHorizontal');
 export const Square = icon('Square');
 export const SquareCode = icon('SquareCode');
 export const Star = icon('Star');

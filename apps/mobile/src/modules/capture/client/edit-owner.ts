@@ -11,12 +11,19 @@
  * a database of its own.
  */
 
-import { get as getNode, move as moveNode, update as updateNode } from '@raphael/client/nodes';
+import {
+  archive as archiveNode,
+  get as getNode,
+  move as moveNode,
+  restore as restoreNode,
+  update as updateNode,
+} from '@raphael/client/nodes';
 import { useEffect } from 'react';
 
+import { invalidateActivation } from '../../../infrastructure/query/invalidate.ts';
 import { queryClient } from '../../../infrastructure/query/query-client';
 import { useConnectionStore } from '../../connection';
-import { createEditOwner, type EditLocation } from '../edit-owner.ts';
+import { createEditOwner, type EditLifecycle, type EditLocation } from '../edit-owner.ts';
 import { openSharedStore } from './store-lifetime.ts';
 import { applyUpdateTo } from './update-cache.ts';
 
@@ -26,10 +33,14 @@ export const useEditOwner = createEditOwner({
   get: (transport, request) => getNode(transport, request),
   update: (transport, request) => updateNode(transport, request),
   move: (transport, request) => moveNode(transport, request),
+  archive: (transport, request) => archiveNode(transport, request),
+  restore: (transport, request) => restoreNode(transport, request),
   now: () => Date.now(),
   // One consequence of one editing session, bound to the app's cache. Which queries it touches is
   // decided in `update-cache.ts`, where it can be driven without a connection.
   applyUpdate: (ref, activation) => applyUpdateTo(queryClient, ref, activation),
+  // Archive and restore reach every list, feed, search and hierarchy read, so all of them refetch.
+  applyLifecycle: (activation) => invalidateActivation(queryClient, activation),
   /**
    * The same question, and the same answer, as the creation owner's.
    *
@@ -69,3 +80,14 @@ export const useEditLifetime = (): void => {
  */
 export const useEditLocation = (editKey: string, initial: EditLocation): EditLocation =>
   useEditOwner((state) => state.locations[editKey]) ?? initial;
+
+/**
+ * Why the record being edited is archived, as the owner confirmed it. `useEditLocation`'s twin: the
+ * owner advances it on an archive, a restore, a read-back and a move out, and the screen reads it.
+ */
+export const useEditLifecycle = (editKey: string, initial: EditLifecycle): EditLifecycle =>
+  useEditOwner((state) => state.lifecycles[editKey]) ?? initial;
+
+/** How many times the owner replaced this record's content under the screen. See `contentEpochs`. */
+export const useEditContentEpoch = (editKey: string): number =>
+  useEditOwner((state) => state.contentEpochs[editKey]) ?? 0;

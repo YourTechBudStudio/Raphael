@@ -42,6 +42,7 @@ const note = (id, over = {}) => ({
   slug: `note-${String(id)}`,
   revision: 1,
   parentId: 3,
+  archived: false,
   ...over,
 });
 
@@ -317,6 +318,71 @@ describe('a note card', () => {
     view.container.querySelector('[data-testid="note-card-42"]').click();
     assert.deepEqual(opened, [42]);
     view.unmount();
+  });
+});
+
+describe('the Archived pill', () => {
+  const spoken = (view) =>
+    (
+      view.container.querySelector('[aria-label]') ?? view.container.querySelector('button')
+    ).getAttribute('aria-label');
+
+  it('is drawn on an archived note, and said first, when the caller asks for it', () => {
+    const view = render(
+      createElement(NoteCard, {
+        note: note(1, { archived: true }),
+        location: 'Kitchen',
+        markArchived: true,
+        onOpen: () => undefined,
+      }),
+    );
+
+    assert.equal(has(view.container, '[data-testid="archived-pill"]'), true);
+    assert.ok(view.text().includes('Archived'), 'the state is a word, not color alone');
+    assert.equal(spoken(view), 'Note. Archived. Note 1. In Kitchen');
+    view.unmount();
+  });
+
+  it('sits in the eyebrow beside the kind when the location is not known', () => {
+    const view = render(
+      createElement(NoteCard, { note: note(1, { archived: true }), markArchived: true }),
+    );
+
+    assert.equal(has(view.container, '[data-testid="archived-pill"]'), true);
+    view.unmount();
+  });
+
+  it('is never drawn unless asked for, archived or not', () => {
+    // An archived container's own notes are all archived with it; the toggle above already says so.
+    const view = render(
+      createElement(NoteCard, {
+        note: note(1, { archived: true }),
+        location: 'Kitchen',
+        onOpen: () => undefined,
+      }),
+    );
+
+    assert.equal(has(view.container, '[data-testid="archived-pill"]'), false);
+    assert.equal(spoken(view), 'Note. Note 1. In Kitchen');
+    view.unmount();
+  });
+
+  it('is never drawn on an active note, even when asked for', () => {
+    const view = render(createElement(NoteCard, { note: note(1), markArchived: true }));
+
+    assert.equal(has(view.container, '[data-testid="archived-pill"]'), false);
+    view.unmount();
+  });
+
+  it('reaches every card through the grid, only when the grid is asked', () => {
+    const items = [note(1, { archived: true }), note(2)];
+    const marked = render(createElement(NoteGrid, { items, markArchived: true }));
+    const plain = render(createElement(NoteGrid, { items }));
+
+    assert.equal(marked.container.querySelectorAll('[data-testid="archived-pill"]').length, 1);
+    assert.equal(plain.container.querySelectorAll('[data-testid="archived-pill"]').length, 0);
+    marked.unmount();
+    plain.unmount();
   });
 });
 

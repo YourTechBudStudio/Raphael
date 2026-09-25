@@ -45,7 +45,7 @@ export type ReceivedProtocolVersion = Schema.Schema.Type<typeof ReceivedProtocol
  * number: adding an optional response property does not move it, while changing what an existing
  * operation can return to a client that already exists does.
  */
-export const PROTOCOL_VERSION: DateProtocolVersion = '2026-09-18';
+export const PROTOCOL_VERSION: DateProtocolVersion = '2026-09-24';
 
 /**
  * Verification carries no input, and any property is refused.

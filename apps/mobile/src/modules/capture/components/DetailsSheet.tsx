@@ -28,10 +28,19 @@ export interface DetailsSheetProps {
    */
   slug: string | null;
   tags: readonly string[];
+  /**
+   * The entity is archived: the same layout, and nothing in it can change. The ID and tags stay
+   * readable, because reading an archived note's details is legitimate; only changing them is refused.
+   * `subtitle` says why and the way back, which only the screen's lifecycle can word.
+   */
+  readOnly?: { readonly subtitle: string } | null | undefined;
   /** Committed once, on Done. Nothing here reaches the owner per keystroke. */
   onDone: (details: { slug: string | null; tags: readonly string[] }) => void;
   onClose: () => void;
 }
+
+/** How an unavailable field is drawn: in place, dimmed, so nothing moves when the entity is archived. */
+const UNAVAILABLE = { opacity: 0.38 } as const;
 
 /** Sentence case for a label a person reads, from the lower-case name the status line uses. */
 const sentenceCase = (value: string): string => value.charAt(0).toUpperCase() + value.slice(1);
@@ -62,9 +71,11 @@ export function DetailsSheet({
   idLabel,
   slug,
   tags,
+  readOnly: readOnlyMode = null,
   onDone,
   onClose,
 }: DetailsSheetProps) {
+  const readOnly = readOnlyMode !== null;
   const [draftSlug, setDraftSlug] = useState(slug ?? '');
   const [draftTags, setDraftTags] = useState<readonly string[]>(tags);
   const [entry, setEntry] = useState('');
@@ -96,9 +107,11 @@ export function DetailsSheet({
   // underneath it must not decide whether Done is offered for what is on screen.
   const since = opened.current;
   const changed =
-    (since.slug !== null && draftSlug !== since.slug) ||
-    draftTags.length !== since.tags.length ||
-    draftTags.some((tag, index) => tag !== since.tags[index]);
+    !readOnly &&
+    ((since.slug !== null && draftSlug !== since.slug) ||
+      draftTags.length !== since.tags.length ||
+      draftTags.some((tag, index) => tag !== since.tags[index]));
+  const off = readOnly ? UNAVAILABLE : undefined;
 
   return (
     <Sheet
@@ -110,11 +123,13 @@ export function DetailsSheet({
       testID="details-sheet"
     >
       <SheetHeader
-        leading={<IconButton icon={X} label="Cancel" onPress={onClose} />}
+        leading={<IconButton icon={X} label={readOnly ? 'Close' : 'Cancel'} onPress={onClose} />}
         subtitle={
-          since.slug === null
-            ? 'Applied when you press Done, and saved when you save the note.'
-            : 'Applied when you press Done, and saved with everything else.'
+          readOnlyMode !== null
+            ? readOnlyMode.subtitle
+            : since.slug === null
+              ? 'Applied when you press Done, and saved when you save the note.'
+              : 'Applied when you press Done, and saved with everything else.'
         }
         title="Details"
         trailing={
@@ -140,11 +155,14 @@ export function DetailsSheet({
             </Text>
             <TextInput
               accessibilityLabel={sentenceCase(idLabel)}
+              accessibilityState={{ disabled: readOnly }}
               autoCapitalize="none"
               autoCorrect={false}
               className="h-11 rounded-full bg-card px-4 font-body text-[16px] text-ink"
+              editable={!readOnly}
               onChangeText={setDraftSlug}
               placeholder={idLabel}
+              style={off}
               testID="details-slug"
               value={draftSlug}
             />
@@ -157,30 +175,40 @@ export function DetailsSheet({
         <View className="gap-2">
           <Text className="font-body-medium text-[14px] text-ink-soft">Tags</Text>
           <View className="flex-row flex-wrap gap-2">
-            {draftTags.map((tag) => (
-              <Chip
-                accessibilityHint="Removes this tag"
-                accessibilityLabel={`Remove tag ${tag}`}
-                key={tag}
-                label={tag}
-                onPress={() => {
-                  setDraftTags(draftTags.filter((item) => item !== tag));
-                }}
-                trailingIcon={X}
-              />
-            ))}
+            {draftTags.map((tag) =>
+              readOnly ? (
+                <Chip key={tag} label={tag} />
+              ) : (
+                <Chip
+                  accessibilityHint="Removes this tag"
+                  accessibilityLabel={`Remove tag ${tag}`}
+                  key={tag}
+                  label={tag}
+                  onPress={() => {
+                    setDraftTags(draftTags.filter((item) => item !== tag));
+                  }}
+                  trailingIcon={X}
+                />
+              ),
+            )}
             {draftTags.length === 0 ? (
               <Text className="font-body text-[15px] leading-[22px] text-ink-soft">
                 No tags yet.
               </Text>
             ) : null}
           </View>
-          <View className="flex-row items-center gap-2">
+          <View
+            accessibilityState={{ disabled: readOnly }}
+            className="flex-row items-center gap-2"
+            pointerEvents={readOnly ? 'none' : 'auto'}
+            style={off}
+          >
             <TextInput
               accessibilityLabel="New tag"
               autoCapitalize="none"
               blurOnSubmit={false}
               className="h-11 flex-1 rounded-full bg-card px-4 font-body text-[16px] text-ink"
+              editable={!readOnly}
               onChangeText={setEntry}
               onSubmitEditing={addTag}
               placeholder="Add a tag"
@@ -189,7 +217,7 @@ export function DetailsSheet({
               value={entry}
             />
             <IconButton
-              disabled={entry.trim() === ''}
+              disabled={readOnly || entry.trim() === ''}
               icon={Plus}
               label="Add tag"
               onPress={addTag}

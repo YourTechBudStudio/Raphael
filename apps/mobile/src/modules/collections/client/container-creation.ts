@@ -30,8 +30,10 @@ import { randomUUID } from 'expo-crypto';
 import { useCallback, useRef, useState } from 'react';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
+import { invalidateActivation } from '../../../infrastructure/query/invalidate';
 import { queryClient } from '../../../infrastructure/query/query-client';
 import { useConnectionSession, useConnectionStore } from '../../connection';
+import { ARCHIVED_PARENT_CREATION_SENTENCE } from '../../lifecycle';
 import { recordCreation } from './queries';
 
 /**
@@ -166,9 +168,23 @@ export const useContainerCreationSession = (sessionId: number): ContainerCreatio
         });
 
         if (!result.ok) {
-          return result.failure.mutationOutcome === 'unknown'
-            ? { kind: 'unconfirmed', message: UNCONFIRMED }
-            : { kind: 'refused', message: result.failure.message };
+          const { failure } = result;
+
+          if (failure.mutationOutcome === 'unknown') {
+            return { kind: 'unconfirmed', message: UNCONFIRMED };
+          }
+          if (failure.kind === 'api_error' && failure.error.code === 'node_archived') {
+            // The parent was archived elsewhere while this form was open. Whatever is showing it
+            // learns that from a re-read, not from this refusal, and archiving changes more reads
+            // than the parent's own. Not awaited: the sentence does not depend on the refresh.
+            void invalidateActivation(queryClient, session.activation).catch(() => {
+              // A failed refresh, never a different refusal.
+            });
+
+            return { kind: 'refused', message: ARCHIVED_PARENT_CREATION_SENTENCE };
+          }
+
+          return { kind: 'refused', message: failure.message };
         }
 
         const entity = result.value.entity;
@@ -176,16 +192,18 @@ export const useContainerCreationSession = (sessionId: number): ContainerCreatio
         /**
          * The tree really changed, so it is stale whether or not anyone is still looking at this
          * form. `recordCreation` is itself fenced on the activation, so a completion from a
-         * connection this app has left seeds and invalidates nothing that is on screen.
+         * connection this app has left invalidates nothing that is on screen. The response itself is
+         * never cached: it may be a replay of a creation recorded long ago, and the container's own
+         * Get is what shows it now.
          *
-         * Not awaited, and its failure is swallowed. The parts that matter run synchronously before
-         * the first await inside it: the container is seeded and its queries are marked stale. What
-         * awaiting would add is the *refetch* - a tree read that can retry or hang - and holding a
-         * confirmed creation behind that would leave the form saying "Saving…" about something the
-         * server has already answered for. A refresh that could not be scheduled is not a creation
-         * that did not happen, and the next ordinary read corrects a stale tree.
+         * Not awaited, and its failure is swallowed. The part that matters runs synchronously before
+         * the first await inside it: the hierarchy is marked stale. What awaiting would add is the
+         * *refetch* - a tree read that can retry or hang - and holding a confirmed creation behind
+         * that would leave the form saying "Saving…" about something the server has already
+         * answered for. A refresh that could not be scheduled is not a creation that did not happen,
+         * and the next ordinary read corrects a stale tree.
          */
-        void recordCreation(queryClient, result.value, session.activation).catch(() => {
+        void recordCreation(queryClient, session.activation).catch(() => {
           // A failed refresh, never a failed creation.
         });
 

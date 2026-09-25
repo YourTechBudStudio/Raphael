@@ -18,7 +18,7 @@ const TURN_DURATION = 1100;
 /** How much of the circumference the arc covers. */
 const ARC = 0.28;
 
-interface BusyRingProps {
+export interface BusyRingProps {
   /** The mark's box, which the ring is drawn around: 48 on a bare mark, 44 on a labelled one. */
   size: number;
 }

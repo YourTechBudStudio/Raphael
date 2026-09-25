@@ -4,8 +4,9 @@ import { responseDecoder } from './decode.ts';
 import { JsonObjectSafe, type JsonObject } from './json.ts';
 
 /**
- * Every error this release can produce. Unused provider or lifecycle codes are deliberately absent: a
- * code exists here only when something returns it.
+ * Every error this release can produce. Unused provider codes are deliberately absent: a code exists
+ * here only when something returns it. `node_archived` is here because archive and restore now exist
+ * and every other mutation refuses to change something archived.
  *
  * The catalog spans two owners. Most codes are operation outcomes, produced by a capability and
  * projected from its own tagged failure. `unauthorized`, `route_not_found`, `method_not_allowed`,
@@ -21,6 +22,7 @@ export const API_ERROR_CODES = [
   'slug_conflict',
   'idempotency_conflict',
   'revision_conflict',
+  'node_archived',
   'payload_too_large',
   'unsupported_media_type',
   'invalid_parent',
@@ -48,6 +50,7 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorCode, number>> = {
   slug_conflict: 409,
   idempotency_conflict: 409,
   revision_conflict: 409,
+  node_archived: 409,
   payload_too_large: 413,
   unsupported_media_type: 415,
   invalid_parent: 422,

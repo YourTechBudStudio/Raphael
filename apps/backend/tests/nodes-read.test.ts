@@ -324,3 +324,63 @@ test('a read says whether the project is selected, without being asked', () => {
     assert.equal(work.active, false);
   });
 });
+
+test('get reports archived status and its causes, nearest origin first', () => {
+  withMigrated('read-archived', (connection) => {
+    const make = (request: Record<string, unknown>) =>
+      expectRight(runNodes(connection, createNode(request), clockAt(T0))).entity;
+    const shelf = make({ type: 'area', parent: { path: '/work' }, title: 'Shelf' });
+    const apollo = make({ type: 'project', parent: { id: shelf.id }, title: 'Apollo' });
+    const note = make({ type: 'resource', kind: 'note', parent: { id: apollo.id }, title: 'Note' });
+    const get = (id: number) =>
+      expectRight(runNodes(connection, getNode({ target: { id } }))).entity;
+    const cause = (id: number, owner: string, reason: string) =>
+      connection.db
+        .prepare(
+          'INSERT INTO archive_causes (node_id, owner, reason, created_at) VALUES (?, ?, ?, ?)',
+        )
+        .run(id, owner, reason, T0);
+
+    assert.equal(get(note.id).archived, false);
+    assert.deepEqual(get(note.id).archiveCauses, []);
+
+    // Direct.
+    cause(apollo.id, 'user', 'direct');
+    assert.deepEqual(get(apollo.id).archiveCauses, [
+      {
+        origin: { id: apollo.id, type: 'project', title: 'Apollo' },
+        owner: 'user',
+        reason: 'direct',
+      },
+    ]);
+
+    // Inherited, through the project.
+    const inherited = get(note.id);
+    assert.equal(inherited.archived, true);
+    assert.deepEqual(
+      inherited.archiveCauses.map((c) => c.origin),
+      [{ id: apollo.id, type: 'project', title: 'Apollo' }],
+    );
+
+    // Mixed: its own, the project's, and two on the area, ordered by distance, then owner, then reason.
+    cause(note.id, 'user', 'direct');
+    cause(shelf.id, 'user', 'direct');
+    cause(shelf.id, 'ext_calendar', 'expired');
+    assert.deepEqual(
+      get(note.id).archiveCauses.map((c) => [c.origin.id, c.owner, c.reason]),
+      [
+        [note.id, 'user', 'direct'],
+        [apollo.id, 'user', 'direct'],
+        [shelf.id, 'ext_calendar', 'expired'],
+        [shelf.id, 'user', 'direct'],
+      ],
+    );
+
+    // An archived entity is still read, by path too, and its revision was never touched.
+    const byPath = expectRight(
+      runNodes(connection, getNode({ target: { path: '/work/shelf/apollo' } })),
+    ).entity;
+    assert.equal(byPath.archived, true);
+    assert.equal(byPath.revision, apollo.revision);
+  });
+});

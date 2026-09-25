@@ -31,6 +31,7 @@ const summary = (id, type, over = {}) => ({
   description: '',
   tags: [],
   active: false,
+  archived: false,
   ...over,
 });
 
@@ -41,6 +42,7 @@ const descriptor = (over = {}) => ({
   query: 'credentials',
   type: 'all',
   tags: [],
+  includeArchived: false,
   ...over,
 });
 
@@ -71,6 +73,12 @@ describe('the request a search sends', () => {
     // a modal that fills from the top and has nowhere to append.
     assert.equal(searchRequest(descriptor()).skip, 0);
     assert.equal(SEARCH_LIMIT, 100);
+  });
+
+  it('asks for archived nodes only when "Include archived" is on', () => {
+    // Off is the server's default, so it is left out rather than restated.
+    assert.ok(!('includeArchived' in searchRequest(descriptor())));
+    assert.equal(searchRequest(descriptor({ includeArchived: true })).includeArchived, true);
   });
 
   it('omits the filter entirely when there is nothing to say', () => {
@@ -139,6 +147,8 @@ describe('cache keys', () => {
       { query: 'credential' },
       { type: 'note' },
       { tags: ['sync'] },
+      // The archived and active readings of one search never share an answer.
+      { includeArchived: true },
     ]) {
       assert.notEqual(
         hash(searchKey(1, base)),
@@ -168,7 +178,9 @@ describe('a hit, as something drawable', () => {
       ref: { type: 'area', id: 3 },
       title: 'Security',
       description: 'x',
+      archived: false,
     });
+    assert.equal(toSearchResultItem(hit(12, 'project', { archived: true })).archived, true);
     assert.deepEqual(toSearchResultItem(hit(12, 'project')).ref, { type: 'project', id: 12 });
   });
 
@@ -183,6 +195,7 @@ describe('a hit, as something drawable', () => {
       slug: 'n41',
       revision: 1,
       parentId: 12,
+      archived: false,
     });
   });
 

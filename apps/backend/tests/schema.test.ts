@@ -545,3 +545,51 @@ describe('active selection', () => {
     ]);
   });
 });
+
+describe('archive causes', () => {
+  // Rows are written here directly: this suite asks what the table permits, not what `lifecycle.ts`
+  // chooses to write.
+  const cause = (nodeId: number, owner = 'user', reason = 'direct', createdAt: number = 1) =>
+    db
+      .prepare(
+        'INSERT INTO archive_causes (node_id, owner, reason, created_at) VALUES (?, ?, ?, ?)',
+      )
+      .run(nodeId, owner, reason, createdAt);
+  let target: number;
+
+  test('one owner holds one reason on one node at most', () => {
+    insertNode(db, { type: 'project', parentId: WORK, parentType: 'area', slug: 'held' });
+    target = one<{ id: number }>(db, `SELECT id FROM nodes WHERE slug = 'held'`).id;
+    cause(target);
+    rejects(() => cause(target), /UNIQUE constraint failed|PRIMARY KEY/);
+    // Another owner, or another reason, is an independent cause.
+    cause(target, 'ext_calendar', 'direct');
+    cause(target, 'user', 'expired');
+    assert.equal(
+      count(db, 'SELECT count(*) AS c FROM archive_causes WHERE node_id = ?', target),
+      3,
+    );
+  });
+
+  test('a node with causes cannot be deleted, and a cause must name a node', () => {
+    rejects(
+      () => db.prepare('DELETE FROM nodes WHERE id = ?').run(target),
+      /FOREIGN KEY constraint failed/,
+    );
+    rejects(() => cause(999_999), /FOREIGN KEY constraint failed/);
+  });
+
+  test('owner and reason are present and bounded, and the timestamp is a safe integer', () => {
+    rejects(() => cause(target, '', 'r1'), /archive_causes_owner_present/);
+    rejects(() => cause(target, 'o'.repeat(65), 'r1'), /archive_causes_owner_present/);
+    rejects(() => cause(target, 'user', ''), /archive_causes_reason_present/);
+    rejects(() => cause(target, 'user', 'r'.repeat(65)), /archive_causes_reason_present/);
+    cause(target, 'o'.repeat(64), 'r'.repeat(64));
+    rejects(
+      () => cause(target, 'user', 'r2', MAX_SAFE_DB_INTEGER + 1),
+      /archive_causes_created_at_safe/,
+    );
+    rejects(() => cause(target, 'user', 'r3', 1.5), /archive_causes_created_at_safe/);
+    rejects(() => cause(target, 'user', 'r4', -1), /archive_causes_created_at_safe/);
+  });
+});

@@ -71,6 +71,8 @@ const entity = (over = {}) => ({
   description: 'what we agreed',
   tags: ['work', 'review'],
   active: false,
+  archived: false,
+  archiveCauses: [],
   metadata: {},
   body: { format: 'tiptap', value: CANONICAL },
   ...over,

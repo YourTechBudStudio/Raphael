@@ -138,6 +138,8 @@ test('the failure vocabulary can name the fields the new request shapes added', 
   // `isRequestField` projection in `recovery.ts`, and the refusal reaches a client with no field at
   // all - "the request was wrong" where "only a project can be marked active" was meant.
   assert.ok(isRequestField('active'));
+  // The archive read flag, so a refused `includeArchived` names its field.
+  assert.ok(isRequestField('includeArchived'));
   assert.ok(!isRequestField('body_text'));
   assert.equal(new Set(REQUEST_FIELDS).size, REQUEST_FIELDS.length, 'no duplicate field names');
 });

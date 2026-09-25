@@ -819,6 +819,36 @@ describe('what the answer does', () => {
     await kit.close();
   });
 
+  it('words an archived destination from the lifecycle table, and keeps the draft', async () => {
+    const kit = await harness();
+    const editor = fakeEditor();
+    const { draftId } = await readyDraft(kit, editor);
+    editor.captures(documentWith('refused'));
+    kit.respond({
+      ok: false,
+      failure: {
+        kind: 'api_error',
+        error: { code: 'node_archived' },
+        details: { field: 'parent', reason: 'inherited' },
+        message: 'the server’s own words',
+        mutationOutcome: 'rejected',
+      },
+    });
+
+    await kit.owner.getState().save(draftId, kit.session());
+
+    assert.equal(draftOf(kit, draftId).state, 'composing');
+    assert.deepEqual(
+      {
+        code: attemptsOf(kit, draftId)[0].lastOutcome.code,
+        message: attemptsOf(kit, draftId)[0].lastOutcome.message,
+      },
+      { code: 'node_archived', message: 'That place is archived. Pick another.' },
+    );
+
+    await kit.close();
+  });
+
   it('refuses ordinary Save once an attempt is unresolved, and keeps refusing after a rejection', async () => {
     const kit = await harness();
     const editor = fakeEditor();

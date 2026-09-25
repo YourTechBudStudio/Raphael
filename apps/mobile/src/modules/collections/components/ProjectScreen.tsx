@@ -16,6 +16,11 @@ import {
 } from '../../../ui';
 import { RejectionNotice } from '../../connection';
 import {
+  lifecycleView,
+  UNAVAILABLE_WHILE_ARCHIVED_HINT,
+  useLifecycleAction,
+} from '../../lifecycle';
+import {
   goBack,
   openBrowse,
   openEditor,
@@ -41,6 +46,7 @@ import {
   useHierarchy,
 } from '../client/queries';
 import { ActiveVerdict } from './ActiveVerdict';
+import { ArchiveLines, ArchiveToggle } from './ContainerArchive';
 import { ContainerEditAction } from './ContainerEditAction';
 import { ContainerHeader } from './ContainerHeader';
 import { ProjectHeaderSkeleton } from './ProjectSkeleton';
@@ -63,6 +69,11 @@ export interface ProjectScreenProps {
  *
  * The notes are the server's, in its default order, paged as the scroll reaches the end. Media
  * recorded in this session has no server operation at all and keeps its own heading below them.
+ *
+ * Archived, nothing moves: Active, Favorite, Edit and the capture pair stay where they are, drawn
+ * unavailable, with Active and Favorite showing their saved values, because archiving clears
+ * neither. Archive stays live. The notes are then read with archived ones included, since every note
+ * in an archived project is archived with it.
  */
 export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const target = useMemo<ContainerRef | null>(
@@ -72,9 +83,10 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
 
   const favorite = useFavoriteToggle();
   const active = useProjectActive();
+  const lifecycle = useLifecycleAction();
   const project = useContainer(target);
   const tree = useHierarchy();
-  const notes = useNotePages(target);
+  const notes = useNotePages(target, { includeArchived: project.data?.archived === true });
   const media = useSessionMedia();
 
   const entity = project.data;
@@ -172,6 +184,9 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   }
 
   const { title, description } = entity;
+  const view = lifecycleView(entity.id, entity.archiveCauses);
+  // Every refused control stays in place and says why. Archive is the one control this never covers.
+  const unavailable = view.standing === 'active' ? undefined : UNAVAILABLE_WHILE_ARCHIVED_HINT;
   // The write is guarded by the revision this screen actually read, and reports the state it read,
   // so a change made elsewhere since then is refused rather than silently overwritten.
   const activeTarget = { id: entity.id, revision: entity.revision, active: entity.active };
@@ -216,6 +231,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
                     active.toggle(activeTarget);
                   }}
                   selected={active.isActive(activeTarget)}
+                  unavailable={unavailable}
                 />
                 <ToggleLabel
                   accessibilityLabel={
@@ -229,12 +245,25 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
                     if (target !== null) favorite.toggle(target);
                   }}
                   selected={target !== null && favorite.isFavorite(target)}
+                  unavailable={unavailable}
                 />
-                <ContainerEditAction id={projectId} kind="project" />
+                {target === null ? null : (
+                  <ArchiveToggle
+                    action={lifecycle}
+                    revision={entity.revision}
+                    target={target}
+                    title={title}
+                    view={view}
+                  />
+                )}
               </>
             }
           />
-          <ActiveVerdict className="mt-2" failure={activeBusy ? null : active.failure} />
+          <ActiveVerdict
+            className="mt-2"
+            details={active.failureDetails}
+            failure={activeBusy ? null : active.failure}
+          />
           {favorite.isError ? (
             <Text
               accessibilityLiveRegion="polite"
@@ -243,9 +272,11 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
               That star did not stick. Tap it again.
             </Text>
           ) : null}
+          <ArchiveLines action={lifecycle} view={view} />
         </View>
 
         <ReadOnlyBody
+          action={<ContainerEditAction id={projectId} kind="project" unavailable={unavailable} />}
           body={entity.body.format === 'markdown' ? entity.body.value : ''}
           description={description}
           kind="project"

@@ -31,6 +31,7 @@ import {
   SESSION,
   T0,
   until,
+  USER_CAUSE_OF,
 } from './support/edit-harness.mjs';
 
 const temporaries = [];
@@ -1007,5 +1008,460 @@ describe('the record as something a list can draw', () => {
     assert.equal(listed.length, 1);
     assert.equal(listed[0].standing, 'conflicted');
     assert.deepEqual(listed[0].actions, ['open', 'discard']);
+  });
+});
+
+/**
+ * Archive and restore, as record work.
+ *
+ * Every request carries the revision of a Get made inside the action, after sendable writing was
+ * sent - never the record's own base, which a refused or conflicted record can hold behind the server
+ * for good. What is defended here is that pin, the session guard around it, and what a success, a
+ * refusal and a lost answer each leave the record and the screen holding.
+ */
+describe('archive and restore', () => {
+  const PROJECT_CAUSE = {
+    origin: { id: 3, type: 'project', title: 'Auth rework' },
+    owner: 'user',
+    reason: 'direct',
+  };
+  const lifecycle = (kit) => kit.state().lifecycles[KEY];
+  const refuseNextSlug = (kit) => {
+    const realUpdate = kit.server.update;
+    let refused = false;
+
+    kit.server.update = async (request) => {
+      if (!refused) {
+        refused = true;
+        kit.server.updates.push(request);
+
+        return clientFailure('api_error', 'slug_conflict', 'rejected', { field: 'slug' });
+      }
+
+      return realUpdate(request);
+    };
+  };
+  const refusedRecord = async (options) => {
+    const kit = await opened(options);
+
+    refuseNextSlug(kit);
+    kit.owner.getState().editFields(KEY, { slug: 'taken' });
+    await committed(kit, 2);
+    kit.fire();
+    await until(() => kit.record(KEY).syncState === 'refused', 'the refusal');
+
+    return kit;
+  };
+  /** The Get after the pin fails; the pin itself succeeds. */
+  const failReadBack = (kit) => {
+    const realGet = kit.server.get;
+    const pinnedAt = kit.server.gets;
+
+    kit.server.get = async (request) =>
+      kit.server.gets > pinnedAt
+        ? ((kit.server.gets += 1), clientFailure('transport', null, 'not_applicable'))
+        : realGet(request);
+  };
+
+  it('learns the causes an open read, and seeds an archived entity with no writing', async () => {
+    const kit = await editHarness({
+      server: serverModel({ archived: true, archiveCauses: [PROJECT_CAUSE] }),
+    });
+
+    await kit.owner.getState().initialize();
+
+    const outcome = await kit.owner.getState().open(42, SESSION);
+
+    assert.equal(outcome.kind, 'ready');
+    assert.deepEqual(outcome.lifecycle, { kind: 'known', archiveCauses: [PROJECT_CAUSE] });
+    assert.deepEqual(lifecycle(kit), outcome.lifecycle);
+
+    const record = kit.record(KEY);
+
+    assert.deepEqual(record.content, record.base, 'the seeded record holds no writing');
+    assert.equal(await kit.owner.getState().leave(KEY), 'settled');
+    assert.equal(kit.record(KEY), null, 'and leaving removes it');
+    assert.equal(lifecycle(kit), undefined, 'with everything held beside it');
+    assert.equal(kit.server.updates.length, 0, 'nothing was ever sent');
+  });
+
+  it('sends pending writing first, then archives at the revision the pin read', async () => {
+    const kit = await opened();
+
+    kit.owner.getState().editFields(KEY, { title: 'written first' });
+    await committed(kit, 2);
+
+    const outcome = await kit.owner.getState().archive(KEY);
+
+    assert.equal(kit.server.updates.length, 1, 'the writing was sent before the archive');
+    assert.deepEqual(kit.server.lifecycles, [{ verb: 'archive', target: { id: 42 }, revision: 2 }]);
+    assert.deepEqual(outcome, {
+      kind: 'done',
+      archived: true,
+      causes: [USER_CAUSE_OF(kit.server.entity())],
+    });
+    assert.deepEqual(lifecycle(kit), { kind: 'known', archiveCauses: outcome.causes });
+    assert.deepEqual(kit.refreshed, [1], 'every read under the activation is refreshed');
+  });
+
+  it('adopts the new revision at once, so the next edit after Restore does not conflict', async () => {
+    const kit = await opened();
+
+    await kit.owner.getState().archive(KEY);
+    assert.equal(kit.record(KEY).baseRevision, 2, 'published straight from the advance');
+
+    const restored = await kit.owner.getState().restore(KEY);
+
+    assert.deepEqual(restored, { kind: 'done', archived: false, causes: [] });
+    assert.equal(kit.record(KEY).baseRevision, 3, 'the base is the response revision immediately');
+    assert.equal(
+      kit.server.gets,
+      3,
+      'one open read and one pin each, no read-back after a success',
+    );
+
+    kit.owner.getState().editFields(KEY, { title: 'after restore' });
+    await committed(kit, 2);
+    kit.fire();
+    await until(() => kit.record(KEY).acknowledgedVersion === 2, 'the acknowledgement');
+
+    assert.equal(kit.server.updates[0].revision, 3);
+    assert.equal(kit.server.entity().title, 'after restore');
+  });
+
+  it('refuses nothing to be sent when the pin cannot be read', async () => {
+    const kit = await opened();
+
+    kit.server.getFailure = clientFailure('transport', null, 'not_applicable');
+
+    assert.deepEqual(await kit.owner.getState().archive(KEY), {
+      kind: 'not_sent',
+      reason: 'unread',
+    });
+    assert.equal(kit.server.lifecycles.length, 0);
+    assert.deepEqual(kit.refreshed, []);
+  });
+
+  describe('never dispatches under a session that ended while it waited', () => {
+    const pinHeld = async () => {
+      const kit = await opened();
+
+      kit.server.hold = true;
+
+      const running = kit.owner.getState().archive(KEY);
+
+      await until(() => kit.server.holding() === 1, 'the pin to be in the air');
+
+      return { kit, running };
+    };
+
+    /** A settled record whose pin finds newer content, so adopting it has a store write to wait on. */
+    const adoptionHeld = async () => {
+      let open = () => {};
+      let entered = false;
+      const gate = new Promise((resolve) => {
+        open = resolve;
+      });
+      const kit = await opened({
+        store: (real) => ({
+          rebaseEdit: async (...args) => {
+            entered = true;
+            await gate;
+
+            return real.rebaseEdit(...args);
+          },
+        }),
+      });
+
+      kit.server.writeBehind({ title: 'elsewhere' });
+
+      const running = kit.owner.getState().archive(KEY);
+
+      await until(() => entered, 'the adoption to be writing');
+
+      return { kit, running, open };
+    };
+
+    it('when the owner closes while the pin is in the air', async () => {
+      const { kit, running } = await pinHeld();
+
+      await kit.owner.getState().close();
+      kit.server.release();
+
+      assert.deepEqual(await running, { kind: 'not_sent', reason: 'no_session' });
+      assert.equal(kit.server.lifecycles.length, 0);
+    });
+
+    it('when the session is replaced while the pin is in the air', async () => {
+      const { kit, running } = await pinHeld();
+
+      kit.owner.getState().resume(KEY, { ...SESSION, activation: 2 });
+      kit.server.release();
+
+      assert.deepEqual(await running, { kind: 'not_sent', reason: 'no_session' });
+      assert.equal(kit.server.lifecycles.length, 0);
+    });
+
+    it('when the owner closes while the pin is being adopted', async () => {
+      const { kit, running, open } = await adoptionHeld();
+
+      await kit.owner.getState().close();
+      open();
+
+      assert.deepEqual(await running, { kind: 'not_sent', reason: 'no_session' });
+      assert.equal(kit.server.lifecycles.length, 0);
+    });
+
+    it('when the session is replaced while the pin is being adopted', async () => {
+      const { kit, running, open } = await adoptionHeld();
+
+      kit.owner.getState().resume(KEY, { ...SESSION, activation: 2 });
+      open();
+
+      assert.deepEqual(await running, { kind: 'not_sent', reason: 'no_session' });
+      assert.equal(kit.server.lifecycles.length, 0);
+    });
+  });
+
+  it('archives and restores a refused record, keeping its writing until new writing is accepted', async () => {
+    const kit = await refusedRecord();
+    const refusal = kit.record(KEY).lastRefusal;
+
+    assert.equal((await kit.owner.getState().archive(KEY)).kind, 'done');
+    assert.equal((await kit.owner.getState().restore(KEY)).kind, 'done');
+
+    const record = kit.record(KEY);
+
+    assert.equal(record.syncState, 'refused', 'still refused');
+    assert.deepEqual(record.lastRefusal, refusal, 'with its refusal');
+    assert.equal(record.content.slug, 'taken', 'and its writing');
+    assert.equal(record.baseRevision, 3, 'at the revision both actions left');
+
+    kit.owner.getState().editFields(KEY, { slug: 'free' });
+    await committed(kit, 3);
+    kit.fire();
+    await until(() => kit.record(KEY).acknowledgedVersion === 3, 'the acknowledgement');
+
+    assert.equal(kit.server.updates.at(-1).revision, 3, 'sent at the advanced revision');
+    assert.equal(kit.server.entity().slug, 'free');
+  });
+
+  it('restores a refused record after an archive whose answer was lost', async () => {
+    const kit = await refusedRecord();
+
+    kit.server.lose = true;
+
+    const lost = await kit.owner.getState().archive(KEY);
+
+    assert.deepEqual(lost, { kind: 'unconfirmed', reread: true });
+    assert.deepEqual(
+      lifecycle(kit),
+      { kind: 'known', archiveCauses: [USER_CAUSE_OF(kit.server.entity())] },
+      'the read-back shows the cause the lost answer applied',
+    );
+    assert.deepEqual(kit.refreshed, [1], 'an unknown outcome refreshes too');
+    assert.equal(kit.record(KEY).baseRevision, 1, 'nothing advanced a base it cannot vouch for');
+
+    const restored = await kit.owner.getState().restore(KEY);
+
+    assert.equal(restored.kind, 'done');
+    assert.equal(kit.server.lifecycles.at(-1).revision, 2, 'the pin supplied the current revision');
+    assert.equal(kit.record(KEY).content.slug, 'taken', 'the refused writing is kept');
+    assert.equal(kit.record(KEY).syncState, 'refused');
+  });
+
+  it('archives and restores a conflicted record too', async () => {
+    const kit = await opened();
+
+    kit.server.writeBehind({ title: 'someone else' });
+    kit.owner.getState().editFields(KEY, { title: 'mine' });
+    await committed(kit, 2);
+    kit.fire();
+    await until(() => kit.record(KEY).syncState === 'conflicted', 'the conflict');
+
+    assert.equal((await kit.owner.getState().archive(KEY)).kind, 'done');
+    assert.equal((await kit.owner.getState().restore(KEY)).kind, 'done');
+    assert.equal(kit.record(KEY).content.title, 'mine', 'the conflicted writing is kept');
+    assert.equal(kit.record(KEY).syncState, 'conflicted');
+  });
+
+  it('sends nothing while an earlier answer is still owed', async () => {
+    const kit = await opened();
+
+    kit.server.lose = true;
+    kit.owner.getState().editFields(KEY, { title: 'landed' });
+    await committed(kit, 2);
+    kit.fire();
+    await until(() => kit.record(KEY).inflightVersion === 2, 'the envelope to be left in flight');
+
+    assert.deepEqual(await kit.owner.getState().archive(KEY), {
+      kind: 'not_sent',
+      reason: 'unconfirmed',
+    });
+    assert.equal(kit.server.lifecycles.length, 0);
+  });
+
+  /**
+   * A drain whose send meets a verdict does not stop the action.
+   *
+   * Only writing still waiting to be sent does. Archived through a container above, the drain's send
+   * is refused as archived and the record becomes refused; archived elsewhere by the user, the archive
+   * moved the revision, so it conflicts. Either way the pin supplies the revision and the action runs.
+   */
+  it('archives after the drain is refused because a container above is archived', async () => {
+    const kit = await opened();
+
+    kit.server.archiveAbove(PROJECT_CAUSE);
+    kit.owner.getState().editFields(KEY, { title: 'written offline' });
+    await committed(kit, 2);
+
+    const outcome = await kit.owner.getState().archive(KEY);
+
+    assert.equal(outcome.kind, 'done');
+    assert.equal(kit.server.updates.length, 1, 'the writing was sent first');
+
+    const record = kit.record(KEY);
+
+    assert.equal(record.syncState, 'refused');
+    assert.equal(record.lastRefusal.code, 'node_archived');
+    assert.equal(record.content.title, 'written offline', 'and kept');
+    assert.equal(record.baseRevision, 2, 'the base was current, so it advanced');
+  });
+
+  it('restores after the drain conflicts with an archive made elsewhere', async () => {
+    const kit = await opened();
+
+    kit.owner.getState().editFields(KEY, { title: 'written offline' });
+    await committed(kit, 2);
+    kit.server.archiveElsewhere();
+
+    const outcome = await kit.owner.getState().restore(KEY);
+
+    assert.deepEqual(outcome, { kind: 'done', archived: false, causes: [] });
+
+    const record = kit.record(KEY);
+
+    assert.equal(record.syncState, 'conflicted');
+    assert.equal(record.content.title, 'written offline', 'the writing is kept');
+    assert.equal(record.baseRevision, 1, 'behind the server, and not advanced past what it saw');
+  });
+
+  it('is still done when the local advance fails, and later writing conflicts rather than overwrites', async () => {
+    const kit = await opened({
+      store: () => ({
+        advanceEditRevision: async () => {
+          throw new Error('disk full');
+        },
+      }),
+    });
+
+    const archived = await kit.owner.getState().archive(KEY);
+
+    assert.equal(archived.kind, 'done');
+    assert.equal(lifecycle(kit).archiveCauses.length, 1, 'the causes are learned regardless');
+    assert.equal(kit.record(KEY).baseRevision, 1);
+    assert.equal(
+      (await kit.owner.getState().restore(KEY)).kind,
+      'done',
+      'the next action pins afresh',
+    );
+
+    kit.owner.getState().editFields(KEY, { title: 'late' });
+    await committed(kit, 2);
+    kit.fire();
+    await until(() => kit.record(KEY).syncState === 'conflicted', 'the conflict');
+
+    assert.equal(kit.server.entity().title, 'A note', 'nothing was overwritten');
+  });
+
+  it('skips the advance when the pin shows the base already behind', async () => {
+    const kit = await refusedRecord();
+
+    kit.server.writeBehind({ description: 'elsewhere' });
+    assert.equal((await kit.owner.getState().archive(KEY)).kind, 'done');
+    assert.equal(kit.record(KEY).baseRevision, 1, 'a base it cannot vouch for is not advanced');
+  });
+
+  it('reads back after a refusal, and says whether that read worked', async () => {
+    const kit = await opened();
+
+    kit.server.lifecycleFailure = clientFailure('api_error', 'invalid_input', 'rejected');
+
+    const refused = await kit.owner.getState().archive(KEY);
+
+    assert.equal(refused.kind, 'refused');
+    assert.equal(refused.reread, true);
+    assert.deepEqual(kit.refreshed, [], 'a definite refusal changed nothing to refresh');
+
+    const known = lifecycle(kit);
+
+    kit.server.lifecycleFailure = clientFailure('api_error', 'invalid_input', 'rejected');
+    failReadBack(kit);
+
+    const blind = await kit.owner.getState().archive(KEY);
+
+    assert.equal(blind.kind, 'refused');
+    assert.equal(blind.reread, false);
+    assert.deepEqual(lifecycle(kit), known, 'the previous lifecycle stands');
+  });
+
+  it('claims no refresh when the read-back found newer content it could not adopt', async () => {
+    const kit = await opened({
+      store: () => ({
+        rebaseEdit: async () => {
+          throw new Error('disk full');
+        },
+      }),
+    });
+
+    kit.server.writeBehind({ title: 'elsewhere' });
+    kit.server.lifecycleFailure = clientFailure('transport', null, 'unknown');
+
+    assert.deepEqual(await kit.owner.getState().archive(KEY), {
+      kind: 'unconfirmed',
+      reread: false,
+    });
+    assert.equal(kit.record(KEY).content.title, 'A note', 'the screen still shows the old content');
+    assert.equal(kit.server.lifecycles[0].revision, 2, 'the pin still named the revision');
+  });
+
+  it('reports a lost answer whose read-back also failed as not re-read', async () => {
+    const kit = await opened();
+
+    kit.server.lose = true;
+    failReadBack(kit);
+
+    assert.deepEqual(await kit.owner.getState().archive(KEY), {
+      kind: 'unconfirmed',
+      reread: false,
+    });
+    assert.deepEqual(lifecycle(kit), { kind: 'known', archiveCauses: [] });
+    assert.deepEqual(kit.refreshed, [1]);
+  });
+
+  /**
+   * The pin can find someone else's newer content under an attached editor. Adopting it is right, and
+   * the screen must be told, or its stale text would be sent at the new revision.
+   */
+  it('marks content it adopted under the screen, and nothing else', async () => {
+    const kit = await opened();
+
+    assert.equal(kit.state().contentEpochs[KEY], undefined);
+
+    kit.server.writeBehind({ title: 'elsewhere' });
+    kit.server.lifecycleFailure = clientFailure('api_error', 'invalid_input', 'rejected');
+    await kit.owner.getState().archive(KEY);
+
+    assert.equal(kit.state().contentEpochs[KEY], 1);
+    assert.equal(kit.record(KEY).content.title, 'elsewhere');
+    assert.equal(kit.record(KEY).baseRevision, 2);
+
+    // Its own writing, acknowledged, is already on screen.
+    kit.owner.getState().editFields(KEY, { title: 'mine' });
+    await committed(kit, 2);
+    kit.fire();
+    await until(() => kit.record(KEY).acknowledgedVersion === 2, 'the acknowledgement');
+    assert.equal(kit.state().contentEpochs[KEY], 1);
+    assert.equal(kit.server.updates[0].revision, 2);
   });
 });

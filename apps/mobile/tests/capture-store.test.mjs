@@ -89,6 +89,8 @@ const entity = (over = {}) => ({
   description: '',
   tags: [],
   active: false,
+  archived: false,
+  archiveCauses: [],
   body: { format: 'tiptap', value: DOCUMENT },
   metadata: {},
   ...over,
@@ -383,6 +385,60 @@ describe('attempts', () => {
     // The point of the state is that it reports what the server actually created.
     assert.equal(stored.attempts.length, 0);
     assert.equal(stored.unreadableAttempts, 1);
+
+    await store.close();
+  });
+});
+
+describe('acknowledgements saved before archive existed', () => {
+  /**
+   * A capture file written by the previous build: the attempt is acknowledged with the Create response
+   * of that time, which had no lifecycle fields, and the file is at schema version 2.
+   */
+  const savedAtVersionTwo = async (acknowledged) => {
+    const file = await temporaryFile();
+    const first = await opened(file);
+    await first.store.insertDraft(newDraft());
+    await first.store.insertIntent(newIntent());
+    await first.store.acknowledge(acknowledgement());
+    await first.db.run(`UPDATE ${ATTEMPTS_TABLE} SET acknowledged = ? WHERE attempt_id = ?`, [
+      acknowledged,
+      'a1',
+    ]);
+    await first.db.run('PRAGMA user_version = 2');
+    await first.store.close();
+    return file;
+  };
+
+  it('reads an old-shape acknowledgement back after the migration, as active with no causes', async () => {
+    const { archived: _archived, archiveCauses: _causes, ...before } = entity();
+    const file = await savedAtVersionTwo(JSON.stringify({ entity: before }));
+
+    const { store } = await opened(file);
+    const stored = await one(store);
+
+    assert.equal(stored.attempts.length, 1);
+    assert.equal(stored.attempts[0].state, 'acknowledged');
+    assert.equal(stored.attempts[0].acknowledged.id, 42);
+    assert.equal(stored.attempts[0].acknowledged.entity.archived, false);
+    assert.deepEqual(stored.attempts[0].acknowledged.entity.archiveCauses, []);
+
+    await store.close();
+  });
+
+  it('leaves a saved answer with no entity exactly as it was, and still unreadable', async () => {
+    const unusable = '{ "entity" : "not an entity",  "kept": true }';
+    const file = await savedAtVersionTwo(unusable);
+
+    const { store, db } = await opened(file);
+    const stored = await store.list();
+
+    assert.equal(stored.attempts.length, 0);
+    assert.equal(stored.unreadableAttempts, 1);
+    const [row] = await db.all(`SELECT acknowledged FROM ${ATTEMPTS_TABLE} WHERE attempt_id = ?`, [
+      'a1',
+    ]);
+    assert.equal(row.acknowledged, unusable, 'not rewritten, not even reformatted');
 
     await store.close();
   });
@@ -1307,6 +1363,63 @@ describe('entity_edits', () => {
       await store.markEditConflicted(KEY, T0 + 1);
 
       assert.equal((await store.rebaseEdit(KEY, CONTENT, 9, T0 + 2)).baseRevision, 4);
+
+      await store.close();
+    });
+  });
+
+  describe('advanceEditRevision', () => {
+    /** Refused, with writing: the record a phone archive most needs to leave intact. */
+    const refused = async () => {
+      const opening = await seeded();
+      const { store } = opening;
+
+      await store.writeEditVersion({
+        key: KEY,
+        content: { ...CONTENT, slug: 'taken' },
+        draftVersion: 2,
+        at: T0 + 1,
+      });
+      await store.markEditInflight(KEY, 2, updateOf({ slug: 'taken' }), T0 + 2);
+      await store.markEditRefused(
+        KEY,
+        { code: 'slug_conflict', field: 'slug', reason: null, at: T0 + 3 },
+        T0 + 3,
+      );
+
+      return opening;
+    };
+
+    it('moves only the base revision and the update time', async () => {
+      const { store } = await refused();
+      const before = await only(store);
+
+      const record = await store.advanceEditRevision(KEY, 4, 5, T0 + 9);
+
+      assert.deepEqual(record, { ...before, baseRevision: 5, updatedAt: T0 + 9 });
+      assert.equal(record.syncState, 'refused', 'the state is kept');
+      assert.deepEqual(record.lastRefusal, before.lastRefusal, 'with its refusal');
+      assert.equal(record.content.slug, 'taken', 'and its writing');
+      assert.deepEqual(record.base, CONTENT, 'the base content is untouched');
+
+      await store.close();
+    });
+
+    it('matches nothing when the base revision is not the one the caller pinned', async () => {
+      const { store } = await refused();
+      const before = await only(store);
+
+      assert.deepEqual(await store.advanceEditRevision(KEY, 3, 5, T0 + 9), before);
+
+      await store.close();
+    });
+
+    it('matches nothing while an envelope is in flight', async () => {
+      const { store } = await seeded();
+      await store.markEditInflight(KEY, 1, updateOf({ title: 'x' }), T0 + 1);
+      const before = await only(store);
+
+      assert.deepEqual(await store.advanceEditRevision(KEY, 4, 5, T0 + 9), before);
 
       await store.close();
     });

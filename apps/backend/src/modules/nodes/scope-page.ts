@@ -1,6 +1,7 @@
 import type { NodeFilter } from '@raphael/contracts/nodes';
 import { sql, type SQL } from 'drizzle-orm';
 
+import { ARCHIVED_CONTAINERS, IS_ARCHIVED } from './lifecycle.ts';
 import type { ResolvedScopes } from './types.ts';
 
 /**
@@ -9,7 +10,8 @@ import type { ResolvedScopes } from './types.ts';
  * This module knows nothing about this capability's machinery - no `Orm`, no transaction, no
  * `resolve.ts`. It takes facts that are already resolved and produces fragments, which is what keeps
  * `resolve.ts` free of a dependency back on it and what makes every rule below testable by reading
- * one file.
+ * one file. The one rule it does not own is "effectively archived": it takes that as two fixed
+ * fragments from `lifecycle.ts`, the module that owns it.
  *
  * ## The invariants enforced here
  *
@@ -59,22 +61,50 @@ import type { ResolvedScopes } from './types.ts';
  * The root can never appear in shape 3, because root-and-recursive is shape 1, so the walk has no
  * root seed and needs no synthetic tag for one.
  *
- * ## The archive seam
+ * ## Archived nodes
  *
- * Story #8 will need both operations to exclude effectively archived nodes, including those archived
- * through an ancestor (ADR 0001). Archive is unlike a type filter: it *does* prune traversal, because
- * an archived container archives what it holds. It belongs in two places in shape 3 - the recursive
- * member, where an archived node stops the walk into its subtree, and the seed and predicate, where
- * an archived member is excluded - and as an ordinary predicate in shapes 1 and 2, which have no walk
- * to prune. Nothing here implements it.
+ * Both operations leave out effectively archived nodes by default - archived by a cause of their own
+ * or through a container above them - and include them, marked, when the request asks (ADR 0001).
+ *
+ * **The walk is not pruned.** The archive predicate is evaluated per row against one global set of
+ * archived containers, computed once per statement, so it applies identically in all three shapes and
+ * needs no hook into the walk. A scope inside an archived subtree therefore needs no special handling:
+ * its members' parents are archived containers, so a default page of it is empty and an inclusive page
+ * shows everything, marked. Pruning the walk would be an optimization only, and nothing measured calls
+ * for it.
+ *
+ * Every page statement has exactly one `WITH RECURSIVE`, because SQLite allows one `WITH` per statement:
+ * the archived containers always come first, and shape 3 adds its walk and members after them. That is
+ * why `pageFragments` assembles the clause rather than each shape writing its own.
  */
 
 /**
- * What a page statement is assembled from. Any of the three may be empty; `conditions` are ANDed with
- * the operation's own conditions by `whereFragment`.
+ * What a page statement is assembled from. `conditions` are ANDed with the operation's own conditions
+ * by `whereFragment`; `join` may be empty.
  */
-export interface MembershipFragments {
+export interface PageFragments {
+  /** One `WITH RECURSIVE`, always present: the archived containers, then any membership entries. */
   readonly with: SQL;
+  readonly join: SQL;
+  /** Membership plus, in default mode, the archive exclusion. What a page selects under. */
+  readonly conditions: readonly SQL[];
+  /**
+   * Membership alone, without the archive exclusion. For a caller that asks about the rows a default
+   * page left out, which must not also carry the condition that left them out.
+   */
+  readonly membershipConditions: readonly SQL[];
+  /** `… AS archived`: the constant `0` when archived rows are excluded, computed when included. */
+  readonly archivedColumn: SQL;
+  /**
+   * The archive predicate over the page alias `n`, for a caller that must ask about the archived rows
+   * a default page left out without restating the rule.
+   */
+  readonly archivedCondition: SQL;
+}
+
+/** Membership alone: CTE entries for the page's one `WITH RECURSIVE`, a join, and conditions. */
+interface MembershipFragments {
+  readonly ctes: readonly SQL[];
   readonly join: SQL;
   readonly conditions: readonly SQL[];
 }
@@ -90,11 +120,32 @@ const boundList = (values: readonly (string | number)[]): SQL =>
 const anyOf = (conditions: readonly SQL[]): SQL =>
   conditions.length === 1 ? (conditions[0] as SQL) : sql`(${sql.join([...conditions], sql` OR `)})`;
 
-export const membershipFragments = (
+/**
+ * The page's fragments: membership for the scopes, and archived rows excluded or marked.
+ *
+ * Default mode adds the exclusion as one more condition and reports every row as not archived, which is
+ * true by construction of that condition. Inclusion mode adds no condition and computes the column.
+ */
+export const pageFragments = (
   scopes: ResolvedScopes,
   recursive: boolean,
-): MembershipFragments => {
-  const noClause = { with: sql.empty(), join: sql.empty() } as const;
+  includeArchived: boolean,
+): PageFragments => {
+  const membership = membershipFragments(scopes, recursive);
+  return {
+    with: sql`WITH RECURSIVE ${sql.join([ARCHIVED_CONTAINERS, ...membership.ctes], sql`, `)}`,
+    join: membership.join,
+    membershipConditions: membership.conditions,
+    conditions: includeArchived
+      ? membership.conditions
+      : [...membership.conditions, sql`NOT ${IS_ARCHIVED}`],
+    archivedColumn: includeArchived ? sql`${IS_ARCHIVED} AS archived` : sql`0 AS archived`,
+    archivedCondition: IS_ARCHIVED,
+  };
+};
+
+const membershipFragments = (scopes: ResolvedScopes, recursive: boolean): MembershipFragments => {
+  const noClause = { ctes: [], join: sql.empty() } as const;
 
   if (scopes.root && recursive) return { ...noClause, conditions: [] };
 
@@ -112,13 +163,14 @@ export const membershipFragments = (
   // corrupt cycle cannot list a node as its own descendant.
   const seeds = sql`SELECT id, parent_id FROM nodes WHERE parent_id IN (${boundList(scopes.nodeIds)})`;
   return {
-    with: sql`
-      WITH RECURSIVE walk(id, scope) AS (
+    ctes: [
+      sql`walk(id, scope) AS (
         ${seeds}
         UNION
         SELECT child.id, walk.scope FROM nodes child JOIN walk ON child.parent_id = walk.id
-      ),
-      members(id) AS (SELECT DISTINCT id FROM walk WHERE id <> scope)`,
+      )`,
+      sql`members(id) AS (SELECT DISTINCT id FROM walk WHERE id <> scope)`,
+    ],
     join: sql`JOIN members ON members.id = n.id`,
     conditions: [],
   };

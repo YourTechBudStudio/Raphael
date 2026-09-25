@@ -1,5 +1,5 @@
 import { Pencil } from 'lucide-react-native';
-import { Text, View } from 'react-native';
+import { Text } from 'react-native';
 
 import type { ContainerType } from '../../../infrastructure/api/contracts';
 import { colors, PressableFeedback } from '../../../ui';
@@ -17,34 +17,40 @@ export interface ContainerEditActionProps {
    * an id the screen has not read yet would be an editor over nothing.
    */
   id: number | null;
+  /** Stays in place but cannot be used, and this says why; it becomes the spoken hint. */
+  unavailable?: string | undefined;
 }
 
 /**
- * Edit, in the header's toggle row beside Favorite.
+ * Edit, a compact pencil and word at the end of the "About this …" heading.
  *
- * A pencil and the word, in the same 44pt shape as `ToggleLabel`, so the row reads as one set of
- * things you can do to this container. It is not in the top bar - that is four controls already on an
- * area, and a fifth would squeeze the location chip - and it is not beside "About this area", which
- * would read as editing the prose while the editor changes the whole container.
+ * It left the header's toggle row because that row holds states - Active, Favorite, Archive - and
+ * Edit changes the content rather than describing a state. Beside the heading it sits next to the
+ * content it changes, and it is not in the top bar, which is four controls already on an area.
+ *
+ * While the container is archived it stays where it is, drawn unavailable, because the server
+ * refuses an edit then. Nothing moving is what keeps the Archive toggle under the same thumb.
  */
-export function ContainerEditAction({ kind, id }: ContainerEditActionProps) {
+export function ContainerEditAction({ kind, id, unavailable }: ContainerEditActionProps) {
   if (id === null) return null;
+
+  const off = unavailable !== undefined;
 
   return (
     <PressableFeedback
-      accessibilityHint="Changes the title, description, body, ID and tags"
+      accessibilityHint={unavailable ?? 'Changes the title, description, body, ID and tags'}
       accessibilityLabel={`Edit ${KIND_WORD[kind]}`}
       accessibilityRole="button"
-      className="h-11 flex-row items-center gap-1 pr-2"
+      className={['h-11 flex-row items-center gap-1 pl-2', off ? 'opacity-40' : ''].join(' ')}
+      disabled={off}
       onPress={() => {
         openEditor(id);
       }}
       testID="container-edit"
+      treatment="button"
     >
-      <View className="items-center justify-center" style={{ height: 44, width: 44 }}>
-        <Pencil color={colors.primary} size={20} strokeWidth={2} />
-      </View>
-      <Text className="font-body-medium text-[16px] text-ink">Edit</Text>
+      <Pencil color={colors.primary} size={18} strokeWidth={2} />
+      <Text className="font-body-medium text-[16px] text-primary">Edit</Text>
     </PressableFeedback>
   );
 }

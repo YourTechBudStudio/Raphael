@@ -22,6 +22,11 @@ export interface CaptureBarProps {
   lift?: number | undefined;
   /** True while a draft is being started, so a second tap cannot start a second one. */
   busy?: boolean | undefined;
+  /**
+   * Both controls stay in place but cannot be used, and this says why; it becomes their spoken hint.
+   * Drawn dimmed and announced as disabled, with nothing in the pair moving.
+   */
+  unavailable?: string | undefined;
   testID?: string | undefined;
 }
 
@@ -40,8 +45,10 @@ export function CaptureBar({
   onVoice,
   lift = 0,
   busy = false,
+  unavailable,
   testID,
 }: CaptureBarProps) {
+  const off = unavailable !== undefined;
   const insets = useSafeAreaInsets();
   const raised = useRef(new Animated.Value(0)).current;
   const reducedMotion = useReducedMotion();
@@ -68,11 +75,14 @@ export function CaptureBar({
       testID={testID}
     >
       <PressableFeedback
-        accessibilityHint="Opens a new note to write"
+        accessibilityHint={unavailable ?? 'Opens a new note to write'}
         accessibilityLabel="New note"
-        accessibilityState={{ disabled: busy }}
-        className="flex-row items-center gap-2 rounded-full bg-primary px-5"
-        disabled={busy}
+        accessibilityState={{ disabled: busy || off }}
+        className={[
+          'flex-row items-center gap-2 rounded-full bg-primary px-5',
+          off ? 'opacity-40' : '',
+        ].join(' ')}
+        disabled={busy || off}
         onPress={onNewNote}
         stateLayerColor={colors.onPrimary}
         style={{ borderRadius: CONTROL_SIZE / 2, boxShadow: captureShadow }}
@@ -86,9 +96,14 @@ export function CaptureBar({
       </PressableFeedback>
 
       <PressableFeedback
-        accessibilityHint="Starts recording a voice note"
+        accessibilityHint={unavailable ?? 'Starts recording a voice note'}
         accessibilityLabel="Record a voice note"
-        className="items-center justify-center rounded-full bg-primary"
+        accessibilityState={{ disabled: off }}
+        className={[
+          'items-center justify-center rounded-full bg-primary',
+          off ? 'opacity-40' : '',
+        ].join(' ')}
+        disabled={off}
         onPress={onVoice}
         stateLayerColor={colors.onPrimary}
         style={{ borderRadius: CONTROL_SIZE / 2, boxShadow: captureShadow }}

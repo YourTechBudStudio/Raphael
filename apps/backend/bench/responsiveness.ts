@@ -86,12 +86,26 @@ const main = async (): Promise<void> => {
     const workId = (
       seed.db.prepare("SELECT id FROM nodes WHERE slug = 'work'").get() as { id: number }
     ).id;
+    // A fixed fraction of the containers carries an archive cause, written directly beside the node
+    // inserts, so every default List below pays for computing and excluding the archived set. `area-0`
+    // stays active because the create and get samples use it.
+    const insertCause = seed.db.prepare(
+      "INSERT INTO archive_causes (node_id, owner, reason, created_at) VALUES (?, 'user', 'direct', 1)",
+    );
     seed.db.transaction(() => {
       for (let area = 0; area < 10; area += 1) {
         const info = insertNode.run('area', workId, 'area', `area-${area}`, `Area ${area}`);
         const areaId = Number(info.lastInsertRowid);
+        if (area % 4 === 3) insertCause.run(areaId);
         for (let project = 0; project < 20; project += 1) {
-          insertNode.run('project', areaId, 'area', `project-${project}`, `Project ${project}`);
+          const child = insertNode.run(
+            'project',
+            areaId,
+            'area',
+            `project-${project}`,
+            `Project ${project}`,
+          );
+          if (project % 5 === 4) insertCause.run(Number(child.lastInsertRowid));
         }
       }
     })();
@@ -166,7 +180,7 @@ const main = async (): Promise<void> => {
           case 2:
             batch.push(
               fire('list-recursive', '/api/nodes/list', {
-                parent: { path: '/work' },
+                scopes: [{ path: '/work' }],
                 recursive: true,
                 limit: 200,
               }),

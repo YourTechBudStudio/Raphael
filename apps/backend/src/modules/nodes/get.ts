@@ -4,6 +4,7 @@ import { Effect, Either } from 'effect';
 import { Db } from '../../infrastructure/database/index.ts';
 import { GET_FIELDS, invalidInputFrom } from './diagnostics.ts';
 import type { NodeError } from './errors.ts';
+import { effectiveCauses } from './lifecycle.ts';
 import {
   bodyProjection,
   checkedResponse,
@@ -24,8 +25,10 @@ const OPERATION = 'nodes.get';
  * converting it to Markdown then happens outside, where it holds no transaction open while doing the
  * most expensive work in the operation.
  *
- * No path is computed. A full path is only ever produced on explicit request, so an ordinary read does
- * not pay for an ancestor walk and no client can start depending on an address it did not ask for.
+ * Get pays a depth-bounded ancestor walk for lifecycle status, because it must report whether the
+ * entity is archived and why, computed from its current ancestors (ADR 0001). It still computes no
+ * path: a full path is only ever produced on explicit request, so no client can start depending on an
+ * address it did not ask for.
  */
 export const getNode = (input: unknown): Effect.Effect<GetResponse, NodeError, Db> =>
   Effect.gen(function* () {
@@ -38,8 +41,11 @@ export const getNode = (input: unknown): Effect.Effect<GetResponse, NodeError, D
           return raise(invalidInputFrom(request.left, GET_FIELDS, input));
         }
         const { target, format } = request.right;
-        const found = readTransaction(db, () => loadEntity(orm(db), target, 'target', OPERATION));
-        return { found, format };
+        return readTransaction(db, () => {
+          const handle = orm(db);
+          const found = loadEntity(handle, target, 'target', OPERATION);
+          return { found, causes: effectiveCauses(handle, found, OPERATION), format };
+        });
       },
       catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'read' }, cause),
     });
@@ -50,7 +56,12 @@ export const getNode = (input: unknown): Effect.Effect<GetResponse, NodeError, D
         return checkedResponse(
           decodeGetResponse,
           {
-            entity: entityProjection(row.found, bodyProjection(document, row.format), OPERATION),
+            entity: entityProjection(
+              row.found,
+              bodyProjection(document, row.format),
+              row.causes,
+              OPERATION,
+            ),
           },
           OPERATION,
         );

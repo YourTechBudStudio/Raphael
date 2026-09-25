@@ -643,6 +643,9 @@ const unresolved = (standing: Standing | null): boolean =>
       standing.reason === 'unresolved_unsendable' ||
       standing.reason === 'inconsistent'));
 
-/** Refusals whose remedy is a different place, rather than a different title. */
+/**
+ * Refusals whose remedy is a different place, rather than a different title. The only `node_archived`
+ * a creation can meet is an archived destination, so it is one of these.
+ */
 const isPlacementProblem = (code: string | null): boolean =>
-  code === 'slug_conflict' || code === 'invalid_parent';
+  code === 'slug_conflict' || code === 'invalid_parent' || code === 'node_archived';

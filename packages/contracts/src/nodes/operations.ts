@@ -3,6 +3,7 @@ import { Schema } from 'effect';
 import { requestDecoder, responseDecoder } from '../shared/decode.ts';
 import { NonNegativeSafeInt, PositiveSafeInt } from '../shared/numbers.ts';
 import type { RouteDescriptor } from '../shared/route.ts';
+import { ArchiveCause } from './archive.ts';
 import {
   BodyFormatSchema,
   BodyInput,
@@ -194,6 +195,12 @@ const ScopePageFields = {
   filter: Schema.optional(NodeFilter),
   skip: Schema.optionalWith(ListSkipInput, { default: () => LIST_SKIP_DEFAULT, exact: true }),
   limit: Schema.optionalWith(ListLimitInput, { default: () => LIST_LIMIT_DEFAULT, exact: true }),
+  /**
+   * Whether effectively archived nodes are part of the answer. Off by default: archive exists to hide
+   * material from daily views (ADR 0001), so a caller asks to see it. With it on, each item says
+   * whether it is archived.
+   */
+  includeArchived: Schema.optionalWith(Schema.Boolean, { default: () => false, exact: true }),
 };
 
 export const ListRequest = Schema.Struct({
@@ -331,6 +338,15 @@ export const MoveRequest = Schema.Struct({
   destination: MoveDestination,
 });
 
+/**
+ * Archiving or restoring one entity, against the revision the caller last read. One shape for both
+ * directions: the two operations differ only in whether they add or remove the user's direct cause.
+ */
+export const LifecycleRequest = Schema.Struct({
+  target: EntitySelector,
+  revision: NodeRevision,
+});
+
 export type ContainerCreateRequest = Schema.Schema.Type<typeof ContainerCreateRequest>;
 export type ResourceCreateRequest = Schema.Schema.Type<typeof ResourceCreateRequest>;
 export type CreateRequest = Schema.Schema.Type<typeof CreateRequest>;
@@ -341,6 +357,7 @@ export type GetPathRequest = Schema.Schema.Type<typeof GetPathRequest>;
 export type UpdateRequest = Schema.Schema.Type<typeof UpdateRequest>;
 export type MoveDestination = Schema.Schema.Type<typeof MoveDestination>;
 export type MoveRequest = Schema.Schema.Type<typeof MoveRequest>;
+export type LifecycleRequest = Schema.Schema.Type<typeof LifecycleRequest>;
 
 /**
  * Response projections. Every field is always present: `parentId` is a positive ID or `null` for a
@@ -351,6 +368,12 @@ export type MoveRequest = Schema.Schema.Type<typeof MoveRequest>;
  * stored value stays readable by a client whose own creation limits have since changed. A slug is still
  * checked for canonical shape, because an address that would be refused as a selector cannot honestly
  * describe the entity that was just returned; only its submission length bound is left out.
+ *
+ * Lifecycle is two fields. `archived` is the effective status, always computed and never stored: a node
+ * is archived when it or any current ancestor carries an archive cause. `archiveCauses`, on entities
+ * and lifecycle responses, explains it, nearest origin first; an empty list means active. A node's
+ * `revision` does not change when an *ancestor's* causes change, so a revision says nothing about
+ * whether a node is still archived - read the status, not the revision.
  */
 const NodeSummaryFields = {
   id: NodeId,
@@ -377,6 +400,8 @@ const NodeSummaryFields = {
    * `type`. Named `active` rather than `isActive` because it is a stored authored field like `title`.
    */
   active: Schema.Boolean,
+  /** The effective archive status, computed from this node and its current ancestors. */
+  archived: Schema.Boolean,
 };
 
 /**
@@ -419,6 +444,18 @@ const activeMatchesType = (value: {
   readonly active: boolean;
 }): true | string => !value.active || value.type === 'project' || 'only a project can be active';
 
+/**
+ * The status and its explanation are one fact. A server that says "archived" with no cause, or lists
+ * causes for an active node, has contradicted itself, and that is refused at the boundary like the
+ * other pairings above.
+ */
+const archivedMatchesCauses = (value: {
+  readonly archived: boolean;
+  readonly archiveCauses: readonly unknown[];
+}): true | string =>
+  value.archived === value.archiveCauses.length > 0 ||
+  'archived must agree with the archive causes';
+
 export const NodeSummary = Schema.Struct(NodeSummaryFields).pipe(
   Schema.filter(kindMatchesType),
   Schema.filter(activeMatchesType),
@@ -428,7 +465,12 @@ export const NodeEntity = Schema.Struct({
   ...NodeSummaryFields,
   body: BodyOutput,
   metadata: MetadataOutput,
-}).pipe(Schema.filter(kindMatchesType), Schema.filter(activeMatchesType));
+  archiveCauses: Schema.Array(ArchiveCause),
+}).pipe(
+  Schema.filter(kindMatchesType),
+  Schema.filter(activeMatchesType),
+  Schema.filter(archivedMatchesCauses),
+);
 
 export type NodeSummary = Schema.Schema.Type<typeof NodeSummary>;
 export type NodeEntity = Schema.Schema.Type<typeof NodeEntity>;
@@ -444,6 +486,20 @@ export const UpdateResponse = Schema.Struct({ entity: NodeEntity });
  * site, as `SearchHit.node` is.
  */
 export const MoveResponse = Schema.Struct({ node: NodeSummary });
+
+/**
+ * What archive and restore answer: the target's summary and the causes that apply *after* the change,
+ * so a restore that leaves the node archived through an ancestor says so truthfully. A summary rather
+ * than an entity, for the same reason as a move: no body projection under the writer's lock.
+ */
+export const LifecycleResponse = Schema.Struct({
+  node: NodeSummary,
+  archiveCauses: Schema.Array(ArchiveCause),
+}).pipe(
+  Schema.filter((value) =>
+    archivedMatchesCauses({ archived: value.node.archived, archiveCauses: value.archiveCauses }),
+  ),
+);
 
 export const ListResponse = Schema.Struct({
   items: Schema.Array(NodeSummary),
@@ -467,12 +523,18 @@ export const SearchHit = Schema.Struct({ node: NodeSummary });
 /**
  * `hasMore` means the page sequence ended. It never claims coverage: this response has no place to
  * say "and one source did not answer", and it will not have one until a second source exists.
+ *
+ * `archivedLeftOut` is true when archived nodes were excluded and at least one of them matches the
+ * same query, scopes, and filter - anywhere in the match set, not only in this window. It is always
+ * false when `includeArchived` was set. It carries no count: it exists so a client offers "include
+ * archived" only when doing so adds results.
  */
 export const SearchResponse = Schema.Struct({
   items: Schema.Array(SearchHit),
   skip: NonNegativeSafeInt,
   limit: PositiveSafeInt,
   hasMore: Schema.Boolean,
+  archivedLeftOut: Schema.Boolean,
 });
 
 /**
@@ -494,6 +556,7 @@ export type SearchHit = Schema.Schema.Type<typeof SearchHit>;
 export type SearchResponse = Schema.Schema.Type<typeof SearchResponse>;
 export type GetPathResponse = Schema.Schema.Type<typeof GetPathResponse>;
 export type MoveResponse = Schema.Schema.Type<typeof MoveResponse>;
+export type LifecycleResponse = Schema.Schema.Type<typeof LifecycleResponse>;
 
 /**
  * What a caller passes in, as opposed to what a decoder hands back.
@@ -514,6 +577,7 @@ export type SearchRequestInput = Schema.Schema.Encoded<typeof SearchRequest>;
 export type GetPathRequestInput = Schema.Schema.Encoded<typeof GetPathRequest>;
 export type UpdateRequestInput = Schema.Schema.Encoded<typeof UpdateRequest>;
 export type MoveRequestInput = Schema.Schema.Encoded<typeof MoveRequest>;
+export type LifecycleRequestInput = Schema.Schema.Encoded<typeof LifecycleRequest>;
 
 export const decodeCreateRequest = requestDecoder(CreateRequest);
 export const decodeGetRequest = requestDecoder(GetRequest);
@@ -522,6 +586,7 @@ export const decodeSearchRequest = requestDecoder(SearchRequest);
 export const decodeGetPathRequest = requestDecoder(GetPathRequest);
 export const decodeUpdateRequest = requestDecoder(UpdateRequest);
 export const decodeMoveRequest = requestDecoder(MoveRequest);
+export const decodeLifecycleRequest = requestDecoder(LifecycleRequest);
 
 export const decodeCreateResponse = responseDecoder(CreateResponse);
 export const decodeGetResponse = responseDecoder(GetResponse);
@@ -530,6 +595,7 @@ export const decodeSearchResponse = responseDecoder(SearchResponse);
 export const decodeGetPathResponse = responseDecoder(GetPathResponse);
 export const decodeUpdateResponse = responseDecoder(UpdateResponse);
 export const decodeMoveResponse = responseDecoder(MoveResponse);
+export const decodeLifecycleResponse = responseDecoder(LifecycleResponse);
 
 export const NODE_ROUTES = {
   create: { method: 'POST', path: '/api/nodes/create' },
@@ -539,4 +605,6 @@ export const NODE_ROUTES = {
   getPath: { method: 'POST', path: '/api/nodes/get-path' },
   update: { method: 'POST', path: '/api/nodes/update' },
   move: { method: 'POST', path: '/api/nodes/move' },
+  archive: { method: 'POST', path: '/api/nodes/archive' },
+  restore: { method: 'POST', path: '/api/nodes/restore' },
 } as const satisfies Record<string, RouteDescriptor>;
