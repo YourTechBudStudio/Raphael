@@ -26,11 +26,13 @@ export {
 export {
   ancestorsOf,
   childrenOf,
+  containerLookup,
   containerTitleLookup,
   pathSegments,
   useContainerPath,
   useHierarchy,
   type ContainerChildren,
+  type ContainerPill,
   type Hierarchy,
   type HierarchyNode,
   type HierarchyQuery,

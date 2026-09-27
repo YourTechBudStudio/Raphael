@@ -2,7 +2,7 @@ import { get as getNode, getPath, list } from '@raphael/client/nodes';
 import type { GetResponse } from '@raphael/contracts/nodes';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
-import type { ContainerRef } from '../../../infrastructure/api/contracts';
+import type { ContainerRef, ContainerType } from '../../../infrastructure/api/contracts';
 import { unwrap } from '../../../infrastructure/query/failure';
 import { activationOf, scopeKey } from '../../../infrastructure/query/keys';
 import { useConnectionSession, type ConnectionSession } from '../../connection';
@@ -332,4 +332,33 @@ export const containerTitleLookup = (
   if (hierarchy === undefined || tree.isStale) return () => undefined;
 
   return (id: number) => hierarchy.byId.get(id)?.title;
+};
+
+/** A container as a parent pill draws it: its kind for the tiny mark, its id, and its title. */
+export interface ContainerPill {
+  readonly type: ContainerType;
+  readonly id: number;
+  readonly title: string;
+}
+
+/**
+ * Names a container for a parent pill, or declines to.
+ *
+ * `containerTitleLookup`'s rule, answering with the kind as well, because a pill draws the parent's
+ * own mark beside its title. Offered only from a hierarchy that has loaded and is current: a stale
+ * tree may name a parent the node has since moved away from, and a pill has nowhere to say so. The
+ * hierarchy only decorates a row this way; it never decides which rows there are or their order.
+ */
+export const containerLookup = (
+  tree: HierarchyQuery,
+): ((id: number) => ContainerPill | undefined) => {
+  const hierarchy = tree.hierarchy;
+
+  if (hierarchy === undefined || tree.isStale) return () => undefined;
+
+  return (id: number) => {
+    const node = hierarchy.byId.get(id);
+
+    return node === undefined ? undefined : { type: node.type, id: node.id, title: node.title };
+  };
 };

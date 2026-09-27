@@ -45,7 +45,6 @@ const descriptor = () => {
 
 export const FadeIn = descriptor();
 export const LinearTransition = descriptor();
-// Temporary: favorites mock for story #14.
 export const FadeOut = descriptor();
 export const useReducedMotion = () => true;
 export const Easing = {

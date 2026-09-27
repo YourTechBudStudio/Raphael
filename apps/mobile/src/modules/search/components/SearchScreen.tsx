@@ -1,42 +1,30 @@
 import { describeQueryRejection } from '@raphael/contracts/nodes';
-import { ChevronLeft, SlidersHorizontal } from 'lucide-react-native';
+import { Archive, ChevronLeft, SlidersHorizontal } from 'lucide-react-native';
 import { useEffect, useMemo, useState } from 'react';
 import { Text, View } from 'react-native';
-import Animated, {
-  cancelAnimation,
-  Easing,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
 import {
   Chip,
-  emblemFor,
   IconButton,
+  ListRow,
   PressableFeedback,
   Screen,
   SearchField,
   SectionError,
-  SectionHeading,
+  StateLine,
+  WaitingLine,
+  type ListRowParent,
 } from '../../../ui';
-import { CollectionTile, containerTitleLookup, useHierarchy } from '../../collections';
+import { containerLookup, useHierarchy } from '../../collections';
 import {
+  ARCHIVED_LABEL,
   ARCHIVED_LEFT_OUT_SENTENCE,
   INCLUDE_ARCHIVED_HINT,
   INCLUDE_ARCHIVED_LABEL,
 } from '../../lifecycle';
 import { goBack, leaveSearchFor, leaveSearchForNote } from '../../navigation';
-import { NoteGrid } from '../../resources';
-import type {
-  ContainerResultItem,
-  SearchDescriptor,
-  SearchTypeFilter,
-} from '../client/requests.ts';
-import { SEARCH_LIMIT } from '../client/requests.ts';
+import type { SearchDescriptor, SearchResultItem, SearchTypeFilter } from '../client/requests.ts';
 import { useSearchResults } from '../client/results.ts';
 import { describeTagsRejection } from './filter-copy';
 import { FilterSheet } from './FilterSheet';
@@ -49,89 +37,59 @@ import { FilterSheet } from './FilterSheet';
  */
 const DEBOUNCE_MS = 300;
 
-/** One breath: fade to soft and back. Slow enough to read as waiting, not blinking. */
-const PULSE_DURATION = 900;
-const PULSE_LOW = 0.45;
+/** The kind in a word, on each row's second line and in its spoken label. */
+const KIND_LABELS: Record<SearchResultItem['type'], string> = {
+  area: 'Area',
+  project: 'Project',
+  note: 'Note',
+};
+
+/** What pressing a row does, said once for each kind. */
+const OPEN_HINTS: Record<SearchResultItem['type'], string> = {
+  area: 'Opens this area',
+  project: 'Opens this project',
+  note: 'Opens this note',
+};
 
 export interface SearchScreenProps {
   /** Limits the search to one container subtree. Everything is searched when absent. */
   scope?: ContainerRef | null | undefined;
 }
 
-/** A quiet sentence on the canvas, for states that are not content. */
-function Line({ children, className }: { children: string; className?: string }) {
-  return (
-    <Text
-      accessibilityLiveRegion="polite"
-      className={['font-body text-[15px] leading-[22px] text-ink-soft', className ?? ''].join(' ')}
-    >
-      {children}
-    </Text>
-  );
-}
+/** Leaves search for the row's own screen: a container where it lives, a note in the editor. */
+const openResult = (item: SearchResultItem): void => {
+  if (item.type === 'note') {
+    leaveSearchForNote(item.id);
 
-/** "Searching…" with a slow pulse while the server looks. Under reduced motion it holds still. */
-function SearchingText() {
-  const reducedMotion = useReducedMotion();
-  const opacity = useSharedValue(1);
+    return;
+  }
 
-  useEffect(() => {
-    // Cancelled rather than merely not started. Reduced motion can be turned on while this screen
-    // is open, and an early return alone would leave the pulse it had already started running.
-    if (reducedMotion) {
-      cancelAnimation(opacity);
-      opacity.value = 1;
+  leaveSearchFor({ type: item.type, id: item.id });
+};
 
-      return;
-    }
-
-    opacity.value = withRepeat(
-      withTiming(PULSE_LOW, { duration: PULSE_DURATION, easing: Easing.inOut(Easing.sin) }),
-      -1,
-      true,
-    );
-
-    return () => {
-      cancelAnimation(opacity);
-    };
-  }, [reducedMotion, opacity]);
-
-  const pulse = useAnimatedStyle(() => ({ opacity: opacity.value }));
-
-  return (
-    <Animated.Text
-      accessibilityLiveRegion="polite"
-      className="font-body text-[15px] leading-[22px] text-ink-soft"
-      style={pulse}
-    >
-      Searching…
-    </Animated.Text>
-  );
-}
-
-function ContainerSection({
-  heading,
-  items,
+/**
+ * The end of the list while it is still being walked: waiting for the next page, or saying that it
+ * did not come. A failed page keeps every row above it and never lets the list look finished.
+ */
+function MoreFooter({
+  isLoadingMore,
+  isMoreError,
+  onRetry,
 }: {
-  heading: string;
-  items: readonly ContainerResultItem[];
+  isLoadingMore: boolean;
+  isMoreError: boolean;
+  onRetry: () => void;
 }) {
+  if (isLoadingMore) return <WaitingLine>Loading more…</WaitingLine>;
+
+  if (!isMoreError) return null;
+
   return (
-    <View className="gap-3">
-      <SectionHeading>{heading}</SectionHeading>
-      {items.map((item, index) => (
-        <CollectionTile
-          description={item.description}
-          emblem={emblemFor(item.ref.type, item.ref.id)}
-          key={item.ref.id}
-          archived={item.archived}
-          name={item.title}
-          onPress={() => {
-            leaveSearchFor(item.ref);
-          }}
-          waveSeed={index}
-        />
-      ))}
+    <View className="gap-3" testID="more-failed">
+      <StateLine>More results did not load.</StateLine>
+      <View className="flex-row">
+        <Chip accessibilityHint="Asks for the next results again" label="Retry" onPress={onRetry} />
+      </View>
     </View>
   );
 }
@@ -144,7 +102,7 @@ function ContainerSection({
 function ArchivedLeftOut({ onInclude }: { onInclude: () => void }) {
   return (
     <View className="gap-1" testID="archived-left-out">
-      <Line>{ARCHIVED_LEFT_OUT_SENTENCE}</Line>
+      <StateLine>{ARCHIVED_LEFT_OUT_SENTENCE}</StateLine>
       <PressableFeedback
         accessibilityHint={INCLUDE_ARCHIVED_HINT}
         accessibilityLabel={INCLUDE_ARCHIVED_LABEL}
@@ -161,12 +119,11 @@ function ArchivedLeftOut({ onInclude }: { onInclude: () => void }) {
 }
 
 /**
- * The modal search screen: one field, one request, and the results grouped under three headings.
+ * The modal search screen: one field, and one list of results in the server's relevance order.
  *
- * The screen is a thin view over one page of server results. It asks once and never pages - a
- * fuller answer is a narrower search, and the cap is said out loud when there is one. It never
- * reorders within a group: relevance is the server's answer, and `groupSearchResults` only decides
- * which heading a hit sits under.
+ * The screen is a thin view over server pages. It asks for the first page when the query settles and
+ * for the next as the end of the list scrolls into view, and it never reorders anything: relevance
+ * is the server's answer. Every row is a `ListRow`, whatever its kind.
  *
  * Two distinctions it exists to keep. "Could not search" is not "nothing matched": one is a fact
  * about the server and the other a claim about someone's data, and they read identically to code
@@ -174,8 +131,8 @@ function ArchivedLeftOut({ onInclude }: { onInclude: () => void }) {
  * the person is told, and clearing the scope is an action they take.
  *
  * The hierarchy is read for two presentation details only - the container title in the placeholder
- * and the location eyebrow on a note card. A hierarchy that did not load costs exactly those two
- * things and nothing else; no search state is derived from it.
+ * and the parent pill on a row. A hierarchy that did not load costs exactly those two things and
+ * nothing else; no search state, row or order is derived from it.
  */
 export function SearchScreen({ scope = null }: SearchScreenProps) {
   const [text, setText] = useState('');
@@ -207,11 +164,18 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
     [effectiveScope, query, type, tags, includeArchived],
   );
 
-  const { view, refresh, isRefreshing } = useSearchResults(descriptor);
+  const { view, refresh, isRefreshing, loadMore, retryMore } = useSearchResults(descriptor);
 
   const tree = useHierarchy();
-  const titleOf = containerTitleLookup(tree);
-  const scopeTitle = effectiveScope === null ? undefined : titleOf(effectiveScope.id);
+  const containerOf = containerLookup(tree);
+  const scopeTitle = effectiveScope === null ? undefined : containerOf(effectiveScope.id)?.title;
+  const parentOf = (parentId: number | null): ListRowParent | undefined => {
+    const parent = parentId === null ? undefined : containerOf(parentId);
+
+    return parent === undefined
+      ? undefined
+      : { kind: parent.type, id: parent.id, title: parent.title };
+  };
 
   const placeholder =
     effectiveScope === null
@@ -235,13 +199,11 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
   // Reported against the root it would be an ordinary failed search, so it is drawn as one.
   const scopeGone = view.isScopeGone && effectiveScope !== null;
   const unavailable = view.isUnavailable || (view.isScopeGone && effectiveScope === null);
-  const { groups } = view;
-  const hasResults =
-    groups.areas.length > 0 || groups.projects.length > 0 || groups.notes.length > 0;
 
   return (
     <Screen
       captureBar={false}
+      onEndReached={loadMore}
       header={
         <View className="flex-row items-center gap-3 pb-2">
           <IconButton
@@ -281,19 +243,19 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
           // while a phrase is unfinished - but this sentence would be false then, because the
           // person plainly is searching.
           query === '' ? (
-            <Line>
+            <StateLine>
               Titles, descriptions and note text all count. Nothing is searched until you do.
-            </Line>
+            </StateLine>
           ) : null
         ) : view.invalid !== undefined ? (
-          <Line>
+          <StateLine>
             {view.invalid.source === 'tags'
               ? describeTagsRejection(view.invalid.rejection)
               : describeQueryRejection(view.invalid.rejection)}
-          </Line>
+          </StateLine>
         ) : scopeGone && effectiveScope !== null ? (
           <View className="gap-3">
-            <Line>{`That ${effectiveScope.type} is no longer here.`}</Line>
+            <StateLine>{`That ${effectiveScope.type} is no longer here.`}</StateLine>
             <View className="flex-row">
               <Chip
                 accessibilityHint="Clears the scope and searches everything"
@@ -305,45 +267,46 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
             </View>
           </View>
         ) : view.isLoading ? (
-          <SearchingText />
+          <WaitingLine>Searching…</WaitingLine>
         ) : unavailable ? (
           <SectionError onRetry={refresh} retrying={isRefreshing} title="Search did not answer." />
         ) : view.isEmpty ? (
           // The filters are named when any are on. "Nothing matches" on its own is a claim about
           // everything they have, and it would be false about the half this search excluded.
           <View className="gap-4">
-            <Line>
+            <StateLine>
               {filterActive
                 ? `Nothing matches “${query}” with these filters.`
                 : `Nothing matches “${query}”.`}
-            </Line>
+            </StateLine>
             {leftOut}
           </View>
-        ) : hasResults ? (
+        ) : view.items.length > 0 ? (
           <View className="gap-4">
-            <View className="gap-7">
-              {groups.areas.length > 0 ? (
-                <ContainerSection heading="Areas" items={groups.areas} />
-              ) : null}
-              {groups.projects.length > 0 ? (
-                <ContainerSection heading="Projects" items={groups.projects} />
-              ) : null}
-              {groups.notes.length > 0 ? (
-                <View className="gap-3">
-                  <SectionHeading>Notes</SectionHeading>
-                  <NoteGrid
-                    items={groups.notes}
-                    locationFor={titleOf}
-                    markArchived
-                    onOpen={leaveSearchForNote}
-                  />
-                </View>
-              ) : null}
+            <View className="gap-0.5">
+              {view.items.map((item) => (
+                <ListRow
+                  accessibilityHint={OPEN_HINTS[item.type]}
+                  key={item.id}
+                  kindLabel={KIND_LABELS[item.type]}
+                  mark={{ kind: item.type, id: item.id }}
+                  onPress={() => {
+                    openResult(item);
+                  }}
+                  parent={parentOf(item.parentId)}
+                  status={item.archived ? { icon: Archive, label: ARCHIVED_LABEL } : undefined}
+                  testID="search-result"
+                  title={item.title}
+                />
+              ))}
             </View>
-            {view.isCapped ? (
-              <Line>{`Showing the first ${String(SEARCH_LIMIT)}. Narrow the search to see the rest.`}</Line>
-            ) : null}
-            {leftOut}
+            <MoreFooter
+              isLoadingMore={view.isLoadingMore}
+              isMoreError={view.isMoreError}
+              onRetry={retryMore}
+            />
+            {/* It describes the whole match set, so it waits until the list has ended. */}
+            {view.hasMore ? null : leftOut}
           </View>
         ) : null}
 
@@ -353,7 +316,7 @@ export function SearchScreen({ scope = null }: SearchScreenProps) {
             reason: over an empty page there are none, and the collections module says it this way
             too. */}
         {view.isStale ? (
-          <Line>Search could not be refreshed. This is the last reading.</Line>
+          <StateLine>Search could not be refreshed. This is the last reading.</StateLine>
         ) : null}
       </View>
 
