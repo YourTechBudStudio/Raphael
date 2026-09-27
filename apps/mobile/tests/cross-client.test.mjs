@@ -26,12 +26,16 @@ import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import { createTransport } from '@raphael/client';
-import { get, restore, update } from '@raphael/client/nodes';
+import { get, removeFavorite, restore, update } from '@raphael/client/nodes';
 import { QueryClient } from '@tanstack/react-query';
 
 import { asClientFailure, unwrap } from '../src/infrastructure/query/failure.ts';
 import { unfinishedEdits } from '../src/modules/capture/edit-unfinished.ts';
 import { activeProjects } from '../src/modules/collections/client/hierarchy.ts';
+import {
+  favoritePagesOptions,
+  flattenFavoritePages,
+} from '../src/modules/favorites/client/options.ts';
 import { notePagesOptions } from '../src/modules/resources/client/options.ts';
 import { containerDescriptor, feedDescriptor } from '../src/modules/resources/client/requests.ts';
 import { toNoteSummaryItem } from '../src/modules/resources/client/summary.ts';
@@ -1265,6 +1269,55 @@ describe('archive and restore, across the two clients', () => {
       } finally {
         await kit.owner.getState().close();
       }
+    });
+  });
+});
+
+/**
+ * One favorite, starred by one client and dropped by the other.
+ *
+ * The story promises favorites that are server data, shared across clients. The phone side reads
+ * through the options its Favorites tab uses and flattens the pages the way the tab does, and it
+ * removes with the call `useFavoriteToggle`'s `mutationFn` issues - `removeFavorite(transport, {
+ * target: { id } })` through the same `unwrap` - rather than mounting the hook, for the reason the
+ * active-selection crossing above gives: the hook's plumbing is pinned against a controllable fake,
+ * and nothing in this file is stubbed.
+ */
+describe('a favorite, across the two clients', () => {
+  const favoritesOnPhone = async (transport) => {
+    const pages = await allPages(freshClient(), favoritePagesOptions(1, transport));
+
+    return flattenFavoritePages(pages).map((item) => item.node);
+  };
+
+  it('is added by the terminal and listed by the phone, and a phone removal leaves the terminal', async () => {
+    const dir = await temporaryDir('favorite-crossing-');
+
+    await withServer(async ({ endpoint }) => {
+      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const { entity: project } = await cliJson(
+        ['create', 'project', `${WORK.path}/starred`, '--title', 'Starred'],
+        { endpoint },
+      );
+
+      assert.deepEqual(await favoritesOnPhone(transport), [], 'nothing is a favorite yet');
+
+      const added = await runCli(['favorite', `${WORK.path}/starred`], { endpoint });
+      assert.equal(added.code, 0, added.stderr);
+
+      const listed = await favoritesOnPhone(transport);
+      assert.deepEqual(
+        listed.map((node) => [node.id, node.type, node.title, node.isFavorite]),
+        [[project.id, 'project', 'Starred', true]],
+        'the phone lists what the terminal starred',
+      );
+
+      const answer = unwrap(await removeFavorite(transport, { target: { id: project.id } }));
+      assert.deepEqual(answer, { nodeId: project.id, isFavorite: false });
+
+      const atTerminal = await cliJson(['favorites'], { endpoint });
+      assert.deepEqual(atTerminal.items, [], 'the terminal no longer lists it');
+      assert.deepEqual(await favoritesOnPhone(transport), []);
     });
   });
 });

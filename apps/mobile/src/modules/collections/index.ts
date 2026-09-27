@@ -4,7 +4,6 @@ export {
   type ActiveTarget,
   type ProjectActive,
 } from './client/active';
-export { useFavorites, useFavoriteToggle } from './client/favorites';
 export {
   activeProjects,
   allAreas,
@@ -53,5 +52,4 @@ export {
 export { ContainerCreationHost } from './components/ContainerCreationHost';
 export { NewContainerSheet, type NewContainerSheetProps } from './components/NewContainerSheet';
 export { HierarchyError, HierarchyStale } from './components/HierarchyError';
-export { CollectionTile } from './components/CollectionTile';
 export { ProjectScreen } from './components/ProjectScreen';

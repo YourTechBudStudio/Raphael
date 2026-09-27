@@ -5,6 +5,7 @@ import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react
 import type { ContainerRef, ContainerType } from '../../../infrastructure/api/contracts';
 import { unwrap } from '../../../infrastructure/query/failure';
 import { activationOf, scopeKey } from '../../../infrastructure/query/keys';
+import { nextReadStamp } from '../../../infrastructure/query/read-stamp';
 import { useConnectionSession, type ConnectionSession } from '../../connection';
 import {
   fetchChildren,
@@ -232,8 +233,18 @@ const runHierarchy = (
   return fetchHierarchy((request, pageSignal) => list(transport, request, pageSignal), signal);
 };
 
+/** One container as its own Get read it, and when that Get was asked for. */
+export interface ContainerRead {
+  readonly entity: GetResponse['entity'];
+  /**
+   * The `nextReadStamp()` taken just before this Get was sent. The header star compares it with a
+   * confirmed favorite change to tell whether this read can have seen that change.
+   */
+  readonly requestedAt: number;
+}
+
 /** One container, with its body. Null `ref` means there is nothing to ask about. */
-export function useContainer(ref: ContainerRef | null): UseQueryResult<GetResponse['entity']> {
+export function useContainer(ref: ContainerRef | null): UseQueryResult<ContainerRead> {
   return useQuery(containerOptions(useConnectionSession(), ref));
 }
 
@@ -246,15 +257,18 @@ export function useContainer(ref: ContainerRef | null): UseQueryResult<GetRespon
 export function useContainerArchived(ref: ContainerRef | null): boolean | null {
   const query = useQuery(containerOptions(useConnectionSession(), ref));
 
-  return query.data === undefined ? null : query.data.archived;
+  return query.data === undefined ? null : query.data.entity.archived;
 }
 
 const containerOptions = (session: ConnectionSession | null, ref: ContainerRef | null) => ({
   queryKey: keys.entity(session?.activation ?? -1, ref ?? { type: 'area', id: 0 }),
-  queryFn: async ({ signal }: { signal: AbortSignal }) => {
+  queryFn: async ({ signal }: { signal: AbortSignal }): Promise<ContainerRead> => {
     if (session === null || ref === null) throw new Error('No connection');
 
-    return unwrap(await getNode(session.transport, { target: { id: ref.id } }, signal)).entity;
+    const requestedAt = nextReadStamp();
+    const { entity } = unwrap(await getNode(session.transport, { target: { id: ref.id } }, signal));
+
+    return { entity, requestedAt };
   },
   enabled: session !== null && ref !== null,
 });

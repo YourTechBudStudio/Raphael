@@ -402,6 +402,80 @@ test('lifecycle does not reach the screens that use it', () => {
 });
 
 /**
+ * Favorites is read by the screens, never the other way round.
+ *
+ * `collections` draws the star on its headers and `browse` draws the list, so if `favorites` reached
+ * either, the screens that import it would close a cycle - the reason it renders nothing and depends
+ * only on `connection` and infrastructure. `capture`, `resources` and `search` are listed too: none of
+ * them has a star, and a favorites module that reached them would be one that had started drawing.
+ */
+test('favorites does not reach the screens that use it', () => {
+  const entry = path.join('modules', 'favorites', 'index.ts');
+  const reached = [...reachable(entry)].filter((file) =>
+    ['browse', 'capture', 'collections', 'resources', 'search'].some((module) =>
+      file.startsWith(path.join('modules', module) + path.sep),
+    ),
+  );
+
+  assert.deepEqual(reached, [], `${entry} reaches a module that depends on it`);
+});
+
+/**
+ * Notes cannot be favorites in this release, so the editor has no star: no file in capture - the
+ * owner of the note being edited - imports the module that writes favorites.
+ *
+ * Stated as direct imports rather than reachability, and on purpose. Capture takes the hierarchy, the
+ * tree and the invalidations through the `collections` and `browse` entry points, which also publish
+ * the screens that draw stars, so the graph reaches favorites through them without capture ever using
+ * it. What must not happen is capture itself starting to use it.
+ */
+test('capture does not use favorites', () => {
+  const favorites = path.join('modules', 'favorites') + path.sep;
+
+  for (const file of files.filter((it) =>
+    it.startsWith(path.join('modules', 'capture') + path.sep),
+  )) {
+    for (const specifier of imports(file)) {
+      if (!specifier.startsWith('.')) continue;
+
+      const resolved = resolveImport(file, specifier);
+      if (resolved === undefined) continue;
+
+      assert.ok(
+        !path.relative(root, resolved).startsWith(favorites),
+        `${file}: imports favorites, so the editor has started using the star`,
+      );
+    }
+  }
+});
+
+/**
+ * Favorites are the server's list now, and the session-only stand-in is gone for good.
+ *
+ * The stand-in kept stars in a module-level map: they died with the process and no other client saw
+ * them. A reinstated reader or writer would not fail to compile - it would be a second, silent set of
+ * stars that disagreed with the server - so its names stay banned, with the grouped, capped search
+ * that the paged list replaced.
+ */
+test('no session-only favorites survive', () => {
+  for (const file of files) {
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    for (const name of [
+      'getFavorites',
+      'localContent.toggleFavorite',
+      'useFavorites',
+      'collections/client/favorites',
+      'groupSearchResults',
+      'SEARCH_LIMIT',
+      'favorites-mock',
+    ]) {
+      assert.ok(!source.includes(name), `${file}: still reaches the retired favorites ${name}`);
+    }
+  }
+});
+
+/**
  * The session-only note writer is gone for good.
  *
  * New note is back and it is real: it asks the owner for a durable draft and opens a route over it.
@@ -458,6 +532,11 @@ test('no throwaway mock surface survives', () => {
       'archive-mock',
       'ArchiveMock',
       'Temporary: archive mock',
+      // Story #14's favorites mock: the invented Favorites and Search screens, their route and the
+      // Settings door to it. `ShapeMark`, `ListRow` and `StateLine` in `ui/core` replaced them.
+      'mock-favorites',
+      'FavoritesMock',
+      'Temporary: favorites mock',
     ]) {
       assert.ok(!source.includes(name), `${file}: still reaches the retired mock surface ${name}`);
     }
@@ -481,6 +560,14 @@ test('no throwaway mock surface survives', () => {
   assert.ok(
     !existsSync(path.join(root, 'modules', 'capture', 'components', 'archive-mock')),
     'the archive mock components are gone',
+  );
+  assert.ok(
+    !existsSync(path.join(root, 'app', 'mock-favorites.tsx')),
+    'the favorites mock route is gone',
+  );
+  assert.ok(
+    !existsSync(path.join(root, 'modules', 'browse', 'components', 'favorites-mock')),
+    'the favorites mock components are gone',
   );
 });
 

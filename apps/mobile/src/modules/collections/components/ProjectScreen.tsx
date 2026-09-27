@@ -15,6 +15,7 @@ import {
   ToggleLabel,
 } from '../../../ui';
 import { RejectionNotice } from '../../connection';
+import { favoriteFailureSentence, useFavoriteToggle, type FavoriteRead } from '../../favorites';
 import {
   lifecycleView,
   UNAVAILABLE_WHILE_ARCHIVED_HINT,
@@ -36,7 +37,6 @@ import {
   useSessionMedia,
 } from '../../resources';
 import { useProjectActive } from '../client/active';
-import { useFavoriteToggle } from '../client/favorites';
 import { pathSegments } from '../client/hierarchy';
 import {
   ancestorsOf,
@@ -70,10 +70,11 @@ export interface ProjectScreenProps {
  * The notes are the server's, in its default order, paged as the scroll reaches the end. Media
  * recorded in this session has no server operation at all and keeps its own heading below them.
  *
- * Archived, nothing moves: Active, Favorite, Edit and the capture pair stay where they are, drawn
- * unavailable, with Active and Favorite showing their saved values, because archiving clears
- * neither. Archive stays live. The notes are then read with archived ones included, since every note
- * in an archived project is archived with it.
+ * Archived, nothing moves: Active, Edit and the capture pair stay where they are, drawn unavailable,
+ * with Active showing its saved value, because archiving does not clear it. Archive stays live, and
+ * so does Favorite: the server allows it, and it is the only way to drop a favorite the list hides
+ * while the project is archived. The notes are then read with archived ones included, since every
+ * note in an archived project is archived with it.
  */
 export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const target = useMemo<ContainerRef | null>(
@@ -86,10 +87,11 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   const lifecycle = useLifecycleAction();
   const project = useContainer(target);
   const tree = useHierarchy();
-  const notes = useNotePages(target, { includeArchived: project.data?.archived === true });
+  const notes = useNotePages(target, { includeArchived: project.data?.entity.archived === true });
   const media = useSessionMedia();
 
-  const entity = project.data;
+  const read = project.data;
+  const entity = read?.entity;
   const wrongType = entity !== undefined && entity.type !== 'project';
   // A server that looked and found nothing is a project that is gone. A server that could not be
   // asked is a read to try again. Only the first may say "not here".
@@ -175,7 +177,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
     );
   }
 
-  if (entity === undefined) {
+  if (read === undefined || entity === undefined) {
     return (
       <Screen captureBar={false} header={header}>
         <ProjectHeaderSkeleton />
@@ -193,6 +195,14 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   // Disabled spans the write and the re-read that follows it. While it holds, the ring is the whole
   // message and no sentence is drawn beside it.
   const activeBusy = active.isDisabled(entity.id);
+  // Stamped with the Get that read it, so the star can tell whether this read has seen a confirmed
+  // favorite change.
+  const favoriteRead: FavoriteRead = {
+    id: entity.id,
+    isFavorite: entity.isFavorite,
+    requestedAt: read.requestedAt,
+  };
+  const favoriteFailure = favoriteFailureSentence(favorite.failure);
   const sessionMedia = (media.data ?? []).filter(
     (resource) => resource.parent.type === 'project' && resource.parent.id === projectId,
   );
@@ -235,17 +245,17 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
                 />
                 <ToggleLabel
                   accessibilityLabel={
-                    target !== null && favorite.isFavorite(target)
+                    favorite.isFavorite(favoriteRead)
                       ? `Remove ${title} from favorites`
                       : `Add ${title} to favorites`
                   }
+                  disabled={favorite.isBusy(favoriteRead.id)}
                   label="Favorite"
                   mark={FAVORITE_MARK}
                   onToggle={() => {
-                    if (target !== null) favorite.toggle(target);
+                    favorite.toggle(favoriteRead);
                   }}
-                  selected={target !== null && favorite.isFavorite(target)}
-                  unavailable={unavailable}
+                  selected={favorite.isFavorite(favoriteRead)}
                 />
                 {target === null ? null : (
                   <ArchiveToggle
@@ -264,14 +274,14 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
             details={active.failureDetails}
             failure={activeBusy ? null : active.failure}
           />
-          {favorite.isError ? (
+          {favoriteFailure === null ? null : (
             <Text
               accessibilityLiveRegion="polite"
               className="mt-2 font-body text-[15px] leading-[22px] text-danger"
             >
-              That star did not stick. Tap it again.
+              {favoriteFailure}
             </Text>
-          ) : null}
+          )}
           <ArchiveLines action={lifecycle} view={view} />
         </View>
 

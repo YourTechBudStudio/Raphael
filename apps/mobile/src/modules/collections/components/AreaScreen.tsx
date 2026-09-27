@@ -15,6 +15,7 @@ import {
   ToggleLabel,
 } from '../../../ui';
 import { RejectionNotice } from '../../connection';
+import { favoriteFailureSentence, useFavoriteToggle, type FavoriteRead } from '../../favorites';
 import {
   lifecycleView,
   UNAVAILABLE_WHILE_ARCHIVED_HINT,
@@ -37,7 +38,6 @@ import {
   useNotePages,
   useSessionMedia,
 } from '../../resources';
-import { useFavoriteToggle } from '../client/favorites';
 import { pathSegments } from '../client/hierarchy';
 import {
   ancestorsOf,
@@ -84,8 +84,9 @@ export interface AreaScreenProps {
  *
  * An archived area is the exception to reading children from the hierarchy: the hierarchy never
  * contains one, so it reads its own children, complete or not at all, with archived ones included.
- * Its notes are read the same way. Nothing moves while it is archived - Favorite, Edit, the add
- * button and the capture pair stay in place, unavailable - and Archive stays live.
+ * Its notes are read the same way. Nothing moves while it is archived - Edit, the add button and the
+ * capture pair stay in place, unavailable - and Archive stays live. Favorite stays live too: the
+ * server allows it, and it is the only way to drop a favorite the list hides while it is archived.
  */
 export function AreaScreen({ areaId }: AreaScreenProps) {
   const target = useMemo<ContainerRef | null>(
@@ -99,7 +100,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   const tree = useHierarchy();
   // Only once the area's own Get says it is archived. An active area's children are the hierarchy's,
   // and a second read of the same fact could disagree with it.
-  const archivedRead = areaQuery.data?.archived === true;
+  const archivedRead = areaQuery.data?.entity.archived === true;
   const childrenQuery = useContainerChildren(archivedRead ? areaId : null);
   const notes = useNotePages(target, { includeArchived: archivedRead });
   const media = useSessionMedia();
@@ -108,7 +109,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   // it leads to is the app's, and the sheet store owns that one.
   const [adding, setAdding] = useState<AddInsideTarget | null>(null);
 
-  const entity = areaQuery.data;
+  const entity = areaQuery.data?.entity;
   // A route can name a real container of the wrong kind. Rendering a project as an area would
   // describe it with the wrong vocabulary and offer the wrong actions, so it is refused.
   const wrongType = entity !== undefined && entity.type !== 'area';
@@ -144,6 +145,15 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
     entity === undefined || wrongType ? null : lifecycleView(entity.id, entity.archiveCauses);
   const unavailable =
     view === null || view.standing === 'active' ? undefined : UNAVAILABLE_WHILE_ARCHIVED_HINT;
+  const favoriteRead: FavoriteRead | null =
+    areaQuery.data === undefined || wrongType
+      ? null
+      : {
+          id: areaQuery.data.entity.id,
+          isFavorite: areaQuery.data.entity.isFavorite,
+          requestedAt: areaQuery.data.requestedAt,
+        };
+  const favoriteFailure = favoriteFailureSentence(favorite.failure);
 
   const header = (
     <LocationTopBar
@@ -279,21 +289,21 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
           kind="area"
           title={entity === undefined ? 'Loading…' : entity.title}
           toggles={
-            entity === undefined || target === null ? undefined : (
+            entity === undefined || target === null || favoriteRead === null ? undefined : (
               <>
                 <ToggleLabel
                   accessibilityLabel={
-                    favorite.isFavorite(target)
+                    favorite.isFavorite(favoriteRead)
                       ? `Remove ${entity.title} from favorites`
                       : `Add ${entity.title} to favorites`
                   }
+                  disabled={favorite.isBusy(favoriteRead.id)}
                   label="Favorite"
                   mark={FAVORITE_MARK}
                   onToggle={() => {
-                    favorite.toggle(target);
+                    favorite.toggle(favoriteRead);
                   }}
-                  selected={favorite.isFavorite(target)}
-                  unavailable={unavailable}
+                  selected={favorite.isFavorite(favoriteRead)}
                 />
                 {view === null ? null : (
                   <ArchiveToggle
@@ -308,11 +318,11 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
             )
           }
         />
-        {favorite.isError ? (
+        {favoriteFailure === null ? null : (
           <Text accessibilityLiveRegion="polite" className="mt-2 font-body text-[15px] text-danger">
-            Favorite did not update. Try again.
+            {favoriteFailure}
           </Text>
-        ) : null}
+        )}
         {view === null ? null : <ArchiveLines action={lifecycle} view={view} />}
 
         {entity === undefined ? null : (
