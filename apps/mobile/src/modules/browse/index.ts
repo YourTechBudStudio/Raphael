@@ -16,3 +16,5 @@ export {
 } from './components/SelectableTree';
 /** Pruning a tree to what matches, keeping ancestors visible. The picker filters the same way. */
 export { filterTree } from './components/tree';
+// Temporary: favorites mock for story #14. Delete with `components/favorites-mock` and `app/mock-favorites.tsx`.
+export { FavoritesMockRoot } from './components/favorites-mock/FavoritesMockRoot';
