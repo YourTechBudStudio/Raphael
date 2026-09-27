@@ -21,7 +21,7 @@ The mobile app is the primary phone interface for quick capture and retrieval. A
 
 Capture should feel closer to Google Keep than Notion: lightweight notes, flexible text formatting, and optional voice or image attachments. Areas and projects can carry descriptions and contextual bodies while retaining distinct organizational roles.
 
-Capture preserves drafts on-device until explicit Save. People can choose a location or request a suggestion without relying on a default inbox; see [Capture and media](../architecture/capture-and-media.md) for the persistence boundary.
+Capture keeps unsent writing on-device until the server accepts it. People can choose a location or request a suggestion without relying on a default inbox; see [Capture and media](../architecture/capture-and-media.md) for the persistence boundary.
 
 PARA informs that organization, while CODE informs the goal of moving captured information toward useful expression. These concepts guide the product without requiring a prescribed workflow for every kind of work.
 

@@ -10,6 +10,10 @@ Core offers agent-backed parent recommendations separately from creation. The us
 
 Explicit Save creates the note through ordinary core operations. Creating an area/project during capture commits independently and survives discarding the note. The stored resource is a note regardless of its capture method.
 
+## Unsent writing
+
+Mobile requires a reachable server. Drafts and edits the server has not accepted stay on-device and are retried automatically; those that need the person, such as refusals and revision conflicts, appear in Unfinished, where a conflict is resolved by keeping either version.
+
 ## Attachments
 
 Core manages files separately from entity bodies. Upload and attachment linking are separate persistence steps, so retrying a note mutation need not resend its media. Saved voice notes retain their original recordings. Draft originals remain on-device until Save succeeds; expired uploads can be recreated from them.
