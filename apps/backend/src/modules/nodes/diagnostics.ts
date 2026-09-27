@@ -92,6 +92,14 @@ export const MOVE_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
   'destination',
 ]);
 
+/** Add and remove share one request shape, so they share one allowlist. */
+export const FAVORITE_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>(['target']);
+
+export const FAVORITE_LIST_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
+  'skip',
+  'limit',
+]);
+
 /** Archive and restore share one request shape, so they share one allowlist. */
 export const ARCHIVE_FIELDS: ReadonlySet<RequestField> = new Set<RequestField>([
   'target',

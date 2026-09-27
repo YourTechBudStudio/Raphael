@@ -287,6 +287,8 @@ const commit = (
         active: false,
         // Active by construction: creation requires an active parent, and a new node has no cause.
         archived: false,
+        // A node that did not exist a moment ago cannot be a favorite: a favorite references an existing id.
+        isFavorite: false,
         body,
         metadata: prepared.metadata,
         archiveCauses: [],

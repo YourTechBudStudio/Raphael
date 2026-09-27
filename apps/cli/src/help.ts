@@ -51,6 +51,9 @@ Commands:
   move              Move an area, a project, or a note somewhere else.
   archive           Hide an area, a project, or a note from lists and search.
   restore           Bring back something you archived.
+  favorite          Add an area or a project to your favorites.
+  unfavorite        Remove something from your favorites.
+  favorites         List your favorites.
   get               Read one area or project.
   path              Print the current full path of an area or project.
   list              List what is inside an area or project.

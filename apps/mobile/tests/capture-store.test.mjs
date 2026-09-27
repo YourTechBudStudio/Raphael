@@ -90,6 +90,7 @@ const entity = (over = {}) => ({
   tags: [],
   active: false,
   archived: false,
+  isFavorite: false,
   archiveCauses: [],
   body: { format: 'tiptap', value: DOCUMENT },
   metadata: {},
@@ -429,6 +430,59 @@ describe('acknowledgements saved before archive existed', () => {
   it('leaves a saved answer with no entity exactly as it was, and still unreadable', async () => {
     const unusable = '{ "entity" : "not an entity",  "kept": true }';
     const file = await savedAtVersionTwo(unusable);
+
+    const { store, db } = await opened(file);
+    const stored = await store.list();
+
+    assert.equal(stored.attempts.length, 0);
+    assert.equal(stored.unreadableAttempts, 1);
+    const [row] = await db.all(`SELECT acknowledged FROM ${ATTEMPTS_TABLE} WHERE attempt_id = ?`, [
+      'a1',
+    ]);
+    assert.equal(row.acknowledged, unusable, 'not rewritten, not even reformatted');
+
+    await store.close();
+  });
+});
+
+describe('acknowledgements saved before favorites existed', () => {
+  /**
+   * A capture file written by the previous build: the attempt is acknowledged with the Create response
+   * of that time, which had no `isFavorite`, and the file is at schema version 3.
+   */
+  const savedAtVersionThree = async (acknowledged) => {
+    const file = await temporaryFile();
+    const first = await opened(file);
+    await first.store.insertDraft(newDraft());
+    await first.store.insertIntent(newIntent());
+    await first.store.acknowledge(acknowledgement());
+    await first.db.run(`UPDATE ${ATTEMPTS_TABLE} SET acknowledged = ? WHERE attempt_id = ?`, [
+      acknowledged,
+      'a1',
+    ]);
+    await first.db.run('PRAGMA user_version = 3');
+    await first.store.close();
+    return file;
+  };
+
+  it('reads an old-shape acknowledgement back after the migration, as not a favorite', async () => {
+    const { isFavorite: _isFavorite, ...before } = entity();
+    const file = await savedAtVersionThree(JSON.stringify({ entity: before }));
+
+    const { store } = await opened(file);
+    const stored = await one(store);
+
+    assert.equal(stored.attempts.length, 1);
+    assert.equal(stored.attempts[0].state, 'acknowledged');
+    assert.equal(stored.attempts[0].acknowledged.id, 42);
+    assert.equal(stored.attempts[0].acknowledged.entity.isFavorite, false);
+
+    await store.close();
+  });
+
+  it('leaves a saved answer with no entity exactly as it was, and still unreadable', async () => {
+    const unusable = '{ "entity" : "not an entity",  "kept": true }';
+    const file = await savedAtVersionThree(unusable);
 
     const { store, db } = await opened(file);
     const stored = await store.list();

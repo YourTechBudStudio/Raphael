@@ -315,6 +315,7 @@ describe('a note the CLI wrote, read by the phone', () => {
           tags: [],
           active: false,
           archived: false,
+          isFavorite: false,
         }),
         null,
         'a container is never mapped into a notes grid',

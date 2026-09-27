@@ -18,12 +18,15 @@ import * as capability from '../src/modules/nodes/index.ts';
  */
 
 const OPERATIONS = [
+  'addFavorite',
   'archiveNode',
   'createNode',
   'getNode',
   'getNodePath',
+  'listFavorites',
   'listNodes',
   'moveNode',
+  'removeFavorite',
   'restoreNode',
   'searchNodes',
   'updateNode',

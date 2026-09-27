@@ -43,6 +43,7 @@ const summary = (id, over = {}) => ({
   tags: [],
   active: false,
   archived: false,
+  isFavorite: false,
   ...over,
 });
 

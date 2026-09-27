@@ -43,6 +43,7 @@ const note = (id, over = {}) => ({
   revision: 1,
   parentId: 3,
   archived: false,
+  isFavorite: false,
   ...over,
 });
 

@@ -6,6 +6,7 @@ import type { OperationFailure, OperationRoute } from '../../infrastructure/http
 import { archiveNode, restoreNode } from './archive.ts';
 import { createNode } from './create.ts';
 import { toPublicError, type NodeError } from './errors.ts';
+import { addFavorite, listFavorites, removeFavorite } from './favorites.ts';
 import { getNodePath } from './get-path.ts';
 import { getNode } from './get.ts';
 import { listNodes } from './list.ts';
@@ -60,7 +61,8 @@ const adapt =
  * Creation answers 201, including a replay - a replay is a success that reports the entity that
  * exists, not a distinct outcome with a status of its own. Reads answer 200, and so do an update, a
  * move, an archive and a restore: each changed an entity that already existed rather than bringing one
- * into being.
+ * into being. Adding and removing a favorite answer 200 too: each changes a collection that already
+ * exists.
  */
 export const nodeRoutes: readonly OperationRoute[] = [
   {
@@ -101,5 +103,23 @@ export const nodeRoutes: readonly OperationRoute[] = [
     label: 'nodes.restore',
     successStatus: 200,
     run: adapt(restoreNode),
+  },
+  {
+    descriptor: NODE_ROUTES.addFavorite,
+    label: 'favorites.add',
+    successStatus: 200,
+    run: adapt(addFavorite),
+  },
+  {
+    descriptor: NODE_ROUTES.removeFavorite,
+    label: 'favorites.remove',
+    successStatus: 200,
+    run: adapt(removeFavorite),
+  },
+  {
+    descriptor: NODE_ROUTES.listFavorites,
+    label: 'favorites.list',
+    successStatus: 200,
+    run: adapt(listFavorites),
   },
 ];

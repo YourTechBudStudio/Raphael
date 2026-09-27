@@ -11,6 +11,8 @@ import { createTransport, type FetchLike, type Transport } from '@raphael/client
 import { move as moveDirect, update as updateDirect } from '@raphael/client/nodes';
 import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
 import {
+  decodeAddFavoriteResponse,
+  decodeListResponse,
   decodeLifecycleResponse,
   decodeMoveResponse,
   decodeUpdateResponse,
@@ -19,7 +21,14 @@ import { Effect, Either, Exit, Scope } from 'effect';
 
 import { run as runCli } from '../src/main.ts';
 import { runLogin } from '../src/modules/connection/login.ts';
-import { ARCHIVE_HELP, MOVE_HELP, RESTORE_HELP } from '../src/modules/nodes/commands.ts';
+import {
+  ARCHIVE_HELP,
+  FAVORITES_HELP,
+  FAVORITE_HELP,
+  MOVE_HELP,
+  RESTORE_HELP,
+  UNFAVORITE_HELP,
+} from '../src/modules/nodes/commands.ts';
 import { buildFailureReport } from '../src/shared/report.ts';
 
 /**
@@ -2328,5 +2337,146 @@ describe('archiving and restoring', () => {
     assert.equal((await run(['archive', '--help'])).stdout.trim(), ARCHIVE_HELP);
     assert.equal((await run(['restore', '--help'])).stdout.trim(), RESTORE_HELP);
     assert.match(MOVE_HELP, /archived directly must be restored before it moves/);
+  });
+});
+
+describe('favorites', () => {
+  const created = async (args: readonly string[]): Promise<any> => {
+    const ran = await run([...args, '--json']);
+    assert.equal(ran.code, 0, ran.stderr);
+    return jsonOf(ran).entity;
+  };
+  const favoriteLine = async (path: string): Promise<string | undefined> =>
+    (await run(['get', path])).stdout.split('\n').find((line) => line.startsWith('favorite: '));
+  const listedIds = async (): Promise<number[]> => {
+    const ran = await run(['favorites', '--json']);
+    assert.equal(ran.code, 0, ran.stderr);
+    return jsonOf(ran).items.map((item: { id: number }) => item.id);
+  };
+
+  it('adds, shows, lists and removes a favorite, and repeating either is fine', async () => {
+    const project = await created(['create', 'project', '/work/fav-basic', '--title', 'Basic']);
+    assert.equal(await favoriteLine('/work/fav-basic'), 'favorite: no');
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const added = await run(['favorite', '/work/fav-basic']);
+      assert.equal(added.code, 0, added.stderr);
+      assert.equal(added.stdout, `Node ${project.id} is a favorite.\n`);
+    }
+    assert.equal(await favoriteLine('/work/fav-basic'), 'favorite: yes');
+
+    const listed = await run(['favorites']);
+    assert.equal(listed.code, 0, listed.stderr);
+    assert.match(listed.stdout, new RegExp(`^ *${project.id}  project +Basic$`, 'm'));
+    assert.match(listed.stdout, /shown, skip 0, limit 50\. No more\.\n$/);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const removed = await run(['unfavorite', '--id', String(project.id)]);
+      assert.equal(removed.code, 0, removed.stderr);
+      assert.equal(removed.stdout, `Node ${project.id} is not a favorite.\n`);
+    }
+    assert.equal(await favoriteLine('/work/fav-basic'), 'favorite: no');
+    assert.equal((await listedIds()).includes(project.id), false);
+  });
+
+  it('prints the answer as JSON, and pages the list', async () => {
+    const area = await created(['create', 'area', '/work/fav-json', '--title', 'Json']);
+    const added = await run(['favorite', '--id', String(area.id), '--json']);
+    assert.equal(added.code, 0, added.stderr);
+    assert.deepEqual(Either.getOrUndefined(decodeAddFavoriteResponse(jsonOf(added))), {
+      nodeId: area.id,
+      isFavorite: true,
+    });
+
+    const page = await run(['favorites', '--limit', '1', '--skip', '0', '--json']);
+    assert.equal(page.code, 0, page.stderr);
+    const decoded = decodeListResponse(jsonOf(page));
+    assert.equal(Either.isRight(decoded), true);
+    if (Either.isRight(decoded)) {
+      assert.equal(decoded.right.limit, 1);
+      assert.equal(
+        decoded.right.items.every((item) => item.isFavorite),
+        true,
+      );
+    }
+    assert.equal((await run(['unfavorite', '--id', String(area.id)])).code, 0);
+  });
+
+  it("refuses a note with the server's reason", async () => {
+    await created(['create', 'project', '/work/fav-note', '--title', 'Holder']);
+    await created(['create', 'resource.note', '/work/fav-note/runbook', '--title', 'Runbook']);
+
+    const refused = await run(['favorite', '/work/fav-note/runbook']);
+    assert.equal(refused.code, 1);
+    assert.match(refused.stderr, /Favorites hold areas and projects\./);
+    assert.equal(await favoriteLine('/work/fav-note/runbook'), 'favorite: no');
+  });
+
+  it('leaves an archived favorite out of the list while it stays a favorite', async () => {
+    const shelf = await created(['create', 'area', '/work/fav-shelf', '--title', 'Shelf']);
+    assert.equal((await run(['favorite', '/work/fav-shelf'])).code, 0);
+    assert.equal((await listedIds()).includes(shelf.id), true);
+
+    assert.equal((await run(['archive', '/work/fav-shelf'])).code, 0);
+    assert.equal((await listedIds()).includes(shelf.id), false);
+    assert.equal(await favoriteLine('/work/fav-shelf'), 'favorite: yes');
+
+    assert.equal((await run(['restore', '/work/fav-shelf'])).code, 0);
+    assert.equal((await listedIds()).includes(shelf.id), true);
+    assert.equal((await run(['unfavorite', '/work/fav-shelf'])).code, 0);
+  });
+
+  it('refuses a bad window, the root, and extra arguments locally', async () => {
+    const zero = await run(['favorites', '--limit', '0']);
+    assert.equal(zero.code, 2);
+    assert.equal((await run(['favorites', '--skip', '-1'])).code, 2);
+    assert.equal((await run(['favorites', '/work'])).code, 2);
+    assert.equal((await run(['favorite', '/'])).code, 2);
+    const extra = await run(['unfavorite', '/work/a', '/work/b']);
+    assert.equal(extra.code, 2);
+    assert.match(extra.stderr, /Unexpected argument/);
+  });
+
+  it('cannot confirm a lost answer, and says repeating is safe only when it names the same item', async () => {
+    for (const verb of ['favorite', 'unfavorite'] as const) {
+      const unconfirmed = new RegExp(
+        `Could not confirm whether this was ${verb === 'favorite' ? 'added to' : 'removed from'} your favorites\\.`,
+      );
+
+      const byId = await run([verb, '--id', '7'], {
+        env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+      });
+      assert.equal(byId.code, 1);
+      assert.match(byId.stderr, unconfirmed);
+      assert.match(
+        byId.stderr,
+        new RegExp(
+          `Running "raphael ${verb} --id 7" again is safe: it only sets the state you asked for\\.`,
+        ),
+      );
+
+      // A path may name something else by the time it is sent again, so safety is not promised for it.
+      const byPath = await run([verb, '/work/anything'], {
+        env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+      });
+      assert.equal(byPath.code, 1);
+      assert.match(byPath.stderr, unconfirmed);
+      assert.match(byPath.stderr, /A path can name something else after a move/);
+      assert.match(
+        byPath.stderr,
+        /check it with "raphael get" before running this again, or run it with --id/,
+      );
+      assert.equal(byPath.stderr.includes('again is safe'), false);
+    }
+  });
+
+  it('is listed in the root help and documents itself', async () => {
+    const root = await run(['help']);
+    assert.match(root.stdout, /\n {2}favorite {10}Add an area or a project to your favorites\.\n/);
+    assert.match(root.stdout, /\n {2}unfavorite {8}Remove something from your favorites\.\n/);
+    assert.match(root.stdout, /\n {2}favorites {9}List your favorites\.\n/);
+    assert.equal((await run(['favorite', '--help'])).stdout.trim(), FAVORITE_HELP);
+    assert.equal((await run(['unfavorite', '--help'])).stdout.trim(), UNFAVORITE_HELP);
+    assert.equal((await run(['favorites', '--help'])).stdout.trim(), FAVORITES_HELP);
   });
 });

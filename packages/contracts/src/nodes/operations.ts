@@ -182,6 +182,16 @@ export type NodeOrderClause = Schema.Schema.Type<typeof NodeOrderClause>;
 export type NodeOrderBy = Schema.Schema.Type<typeof NodeOrderBy>;
 
 /**
+ * The page window every paged operation takes: the scope pages and the favorites list. One spelling,
+ * one default, so the two cannot drift. Exported for `favorites.ts` only, and not re-exported from the
+ * capability index (the `UpdateRequestFields` precedent).
+ */
+export const PageWindowFields = {
+  skip: Schema.optionalWith(ListSkipInput, { default: () => LIST_SKIP_DEFAULT, exact: true }),
+  limit: Schema.optionalWith(ListLimitInput, { default: () => LIST_LIMIT_DEFAULT, exact: true }),
+};
+
+/**
  * One scope page, shared by List and Search.
  *
  * The two operations differ only in how they order what they found: List by an authored field,
@@ -193,8 +203,7 @@ const ScopePageFields = {
   scopes: Scopes,
   recursive: Schema.optionalWith(Schema.Boolean, { default: () => false, exact: true }),
   filter: Schema.optional(NodeFilter),
-  skip: Schema.optionalWith(ListSkipInput, { default: () => LIST_SKIP_DEFAULT, exact: true }),
-  limit: Schema.optionalWith(ListLimitInput, { default: () => LIST_LIMIT_DEFAULT, exact: true }),
+  ...PageWindowFields,
   /**
    * Whether effectively archived nodes are part of the answer. Off by default: archive exists to hide
    * material from daily views (ADR 0001), so a caller asks to see it. With it on, each item says
@@ -402,6 +411,12 @@ const NodeSummaryFields = {
   active: Schema.Boolean,
   /** The effective archive status, computed from this node and its current ancestors. */
   archived: Schema.Boolean,
+  /**
+   * Whether this node is one of the owner's favorites. Derived at read time from a separate collection:
+   * never stored on the node, not part of its revision, and not patchable through update. Named `is…`
+   * because it is derived, unlike the authored `active`.
+   */
+  isFavorite: Schema.Boolean,
 };
 
 /**
@@ -607,4 +622,7 @@ export const NODE_ROUTES = {
   move: { method: 'POST', path: '/api/nodes/move' },
   archive: { method: 'POST', path: '/api/nodes/archive' },
   restore: { method: 'POST', path: '/api/nodes/restore' },
+  addFavorite: { method: 'POST', path: '/api/favorites/add' },
+  removeFavorite: { method: 'POST', path: '/api/favorites/remove' },
+  listFavorites: { method: 'POST', path: '/api/favorites/list' },
 } as const satisfies Record<string, RouteDescriptor>;

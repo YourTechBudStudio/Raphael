@@ -91,6 +91,18 @@ export {
   type FilterRejectionReason,
   type NodeFilterInput,
 } from './filter.ts';
+export {
+  AddFavoriteResponse,
+  FavoriteListRequest,
+  FavoriteRequest,
+  RemoveFavoriteResponse,
+  type FavoriteListRequestInput,
+  type FavoriteRequestInput,
+  decodeAddFavoriteResponse,
+  decodeFavoriteListRequest,
+  decodeFavoriteRequest,
+  decodeRemoveFavoriteResponse,
+} from './favorites.ts';
 export { compareNodeOrder } from './ordering.ts';
 export {
   SearchQueries,

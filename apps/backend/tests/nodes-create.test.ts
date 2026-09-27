@@ -76,6 +76,7 @@ test('internal timestamps are stored but never returned', () => {
       'body',
       'description',
       'id',
+      'isFavorite',
       'kind',
       'metadata',
       'parentId',

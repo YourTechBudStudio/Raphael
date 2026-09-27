@@ -72,6 +72,7 @@ const entity = (over = {}) => ({
   tags: ['work', 'review'],
   active: false,
   archived: false,
+  isFavorite: false,
   archiveCauses: [],
   metadata: {},
   body: { format: 'tiptap', value: CANONICAL },

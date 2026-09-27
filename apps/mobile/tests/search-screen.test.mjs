@@ -58,6 +58,7 @@ const summary = (id, type, parentId, title, archived = false) => ({
   tags: [],
   active: false,
   archived,
+  isFavorite: false,
 });
 
 const WORK = summary(1, 'area', null, 'Work');

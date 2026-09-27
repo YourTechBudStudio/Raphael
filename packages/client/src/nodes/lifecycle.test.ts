@@ -53,6 +53,7 @@ const node = (archived: boolean) => ({
   tags: [],
   active: true,
   archived,
+  isFavorite: false,
 });
 
 const inherited = {

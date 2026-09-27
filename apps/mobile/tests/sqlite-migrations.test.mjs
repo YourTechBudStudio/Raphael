@@ -273,7 +273,7 @@ describe('the capability schemas', () => {
 
     const second = await openNodeDatabase(location);
 
-    assert.deepEqual(await migrate(second, CAPTURE_MIGRATIONS), { kind: 'ready', version: 3 });
+    assert.deepEqual(await migrate(second, CAPTURE_MIGRATIONS), { kind: 'ready', version: 4 });
 
     const rows = await second.all('SELECT draft_id, title, draft_version, tags FROM note_drafts');
 
@@ -289,9 +289,21 @@ describe('the capability schemas', () => {
   it('reaches version 3, which is where saved acknowledgements gain their lifecycle fields', async () => {
     const db = await openNodeDatabase();
 
-    assert.deepEqual(await migrate(db, CAPTURE_MIGRATIONS), { kind: 'ready', version: 3 });
-    assert.equal(CAPTURE_MIGRATIONS.length, 3);
+    assert.deepEqual(await migrate(db, CAPTURE_MIGRATIONS.slice(0, 3)), {
+      kind: 'ready',
+      version: 3,
+    });
     assert.equal(await version(db), 3);
+
+    await db.close();
+  });
+
+  it('reaches version 4, which is where saved acknowledgements gain isFavorite', async () => {
+    const db = await openNodeDatabase();
+
+    assert.deepEqual(await migrate(db, CAPTURE_MIGRATIONS), { kind: 'ready', version: 4 });
+    assert.equal(CAPTURE_MIGRATIONS.length, 4);
+    assert.equal(await version(db), 4);
 
     await db.close();
   });

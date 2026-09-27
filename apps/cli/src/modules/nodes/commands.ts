@@ -1,5 +1,5 @@
 /**
- * The nine hierarchy commands.
+ * The twelve hierarchy commands.
  *
  * Each one assembles a request, sends it, and renders the answer. No hierarchy rule is implemented
  * here and none may be: slug derivation, parentage, conflict detection, and content conversion all
@@ -11,12 +11,15 @@ import { randomUUID } from 'node:crypto';
 
 import type { ClientFailure, Transport } from '@raphael/client';
 import {
+  addFavorite,
   archive,
   create,
   get,
   getPath,
   list,
+  listFavorites,
   move,
+  removeFavorite,
   restore,
   search,
   update,
@@ -851,6 +854,143 @@ const runLifecycle = async (
   return EXIT_OK;
 };
 
+export const FAVORITE_HELP = `Usage: raphael favorite <path> [options]
+       raphael favorite --id <id> [options]
+
+Add an area or a project to your favorites. Already a favorite is fine.
+
+Options:
+      --id <id>   Address by identifier instead of by path.
+      --json      Print the result as JSON.
+  -h, --help      Show this help.`;
+
+export const UNFAVORITE_HELP = `Usage: raphael unfavorite <path> [options]
+       raphael unfavorite --id <id> [options]
+
+Remove something from your favorites. Not a favorite is fine.
+
+Options:
+      --id <id>   Address by identifier instead of by path.
+      --json      Print the result as JSON.
+  -h, --help      Show this help.`;
+
+export const runFavorite = (argv: readonly string[], context: CommandContext): Promise<ExitCode> =>
+  runFavoriteChange(true, argv, context);
+
+export const runUnfavorite = (
+  argv: readonly string[],
+  context: CommandContext,
+): Promise<ExitCode> => runFavoriteChange(false, argv, context);
+
+/**
+ * Favorite or unfavorite: one command shape with the state wanted.
+ *
+ * No revision and no convenience read: the request states the result, so sending it again is safe
+ * while it still names the same node - always by id, not always by path, which the recovery advice
+ * says. The answer is only an id and the resulting state, so the node is named by id.
+ */
+const runFavoriteChange = async (
+  wanted: boolean,
+  argv: readonly string[],
+  context: CommandContext,
+): Promise<ExitCode> => {
+  const verb = wanted ? 'favorite' : 'unfavorite';
+  const parsed = parseArgs(
+    argv,
+    { id: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } },
+    verb,
+  );
+  const [path, ...extra] = parsed.positionals;
+  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, verb);
+
+  const target = selectorFrom(path, stringOption(parsed, 'id', verb), verb);
+  const dispatchedAt = new Date();
+  // Only an id names the same node on a second try; the recovery advice depends on which was used.
+  const targetId = 'id' in target ? target.id : undefined;
+  const result = wanted
+    ? await addFavorite(context.transport(), { target })
+    : await removeFavorite(context.transport(), { target });
+  if (!result.ok) {
+    return reportFailure(context.streams, result.failure, {
+      operation: verb,
+      dispatchedAt,
+      ...(targetId === undefined ? {} : { targetId }),
+    });
+  }
+
+  if (booleanOption(parsed, 'json')) writeJson(context.streams.out, result.value);
+  else {
+    writeLine(
+      context.streams.out,
+      `Node ${result.value.nodeId} is ${result.value.isFavorite ? 'a favorite' : 'not a favorite'}.`,
+    );
+  }
+  return EXIT_OK;
+};
+
+export const FAVORITES_HELP = `Usage: raphael favorites [options]
+
+List your favorites by title. Archived ones are left out and stay favorites.
+Open one with "raphael get --id <id>".
+
+Options:
+      --skip <n>      How many to skip. Default 0.
+      --limit <n>     How many to return, ${LIST_LIMIT_MIN} to ${LIST_LIMIT_MAX}.
+      --json          Print the result as JSON.
+  -h, --help          Show this help.`;
+
+export const runFavorites = async (
+  argv: readonly string[],
+  context: CommandContext,
+): Promise<ExitCode> => {
+  const parsed = parseArgs(
+    argv,
+    {
+      skip: { type: 'string' },
+      limit: { type: 'string' },
+      json: { type: 'boolean' },
+      help: { type: 'boolean', short: 'h' },
+    },
+    'favorites',
+  );
+  if (parsed.positionals.length > 0) {
+    throw new UsageError(`Unexpected argument "${parsed.positionals[0]}".`, 'favorites');
+  }
+  // The bounds `scopePageFrom` uses: it is the same page window.
+  const skip = integerOption(parsed, 'skip', 'favorites', {
+    min: 0,
+    max: Number.MAX_SAFE_INTEGER,
+  });
+  const limit = integerOption(parsed, 'limit', 'favorites', {
+    min: LIST_LIMIT_MIN,
+    max: LIST_LIMIT_MAX,
+  });
+
+  const result = await listFavorites(context.transport(), {
+    ...(skip === undefined ? {} : { skip }),
+    ...(limit === undefined ? {} : { limit }),
+  });
+  if (!result.ok) return reportFailure(context.streams, result.failure);
+
+  if (booleanOption(parsed, 'json')) {
+    writeJson(context.streams.out, result.value);
+    return EXIT_OK;
+  }
+
+  const { out } = context.streams;
+  const page = result.value;
+  for (const item of page.items) {
+    writeLine(
+      out,
+      `${String(item.id).padStart(6)}  ${qualifiedType(item).padEnd(13)}  ${forTerminal(item.title)}${
+        item.active ? '  active' : ''
+      }`,
+    );
+  }
+  writePageFooter(context.streams, page);
+  return EXIT_OK;
+};
+
 export const GET_HELP = `Usage: raphael get <path> [options]
        raphael get --id <id> [options]
 
@@ -902,6 +1042,8 @@ export const runGet = async (
   // question nobody can ask of it - `type` is what says the field does not apply.
   if (entity.type === 'project') writeLine(out, `active: ${entity.active ? 'yes' : 'no'}`);
   writeLifecycle(out, entity.id, entity.archiveCauses);
+  // For every type: a note is never a favorite, and `no` is the truthful answer for it.
+  writeLine(out, `favorite: ${entity.isFavorite ? 'yes' : 'no'}`);
   if (entity.description !== '') writeLine(out, `description: ${forTerminal(entity.description)}`);
   if (entity.tags.length > 0) {
     writeLine(out, `tags: ${entity.tags.map((tag) => forTerminal(tag)).join(', ')}`);

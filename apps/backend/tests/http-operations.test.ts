@@ -240,6 +240,36 @@ describe('operations over HTTP', () => {
     });
   });
 
+  test('adding, listing and removing a favorite each answer 200', async () => {
+    await withServer('http-favorites', async (server) => {
+      const created = await call(server, '/api/nodes/create', {
+        body: JSON.stringify({ type: 'project', parent: { path: '/work' }, title: 'Ship it' }),
+      });
+      const entity = (created.json as { entity: { id: number } }).entity;
+
+      const added = await call(server, '/api/favorites/add', {
+        body: JSON.stringify({ target: { path: '/work/ship-it' } }),
+      });
+      assert.equal(added.status, 200);
+      assert.deepEqual(added.json, { nodeId: entity.id, isFavorite: true });
+
+      const listed = await call(server, '/api/favorites/list', { body: JSON.stringify({}) });
+      assert.equal(listed.status, 200);
+      const page = listed.json as { items: { id: number; isFavorite: boolean }[]; limit: number };
+      assert.deepEqual(
+        page.items.map((item) => [item.id, item.isFavorite]),
+        [[entity.id, true]],
+      );
+      assert.equal(page.limit, 50);
+
+      const removed = await call(server, '/api/favorites/remove', {
+        body: JSON.stringify({ target: { id: entity.id } }),
+      });
+      assert.equal(removed.status, 200);
+      assert.deepEqual(removed.json, { nodeId: entity.id, isFavorite: false });
+    });
+  });
+
   test('an update answers 200, and a stale one 409 with the revision to re-read', async () => {
     await withServer('http-update', async (server) => {
       const created = await call(server, '/api/nodes/create', {

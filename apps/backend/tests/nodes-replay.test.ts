@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import { Effect } from 'effect';
 
-import { createNode, toPublicError } from '../src/modules/nodes/index.ts';
+import { addFavorite, createNode, getNode, toPublicError } from '../src/modules/nodes/index.ts';
 // Retention is internal to the capability, so the test reads it where it is defined rather than
 // requiring the public surface to publish it.
 import { REPLAY_TTL_MS } from '../src/modules/nodes/replay.ts';
@@ -510,5 +510,23 @@ test('a replayed creation answers with the selection the original answered with'
     const replayed = expectRight(runNodes(connection, createNode(request()), clockAt(T0 + 60_000)));
     assert.deepEqual(replayed, first);
     assert.equal(replayed.entity.active, false);
+  });
+});
+
+test('a replayed creation answers not-a-favorite even after the node became one', () => {
+  withMigrated('replay-favorite', (connection) => {
+    // A replay is the historical creation answer (ADR 0002), not current state: the node was not a
+    // favorite when it was created, and the saved answer keeps saying so while Get reports the present.
+    const first = expectRight(runNodes(connection, createNode(request()), clockAt(T0)));
+    expectRight(runNodes(connection, addFavorite({ target: { id: first.entity.id } })));
+
+    const replayed = expectRight(runNodes(connection, createNode(request()), clockAt(T0 + 60_000)));
+    assert.deepEqual(replayed, first);
+    assert.equal(replayed.entity.isFavorite, false);
+    assert.equal(
+      expectRight(runNodes(connection, getNode({ target: { id: first.entity.id } }))).entity
+        .isFavorite,
+      true,
+    );
   });
 });

@@ -96,6 +96,7 @@ function node(id, type, parentId, title, over = {}) {
     tags: [],
     active: false,
     archived: false,
+    isFavorite: false,
     archiveCauses: [],
     body: { format: 'markdown', value: '' },
     metadata: {},

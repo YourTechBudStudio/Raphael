@@ -43,6 +43,13 @@
       "when": 1790305125073,
       "tag": "0005_archive_causes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790487897703,
+      "tag": "0006_favorites",
+      "breakpoints": true
     }
   ]
 }

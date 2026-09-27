@@ -211,3 +211,22 @@ export const archiveCauses = sqliteTable(
     check('archive_causes_created_at_safe', safeEpochMillis('created_at')),
   ],
 );
+
+/**
+ * The owner's favorites: one row per favorited node (story #14).
+ *
+ * - **Identity only.** Titles and archive status are always read from `nodes` and `archive_causes`,
+ *   never copied here, so a rename, move or archive can never leave a stale copy behind.
+ * - **The primary key is the no-duplicate rule**, which makes add (`ON CONFLICT DO NOTHING`) and
+ *   remove (a `DELETE` that may match nothing) idempotent.
+ * - **Nothing here touches `nodes`**, so toggling a favorite never changes a revision, and this
+ *   migration stays clear of the table rebuild `0004`'s header warns about.
+ * - **`RESTRICT`**, for the reason `archive_causes` gives: no operation deletes a node.
+ * - `favorites.ts` is the only module that writes this table; `projection.ts::favoriteExpression` is
+ *   the only reader of membership.
+ */
+export const favorites = sqliteTable('favorites', {
+  nodeId: integer('node_id')
+    .primaryKey()
+    .references(() => nodes.id, { onDelete: 'restrict' }),
+});

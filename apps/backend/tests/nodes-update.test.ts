@@ -374,6 +374,38 @@ test('the write guard is the verdict when the row moves between the read and the
   });
 });
 
+test('the answer carries the favorite state at commit, even when it changed after the read', () => {
+  withMigrated('update-favorite-race', (connection) => {
+    const created = create(connection, { type: 'area', parent: { path: '/' }, title: 'Garden' });
+    const read = expectRight(runNodes(connection, getNode({ target: { id: created.id } }))).entity;
+    assert.equal(read.isFavorite, false, 'not a favorite when the update reads it');
+
+    // The same seam as the write-guard test above. A favorite changes no revision, so the guard cannot
+    // see this insert; only the commit-time read can, and that is what the answer must report.
+    let samples = 0;
+    const clock = controlledClock(() => {
+      samples += 1;
+      if (samples === 1) {
+        connection.db.prepare('INSERT INTO favorites (node_id) VALUES (?)').run(created.id);
+      }
+      return AT;
+    });
+
+    const response = expectRight(
+      update(
+        connection,
+        { target: { id: created.id }, revision: created.revision, title: 'Renamed' },
+        clock,
+      ),
+    );
+
+    assert.equal(samples, 1, 'the operation sampled the clock exactly once, inside the commit');
+    assert.equal(response.entity.title, 'Renamed');
+    assert.equal(response.entity.revision, created.revision + 1);
+    assert.equal(response.entity.isFavorite, true);
+  });
+});
+
 test('a target that disappears inside the write is an internal failure, since nothing removes rows', () => {
   withMigrated('update-vanished', (connection) => {
     const created = note(connection, 'Draft');
