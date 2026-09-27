@@ -19,7 +19,9 @@ Get remains available for archived entities; List and Search exclude them by def
 
 ## Mutations
 
-Single-target mutations share core validation across clients and extensions. Revision checks protect existing entities; idempotent creation protects retries. Successful storage does not promise completed external effects. [ADR 0002](../adrs/0002-mutation-authority.md) defines these guarantees; [Hooks](../extensions/hooks.md) explains extension participation.
+Single-target mutations share core validation across clients and extensions. Revision checks protect updates, moves, archive, and restore; idempotent creation protects retries. Successful storage does not promise completed external effects. [ADR 0002](../adrs/0002-mutation-authority.md) defines these guarantees; [Hooks](../extensions/hooks.md) explains extension participation.
+
+Core keeps favorites for areas and projects as a separate selection keyed by stable node identity. Favorite changes neither require nor advance a node revision. Node reads derive membership; the favorites list hides effectively archived nodes without clearing their selection.
 
 ## Recovery
 
