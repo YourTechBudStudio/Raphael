@@ -3,20 +3,20 @@
  *
  * The request is pinned field by field because every field changes what comes back, and a search
  * that quietly asked a wider question would look exactly like a search that worked. The keys are
- * pinned because two searches that differ must not share an answer. And the grouping is pinned as a
- * partition: relevance is the server's answer, so the one thing this app must never do is reorder
- * the hits it was given.
+ * pinned because two searches that differ must not share an answer. And the joining of pages is
+ * pinned: relevance is the server's answer, so the one thing this app must never do is reorder the
+ * hits it was given, and a node seen on two pages must still be one row.
  */
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
-  groupSearchResults,
+  flattenSearchPages,
   searchFilter,
   searchKey,
   searchRequest,
-  SEARCH_LIMIT,
+  SEARCH_PAGE_LIMIT,
   toSearchResultItem,
 } from './requests.ts';
 
@@ -32,6 +32,7 @@ const summary = (id, type, over = {}) => ({
   tags: [],
   active: false,
   archived: false,
+  isFavorite: false,
   ...over,
 });
 
@@ -49,18 +50,20 @@ const descriptor = (over = {}) => ({
 const hash = (key) => JSON.stringify(key);
 
 describe('the request a search sends', () => {
-  it('searches the whole server, recursively, one page from the top', () => {
-    assert.deepEqual(searchRequest(descriptor()), {
+  it('searches the whole server, recursively, one page from the offset it is given', () => {
+    assert.deepEqual(searchRequest(descriptor(), 0), {
       scopes: [{ path: '/' }],
       recursive: true,
       queries: ['credentials'],
       skip: 0,
-      limit: SEARCH_LIMIT,
+      limit: SEARCH_PAGE_LIMIT,
     });
+    assert.equal(searchRequest(descriptor(), 50).skip, 50);
+    assert.equal(searchRequest(descriptor(), 50).limit, SEARCH_PAGE_LIMIT);
   });
 
   it('searches one container by its id when the screen was opened from one', () => {
-    const request = searchRequest(descriptor({ scope: { type: 'project', id: 12 } }));
+    const request = searchRequest(descriptor({ scope: { type: 'project', id: 12 } }), 0);
 
     assert.deepEqual(request.scopes, [{ id: 12 }]);
     // Recursive from that container: a project's results are everything underneath it, which is
@@ -68,27 +71,24 @@ describe('the request a search sends', () => {
     assert.equal(request.recursive, true);
   });
 
-  it('never asks for a second page', () => {
-    // A stated cap is the honest answer to a full page; a second request would be a paged view in
-    // a modal that fills from the top and has nowhere to append.
-    assert.equal(searchRequest(descriptor()).skip, 0);
-    assert.equal(SEARCH_LIMIT, 100);
+  it('asks for the contract default page size', () => {
+    assert.equal(SEARCH_PAGE_LIMIT, 50);
   });
 
   it('asks for archived nodes only when "Include archived" is on', () => {
     // Off is the server's default, so it is left out rather than restated.
-    assert.ok(!('includeArchived' in searchRequest(descriptor())));
-    assert.equal(searchRequest(descriptor({ includeArchived: true })).includeArchived, true);
+    assert.ok(!('includeArchived' in searchRequest(descriptor(), 0)));
+    assert.equal(searchRequest(descriptor({ includeArchived: true }), 0).includeArchived, true);
   });
 
   it('omits the filter entirely when there is nothing to say', () => {
-    assert.ok(!('filter' in searchRequest(descriptor())));
+    assert.ok(!('filter' in searchRequest(descriptor(), 0)));
   });
 
   it('carries the query exactly as it was typed', () => {
     // Parsed by the contract and translated by the backend. Nothing here rewrites, escapes or
     // splits it, because every one of those would be this client deciding what matching means.
-    const request = searchRequest(descriptor({ query: 'auth AND "login flow"' }));
+    const request = searchRequest(descriptor({ query: 'auth AND "login flow"' }), 0);
 
     assert.deepEqual(request.queries, ['auth AND "login flow"']);
   });
@@ -125,7 +125,7 @@ describe('the filter the chips and tags add up to', () => {
   });
 
   it('reaches the request when there is something to say', () => {
-    assert.deepEqual(searchRequest(descriptor({ type: 'area', tags: ['sync'] })).filter, {
+    assert.deepEqual(searchRequest(descriptor({ type: 'area', tags: ['sync'] }), 0).filter, {
       type: 'area',
       tags: { $in: ['sync'] },
     });
@@ -172,84 +172,70 @@ describe('cache keys', () => {
 });
 
 describe('a hit, as something drawable', () => {
-  it('becomes a container reference for an area and a project', () => {
+  it('becomes a row for an area and a project', () => {
     assert.deepEqual(toSearchResultItem(hit(3, 'area', { title: 'Security', description: 'x' })), {
-      kind: 'container',
-      ref: { type: 'area', id: 3 },
+      id: 3,
+      type: 'area',
       title: 'Security',
-      description: 'x',
+      parentId: null,
       archived: false,
     });
     assert.equal(toSearchResultItem(hit(12, 'project', { archived: true })).archived, true);
-    assert.deepEqual(toSearchResultItem(hit(12, 'project')).ref, { type: 'project', id: 12 });
+    assert.equal(toSearchResultItem(hit(12, 'project')).type, 'project');
   });
 
-  it('becomes a note card for a resource of kind note', () => {
-    const item = toSearchResultItem(hit(41, 'resource', { title: 'Runbook', parentId: 12 }));
-
-    assert.equal(item.kind, 'note');
-    assert.deepEqual(item.note, {
+  it('becomes a note row for a resource of kind note', () => {
+    assert.deepEqual(toSearchResultItem(hit(41, 'resource', { title: 'Runbook', parentId: 12 })), {
       id: 41,
+      type: 'note',
       title: 'Runbook',
-      description: '',
-      slug: 'n41',
-      revision: 1,
       parentId: 12,
       archived: false,
     });
   });
 
-  it('is dropped when this build has no honest card for it', () => {
+  it('is dropped when this build has no honest row for it', () => {
     // A resource kind this release has never heard of. Dropped rather than refused, exactly as
     // `toNoteSummaryItem` drops one: a row to leave out is not a reason to fail the search.
     assert.equal(toSearchResultItem(hit(50, 'resource', { kind: 'sketch' })), null);
   });
 });
 
-describe('grouping one page', () => {
-  const page = [
-    toSearchResultItem(hit(12, 'project', { title: 'Authentication rework' })),
-    toSearchResultItem(hit(41, 'resource', { title: 'Credential rotation' })),
-    toSearchResultItem(hit(3, 'area', { title: 'Security' })),
-    toSearchResultItem(hit(17, 'project', { title: 'Mobile login' })),
-    toSearchResultItem(hit(58, 'resource', { title: 'Why we dropped basic auth' })),
-    toSearchResultItem(hit(9, 'area', { title: 'Backend' })),
-  ];
+describe('joining pages into one list', () => {
+  const row = (id, title = `Node ${String(id)}`) => ({
+    id,
+    type: 'project',
+    title,
+    parentId: 1,
+    archived: false,
+  });
+  const page = (items, skip) => ({ items, skip, limit: 3, hasMore: true, archivedLeftOut: false });
 
-  it('partitions the page into areas, projects and notes', () => {
-    const groups = groupSearchResults(page);
+  it("keeps the server's order across pages", () => {
+    const items = flattenSearchPages([page([row(12), row(3), row(41)], 0), page([row(9)], 3)]);
 
     assert.deepEqual(
-      groups.areas.map((item) => item.ref.id),
-      [3, 9],
-    );
-    assert.deepEqual(
-      groups.projects.map((item) => item.ref.id),
-      [12, 17],
-    );
-    assert.deepEqual(
-      groups.notes.map((note) => note.id),
-      [41, 58],
+      items.map((item) => item.id),
+      [12, 3, 41, 9],
     );
   });
 
-  it("keeps the server's order inside each group", () => {
-    // The page above is in relevance order and the groups read it front to back, so a hit that
-    // ranked above another of its own kind is still above it. Sorting here would be a second
-    // authority on relevance, and this app has no basis for one.
-    const reversed = groupSearchResults([...page].reverse());
+  it('keeps one copy of a node seen on two pages: the newest, where the newest page put it', () => {
+    // Pages are not a snapshot. An edit between the two requests can rank one node on both.
+    const items = flattenSearchPages([
+      page([row(12), row(3, 'Old title'), row(41)], 0),
+      page([row(3, 'New title'), row(9)], 3),
+    ]);
 
     assert.deepEqual(
-      reversed.areas.map((item) => item.ref.id),
-      [9, 3],
+      items.map((item) => item.id),
+      [12, 41, 3, 9],
     );
-    assert.deepEqual(
-      reversed.notes.map((note) => note.id),
-      [58, 41],
-    );
+    assert.equal(items.find((item) => item.id === 3).title, 'New title');
+    assert.equal(new Set(items.map((item) => item.id)).size, items.length);
   });
 
-  it('answers with three empty groups for an empty page', () => {
-    assert.deepEqual(groupSearchResults([]), { areas: [], projects: [], notes: [] });
+  it('answers with nothing for no pages', () => {
+    assert.deepEqual(flattenSearchPages([]), []);
   });
 });

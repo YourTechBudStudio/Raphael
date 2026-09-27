@@ -22,6 +22,7 @@ const summary = (over = {}) => ({
   tags: [],
   active: false,
   archived: false,
+  isFavorite: false,
   ...over,
 });
 

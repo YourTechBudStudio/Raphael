@@ -62,7 +62,7 @@ Approximate anchors from the selected mockups.
 
 ## Motion
 
-**Playful on touch. Calm at rest.** Use Material Design 3 Expressive springs for soft, bubbly feedback with small travel and quick settling.
+**Subtle by default.** Springs only for press feedback on small controls, with small travel and quick settling. Content fades and slides; it never bounces.
 
 Here are some examples:
 
@@ -72,13 +72,14 @@ Here are some examples:
 | Selection / favorite | Gentle pop or brief icon wiggle, then rest |
 | Capture / voice / Browse sheet | Slide with one light spring settle and scrim fade; trigger stays separate |
 | Note opening | Card press feedback, then a short directional transition; preserve scroll position for return |
+| List rows | Fade in (~220 ms), fade out, short linear slide (~200 ms) to close gaps; no spring, stagger, or travel |
 
 - **Scale:** small controls carry the playfulness; large surfaces move gently. Allow local squishes and corner softening, while keeping sheet geometry and reading text stable.
 - **Starting points:** roughly 2–4% press compression and a few logical pixels of sheet overshoot; tune in a working interaction, not to make static keyframes more dramatic.
 - **Limits:** one brief response per action, with no input delay or repeated bouncing. Use simple spring transitions instead of liquid stretching, folding, teardrops, or button-to-sheet morphs.
 - **At rest:** decorative waves stay still or have very slow, hard to notice, non distracting perpetual motion.. Activity animation reflects actual recording, playback, or work status.
 - **Reduced motion:** tonal feedback with an immediate change or short fade.
-- **Review:** verify at normal speed that touch feels softly responsive and slightly bouncy, then settles quickly enough to leave attention on the content.
+- **Review:** verify at normal speed that touch feels softly responsive and settles quickly enough to leave attention on the content.
 
 ## Voice
 

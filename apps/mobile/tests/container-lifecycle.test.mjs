@@ -9,7 +9,9 @@
  * Four properties carry the design and are pinned here.
  *
  * **Nothing moves.** An archived container keeps every control where it was. The ones the server
- * would refuse are drawn unavailable, and Active and Favorite keep their saved values.
+ * would refuse are drawn unavailable, and Active keeps its saved value. Favorite stays available: the
+ * server takes a favorite change on an archived node, and the header is the only place to drop a
+ * favorite the list hides while it is archived.
  *
  * **The screen shows what it re-read, never what it sent.** The toggle's fill comes from the Get
  * after the action, so a restore that leaves something archived through a container above reads as
@@ -96,6 +98,7 @@ function node(id, type, parentId, title, over = {}) {
     tags: [],
     active: false,
     archived: false,
+    isFavorite: false,
     archiveCauses: [],
     body: { format: 'markdown', value: '' },
     metadata: {},
@@ -202,6 +205,15 @@ const fakeServer = () => {
         );
       case 'notes':
         return page([]);
+      // Stored, so the re-read the change starts agrees with it: the star gives way to that read.
+      case '/api/favorites/add':
+        tree[body.target.id] = { ...tree[body.target.id], isFavorite: true };
+
+        return ok({ nodeId: body.target.id, isFavorite: true });
+      case '/api/favorites/remove':
+        tree[body.target.id] = { ...tree[body.target.id], isFavorite: false };
+
+        return ok({ nodeId: body.target.id, isFavorite: false });
       default:
         throw new Error(`the fake server has no answer for ${what}`);
     }
@@ -442,7 +454,8 @@ describe('the project header', () => {
       assert.equal(active.getAttribute('aria-description'), 'Unavailable while this is archived');
 
       const favorite = screen.byLabel('Add Auth rework to favorites');
-      assert.ok(unavailable(favorite));
+      assert.ok(!unavailable(favorite), 'Favorite stays available while archived');
+      assert.equal(favorite.getAttribute('aria-description'), null);
       assert.ok(unavailable(screen.$('[data-testid="container-edit"]')));
       assert.ok(unavailable(screen.$('[data-testid="new-note"]')));
       assert.ok(unavailable(screen.byLabel('Record a voice note')));
@@ -453,6 +466,10 @@ describe('the project header', () => {
       assert.ok(!screen.has('[data-testid="inherited-line"]'));
       // Its notes are read with archived ones included; all of them are archived with it.
       assert.equal(server.of('notes').at(-1).body.includeArchived, true);
+
+      await screen.press(favorite);
+      assert.deepEqual(server.of('/api/favorites/add')[0].body, { target: { id: PROJECT } });
+      assert.ok(selected(screen.byLabel('Remove Auth rework from favorites')));
 
       await screen.press(screen.archiveToggle());
       assert.deepEqual(server.of('restore')[0].body, { target: { id: PROJECT }, revision: 4 });
@@ -613,7 +630,7 @@ describe('the area header', () => {
     }
   });
 
-  it('keeps the add button, Favorite, Edit and the capture pair in place while archived', async () => {
+  it('keeps the add button, Edit and the capture pair in place while archived', async () => {
     archiveIn(server.tree, WORK);
     const screen = await openArea();
 
@@ -622,10 +639,29 @@ describe('the area header', () => {
       assert.ok(add !== null, 'the add button stays in the top bar');
       assert.ok(unavailable(add));
       assert.equal(add.getAttribute('aria-description'), 'Unavailable while this is archived');
-      assert.ok(unavailable(screen.byLabel('Add Work to favorites')));
       assert.ok(unavailable(screen.$('[data-testid="container-edit"]')));
       assert.ok(unavailable(screen.$('[data-testid="new-note"]')));
       assert.ok(!unavailable(screen.archiveToggle()));
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('keeps Favorite available while archived, and a tap sends addFavorite', async () => {
+    archiveIn(server.tree, WORK);
+    const screen = await openArea();
+
+    try {
+      const favorite = screen.byLabel('Add Work to favorites');
+      assert.ok(!unavailable(favorite), 'Favorite stays available while archived');
+
+      await screen.press(favorite);
+
+      assert.deepEqual(server.of('/api/favorites/add')[0].body, { target: { id: WORK } });
+      // The star shows the stored change, and is no longer busy.
+      const starred = screen.byLabel('Remove Work from favorites');
+      assert.ok(selected(starred));
+      assert.ok(!busy(starred));
     } finally {
       screen.unmount();
     }

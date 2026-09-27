@@ -16,8 +16,11 @@ export {
 } from './Emblem';
 export { emblemFor } from './emblem-for';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
+export { ListRow, type ListRowParent, type ListRowProps, type ListRowStatus } from './ListRow';
 export { GrowingTextInput, type GrowingTextInputProps } from './GrowingTextInput';
 export { FavoriteButton, type FavoriteButtonProps } from './FavoriteButton';
+export { ShapeMark, type MarkKind, type ShapeMarkProps } from './ShapeMark';
+export { StateLine, WaitingLine, type StateLineProps } from './StateLine';
 export { StatePill, type StatePillProps } from './StatePill';
 export { ToggleLabel, type ToggleLabelProps } from './ToggleLabel';
 export { ACTIVE_MARK, ARCHIVE_MARK, FAVORITE_MARK, type ToggleMark } from './toggle-marks';

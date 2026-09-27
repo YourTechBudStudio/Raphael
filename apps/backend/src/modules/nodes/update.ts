@@ -9,7 +9,7 @@ import {
   type UpdateResponse,
 } from '@raphael/contracts/nodes';
 import type Database from 'better-sqlite3';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { Effect, Either, type Clock } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
@@ -21,6 +21,7 @@ import {
   bodyProjection,
   checkedResponse,
   entityProjection,
+  favoriteExpression,
   parseStored,
   validatedStoredBody,
 } from './projection.ts';
@@ -50,6 +51,7 @@ const OPERATION = 'nodes.update';
  *       re-select the revision; require the caller's
  *       require the target to be active                 (this is the lifecycle verdict)
  *       one UPDATE guarded on the caller's revision
+ *       re-read the favorite state                      (the one field the write must answer)
  *     commit
  * ```
  *
@@ -181,7 +183,9 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
       // Nothing published here needs the write to have happened: `id`, `type`, `kind`, `parentId` and
       // `metadata` come from the row that was read, the three authored fields are the submitted value or
       // the stored one, `revision` is known, and the body was projected above. `updated_at` is not a wire
-      // field. Creation cannot do this - its response carries a generated row id that does not exist
+      // field. The exception is `isFavorite`, which is read again at commit: a favorite changes no
+      // revision, so only the write transaction can say what it was at the moment of this write.
+      // Creation cannot do this - its response carries a generated row id that does not exist
       // until the insert - and that difference is the whole reason the two operations are shaped
       // differently here rather than symmetrically.
       //
@@ -219,7 +223,7 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
           unwrapFailure({ operation: OPERATION, stage: 'response projection' }, cause),
       });
 
-      yield* Effect.try({
+      const isFavorite = yield* Effect.try({
         try: () =>
           writeTransaction(db, () =>
             commit(db, { prepared, row, tags, content: projected.content, nextRevision, clock }),
@@ -239,7 +243,9 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
           ),
       });
 
-      return response;
+      // The one field the pre-assembled response cannot know: it is swapped in whole, and no contract
+      // filter reads it, so the checked response stays valid.
+      return { entity: { ...response.entity, isFavorite } };
     }),
   );
 
@@ -341,7 +347,7 @@ const resultingTags = (storedJson: string, prepared: PreparedUpdate): readonly s
  *
  * The response was assembled and validated before the transaction opened, because nothing in it
  * depends on the write. What is left is a clock sample, the revision verdict, the lifecycle verdict,
- * and one guarded `UPDATE`.
+ * one guarded `UPDATE`, and the favorite state at commit, which is the answer.
  *
  * The revision is re-selected first. A mismatch is the ordinary outcome of two clients editing the same
  * entity, and reporting it before lifecycle keeps revision-first precedence. With the revision
@@ -366,7 +372,7 @@ const commit = (
     readonly nextRevision: number;
     readonly clock: Clock.Clock;
   },
-): void => {
+): boolean => {
   const { prepared, row, tags, content, nextRevision } = context;
   const handle = orm(db);
   // A revision past the safe integer bound trips `nodes_revision_safe` and surfaces as an internal
@@ -418,4 +424,11 @@ const commit = (
       }),
     );
   }
+
+  // A favorite changes no revision, so the revision checks above cannot see one that changed between
+  // the two transactions. Read it here instead, so the response describes the moment of this write.
+  const favorite = handle.get<{ readonly isFavorite: number }>(
+    sql`SELECT ${favoriteExpression(sql`${row.id}`)} AS isFavorite`,
+  );
+  return favorite?.isFavorite === 1;
 };

@@ -1,10 +1,9 @@
 /**
  * Search, as one question asked of the server.
  *
- * The screen filtered a hierarchy it held in memory and said so about notes, because there was no
- * server search to ask. There is now, so this asks it: one request, one page, and no client-side
- * notion of what matching means. Notes are searched for the first time, and by their body text as
- * well as their title and description, which is something no client could have done for itself.
+ * The server decides what matches and in what order; this asks it, a page at a time, and walks
+ * further only as someone scrolls to the end of what has arrived. There is no client-side notion of
+ * what matching means, and nothing here reorders what the server ranked.
  *
  * Two rules it keeps, both borrowed from the notes capability because they are the same rules.
  * Every key is stamped with the connection activation, and the query function captures the session's
@@ -22,18 +21,23 @@
  */
 
 import { inspectQueryInput, inspectTagsInput } from '@raphael/contracts/nodes';
-import { useQuery } from '@tanstack/react-query';
+import { useInfiniteQuery } from '@tanstack/react-query';
 import { useMemo } from 'react';
 
 import { useConnectionSession } from '../../connection';
-import { fetchSearchPage, searchKey, type SearchDescriptor, type SearchPage } from './requests.ts';
+import { requestMoreResults, retryMoreResults, searchPagesOptions } from './options.ts';
+import type { SearchDescriptor } from './requests.ts';
 import { deriveSearchView, isScopeGone, type SearchView } from './view.ts';
 
 export interface SearchResults {
   readonly view: SearchView;
-  /** Ask the same question again. There is no next page to ask for. */
+  /** Ask the same question again, over every page held. The retry when nothing arrived. */
   readonly refresh: () => void;
   readonly isRefreshing: boolean;
+  /** The end of the list is on screen: ask for the next page, if asking is right. */
+  readonly loadMore: () => void;
+  /** Ask again for the next page that failed. */
+  readonly retryMore: () => void;
 }
 
 export function useSearchResults(descriptor: SearchDescriptor): SearchResults {
@@ -51,35 +55,20 @@ export function useSearchResults(descriptor: SearchDescriptor): SearchResults {
   );
   const tagsRejection = useMemo(() => inspectTagsInput(tags), [tags]);
 
-  const enabled =
-    transport !== null &&
-    query !== '' &&
-    queryRejection === undefined &&
-    tagsRejection === undefined;
+  const enabled = query !== '' && queryRejection === undefined && tagsRejection === undefined;
 
-  const result = useQuery({
-    queryKey: searchKey(activation, descriptor),
-    queryFn: ({ signal }): Promise<SearchPage> => {
-      if (transport === null) throw new Error('No connection');
-
-      return fetchSearchPage(transport, descriptor, signal);
-    },
-    // A reading of this moment, never a cached one. Nothing invalidates `SEARCH_SEGMENT` on a write
-    // and nothing needs to: with no freshness and no retention, the page is dropped when the modal
-    // closes and reopening asks the server again. See `requests.ts`.
-    staleTime: 0,
-    gcTime: 0,
-    enabled,
-  });
+  const result = useInfiniteQuery(searchPagesOptions(activation, transport, descriptor, enabled));
 
   const view = deriveSearchView({
     query,
     queryRejection,
     tagsRejection,
     scopeGone: isScopeGone(result.error),
-    page: result.data,
+    pages: result.data?.pages,
     isPending: result.isPending,
     isError: result.isError,
+    isFetchingNextPage: result.isFetchingNextPage,
+    isFetchNextPageError: result.isFetchNextPageError,
   });
 
   return {
@@ -88,5 +77,11 @@ export function useSearchResults(descriptor: SearchDescriptor): SearchResults {
       void result.refetch();
     },
     isRefreshing: result.isRefetching,
+    loadMore: () => {
+      requestMoreResults(result);
+    },
+    retryMore: () => {
+      retryMoreResults(result);
+    },
   };
 }

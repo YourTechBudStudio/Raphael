@@ -1,23 +1,20 @@
 /**
- * How this app asks the server to search, and how the answer is keyed and grouped.
+ * How this app asks the server to search, and how the answer is keyed and paged.
  *
  * The mirror of `resources/client/requests.ts`: the request is pinned field by field, the key
- * carries everything that changes the answer, and the order of the hits inside each group is the
- * server's. The screen sends one request and never a second - `skip` is always 0 and `limit` is
- * always `SEARCH_LIMIT` - so there is no page sequence here and nothing that walks one.
+ * carries everything that changes the answer, and the order of the hits is the server's. The answer
+ * is a page sequence walked on scroll: each page asks from where the server said the last one
+ * ended, and `flattenSearchPages` joins the pages into the one list the screen draws, without
+ * reordering anything.
  *
  * **A search result is a point-in-time reading, not a maintained cache.** The query that uses these
  * builders sets `staleTime: 0` and `gcTime: 0`, and nothing in the app invalidates `SEARCH_SEGMENT`
  * on a write. Nothing needs to while search lives where it does: the screen is a modal, every write
- * surface is reached only by dismissing it, and the page is dropped the moment the screen unmounts,
- * so reopening search always asks the server again. A later capability that shows search results
- * outside the modal - beside a feed someone can write to - must add that invalidation itself;
- * `invalidateResources` is the notes-only function its own comment describes and must stay so.
- *
- * `groupSearchResults` is the one place the page is rearranged, and it is a partition, not a sort:
- * a hit's position relative to the other hits of its own kind is untouched. The "no reordering"
- * rule in `resources/client/requests.ts` protects a *paged* feed's continuity across requests;
- * a single page has none to protect, and the grouping is presentation over one complete answer.
+ * surface is reached only by dismissing it, and the pages are dropped the moment the screen
+ * unmounts, so reopening search always asks the server again. A later capability that shows search
+ * results outside the modal - beside a feed someone can write to - must add that invalidation
+ * itself; `invalidateResources` is the notes-only function its own comment describes and must stay
+ * so.
  */
 
 import { search } from '@raphael/client/nodes';
@@ -27,25 +24,24 @@ import type {
   SearchRequestInput,
   ScopeSelector,
 } from '@raphael/contracts/nodes';
-import { CONTAINER_TYPES, ROOT_PATH } from '@raphael/contracts/nodes';
+import { CONTAINER_TYPES, LIST_LIMIT_DEFAULT, ROOT_PATH } from '@raphael/contracts/nodes';
 
 import type { Transport } from '../../../infrastructure/api';
 import type { ContainerRef, ContainerType } from '../../../infrastructure/api/contracts';
 import { unwrap } from '../../../infrastructure/query/failure.ts';
 import { scopeKey } from '../../../infrastructure/query/keys.ts';
-import { toNoteSummaryItem, type NoteSummaryItem } from '../../resources/summary.ts';
+import { toNoteSummaryItem } from '../../resources/summary.ts';
 
 /** The cache segment every search lives under. Notes and media have their own. */
 export const SEARCH_SEGMENT = 'search';
 
 /**
- * One page, and the only page. Mobile does not page; a fuller answer is a narrower search.
+ * How many hits one page asks for: the contract's default page, the same size every list uses.
  *
- * A modal that fills from the top has no good place to append, so reaching the end and pulling
- * would bring results in above rather than below. When the server says there are more, the screen
- * says the cap out loud instead of ending a list that quietly stopped being the whole answer.
+ * Small enough that the first rows arrive quickly, large enough that one page always fills the
+ * screen, so the end is only reached by scrolling to it.
  */
-export const SEARCH_LIMIT = 100;
+export const SEARCH_PAGE_LIMIT = LIST_LIMIT_DEFAULT;
 
 /** What the "Show" chips choose between. `'note'` is the one leaf kind core admits. */
 export type SearchTypeFilter = 'all' | 'area' | 'project' | 'note';
@@ -91,8 +87,8 @@ export const searchFilter = (descriptor: SearchDescriptor): NodeFilterInput | un
   return Object.keys(filter).length === 0 ? undefined : filter;
 };
 
-/** The wire request. One scope, recursive, one query, one page, from the top. */
-export const searchRequest = (descriptor: SearchDescriptor): SearchRequestInput => {
+/** The wire request. One scope, recursive, one query, one page, from `skip`. */
+export const searchRequest = (descriptor: SearchDescriptor, skip: number): SearchRequestInput => {
   const filter = searchFilter(descriptor);
 
   return {
@@ -101,15 +97,16 @@ export const searchRequest = (descriptor: SearchDescriptor): SearchRequestInput 
     queries: [descriptor.query],
     ...(filter === undefined ? {} : { filter }),
     ...(descriptor.includeArchived ? { includeArchived: true } : {}),
-    skip: 0,
-    limit: SEARCH_LIMIT,
+    skip,
+    limit: SEARCH_PAGE_LIMIT,
   };
 };
 
 /**
- * The cache key for one search.
+ * The cache key for one search, and for every page of it.
  *
- * Every descriptor field is in it, because every one of them changes what comes back. The scope is
+ * Every descriptor field is in it, because every one of them changes what comes back. The offset is
+ * not: the pages of one search live together under one key, as one sequence. The scope is
  * keyed as the selector that is actually sent, so a search of the root and a search of a container
  * cannot read one another's answer.
  */
@@ -124,17 +121,17 @@ export const searchKey = (activation: number, descriptor: SearchDescriptor): rea
     descriptor.includeArchived,
   );
 
-/** One hit as this app draws it: a container tile, or a note card. */
-export type SearchResultItem =
-  | {
-      readonly kind: 'container';
-      readonly ref: ContainerRef;
-      readonly title: string;
-      readonly description: string;
-      /** Effectively archived. Search draws the pill for it. */
-      readonly archived: boolean;
-    }
-  | { readonly kind: 'note'; readonly note: NoteSummaryItem };
+/** One hit as this app draws it: a row with a kind, a title, and the container it lives in. */
+export interface SearchResultItem {
+  readonly id: number;
+  /** `'note'` is a resource of kind note, the one resource kind this build can draw. */
+  readonly type: ContainerType | 'note';
+  readonly title: string;
+  /** The container it lives in. Null only for a top-level area. */
+  readonly parentId: number | null;
+  /** Effectively archived. Search draws the pill for it. */
+  readonly archived: boolean;
+}
 
 const isContainerType = (value: string): value is ContainerType =>
   (CONTAINER_TYPES as readonly string[]).includes(value);
@@ -143,98 +140,73 @@ const isContainerType = (value: string): value is ContainerType =>
  * A hit as something drawable, or null for a hit that is neither a container nor a note.
  *
  * Dropped rather than refused, which is the same judgment `toNoteSummaryItem` already makes: one
- * unrecognized row in a page of a hundred is a row to leave out, not a reason to tell someone their
- * search failed. A resource kind this build has never heard of has no honest card.
+ * unrecognized row in a page is a row to leave out, not a reason to tell someone their search
+ * failed. A resource kind this build has never heard of has no honest row.
  */
 export const toSearchResultItem = (hit: SearchHit): SearchResultItem | null => {
   const summary = hit.node;
+  const common = {
+    id: summary.id,
+    title: summary.title,
+    parentId: summary.parentId,
+    archived: summary.archived,
+  };
 
-  if (isContainerType(summary.type)) {
-    return {
-      kind: 'container',
-      ref: { type: summary.type, id: summary.id },
-      title: summary.title,
-      description: summary.description,
-      archived: summary.archived,
-    };
-  }
+  if (isContainerType(summary.type)) return { ...common, type: summary.type };
 
-  const note = toNoteSummaryItem(summary);
-
-  return note === null ? null : { kind: 'note', note };
+  return toNoteSummaryItem(summary) === null ? null : { ...common, type: 'note' };
 };
 
-/** One page of results as this app holds it: mapped, guarded, and carrying the server's own cap. */
+/** One page of results as this app holds it: mapped, guarded, and carrying where it sits. */
 export interface SearchPage {
   readonly items: readonly SearchResultItem[];
+  /** The offset the server answered from, and the page size it used. The next page starts after. */
+  readonly skip: number;
+  readonly limit: number;
   /** The server has more than it sent. Never a claim about coverage; only about this sequence. */
   readonly hasMore: boolean;
   /**
-   * An archived node matched and was left out. Always false when archived nodes were included. What
-   * the left-out line is shown on, so pressing its button always adds results.
+   * An archived node matched and was left out. Always false when archived nodes were included. It
+   * describes the whole match set, so every page of one search says the same.
    */
   readonly archivedLeftOut: boolean;
 }
 
-/** Asks the server once. */
+/** Asks the server for one page, from `skip`. */
 export const fetchSearchPage = async (
   transport: Transport,
   descriptor: SearchDescriptor,
+  skip: number,
   signal: AbortSignal,
 ): Promise<SearchPage> => {
-  const response = unwrap(await search(transport, searchRequest(descriptor), signal));
+  const response = unwrap(await search(transport, searchRequest(descriptor, skip), signal));
 
   return {
     items: response.items
       .map((hit) => toSearchResultItem(hit))
       .filter((item): item is SearchResultItem => item !== null),
+    skip: response.skip,
+    limit: response.limit,
     hasMore: response.hasMore,
     archivedLeftOut: response.archivedLeftOut,
   };
 };
 
-export type ContainerResultItem = Extract<SearchResultItem, { kind: 'container' }>;
-
-export interface SearchGroups {
-  readonly areas: readonly ContainerResultItem[];
-  readonly projects: readonly ContainerResultItem[];
-  readonly notes: readonly NoteSummaryItem[];
-}
-
-export const EMPTY_GROUPS: SearchGroups = { areas: [], projects: [], notes: [] };
-
 /**
- * The page, partitioned into the three sections the screen draws.
+ * The pages as one list, in page order, with each node once.
  *
- * A partition and never a sort. Relevance is the server's answer and the only ordering anyone here
- * can defend; what this decides is which heading a hit sits under, not where it sits beneath it.
+ * Pages are not a snapshot. A node renamed or edited between two page requests can rank on both, so
+ * the same id can arrive twice. The copy kept is the one from the most recently requested page,
+ * at that page's position: it is the newer reading. Keeping one is also what React needs, since a row
+ * is keyed by its node. Nothing is sorted; the order is still the server's.
  */
-export const groupSearchResults = (items: readonly SearchResultItem[]): SearchGroups => {
-  const areas: ContainerResultItem[] = [];
-  const projects: ContainerResultItem[] = [];
-  const notes: NoteSummaryItem[] = [];
+export const flattenSearchPages = (pages: readonly SearchPage[]): readonly SearchResultItem[] => {
+  const items = pages.flatMap((page) => page.items);
+  const lastIndex = new Map<number, number>();
 
-  // Named per type rather than "area, else project", so a third container type in the contract
-  // arrives as a compile error - the switch would no longer return on every path - instead of
-  // quietly filing itself under Projects. The same discipline `toSearchResultItem` keeps: draw a
-  // hit honestly, or do not draw it.
-  const sectionFor = (type: ContainerType): ContainerResultItem[] => {
-    switch (type) {
-      case 'area':
-        return areas;
-      case 'project':
-        return projects;
-    }
-  };
+  items.forEach((item, index) => {
+    lastIndex.set(item.id, index);
+  });
 
-  for (const item of items) {
-    if (item.kind === 'note') {
-      notes.push(item.note);
-      continue;
-    }
-
-    sectionFor(item.ref.type).push(item);
-  }
-
-  return { areas, projects, notes };
+  return items.filter((item, index) => lastIndex.get(item.id) === index);
 };

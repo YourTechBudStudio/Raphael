@@ -56,6 +56,7 @@ const node = {
   tags: [],
   active: false,
   archived: false,
+  isFavorite: false,
 };
 
 describe('move', () => {

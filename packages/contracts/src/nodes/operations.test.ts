@@ -72,6 +72,7 @@ const entity = (overrides: Record<string, unknown> = {}): Record<string, unknown
   tags: [],
   active: false,
   archived: false,
+  isFavorite: false,
   body: { format: 'markdown', value: '' },
   metadata: {},
   archiveCauses: [],
@@ -89,6 +90,9 @@ test('routes are the agreed POST vocabulary', () => {
     move: { method: 'POST', path: '/api/nodes/move' },
     archive: { method: 'POST', path: '/api/nodes/archive' },
     restore: { method: 'POST', path: '/api/nodes/restore' },
+    addFavorite: { method: 'POST', path: '/api/favorites/add' },
+    removeFavorite: { method: 'POST', path: '/api/favorites/remove' },
+    listFavorites: { method: 'POST', path: '/api/favorites/list' },
   });
 });
 
@@ -547,6 +551,28 @@ test('a response keeps stored values that current input limits would reject', ()
   assert.equal(decoded.entity.tags.length, TAGS_MAX_COUNT + 5);
 });
 
+test('every node response says whether it is a favorite, as a boolean', () => {
+  const { isFavorite: _isFavorite, ...withoutFavorite } = entity();
+  assert.equal(Either.isLeft(decodeGetResponse({ entity: withoutFavorite })), true);
+  assert.equal(Either.isLeft(decodeGetResponse({ entity: entity({ isFavorite: 1 }) })), true);
+  assert.equal(
+    right(decodeGetResponse({ entity: entity({ isFavorite: true }) })).entity.isFavorite,
+    true,
+  );
+
+  const { body: _body, metadata: _metadata, archiveCauses: _causes, ...summary } = entity();
+  const { isFavorite: _summaryFavorite, ...summaryWithoutFavorite } = summary;
+  const page = (item: Record<string, unknown>) => ({
+    items: [item],
+    skip: 0,
+    limit: 50,
+    hasMore: false,
+  });
+  assert.equal(Either.isRight(decodeListResponse(page(summary))), true);
+  assert.equal(Either.isLeft(decodeListResponse(page(summaryWithoutFavorite))), true);
+  assert.equal(Either.isLeft(decodeListResponse(page({ ...summary, isFavorite: 'yes' }))), true);
+});
+
 test('a response still fails on a missing field, a bad identity, or an unsupported type', () => {
   const { parentId: _parentId, ...withoutParentId } = entity();
   assert.equal(Either.isLeft(decodeCreateResponse({ entity: withoutParentId })), true);
@@ -690,6 +716,7 @@ test('selection carries no count, ordinal, timestamp or expiry on the wire eithe
     'archived',
     'description',
     'id',
+    'isFavorite',
     'kind',
     'parentId',
     'revision',
@@ -1122,6 +1149,7 @@ test('identity, parentage and metadata are unpatchable because the schema never 
     ['parent', { id: 1 }],
     ['parentId', 1],
     ['metadata', {}],
+    ['isFavorite', true],
   ] as const) {
     const issues = issuesOf(decodeUpdateRequest(update({ title: 'Backend', [field]: value })));
     assert.deepEqual(

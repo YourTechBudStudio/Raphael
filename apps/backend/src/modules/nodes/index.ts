@@ -1,7 +1,7 @@
 /**
  * The hierarchy capability.
  *
- * Nine operations, each taking an undecoded request and returning an Effect whose failures are all
+ * Twelve operations, each taking an undecoded request and returning an Effect whose failures are all
  * expected and tagged. Callers do not resolve selectors, open transactions, coordinate replay, convert
  * content, or decide what a SQLite error meant - every one of those is settled behind this boundary.
  *
@@ -17,6 +17,7 @@
 
 export { archiveNode, restoreNode } from './archive.ts';
 export { createNode } from './create.ts';
+export { addFavorite, listFavorites, removeFavorite } from './favorites.ts';
 export { getNode } from './get.ts';
 export { getNodePath } from './get-path.ts';
 export { listNodes } from './list.ts';

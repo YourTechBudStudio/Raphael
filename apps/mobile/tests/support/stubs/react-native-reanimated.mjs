@@ -45,6 +45,7 @@ const descriptor = () => {
 
 export const FadeIn = descriptor();
 export const LinearTransition = descriptor();
+export const FadeOut = descriptor();
 export const useReducedMotion = () => true;
 export const Easing = {
   bezier: () => (t) => t,

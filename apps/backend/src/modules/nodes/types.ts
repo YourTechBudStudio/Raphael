@@ -42,6 +42,8 @@ export interface StoredSummary extends StoredNode {
   readonly tags: string;
   /** The raw stored integer, `0` or `1`. `summaryProjection` is the one place it becomes a boolean. */
   readonly active: number;
+  /** `0` or `1`, from `projection.ts::favoriteExpression`. */
+  readonly isFavorite: number;
 }
 
 /**

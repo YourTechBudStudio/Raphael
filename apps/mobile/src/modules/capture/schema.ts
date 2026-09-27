@@ -184,4 +184,30 @@ export const CAPTURE_MIGRATIONS: readonly Migration[] = [
           AND json_type(acknowledged, '$.entity') = 'object'`,
     ],
   },
+  /**
+   * Saved creation answers gain `isFavorite`, which every entity now carries (story #14).
+   *
+   * The same reason as version 3: the store decodes `acknowledged` again on every read with the current
+   * contract, which now requires the field, so without this step every acknowledgement saved before the
+   * change would read as unreadable.
+   *
+   * `false` is historically true, not a guess: a favorite references an existing node, and the node did
+   * not exist before its creation, so no entity was a favorite at the moment it was acknowledged. The
+   * server rewrites its own saved replays the same way for the same reason (`0006_favorites.sql`). A
+   * Create response is a historical confirmation, never current state, so this says nothing about
+   * whether the entity is a favorite now.
+   *
+   * `entity_edits` needs nothing: it stores authored content and an update envelope, never a response.
+   * A row the `WHERE` does not match is left exactly as it is, as in version 3.
+   */
+  {
+    version: 4,
+    statements: [
+      `UPDATE ${ATTEMPTS_TABLE}
+          SET acknowledged = json_set(acknowledged, '$.entity.isFavorite', json('false'))
+        WHERE acknowledged IS NOT NULL
+          AND json_valid(acknowledged)
+          AND json_type(acknowledged, '$.entity') = 'object'`,
+    ],
+  },
 ];

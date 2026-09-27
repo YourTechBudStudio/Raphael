@@ -14,7 +14,10 @@
 import type { Decoder } from '@raphael/contracts';
 import {
   NODE_ROUTES,
+  type AddFavoriteResponse,
   type CreateRequestInput,
+  type FavoriteListRequestInput,
+  type FavoriteRequestInput,
   type GetPathRequestInput,
   type GetRequestInput,
   type LifecycleRequestInput,
@@ -22,8 +25,11 @@ import {
   type MoveRequestInput,
   type SearchRequestInput,
   type UpdateRequestInput,
+  decodeAddFavoriteResponse,
   decodeCreateRequest,
   decodeCreateResponse,
+  decodeFavoriteListRequest,
+  decodeFavoriteRequest,
   decodeGetPathRequest,
   decodeGetPathResponse,
   decodeGetRequest,
@@ -34,6 +40,7 @@ import {
   decodeListResponse,
   decodeMoveRequest,
   decodeMoveResponse,
+  decodeRemoveFavoriteResponse,
   decodeSearchRequest,
   decodeSearchResponse,
   decodeUpdateRequest,
@@ -44,6 +51,7 @@ import {
   type LifecycleResponse,
   type ListResponse,
   type MoveResponse,
+  type RemoveFavoriteResponse,
   type SearchResponse,
   type UpdateResponse,
 } from '@raphael/contracts/nodes';
@@ -271,6 +279,64 @@ export const search = (
     NODE_ROUTES.search,
     decodeSearchRequest as Decoder<unknown>,
     decodeSearchResponse,
+    request,
+    200,
+    false,
+    signal,
+  );
+
+/**
+ * Make an area or a project a favorite. Answers 200 with `{ nodeId, isFavorite: true }`.
+ *
+ * `mutating`, and without an idempotency key or a revision: the request states the desired result, so
+ * sending it again is harmless while its selector still names the same node (an id always does; a path
+ * may not after a move), and a lost answer is reported as `mutationOutcome: 'unknown'` for the
+ * caller to settle by sending it again or re-reading. A note is refused by the server.
+ */
+export const addFavorite = (
+  transport: Transport,
+  request: FavoriteRequestInput,
+  signal?: AbortSignal,
+): Promise<ClientResult<AddFavoriteResponse>> =>
+  run(
+    transport,
+    NODE_ROUTES.addFavorite,
+    decodeFavoriteRequest as Decoder<unknown>,
+    decodeAddFavoriteResponse,
+    request,
+    200,
+    true,
+    signal,
+  );
+
+/** Make a node not a favorite. The same safety as `addFavorite`; answers `{ nodeId, isFavorite: false }`. */
+export const removeFavorite = (
+  transport: Transport,
+  request: FavoriteRequestInput,
+  signal?: AbortSignal,
+): Promise<ClientResult<RemoveFavoriteResponse>> =>
+  run(
+    transport,
+    NODE_ROUTES.removeFavorite,
+    decodeFavoriteRequest as Decoder<unknown>,
+    decodeRemoveFavoriteResponse,
+    request,
+    200,
+    true,
+    signal,
+  );
+
+/** One page of favorites that are not archived, by title then id. Answers 200 with an ordinary page. */
+export const listFavorites = (
+  transport: Transport,
+  request: FavoriteListRequestInput,
+  signal?: AbortSignal,
+): Promise<ClientResult<ListResponse>> =>
+  run(
+    transport,
+    NODE_ROUTES.listFavorites,
+    decodeFavoriteListRequest as Decoder<unknown>,
+    decodeListResponse,
     request,
     200,
     false,

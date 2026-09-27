@@ -21,9 +21,11 @@ export { pathSegments, type Hierarchy, type HierarchyNode } from './client/hiera
 export {
   ancestorsOf,
   childrenOf,
+  containerLookup,
   containerTitleLookup,
   useContainerPath,
   useHierarchy,
   type ContainerChildren,
+  type ContainerPill,
   type HierarchyQuery,
 } from './client/queries';

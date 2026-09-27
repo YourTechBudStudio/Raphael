@@ -593,3 +593,33 @@ describe('archive causes', () => {
     rejects(() => cause(target, 'user', 'r4', -1), /archive_causes_created_at_safe/);
   });
 });
+
+describe('favorites', () => {
+  // Rows are written here directly: this suite asks what the table permits, not what `favorites.ts`
+  // chooses to write.
+  const favorite = (nodeId: number) =>
+    db.prepare('INSERT INTO favorites (node_id) VALUES (?)').run(nodeId);
+  let target: number;
+
+  test('a node is a favorite at most once', () => {
+    insertNode(db, { type: 'project', parentId: WORK, parentType: 'area', slug: 'starred' });
+    target = one<{ id: number }>(db, `SELECT id FROM nodes WHERE slug = 'starred'`).id;
+    favorite(target);
+    rejects(() => favorite(target), /UNIQUE constraint failed|PRIMARY KEY/);
+    assert.equal(count(db, 'SELECT count(*) AS c FROM favorites WHERE node_id = ?', target), 1);
+  });
+
+  test('a favorited node cannot be deleted, and a favorite must name a node', () => {
+    rejects(
+      () => db.prepare('DELETE FROM nodes WHERE id = ?').run(target),
+      /FOREIGN KEY constraint failed/,
+    );
+    rejects(() => favorite(999_999), /FOREIGN KEY constraint failed/);
+  });
+
+  test('favoriting leaves the node row untouched', () => {
+    const before = one(db, 'SELECT revision, updated_at FROM nodes WHERE id = ?', WORK);
+    favorite(WORK);
+    assert.deepEqual(one(db, 'SELECT revision, updated_at FROM nodes WHERE id = ?', WORK), before);
+  });
+});

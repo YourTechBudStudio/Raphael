@@ -30,6 +30,7 @@ export type InvalidInputReason =
   | 'slug_too_long'
   | 'tags_too_many'
   | 'active_requires_project'
+  | 'favorite_requires_container'
   | 'query_malformed'
   | 'query_too_long'
   | 'query_too_many_terms'
@@ -180,6 +181,7 @@ const INVALID_INPUT_MESSAGES: Readonly<Record<InvalidInputReason, string>> = {
   slug_too_long: 'The address is longer than the limit.',
   tags_too_many: 'Too many tags.',
   active_requires_project: 'Only a project can be marked active.',
+  favorite_requires_container: 'Favorites hold areas and projects.',
   query_malformed: 'The search query is not well formed.',
   query_too_long: 'The search query is longer than the limit.',
   query_too_many_terms: 'The search query has more terms than the limit.',

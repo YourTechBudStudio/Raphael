@@ -52,7 +52,7 @@ describe('migration assets', () => {
 
   test('the journal and its files agree', () => {
     const bundled = readBundledMigrations(migrationsFolder);
-    assert.equal(bundled.length, 6);
+    assert.equal(bundled.length, 7);
     assert.deepEqual(
       bundled.map((m) => m.tag),
       [
@@ -62,6 +62,7 @@ describe('migration assets', () => {
         '0003_active_projects',
         '0004_search_index',
         '0005_archive_causes',
+        '0006_favorites',
       ],
     );
     for (const migration of bundled) assert.match(migration.hash, /^[0-9a-f]{64}$/);
@@ -223,7 +224,7 @@ describe('initialization', () => {
           inspectMigrationHistory(second.db, readBundledMigrations(migrationsFolder)),
           {
             state: 'current',
-            applied: 6,
+            applied: 7,
           },
         );
       } finally {
@@ -479,15 +480,15 @@ describe('migration failure', () => {
       const journalPath = join(broken, 'meta', '_journal.json');
       const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
       journal.entries.push({
-        idx: 6,
+        idx: 7,
         version: '6',
         when: Date.now(),
-        tag: '0006_broken',
+        tag: '0007_broken',
         breakpoints: true,
       });
       writeFileSync(journalPath, JSON.stringify(journal));
       writeFileSync(
-        join(broken, '0006_broken.sql'),
+        join(broken, '0007_broken.sql'),
         'ALTER TABLE nodes ADD COLUMN experiment TEXT;\n--> statement-breakpoint\nTHIS IS NOT VALID SQL;',
       );
 
@@ -498,7 +499,7 @@ describe('migration failure', () => {
       );
       assert.ok(!columns.includes('experiment'), 'partial DDL must not survive');
       assert.equal(count(connection.db, `SELECT count(*) AS c FROM nodes WHERE slug = 'live'`), 1);
-      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 6);
+      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 7);
     } finally {
       connection.close();
       temp.cleanup();
@@ -651,6 +652,76 @@ describe('saved creation replays across the archive migration', () => {
   });
 });
 
+describe('saved creation replays across the favorites migration', () => {
+  test('a replay saved before 0006 still replays, and states the entity was not a favorite', () => {
+    // A replay returns the saved response through the current decoder, which now requires
+    // `isFavorite`. `0006` adds it to every saved result as `false`, which was true when it was saved:
+    // a favorite references an existing node, and the node did not exist before its creation.
+    const temp = tempDatabase('replay-favorites');
+    const partial = join(temp.dir, 'through-0005');
+    cpSync(migrationsFolder, partial, { recursive: true });
+    const journalPath = join(partial, 'meta', '_journal.json');
+    const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
+      entries: { idx: number; tag: string }[];
+    };
+    const dropped = journal.entries.filter((entry) => entry.idx > 5);
+    journal.entries = journal.entries.filter((entry) => entry.idx <= 5);
+    writeFileSync(journalPath, JSON.stringify(journal));
+    for (const entry of dropped) rmSync(join(partial, `${entry.tag}.sql`));
+
+    const connection = openDatabase({ databasePath: temp.file });
+    try {
+      migrateToLatest(connection.db, partial);
+      const request = {
+        type: 'area',
+        parent: { path: '/' },
+        title: 'Garden',
+        idempotencyKey: 'before-favorites',
+      };
+      // Creation reads no favorite, so today's operation can create against a `0005` database. What it
+      // saves is then put back into the shape a `0005` server saved.
+      const original = expectRight(runNodes(connection, createNode(request), clockAt(T_SAVED)));
+      connection.db.exec(
+        `UPDATE creation_replays SET result_json = json_remove(result_json, '$.entity.isFavorite')`,
+      );
+      assert.equal(
+        one<{ present: number }>(
+          connection.db,
+          `SELECT json_type(result_json, '$.entity.isFavorite') IS NOT NULL AS present
+             FROM creation_replays WHERE key = 'before-favorites'`,
+        ).present,
+        0,
+        'the saved answer is in its 0005 shape',
+      );
+      // A record with no entity is not repaired into one.
+      connection.db
+        .prepare(
+          `INSERT INTO creation_replays (key, fingerprint, result_json, created_at, expires_at)
+           VALUES ('no-entity', 'x', '{"unexpected":true}', ?, ?)`,
+        )
+        .run(T_SAVED, T_SAVED + 60_000);
+
+      migrateToLatest(connection.db);
+
+      const replayed = expectRight(
+        runNodes(connection, createNode(request), clockAt(T_SAVED + 1_000)),
+      );
+      assert.deepEqual(replayed, original);
+      assert.equal(replayed.entity.isFavorite, false);
+      assert.equal(
+        one<{ result_json: string }>(
+          connection.db,
+          `SELECT result_json FROM creation_replays WHERE key = 'no-entity'`,
+        ).result_json,
+        '{"unexpected":true}',
+      );
+    } finally {
+      connection.close();
+      temp.cleanup();
+    }
+  });
+});
+
 describe('generated artifact introspection', () => {
   // Structural introspection rather than a byte-exact SQL snapshot: whitespace or a harmless generator
   // spelling change must not read as an integrity regression, and the expectations below are written
@@ -740,6 +811,9 @@ describe('generated artifact introspection', () => {
         // needs, and it adds nothing to `nodes`.
         'table:archive_causes',
         'table:creation_replays',
+        // Favorites, one row per favorited node. Its primary key is the only index it needs, and it
+        // adds nothing to `nodes`.
+        'table:favorites',
         'table:nodes',
         // One virtual table and the four shadow tables FTS5 creates to back it. They are the storage
         // an external-content index needs and are not addressed directly by anything we write.

@@ -5,8 +5,8 @@
  * container numbered 3, and a voice note captured against each. A flat store keyed by container id
  * would show one server's media under the other server's area, and nothing on screen would say so.
  *
- * Active projects used to be held here too. They are the server's now, so what is left is media and
- * favorites - and the per-connection isolation still has to hold for them.
+ * Active projects and favorites used to be held here too. They are the server's now, so what is left
+ * is media - and the per-connection isolation still has to hold for it.
  */
 
 import assert from 'node:assert/strict';
@@ -21,10 +21,9 @@ const capture = (connectionId, parent, title) =>
   localContent.createVoiceNote(connectionId, parent, title, 12, [0.2, 0.5, 0.8]);
 
 describe('two servers that both have a container 3', () => {
-  it('keep their media and stars apart', async () => {
+  it('keep their media apart', async () => {
     await capture('server-a', AREA_3, 'From A');
     await capture('server-b', AREA_3, 'From B');
-    await localContent.toggleFavorite('server-a', AREA_3);
 
     assert.deepEqual(
       (await localContent.getResources('server-a')).map((item) => item.title),
@@ -34,15 +33,12 @@ describe('two servers that both have a container 3', () => {
       (await localContent.getResources('server-b')).map((item) => item.title),
       ['From B'],
     );
-    assert.deepEqual(await localContent.getFavorites('server-a'), [AREA_3]);
-    assert.deepEqual(await localContent.getFavorites('server-b'), []);
   });
 
   it('forgetting one leaves the other untouched', async () => {
     localContent.forget('server-a');
 
     assert.deepEqual(await localContent.getResources('server-a'), []);
-    assert.deepEqual(await localContent.getFavorites('server-a'), []);
     assert.deepEqual(
       (await localContent.getResources('server-b')).map((item) => item.title),
       ['From B'],
@@ -89,15 +85,14 @@ describe('what a local record holds', () => {
     assert.equal(localContent.setProjectActive, undefined);
   });
 
+  it('holds no favorites, which the server owns now', () => {
+    // The server's own list, read and written by `modules/favorites`. A second copy here would be
+    // stars that no other client sees and that die with the process.
+    assert.equal(localContent.getFavorites, undefined);
+    assert.equal(localContent.toggleFavorite, undefined);
+  });
+
   it('starts empty, with nothing seeded against ids nobody chose', async () => {
     assert.deepEqual(await localContent.getResources('fresh'), []);
-    assert.deepEqual(await localContent.getFavorites('fresh'), []);
-  });
-});
-
-describe('the selections themselves', () => {
-  it('stars and unstars idempotently', async () => {
-    assert.deepEqual(await localContent.toggleFavorite('sel', AREA_3), [AREA_3]);
-    assert.deepEqual(await localContent.toggleFavorite('sel', AREA_3), []);
   });
 });

@@ -8,25 +8,15 @@
  * identical on screen to any code that only knows the request is over.
  *
  * Two more it keeps. A query that has not been sent - empty, or still being typed into a phrase, or
- * refused before it left - reports no results rather than no matches. And a full page is never the
- * whole answer: `isCapped` carries the server's own `hasMore` to the screen so the cap can be said
- * out loud.
- *
- * The five page-derived flags are the first five of `deriveNoteFeed`'s, restated rather than shared.
- * Those distinctions are about a paged sequence - a failed next page, a walk that can continue - and
- * this screen has no second page to have them about. Sharing would drag next-page semantics into a
- * screen with none; the cost is five lines that must agree in meaning, not in code.
+ * refused before it left - reports no results rather than no matches. And a failed next page is not
+ * a failed search: the rows already read stay, and the end of the list is never implied while the
+ * page after them could not be read.
  */
 
 import type { SearchQueryRejection, TagsRejection } from '@raphael/contracts/nodes';
 
 import { asClientFailure } from '../../../infrastructure/query/failure.ts';
-import {
-  EMPTY_GROUPS,
-  groupSearchResults,
-  type SearchGroups,
-  type SearchPage,
-} from './requests.ts';
+import { flattenSearchPages, type SearchPage, type SearchResultItem } from './requests.ts';
 
 /**
  * The server looked for the scope and it is not there.
@@ -73,11 +63,14 @@ export interface SearchObservation {
   readonly tagsRejection: TagsRejection | undefined;
   /** The last read failed with `node_not_found` on `scopes`: the container searched in is gone. */
   readonly scopeGone: boolean;
-  /** The last successful reading, if any. */
-  readonly page: SearchPage | undefined;
+  /** The pages of the last successful reading, in request order, if any. */
+  readonly pages: readonly SearchPage[] | undefined;
   readonly isPending: boolean;
   /** The most recent read failed, whether or not an earlier one succeeded. */
   readonly isError: boolean;
+  readonly isFetchingNextPage: boolean;
+  /** The most recent read was a next page, and it failed. The pages before it stand. */
+  readonly isFetchNextPageError: boolean;
 }
 
 export interface SearchView {
@@ -91,18 +84,26 @@ export interface SearchView {
   readonly isLoading: boolean;
   /** Nothing arrived and the read failed. There are no results, so the line stands alone. */
   readonly isUnavailable: boolean;
-  /** Results are on screen from an earlier reading and a later read of the same search failed. */
+  /**
+   * Pages are on screen from an earlier reading and a later read of them failed. Not a failed next
+   * page: that one says so at the end of the list instead.
+   */
   readonly isStale: boolean;
-  /** The server answered, and nothing matched. */
+  /** The server answered, nothing matched, and it has nothing more to send. */
   readonly isEmpty: boolean;
-  /** The page is full and the server has more. What is shown is a prefix, and says so. */
-  readonly isCapped: boolean;
+  /** The next page is being read. */
+  readonly isLoadingMore: boolean;
+  /** The next page failed. Every row read so far stays; the list has not ended. */
+  readonly isMoreError: boolean;
+  /** The server has more after the last page. The list has not ended. */
+  readonly hasMore: boolean;
   /**
    * The server says an archived node matched and was left out, so turning "Include archived" on would
-   * add results. From the page on screen; never true when archived nodes were included.
+   * add results. From the newest page; never true when archived nodes were included.
    */
   readonly archivedLeftOut: boolean;
-  readonly groups: SearchGroups;
+  /** Every page's rows, in the server's order, each node once. */
+  readonly items: readonly SearchResultItem[];
 }
 
 const nothing = (over: Partial<SearchView>): SearchView => ({
@@ -113,9 +114,11 @@ const nothing = (over: Partial<SearchView>): SearchView => ({
   isUnavailable: false,
   isStale: false,
   isEmpty: false,
-  isCapped: false,
+  isLoadingMore: false,
+  isMoreError: false,
+  hasMore: false,
   archivedLeftOut: false,
-  groups: EMPTY_GROUPS,
+  items: [],
   ...over,
 });
 
@@ -140,17 +143,26 @@ export const deriveSearchView = (observation: SearchObservation): SearchView => 
   // offers cannot succeed.
   if (observation.scopeGone) return nothing({ isScopeGone: true });
 
-  const page = observation.page;
+  const pages = observation.pages;
+  const newest = pages?.at(-1);
 
-  if (page === undefined) {
+  if (pages === undefined || newest === undefined) {
     return nothing({ isLoading: observation.isPending, isUnavailable: observation.isError });
   }
 
+  const items = flattenSearchPages(pages);
+
   return nothing({
-    isStale: observation.isError,
-    isEmpty: page.items.length === 0,
-    isCapped: page.hasMore,
-    archivedLeftOut: page.archivedLeftOut,
-    groups: groupSearchResults(page.items),
+    isStale: observation.isError && !observation.isFetchNextPageError,
+    // Also requires that nothing more is coming. A page whose every hit was a kind this build cannot
+    // draw would map to no rows while the server still had more; that cannot happen today, since
+    // notes are the only resource kind and they are drawn.
+    isEmpty: items.length === 0 && !newest.hasMore,
+    isLoadingMore: observation.isFetchingNextPage,
+    isMoreError: observation.isFetchNextPageError,
+    hasMore: newest.hasMore,
+    // It describes the whole match set, so every page says the same; the newest is the latest word.
+    archivedLeftOut: newest.archivedLeftOut,
+    items,
   });
 };

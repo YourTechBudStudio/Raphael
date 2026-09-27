@@ -5,7 +5,7 @@ import { toMarkdown } from '@raphael/content/conversion';
 import { canonicalizeDocument } from '@raphael/content/schema';
 import type { Decoder } from '@raphael/contracts';
 import { RESOURCE_KINDS, type BodyFormat, type ResourceKind } from '@raphael/contracts/nodes';
-import { sql, type SQL } from 'drizzle-orm';
+import { sql, type SQL, type SQLWrapper } from 'drizzle-orm';
 import { Either } from 'effect';
 
 import { InternalFailure } from './errors.ts';
@@ -144,6 +144,17 @@ const projectedKind = (
 };
 
 /**
+ * Whether a favorite row exists for a node, as `0` or `1`.
+ *
+ * The one reader of favorite membership: both summary column lists (`SUMMARY_COLUMNS` here and
+ * `resolve.ts`'s Drizzle list) and update's commit-time read use it, so the rule has one spelling.
+ * `nodeId` is a column, an alias, or a bound id. The inner alias is `favorite` so it cannot shadow a
+ * caller's alias.
+ */
+export const favoriteExpression = (nodeId: SQLWrapper): SQL<number> =>
+  sql<number>`EXISTS (SELECT 1 FROM favorites favorite WHERE favorite.node_id = ${nodeId})`;
+
+/**
  * The columns a summary is read from, aliased as `StoredSummary` names them.
  *
  * Here rather than in either page operation, because this is the module that owns the "every field
@@ -154,7 +165,8 @@ const projectedKind = (
  */
 export const SUMMARY_COLUMNS: SQL = sql`n.id AS id, n.type AS type, n.kind AS kind,
   n.parent_id AS parentId, n.slug AS slug, n.revision AS revision, n.title AS title,
-  n.description AS description, n.tags AS tags, n.active AS active`;
+  n.description AS description, n.tags AS tags, n.active AS active,
+  ${favoriteExpression(sql`n.id`)} AS isFavorite`;
 
 /**
  * The summary fields, every one of them named.
@@ -185,6 +197,8 @@ export const summaryProjection = (
     // `1` to a project, so there is no third value for a check here to catch.
     active: row.active === 1,
     archived,
+    // `EXISTS` can only produce `0` or `1`, so there is no third value to check for.
+    isFavorite: row.isFavorite === 1,
   };
 };
 

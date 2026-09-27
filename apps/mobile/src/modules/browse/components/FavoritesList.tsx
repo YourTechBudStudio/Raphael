@@ -1,128 +1,225 @@
-import { ActivityIndicator, Text, View } from 'react-native';
+import { View } from 'react-native';
 
-import type { ContainerRef } from '../../../infrastructure/api/contracts';
-import { emblemFor, EmptyState, SectionError, colors } from '../../../ui';
+import type { ContainerRef, ContainerType } from '../../../infrastructure/api/contracts';
 import {
+  Chip,
+  FavoriteButton,
+  ListRow,
+  PrimaryButton,
+  SectionError,
+  StateLine,
+  WaitingLine,
+  type ListRowParent,
+} from '../../../ui';
+import { containerLookup, useHierarchy } from '../../collections';
+import {
+  favoriteFailureSentence,
+  useFavoritePages,
   useFavoriteToggle,
-  useFavorites,
-  useHierarchy,
-  CollectionTile,
-  HierarchyError,
-  HierarchyStale,
-  type HierarchyNode,
-} from '../../collections';
+  type FavoriteItem,
+} from '../../favorites';
 
 interface FavoritesListProps {
   query: string;
   onSelect: (ref: ContainerRef) => void;
 }
 
+const KIND_WORDS: Record<ContainerType, string> = { area: 'Area', project: 'Project' };
+
+const OPEN_HINTS: Record<ContainerType, string> = {
+  area: 'Opens this area',
+  project: 'Opens this project',
+};
+
+/** A sentence with a Retry under it, for a read that did not come back. */
+function RetryLine({
+  sentence,
+  hint,
+  onRetry,
+  testID,
+}: {
+  sentence: string;
+  hint: string;
+  onRetry: () => void;
+  testID: string;
+}) {
+  return (
+    <View className="gap-3" testID={testID}>
+      <StateLine>{sentence}</StateLine>
+      <View className="flex-row">
+        <Chip accessibilityHint={hint} label="Retry" onPress={onRetry} />
+      </View>
+    </View>
+  );
+}
+
+interface FavoriteRowProps {
+  item: FavoriteItem;
+  parent: ListRowParent | undefined;
+  onSelect: (ref: ContainerRef) => void;
+}
+
 /**
- * Favorites are shortcuts, independent from Home's active projects.
+ * One favorite, with its own star.
  *
- * A favorite is stored as a reference and nothing more, so its name has to be read out of the
- * hierarchy every time. That is the point: a container renamed on the server is renamed here at
- * once, and a star can never carry a title that stopped being true.
+ * One toggle per row, as `useProjectActive` requires: a mutation observer reports only its latest
+ * dispatch, so a list-wide instance would lose row A's refusal as soon as row B was tapped. What is in
+ * flight and what the server confirmed are still shared by every star, because they come from the
+ * mutation cache and the confirmed-answer entry. Only the verdict belongs to the row, and a row that
+ * leaves after a successful remove takes its verdict with it, which is right: that write succeeded.
+ */
+function FavoriteRow({ item, parent, onSelect }: FavoriteRowProps) {
+  const favorite = useFavoriteToggle();
+  const { node, read } = item;
+
+  return (
+    <ListRow
+      accessibilityHint={OPEN_HINTS[node.type]}
+      failure={favoriteFailureSentence(favorite.failure)}
+      kindLabel={KIND_WORDS[node.type]}
+      mark={{ kind: node.type, id: node.id }}
+      onPress={() => {
+        onSelect({ type: node.type, id: node.id });
+      }}
+      parent={parent}
+      testID="favorite-row"
+      title={node.title}
+      trailing={
+        <FavoriteButton
+          busy={favorite.isBusy(node.id)}
+          favorited={favorite.isFavorite(read)}
+          label={node.title}
+          onToggle={() => {
+            favorite.toggle(read);
+          }}
+          size={22}
+        />
+      }
+    />
+  );
+}
+
+/**
+ * Browse → Favorites: the server's favorites list, as one flat list of rows in its order.
  *
- * It follows that this list needs the hierarchy, and inherits its loading and failure states. A
- * hierarchy that did not load is reported as a hierarchy that did not load - never as "you have no
- * favorites", which would be a claim about someone's data made from a network error.
+ * The server decides membership and order - favorites that are not archived, by title then id - and
+ * each row is exactly what its page said. The hierarchy is read only for the parent pill, and it
+ * never decides what is listed: while it is missing or stale the pill is simply left out, so a row
+ * never names a parent that may have changed.
  *
- * A star pointing at something the loaded hierarchy does not contain is not deleted and not
- * rendered as a broken row. It is counted, and the count is stated, because the star may be
- * pointing at something that was removed on the server and only the owner can decide about that.
+ * The filter is the only one on the tab: a case-insensitive title match over the *complete* list. So
+ * a non-empty filter first loads every page and says nothing about matches until it has; "No
+ * favorite matches" is only ever said about every favorite, and a page that fails while filtering is
+ * reported as that, never as no match.
+ *
+ * A failure is never shown as an empty list. The first page failing is an error with Retry; a
+ * refresh failing over rows keeps them and says they may be out of date; a later page failing keeps
+ * the rows above it and says so under them. More pages load from "Show more" rather than on scroll,
+ * because `BrowseScreen` owns the scroll view and with 500 favorites to a page a second is rare.
  */
 export function FavoritesList({ query, onSelect }: FavoritesListProps) {
-  const favorites = useFavorites();
-  const favorite = useFavoriteToggle();
+  const needle = query.trim().toLowerCase();
+  const filtering = needle !== '';
+  const pages = useFavoritePages({ complete: filtering });
   const tree = useHierarchy();
+  const containerOf = containerLookup(tree);
 
-  if (tree.isError && tree.hierarchy === undefined) {
-    return (
-      <HierarchyError
-        title="Your areas and projects did not load, so favorites cannot be named."
-        tree={tree}
-      />
-    );
-  }
+  const parentOf = (parentId: number | null): ListRowParent | undefined => {
+    const parent = parentId === null ? undefined : containerOf(parentId);
 
-  if (favorites.isError) {
+    return parent === undefined
+      ? undefined
+      : { kind: parent.type, id: parent.id, title: parent.title };
+  };
+
+  if (pages.isError) {
     return (
       <SectionError
-        onRetry={() => {
-          void favorites.refetch();
-        }}
-        retrying={favorites.isFetching}
+        onRetry={pages.retry}
+        retrying={pages.isFetching}
         title="Favorites did not load."
       />
     );
   }
 
-  if (favorites.data === undefined || tree.hierarchy === undefined) {
+  if (pages.items === undefined) return <WaitingLine>Loading favorites…</WaitingLine>;
+
+  // A failed refresh stops the loading too (see `useFavoritePages`), so it is reported the same way:
+  // the filter cannot say what matches until Retry has reread the list.
+  if (filtering && !pages.isComplete) {
+    return pages.isMoreError || pages.isStale ? (
+      <RetryLine
+        hint="Asks for the rest of your favorites again"
+        onRetry={pages.retry}
+        sentence="Could not check every favorite, so the filter cannot say what matches."
+        testID="favorites-filter-failed"
+      />
+    ) : (
+      <WaitingLine>Checking every favorite…</WaitingLine>
+    );
+  }
+
+  const rows = filtering
+    ? pages.items.filter((item) => item.node.title.toLowerCase().includes(needle))
+    : pages.items;
+
+  const stale = pages.isStale ? (
+    <RetryLine
+      hint="Reads your favorites again"
+      onRetry={pages.retry}
+      sentence="Favorites may be out of date. The last refresh did not load."
+      testID="favorites-stale"
+    />
+  ) : null;
+
+  if (rows.length === 0) {
     return (
-      <View className="items-center py-8">
-        <ActivityIndicator accessibilityLabel="Loading favorites" color={colors.primary} />
+      <View className="gap-3">
+        {stale}
+        <StateLine>
+          {filtering
+            ? `No favorite matches “${query.trim()}”.`
+            : 'No favorites yet. Star an area or project to keep a shortcut here.'}
+        </StateLine>
       </View>
     );
   }
 
-  const { hierarchy } = tree;
-  const resolved = favorites.data
-    .map((ref) => ({ ref, node: hierarchy.byId.get(ref.id) }))
-    .filter(
-      (entry): entry is { ref: ContainerRef; node: HierarchyNode } =>
-        entry.node !== undefined && entry.node.type === entry.ref.type,
-    );
-  const missing = favorites.data.length - resolved.length;
-
-  const needle = query.trim().toLowerCase();
-  const matches = resolved.filter((entry) => entry.node.title.toLowerCase().includes(needle));
-
   return (
-    <View className="gap-2">
-      {/* Every row's name is read out of the hierarchy, so a stale hierarchy is stale names. */}
-      <HierarchyStale tree={tree} />
-      {matches.length === 0 ? (
-        <EmptyState
-          title={needle === '' ? 'No favorites yet.' : 'No matching favorites.'}
-          description={
-            needle === ''
-              ? 'Star an area or project to keep a shortcut here.'
-              : 'Try a different name or clear the filter.'
-          }
-        />
-      ) : (
-        matches.map((entry) => (
-          <CollectionTile
-            key={entry.node.id}
-            name={entry.node.title}
-            nameNumberOfLines={0}
-            compact
-            accessibilityHint={`Opens ${entry.node.type} ${entry.node.title}`}
-            emblem={emblemFor(entry.node.type, entry.node.id)}
-            trailing="favorite"
-            favorited={favorite.isFavorite(entry.ref)}
-            onToggleFavorite={() => {
-              favorite.toggle(entry.ref);
-            }}
-            onPress={() => {
-              onSelect(entry.ref);
-            }}
+    <View className="gap-3">
+      {stale}
+      <View className="gap-0.5">
+        {rows.map((item) => (
+          // Keyed by node, so a refetch or a reorder keeps each row's toggle, and its verdict, with
+          // the node it belongs to.
+          <FavoriteRow
+            item={item}
+            key={item.node.id}
+            onSelect={onSelect}
+            parent={parentOf(item.node.parentId)}
           />
-        ))
+        ))}
+      </View>
+      {filtering ? null : pages.isMoreError ? (
+        <RetryLine
+          hint="Asks for the next favorites again"
+          onRetry={pages.retry}
+          sentence="More favorites did not load."
+          testID="favorites-more-failed"
+        />
+      ) : pages.isComplete || pages.isStale ? null : (
+        // Busy rather than hidden while any read runs, so the control stays where it was pressed;
+        // `loadMore` asks for nothing while a read is in flight either way. Hidden while the list
+        // is stale: the next page would follow pages that may have changed, so the notice's Retry
+        // above the rows comes first.
+        <PrimaryButton
+          accessibilityHint="Loads the next favorites"
+          busy={pages.isFetching}
+          label="Show more"
+          onPress={pages.loadMore}
+          testID="favorites-show-more"
+        />
       )}
-      {missing > 0 ? (
-        <Text className="font-body text-[14px] leading-[20px] text-ink-soft">
-          {missing === 1
-            ? 'One starred item is not in this hierarchy any more. It has not been removed from here.'
-            : `${String(missing)} starred items are not in this hierarchy any more. They have not been removed from here.`}
-        </Text>
-      ) : null}
-      {favorite.isError ? (
-        <Text accessibilityLiveRegion="polite" className="font-body text-[15px] text-danger">
-          Favorite did not update. Try again.
-        </Text>
-      ) : null}
     </View>
   );
 }

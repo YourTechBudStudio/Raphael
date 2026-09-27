@@ -32,7 +32,14 @@ export interface AttemptContext {
    * on its behalf - see `beforeDispatch`. Absent only for a plain read command, whose outcome is
    * never `unknown` and which therefore never reaches the wording at all.
    */
-  readonly operation?: 'create' | 'update' | 'move' | 'archive' | 'restore';
+  readonly operation?:
+    | 'create'
+    | 'update'
+    | 'move'
+    | 'archive'
+    | 'restore'
+    | 'favorite'
+    | 'unfavorite';
   /**
    * Set when this failure happened while *preparing* the mutation, so the mutation itself never left.
    *
@@ -45,7 +52,7 @@ export interface AttemptContext {
   readonly beforeDispatch?: boolean;
   /**
    * Present for a move whose target identifier is known: given with --id, or learned by the
-   * convenience read. Used only to word the recovery guidance, and deliberately not part of the
+   * convenience read. Present for a favorite change given with --id. Used only to word the recovery guidance, and deliberately not part of the
    * machine report, whose shape does not change for one operation.
    */
   readonly targetId?: number;
@@ -148,6 +155,22 @@ const moveGuidance = (targetId: number | undefined): string[] =>
       ];
 
 /**
+ * A favorite change states its result, so sending it again to the same node is harmless. Only an id
+ * guarantees the same node: a path can name something else after a move or an address change, so the
+ * advice for a path says to check it first, or to use the id.
+ */
+const favoriteGuidance = (
+  operation: 'favorite' | 'unfavorite',
+  targetId: number | undefined,
+): string[] => [
+  '',
+  `Could not confirm whether this was ${operation === 'favorite' ? 'added to' : 'removed from'} your favorites.`,
+  targetId === undefined
+    ? 'A path can name something else after a move, so check it with "raphael get" before running this again, or run it with --id. Sending it again to the same item only sets the state you asked for.'
+    : `Running "raphael ${operation} --id ${targetId}" again is safe: it only sets the state you asked for.`,
+];
+
+/**
  * Recovery guidance, chosen by outcome and by which operation was attempted.
  *
  * Deliberately non-assertive for `unknown`: it says what could not be established and what to do, and
@@ -218,11 +241,13 @@ const guidanceFor = (failure: ClientFailure, context: AttemptContext): string[] 
             `Could not confirm whether this was ${context.operation === 'archive' ? 'archived' : 'restored'}.`,
             'Read it again with "raphael get" and compare the revision before sending it again. Raphael does not retry a change on its own.',
           ]
-        : context.operation === 'move'
-          ? moveGuidance(context.targetId)
-          : context.operation === 'create'
-            ? ['', 'Could not confirm whether this was created.']
-            : ['', 'Could not confirm whether this was applied.'];
+        : context.operation === 'favorite' || context.operation === 'unfavorite'
+          ? favoriteGuidance(context.operation, context.targetId)
+          : context.operation === 'move'
+            ? moveGuidance(context.targetId)
+            : context.operation === 'create'
+              ? ['', 'Could not confirm whether this was created.']
+              : ['', 'Could not confirm whether this was applied.'];
 
   // Kept under its existing guard rather than broadened to every `unknown`. An `internal_error` or a
   // non-shutdown `storage_busy` is also `unknown`, and there the server answered and failed inside

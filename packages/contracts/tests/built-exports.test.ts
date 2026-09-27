@@ -78,6 +78,24 @@ test('the nodes entry point publishes the update vocabulary', async () => {
   assert.equal(nodes.normalizeTag(' Cafe\u0301 '), 'Caf\u00e9');
 });
 
+test('the nodes entry point publishes the favorites vocabulary', async () => {
+  const nodes = await import('@raphael/contracts/nodes');
+  assert.equal(nodes.NODE_ROUTES.addFavorite.path, '/api/favorites/add');
+  assert.equal(nodes.NODE_ROUTES.removeFavorite.path, '/api/favorites/remove');
+  assert.equal(nodes.NODE_ROUTES.listFavorites.path, '/api/favorites/list');
+  assert.equal(Either.isRight(nodes.decodeFavoriteRequest({ target: { id: 1 } })), true);
+  assert.equal(Either.isRight(nodes.decodeFavoriteListRequest({})), true);
+  assert.equal(
+    Either.isRight(nodes.decodeAddFavoriteResponse({ nodeId: 1, isFavorite: true })),
+    true,
+  );
+  assert.equal(
+    Either.isRight(nodes.decodeRemoveFavoriteResponse({ nodeId: 1, isFavorite: false })),
+    true,
+  );
+  assert.equal('PageWindowFields' in nodes, false, 'the window stays internal to the contracts');
+});
+
 test('the connection entry point decodes verification', async () => {
   const connection = await import('@raphael/contracts/connection');
   assert.equal(connection.CONNECTION_ROUTES.verify.path, '/api/connection/verify');

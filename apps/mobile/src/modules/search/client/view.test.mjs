@@ -4,8 +4,8 @@
  * These distinctions were never test-covered before, and they are the part of search that is worth
  * covering most: every one of them is a different sentence to a person, and collapsing any two of
  * them is a lie the code could tell without ever failing. "Nothing matched" is not "could not
- * search". A query nobody has finished typing has not returned nothing. And a full page is not the
- * whole answer.
+ * search". A query nobody has finished typing has not returned nothing. And a failed next page is
+ * neither a failed search nor the end of the list.
  */
 
 import assert from 'node:assert/strict';
@@ -19,23 +19,28 @@ const observation = (over = {}) => ({
   queryRejection: undefined,
   tagsRejection: undefined,
   scopeGone: false,
-  page: undefined,
+  pages: undefined,
   isPending: false,
   isError: false,
+  isFetchingNextPage: false,
+  isFetchNextPageError: false,
   ...over,
 });
 
-const page = (items = [], hasMore = false, archivedLeftOut = false) => ({
+const page = (items = [], hasMore = false, archivedLeftOut = false, skip = 0) => ({
   items,
+  skip,
+  limit: 50,
   hasMore,
   archivedLeftOut,
 });
 
 const containerItem = (id, type = 'area') => ({
-  kind: 'container',
-  ref: { type, id },
+  id,
+  type,
   title: `Node ${String(id)}`,
-  description: '',
+  parentId: null,
+  archived: false,
 });
 
 /** Every flag but the ones named, so a state cannot quietly also be another one. */
@@ -47,7 +52,9 @@ const onlyFlag = (view, name) => {
     'isUnavailable',
     'isStale',
     'isEmpty',
-    'isCapped',
+    'isLoadingMore',
+    'isMoreError',
+    'hasMore',
   ]) {
     assert.equal(view[flag], flag === name, `${flag} should be ${String(flag === name)}`);
   }
@@ -74,11 +81,11 @@ describe('nothing has been asked', () => {
 
   it('shows no results while idle, whatever else arrived', () => {
     const view = deriveSearchView(
-      observation({ query: '', page: page([containerItem(3)], true), isError: true }),
+      observation({ query: '', pages: [page([containerItem(3)], true)], isError: true }),
     );
 
     onlyFlag(view, 'isIdle');
-    assert.deepEqual(view.groups, { areas: [], projects: [], notes: [] });
+    assert.deepEqual(view.items, []);
   });
 });
 
@@ -164,11 +171,11 @@ describe('the scope is gone', () => {
 
   it('takes precedence over results from an earlier reading', () => {
     const view = deriveSearchView(
-      observation({ scopeGone: true, isError: true, page: page([containerItem(3)]) }),
+      observation({ scopeGone: true, isError: true, pages: [page([containerItem(3)])] }),
     );
 
     onlyFlag(view, 'isScopeGone');
-    assert.deepEqual(view.groups, { areas: [], projects: [], notes: [] });
+    assert.deepEqual(view.items, []);
   });
 });
 
@@ -184,31 +191,92 @@ describe('reading the server', () => {
   it('is stale, not unavailable, when results are on screen and a later read failed', () => {
     // The results already shown were true when they were read. Clearing them because a refresh
     // went wrong would throw away a good reading over a later failure.
-    const view = deriveSearchView(observation({ page: page([containerItem(3)]), isError: true }));
+    const view = deriveSearchView(
+      observation({ pages: [page([containerItem(3)])], isError: true }),
+    );
 
     onlyFlag(view, 'isStale');
     assert.deepEqual(
-      view.groups.areas.map((item) => item.ref.id),
+      view.items.map((item) => item.id),
       [3],
     );
   });
 
-  it('is empty when the server answered and nothing matched', () => {
-    onlyFlag(deriveSearchView(observation({ page: page([]) })), 'isEmpty');
+  it('is empty when the server answered, nothing matched, and nothing more is coming', () => {
+    onlyFlag(deriveSearchView(observation({ pages: [page([])] })), 'isEmpty');
   });
 
-  it('is capped when the server says it has more than it sent', () => {
-    const view = deriveSearchView(observation({ page: page([containerItem(3)], true) }));
+  it('is not empty when the first page drew no rows but the server has more', () => {
+    // Every hit on it was a kind this build cannot draw. "Nothing matches" would be a claim about
+    // pages nobody has read.
+    const view = deriveSearchView(observation({ pages: [page([], true)] }));
 
-    onlyFlag(view, 'isCapped');
+    onlyFlag(view, 'hasMore');
+    assert.deepEqual(view.items, []);
   });
 
   it('reports plain results with no flag at all', () => {
-    const view = deriveSearchView(observation({ page: page([containerItem(3)]) }));
+    const view = deriveSearchView(observation({ pages: [page([containerItem(3)])] }));
 
     onlyFlag(view, null);
-    assert.equal(view.groups.areas.length, 1);
+    assert.equal(view.items.length, 1);
     assert.equal(view.archivedLeftOut, false);
+  });
+
+  it('has no cap and no groups: one list, every page, in order', () => {
+    const view = deriveSearchView(
+      observation({
+        pages: [
+          page([containerItem(12, 'project'), containerItem(3)], true),
+          page([containerItem(41, 'note')], false, false, 50),
+        ],
+      }),
+    );
+
+    onlyFlag(view, null);
+    assert.ok(!('isCapped' in view));
+    assert.ok(!('groups' in view));
+    assert.deepEqual(
+      view.items.map((item) => item.id),
+      [12, 3, 41],
+    );
+  });
+});
+
+describe('walking the pages', () => {
+  it('says there is more while the newest page says so', () => {
+    const view = deriveSearchView(observation({ pages: [page([containerItem(3)], true)] }));
+
+    onlyFlag(view, 'hasMore');
+  });
+
+  it('is loading more while the next page is read, over the rows already here', () => {
+    const view = deriveSearchView(
+      observation({ pages: [page([containerItem(3)], true)], isFetchingNextPage: true }),
+    );
+
+    assert.equal(view.isLoadingMore, true);
+    assert.equal(view.hasMore, true);
+    assert.equal(view.isStale, false);
+    assert.equal(view.items.length, 1);
+  });
+
+  it('reports a failed next page as that, not as a stale or failed search', () => {
+    // The library reports a failed next page as an error too. It is not the held pages going
+    // stale: they were not read again, and they stay exactly as true as they were.
+    const view = deriveSearchView(
+      observation({
+        pages: [page([containerItem(3)], true)],
+        isError: true,
+        isFetchNextPageError: true,
+      }),
+    );
+
+    assert.equal(view.isMoreError, true);
+    assert.equal(view.isStale, false);
+    assert.equal(view.isUnavailable, false);
+    assert.equal(view.hasMore, true, 'a failed page never makes the list look finished');
+    assert.equal(view.items.length, 1);
   });
 });
 
@@ -217,15 +285,25 @@ describe('archived matches that were left out', () => {
     // The left-out line reads this, so it is only ever offered when turning the filter on adds
     // something - including over an answer where nothing active matched.
     assert.equal(
-      deriveSearchView(observation({ page: page([containerItem(3)], false, true) }))
+      deriveSearchView(observation({ pages: [page([containerItem(3)], false, true)] }))
         .archivedLeftOut,
       true,
     );
 
-    const empty = deriveSearchView(observation({ page: page([], false, true) }));
+    const empty = deriveSearchView(observation({ pages: [page([], false, true)] }));
 
     onlyFlag(empty, 'isEmpty');
     assert.equal(empty.archivedLeftOut, true);
+  });
+
+  it('are read from the newest page', () => {
+    const view = deriveSearchView(
+      observation({
+        pages: [page([containerItem(3)], true, false), page([containerItem(9)], false, true, 50)],
+      }),
+    );
+
+    assert.equal(view.archivedLeftOut, true);
   });
 
   it('are never claimed without a page to claim them from', () => {

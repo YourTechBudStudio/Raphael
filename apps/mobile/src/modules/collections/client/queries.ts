@@ -2,9 +2,10 @@ import { get as getNode, getPath, list } from '@raphael/client/nodes';
 import type { GetResponse } from '@raphael/contracts/nodes';
 import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react-query';
 
-import type { ContainerRef } from '../../../infrastructure/api/contracts';
+import type { ContainerRef, ContainerType } from '../../../infrastructure/api/contracts';
 import { unwrap } from '../../../infrastructure/query/failure';
 import { activationOf, scopeKey } from '../../../infrastructure/query/keys';
+import { nextReadStamp } from '../../../infrastructure/query/read-stamp';
 import { useConnectionSession, type ConnectionSession } from '../../connection';
 import {
   fetchChildren,
@@ -232,8 +233,18 @@ const runHierarchy = (
   return fetchHierarchy((request, pageSignal) => list(transport, request, pageSignal), signal);
 };
 
+/** One container as its own Get read it, and when that Get was asked for. */
+export interface ContainerRead {
+  readonly entity: GetResponse['entity'];
+  /**
+   * The `nextReadStamp()` taken just before this Get was sent. The header star compares it with a
+   * confirmed favorite change to tell whether this read can have seen that change.
+   */
+  readonly requestedAt: number;
+}
+
 /** One container, with its body. Null `ref` means there is nothing to ask about. */
-export function useContainer(ref: ContainerRef | null): UseQueryResult<GetResponse['entity']> {
+export function useContainer(ref: ContainerRef | null): UseQueryResult<ContainerRead> {
   return useQuery(containerOptions(useConnectionSession(), ref));
 }
 
@@ -246,15 +257,18 @@ export function useContainer(ref: ContainerRef | null): UseQueryResult<GetRespon
 export function useContainerArchived(ref: ContainerRef | null): boolean | null {
   const query = useQuery(containerOptions(useConnectionSession(), ref));
 
-  return query.data === undefined ? null : query.data.archived;
+  return query.data === undefined ? null : query.data.entity.archived;
 }
 
 const containerOptions = (session: ConnectionSession | null, ref: ContainerRef | null) => ({
   queryKey: keys.entity(session?.activation ?? -1, ref ?? { type: 'area', id: 0 }),
-  queryFn: async ({ signal }: { signal: AbortSignal }) => {
+  queryFn: async ({ signal }: { signal: AbortSignal }): Promise<ContainerRead> => {
     if (session === null || ref === null) throw new Error('No connection');
 
-    return unwrap(await getNode(session.transport, { target: { id: ref.id } }, signal)).entity;
+    const requestedAt = nextReadStamp();
+    const { entity } = unwrap(await getNode(session.transport, { target: { id: ref.id } }, signal));
+
+    return { entity, requestedAt };
   },
   enabled: session !== null && ref !== null,
 });
@@ -332,4 +346,33 @@ export const containerTitleLookup = (
   if (hierarchy === undefined || tree.isStale) return () => undefined;
 
   return (id: number) => hierarchy.byId.get(id)?.title;
+};
+
+/** A container as a parent pill draws it: its kind for the tiny mark, its id, and its title. */
+export interface ContainerPill {
+  readonly type: ContainerType;
+  readonly id: number;
+  readonly title: string;
+}
+
+/**
+ * Names a container for a parent pill, or declines to.
+ *
+ * `containerTitleLookup`'s rule, answering with the kind as well, because a pill draws the parent's
+ * own mark beside its title. Offered only from a hierarchy that has loaded and is current: a stale
+ * tree may name a parent the node has since moved away from, and a pill has nowhere to say so. The
+ * hierarchy only decorates a row this way; it never decides which rows there are or their order.
+ */
+export const containerLookup = (
+  tree: HierarchyQuery,
+): ((id: number) => ContainerPill | undefined) => {
+  const hierarchy = tree.hierarchy;
+
+  if (hierarchy === undefined || tree.isStale) return () => undefined;
+
+  return (id: number) => {
+    const node = hierarchy.byId.get(id);
+
+    return node === undefined ? undefined : { type: node.type, id: node.id, title: node.title };
+  };
 };

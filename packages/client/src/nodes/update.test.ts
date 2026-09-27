@@ -59,6 +59,7 @@ const entity = {
   tags: ['reviewed'],
   active: false,
   archived: false,
+  isFavorite: false,
   body: { format: 'markdown', value: '# Contracts\n' },
   metadata: {},
   archiveCauses: [],

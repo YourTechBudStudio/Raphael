@@ -9,6 +9,7 @@ import {
   NodeNotFound,
   type SelectorField,
 } from './errors.ts';
+import { favoriteExpression } from './projection.ts';
 import { nodes } from './schema.ts';
 import { raise } from './storage-failures.ts';
 import type { Orm } from './store.ts';
@@ -227,6 +228,7 @@ const SUMMARY_COLUMNS_OF_NODES = {
   description: nodes.description,
   tags: nodes.tags,
   active: nodes.active,
+  isFavorite: favoriteExpression(nodes.id),
 } as const;
 
 const ENTITY_COLUMNS = {

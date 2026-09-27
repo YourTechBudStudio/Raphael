@@ -38,6 +38,7 @@ const summary = (id) => ({
   tags: [],
   active: false,
   archived: false,
+  isFavorite: false,
 });
 
 const listAnswer = (ids) => ({ items: ids.map(summary), skip: 0, limit: 50, hasMore: false });
