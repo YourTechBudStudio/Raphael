@@ -22,30 +22,43 @@ import { colors, lobedPath } from '../../../ui';
 
 const MARK = 56;
 
-function PhoneMark() {
+export interface MarkProps {
+  /** The box the mark fills, in points. */
+  size?: number | undefined;
+  /** Degrees. The two marks lean opposite ways so the pair reads as drawn, not stamped. */
+  tilt?: number | undefined;
+}
+
+/** The phone on a warm soft square. Also drawn, larger, by Settings' connection map. */
+export function PhoneMark({ size = MARK, tilt = -6 }: MarkProps) {
   return (
-    <View className="items-center justify-center" style={{ height: MARK, width: MARK }}>
+    <View className="items-center justify-center" style={{ height: size, width: size }}>
       <View
-        className="absolute inset-0 rounded-[18px] border border-peach bg-card-warm"
-        style={{ transform: [{ rotate: '-6deg' }] }}
+        className="absolute inset-0 border border-peach bg-card-warm"
+        style={{ borderRadius: size * 0.32, transform: [{ rotate: `${String(tilt)}deg` }] }}
       />
-      <Smartphone color={colors.primary} size={22} strokeWidth={1.9} />
+      <Smartphone color={colors.primary} size={Math.round(size * 0.39)} strokeWidth={1.9} />
     </View>
   );
 }
 
-function ServerMark({ faint }: { faint: boolean }) {
+/** The server on a scalloped cookie. Faint while nothing is known about it. */
+export function ServerMark({
+  faint = false,
+  size = MARK,
+  tilt = 8,
+}: MarkProps & { faint?: boolean }) {
   return (
     <View
       className={['items-center justify-center', faint ? 'opacity-50' : ''].join(' ')}
-      style={{ height: MARK, width: MARK }}
+      style={{ height: size, width: size }}
     >
-      <View className="absolute inset-0" style={{ transform: [{ rotate: '8deg' }] }}>
-        <Svg height={MARK} width={MARK}>
-          <Path d={lobedPath(MARK, 9, 0.07)} fill={colors.wave} />
+      <View className="absolute inset-0" style={{ transform: [{ rotate: `${String(tilt)}deg` }] }}>
+        <Svg height={size} width={size}>
+          <Path d={lobedPath(size, 9, 0.07)} fill={colors.wave} />
         </Svg>
       </View>
-      <Server color={colors.lilacDeep} size={21} strokeWidth={1.9} />
+      <Server color={colors.lilacDeep} size={Math.round(size * 0.375)} strokeWidth={1.9} />
     </View>
   );
 }

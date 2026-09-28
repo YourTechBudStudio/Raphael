@@ -1,9 +1,10 @@
 import { Text, View } from 'react-native';
 
-import { queryClient } from '../../../infrastructure/query/query-client';
 import { Chip } from '../../../ui';
 import { openChangeServer } from '../../navigation';
+import { useRejectionRetry } from '../client/rejection';
 import { useConnectionStore } from '../state/connection';
+import { rejectionCopy } from './rejection-copy';
 
 export interface RejectionNoticeProps {
   className?: string | undefined;
@@ -24,11 +25,11 @@ export interface RejectionNoticeProps {
  */
 export function RejectionNotice({ className }: RejectionNoticeProps) {
   const phase = useConnectionStore((state) => state.phase);
-  const clearRejection = useConnectionStore((state) => state.clearRejection);
+  const { checking, retry } = useRejectionRetry();
 
   if (phase.kind !== 'active' || phase.rejection === null) return null;
 
-  const unauthorized = phase.rejection === 'unauthorized';
+  const copy = rejectionCopy(phase.rejection);
 
   return (
     <View
@@ -39,21 +40,15 @@ export function RejectionNotice({ className }: RejectionNoticeProps) {
       ].join(' ')}
     >
       <Text accessibilityRole="header" className="font-heading text-[16px] leading-[22px] text-ink">
-        {unauthorized ? 'That key was refused.' : 'A different version of Raphael.'}
+        {copy.title}
       </Text>
-      <Text className="font-body text-[15px] leading-[21px] text-ink-soft">
-        {unauthorized
-          ? 'The server answered, and it does not accept the key this device is holding. Nothing has been deleted here, and nothing on the server has changed.'
-          : 'The server answered with a protocol this app does not understand. One of the two needs updating; nothing here is broken.'}
-      </Text>
+      <Text className="font-body text-[15px] leading-[21px] text-ink-soft">{copy.detail}</Text>
       <View className="flex-row flex-wrap gap-2 pt-1">
         <Chip
           accessibilityHint="Reads everything on this screen again"
-          label="Try again"
-          onPress={() => {
-            clearRejection();
-            void queryClient.refetchQueries();
-          }}
+          disabled={checking}
+          label={checking ? 'Checking…' : 'Try again'}
+          onPress={retry}
         />
         <Chip
           accessibilityHint="Points this device at a different server, or re-enters the key"

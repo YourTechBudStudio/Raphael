@@ -1,11 +1,12 @@
+import { ArrowLeftRight, ChevronLeft, RotateCcw, Unplug } from 'lucide-react-native';
 import { useState } from 'react';
 import { Text, View } from 'react-native';
 
-import { Chip, confirmDiscard, Screen, SectionHeading } from '../../../ui';
-import { goBack, openChangeServer, TitleTopBar } from '../../navigation';
+import { confirmDiscard, DiscAction, IconButton, Screen } from '../../../ui';
+import { goBack, openChangeServer } from '../../navigation';
+import { useRejectionRetry } from '../client/rejection';
 import { useConnectionStore } from '../state/connection';
-import { ConnectionCard } from './ConnectionCard';
-import { RejectionNotice } from './RejectionNotice';
+import { ConnectionMap } from './ConnectionMap';
 
 export interface SettingsScreenProps {
   /** Unsent writing on this phone, which disconnecting discards. Composed by the route. */
@@ -23,13 +24,19 @@ export interface SettingsScreenProps {
  *
  * There is no "On this phone" section either. Unfinished is reached from the one place that knows
  * whether there is anything in it: the chip beside Home's Notes heading, drawn only when it is true.
+ *
+ * No cards: the connection is drawn as a small map, and the actions are round buttons under it. A
+ * refusal is shown on the map itself rather than in the notice other screens carry, because here
+ * the map is already the statement about the connection, and Try again joins the actions.
  */
 export function SettingsScreen({ unsent = 0, onDiscardUnsent }: SettingsScreenProps = {}) {
   const phase = useConnectionStore((state) => state.phase);
   const disconnect = useConnectionStore((state) => state.disconnect);
   const [notDiscarded, setNotDiscarded] = useState(false);
+  const { checking, retry } = useRejectionRetry();
 
   const connection = phase.kind === 'active' ? phase.session.connection : null;
+  const rejection = phase.kind === 'active' ? phase.rejection : null;
 
   const onDisconnect = (): void => {
     const discarded =
@@ -61,23 +68,51 @@ export function SettingsScreen({ unsent = 0, onDiscardUnsent }: SettingsScreenPr
   };
 
   return (
-    <Screen captureBar={false} header={<TitleTopBar onBack={goBack} title="Settings" />}>
-      <View className="gap-7 pt-2">
-        <RejectionNotice />
+    <Screen
+      captureBar={false}
+      contentContainerStyle={{ flexGrow: 1 }}
+      header={
+        <View className="h-14 flex-row items-center">
+          <IconButton icon={ChevronLeft} label="Back" onPress={goBack} />
+        </View>
+      }
+    >
+      <View className="flex-1 gap-8">
+        <Text
+          accessibilityRole="header"
+          className="font-heading text-[34px] leading-[42px] text-ink"
+        >
+          Settings
+        </Text>
+
+        {connection === null ? null : (
+          <ConnectionMap connection={connection} rejection={rejection} />
+        )}
 
         <View className="gap-3">
-          <SectionHeading>Connection</SectionHeading>
-          {connection === null ? null : <ConnectionCard connection={connection} />}
-          <View className="flex-row flex-wrap gap-2">
-            <Chip
+          <View className="flex-row flex-wrap gap-x-5 gap-y-4">
+            {rejection === null ? null : (
+              <DiscAction
+                accessibilityHint="Asks the server whether it accepts this phone now"
+                disabled={checking}
+                icon={RotateCcw}
+                label={checking ? 'Checking…' : 'Try again'}
+                onPress={retry}
+                tone="primary"
+              />
+            )}
+            <DiscAction
               accessibilityHint="Points this device at a different server"
+              icon={ArrowLeftRight}
               label="Change server"
               onPress={openChangeServer}
             />
-            <Chip
+            <DiscAction
               accessibilityHint="Forgets this server and returns to setup"
+              icon={Unplug}
               label="Disconnect"
               onPress={onDisconnect}
+              tone="danger"
             />
           </View>
           {notDiscarded ? (
@@ -90,10 +125,12 @@ export function SettingsScreen({ unsent = 0, onDiscardUnsent }: SettingsScreenPr
           ) : null}
         </View>
 
-        <Text className="font-body text-[14px] leading-[20px] text-ink-soft">
-          One server, one key, one brain. There is not much to configure yet, and that is on
-          purpose.
-        </Text>
+        <View className="flex-1 justify-end">
+          <Text className="font-body text-[14px] leading-[20px] text-ink-soft">
+            One server, one key, one brain. There is not much to configure yet, and that is on
+            purpose.
+          </Text>
+        </View>
       </View>
     </Screen>
   );

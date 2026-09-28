@@ -6,6 +6,7 @@ export { Card, type CardProps, type CardVariant } from './Card';
 export { SearchField, type SearchFieldProps } from './SearchField';
 export { Chip, type ChipProps } from './Chip';
 export { CircleButton, type CircleButtonProps, type CircleButtonTone } from './CircleButton';
+export { DiscAction, type DiscActionProps, type DiscActionTone } from './DiscAction';
 export { confirmDiscard, type ConfirmDiscardOptions } from './confirm-discard';
 export {
   Emblem,
