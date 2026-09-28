@@ -11,7 +11,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 
-import { CircleButton, colors, PressableFeedback, AnimatedSurface } from '../../../ui';
+import { CircleButton, colors } from '../../../ui';
 
 const PULSE_DURATION = 700;
 
@@ -91,31 +91,5 @@ export function ReviewPlayButton({ playing, onPress }: ReviewPlayButtonProps) {
       onPress={onPress}
       size={56}
     />
-  );
-}
-
-export interface TextActionProps {
-  label: string;
-  onPress: () => void;
-  accessibilityHint?: string | undefined;
-}
-
-/** A quiet secondary action: cancel, record again. Full 44pt target with no surface. */
-export function TextAction({ label, onPress, accessibilityHint }: TextActionProps) {
-  return (
-    <PressableFeedback
-      accessibilityHint={accessibilityHint}
-      accessibilityLabel={label}
-      className="h-11 items-center justify-center px-2"
-      onPress={onPress}
-      treatment="button"
-      stateLayerColor={colors.primary}
-    >
-      {(stableContentStyle) => (
-        <AnimatedSurface style={stableContentStyle}>
-          <Text className="font-body-medium text-[16px] text-primary">{label}</Text>
-        </AnimatedSurface>
-      )}
-    </PressableFeedback>
   );
 }

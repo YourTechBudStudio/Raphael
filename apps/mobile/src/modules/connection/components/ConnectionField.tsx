@@ -60,7 +60,7 @@ export function ConnectionField({
   return (
     <View
       className={clsx(
-        'min-h-[54px] flex-row items-center gap-3 rounded-card border border-line bg-card pl-4 pr-2',
+        'min-h-[54px] flex-row items-center gap-3 rounded-full bg-card pl-5 pr-2',
         !editable && 'opacity-60',
       )}
     >

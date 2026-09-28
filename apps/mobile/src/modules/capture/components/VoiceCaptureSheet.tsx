@@ -10,6 +10,7 @@ import {
   Sheet,
   SheetBody,
   SheetHeader,
+  TextAction,
 } from '../../../ui';
 import type { AreaOption } from '../../collections';
 import { useSheetsStore } from '../../navigation';
@@ -17,7 +18,7 @@ import { usePlaybackStore, formatDuration, Waveform } from '../../playback';
 import { useCreateVoiceNote } from '../client/mutations';
 import { MAX_RECORDING_SECONDS, useMockRecorder } from '../state/useMockRecorder';
 import { AreaPicker } from './AreaPicker';
-import { RecordingIndicator, ReviewPlayButton, StopButton, TextAction } from './controls';
+import { RecordingIndicator, ReviewPlayButton, StopButton } from './controls';
 import { liveBars, savedWaveform } from './waveform';
 
 /** The take being reviewed is not a resource yet, so playback tracks it under its own id. */

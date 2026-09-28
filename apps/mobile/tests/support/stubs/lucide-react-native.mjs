@@ -56,3 +56,7 @@ export const Strikethrough = icon('Strikethrough');
 export const Tag = icon('Tag');
 export const Undo2 = icon('Undo2');
 export const X = icon('X');
+export const Server = icon('Server');
+export const Smartphone = icon('Smartphone');
+export const GitCompareArrows = icon('GitCompareArrows');
+export const Trash2 = icon('Trash2');

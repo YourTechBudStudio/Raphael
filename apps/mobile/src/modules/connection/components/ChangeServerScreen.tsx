@@ -2,6 +2,14 @@ import { goBack } from '../../navigation';
 import { useConnectionStore } from '../state/connection';
 import { SetupScreen } from './SetupScreen';
 
+export interface ChangeServerScreenProps {
+  /** Whether the current server answers right now; false when reached from the offline screen. */
+  currentReachable?: boolean | undefined;
+  /** Unsent writing that switching would discard. Composed by the route, which can see both owners. */
+  unsent?: number | undefined;
+  onDiscardUnsent?: (() => void) | undefined;
+}
+
 /**
  * Pointing this device at a different server, or at the same one with a new key.
  *
@@ -14,12 +22,24 @@ import { SetupScreen } from './SetupScreen';
  * throws away the whole stack, because every screen behind this one names containers by ids that
  * belong to the server being replaced.
  */
-export function ChangeServerScreen() {
+export function ChangeServerScreen({
+  currentReachable,
+  unsent,
+  onDiscardUnsent,
+}: ChangeServerScreenProps = {}) {
   const phase = useConnectionStore((state) => state.phase);
 
   // Unreachable through the UI - the gate shows setup when there is no connection - but a deep
   // link is a way in, and rendering a replace screen with nothing to replace would be a lie.
   if (phase.kind !== 'active') return <SetupScreen />;
 
-  return <SetupScreen onCancel={goBack} replacing={phase.session.connection} />;
+  return (
+    <SetupScreen
+      currentReachable={currentReachable}
+      onCancel={goBack}
+      onDiscardUnsent={onDiscardUnsent}
+      replacing={phase.session.connection}
+      unsent={unsent}
+    />
+  );
 }

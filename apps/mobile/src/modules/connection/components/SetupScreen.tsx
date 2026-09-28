@@ -3,12 +3,13 @@ import { useEffect, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Chip, IconButton, PrimaryButton } from '../../../ui';
+import { Chip, confirmDiscard, IconButton, PrimaryButton } from '../../../ui';
 import { gutter } from '../../../ui/theme';
 import { verifyConnection } from '../client/verify';
 import { handshakeRows, hasFieldProblem, inspectSetupInput, type SetupPhase } from '../setup';
 import type { Connection } from '../state/connection';
 import { useConnectionStore } from '../state/connection';
+import { ConnectionArt, type ThreadMode } from './ConnectionArt';
 import { ConnectionField } from './ConnectionField';
 import { Handshake } from './Handshake';
 
@@ -24,6 +25,16 @@ export interface SetupScreenProps {
   replacing?: Connection | undefined;
   /** Leaving without replacing anything. Only meaningful alongside `replacing`. */
   onCancel?: (() => void) | undefined;
+  /** Whether the server being replaced answers right now. Only meaningful alongside `replacing`. */
+  currentReachable?: boolean | undefined;
+  /**
+   * Writing on this phone that never reached the server being replaced. It cannot follow to another
+   * server, so switching discards it: said above the button, and confirmed once the new server has
+   * answered.
+   */
+  unsent?: number | undefined;
+  /** Called once the switch has happened, to remove that writing. */
+  onDiscardUnsent?: (() => void) | undefined;
 }
 
 /**
@@ -37,7 +48,13 @@ export interface SetupScreenProps {
  * Connect is always pressable. The checks underneath report what is known; they do not stand
  * between the person and the button, and pressing with an unusable field is how you find out why.
  */
-export function SetupScreen({ replacing, onCancel }: SetupScreenProps = {}) {
+export function SetupScreen({
+  replacing,
+  onCancel,
+  currentReachable = true,
+  unsent = 0,
+  onDiscardUnsent,
+}: SetupScreenProps = {}) {
   const [endpoint, setEndpoint] = useState('');
   const [key, setKey] = useState('');
   const [revealed, setRevealed] = useState(false);
@@ -102,13 +119,25 @@ export function SetupScreen({ replacing, onCancel }: SetupScreenProps = {}) {
 
     const mine = ++attempt.current;
     setPhase({ kind: 'verifying' });
-    void verifyConnection(endpoint, key).then((outcome) => {
+    void verifyConnection(endpoint, key).then(async (outcome) => {
       // A verification that finishes after the person changed a field, backed out, or started
       // another attempt is answering a question nobody is asking. It must not connect anything.
       if (mine !== attempt.current) return;
       if (!outcome.ok) {
         setPhase({ kind: 'failed', problem: outcome.problem });
         return;
+      }
+
+      // Asked once, and only now that there is a working server to switch to.
+      const discarding = replacing !== undefined && unsent > 0;
+      if (discarding) {
+        const confirmed = await confirmDiscard(discardPrompt(unsent, replacing.origin));
+        if (mine !== attempt.current) return;
+        if (!confirmed) {
+          setPhase({ kind: 'idle' });
+          setAttempted(false);
+          return;
+        }
       }
 
       setPhase({ kind: 'connected' });
@@ -141,6 +170,8 @@ export function SetupScreen({ replacing, onCancel }: SetupScreenProps = {}) {
             return;
           }
 
+          if (result.kind === 'activated' && discarding) onDiscardUnsent?.();
+
           // `activated` leaves through the gate, which swaps this screen out on its own.
           // `superseded` means a newer decision already won, and this screen is no longer the one
           // in charge of anything.
@@ -156,12 +187,32 @@ export function SetupScreen({ replacing, onCancel }: SetupScreenProps = {}) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       className="flex-1 bg-canvas"
     >
+      {replacing === undefined ? null : (
+        <View className="absolute z-10" style={{ left: gutter - 10, top: insets.top + 8 }}>
+          <IconButton
+            icon={ChevronLeft}
+            label="Back"
+            onPress={() => {
+              // Abandons any pending success hold as well as leaving: the connection this device
+              // has is the one it keeps.
+              attempt.current += 1;
+              onCancel?.();
+            }}
+          />
+        </View>
+      )}
       <ScrollView
-        contentContainerStyle={{
-          paddingHorizontal: gutter,
-          paddingTop: insets.top + 44,
-          paddingBottom: 24,
-        }}
+        contentContainerStyle={
+          replacing === undefined
+            ? { paddingHorizontal: gutter, paddingTop: insets.top + 44, paddingBottom: 24 }
+            : {
+                flexGrow: 1,
+                justifyContent: 'center',
+                paddingHorizontal: gutter,
+                paddingTop: insets.top + 64,
+                paddingBottom: 24,
+              }
+        }
         keyboardDismissMode="on-drag"
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -207,30 +258,37 @@ export function SetupScreen({ replacing, onCancel }: SetupScreenProps = {}) {
               </Text>
             </View>
           ) : (
-            <View className="gap-3">
-              <View className="-ml-2 flex-row items-center gap-1">
-                <IconButton
-                  icon={ChevronLeft}
-                  label="Back"
-                  onPress={() => {
-                    // Abandons any pending success hold as well as leaving: the connection this
-                    // device has is the one it keeps.
-                    attempt.current += 1;
-                    onCancel?.();
-                  }}
-                />
+            <View className="gap-8">
+              <ConnectionArt mode={threadMode(phase)} travelling={verifying} />
+              <View className="gap-2">
                 <Text
                   accessibilityRole="header"
-                  className="font-heading text-[26px] leading-[32px] text-ink"
+                  className="text-center font-heading text-[28px] leading-[34px] text-ink"
                 >
                   Change server
                 </Text>
+                {/* Through the success hold the new server has answered, but nothing is switched
+                    until it is written down and activated, which can still fail - so this says a
+                    switch is under way, never that it is done. */}
+                <Text
+                  accessibilityLiveRegion="polite"
+                  className="text-center font-body text-[16px] leading-[24px] text-ink-soft"
+                >
+                  {phase.kind === 'connected' ? (
+                    <>
+                      <Text className="font-body-semibold text-ink">{endpoint.trim()}</Text>{' '}
+                      answered. Switching to it…
+                    </>
+                  ) : (
+                    <>
+                      {currentReachable ? 'Connected to ' : 'Can’t reach '}
+                      <Text className="font-body-semibold text-ink">{replacing.origin}</Text>
+                      {currentReachable ? '. ' : ' right now. '}
+                      It stays your server until a new one answers.
+                    </>
+                  )}
+                </Text>
               </View>
-              <Text className="font-body text-[16px] leading-[23px] text-ink-soft">
-                Still connected to{' '}
-                <Text className="font-body-semibold text-ink">{replacing.origin}</Text>. That stays
-                in place until a new server answers.
-              </Text>
             </View>
           )}
 
@@ -288,12 +346,19 @@ export function SetupScreen({ replacing, onCancel }: SetupScreenProps = {}) {
         </View>
       </ScrollView>
 
-      <View
-        className="border-t border-line bg-canvas px-5 pt-3"
-        style={{ paddingBottom: insets.bottom + 12 }}
-      >
+      <View className="gap-3 bg-canvas px-5 pt-2" style={{ paddingBottom: insets.bottom + 12 }}>
+        {replacing === undefined || unsent === 0 || phase.kind === 'connected' ? null : (
+          <Text
+            accessibilityLiveRegion="polite"
+            className="text-center font-body text-[15px] leading-[22px] text-ink-soft"
+          >
+            Switching discards{' '}
+            <Text className="font-body-semibold text-ink">{unfinishedNotes(unsent)}</Text> on this
+            phone.
+          </Text>
+        )}
         {notSaved === null ? null : (
-          <View accessibilityLiveRegion="assertive" accessibilityRole="alert" className="pb-3">
+          <View accessibilityLiveRegion="assertive" accessibilityRole="alert">
             <Text className="font-body-semibold text-[15px] leading-[21px] text-danger">
               That server answered, but this device could not save it.
             </Text>
@@ -303,7 +368,7 @@ export function SetupScreen({ replacing, onCancel }: SetupScreenProps = {}) {
           </View>
         )}
         <PrimaryButton
-          busy={verifying}
+          busy={verifying || (replacing !== undefined && phase.kind === 'connected')}
           label={connectLabel(phase.kind, replacing !== undefined)}
           onPress={onConnect}
           testID="setup-connect"
@@ -313,11 +378,29 @@ export function SetupScreen({ replacing, onCancel }: SetupScreenProps = {}) {
   );
 }
 
+const unfinishedNotes = (count: number): string =>
+  `${String(count)} unfinished ${count === 1 ? 'note' : 'notes'}`;
+
+const discardPrompt = (count: number, origin: string) => ({
+  title: `Discard ${unfinishedNotes(count)}?`,
+  message: `${count === 1 ? 'It' : 'They'} never reached ${origin}, and ${count === 1 ? 'it' : 'they'} can’t move to the new server. Switching removes ${count === 1 ? 'it' : 'them'} from this phone.`,
+  keepLabel: 'Cancel',
+  discardLabel: 'Discard & switch',
+});
+
+/** The thread says what is known about the new server: nothing yet, broken, or joined. */
+const threadMode = (phase: SetupPhase): ThreadMode => {
+  if (phase.kind === 'connected') return 'joined';
+  if (phase.kind === 'failed') return 'broken';
+  return 'open';
+};
+
 /** How long the completed handshake stays on screen before the app moves on. */
 const SUCCESS_HOLD_MS = 850;
 
 const connectLabel = (phase: SetupPhase['kind'], replacing: boolean): string => {
   if (phase === 'verifying') return 'Connecting…';
-  if (phase === 'connected') return 'Connected';
+  // Replacing is not finished when the new server answers: the switch can still fail.
+  if (phase === 'connected') return replacing ? 'Switching…' : 'Connected';
   return replacing ? 'Use this server' : 'Connect';
 };

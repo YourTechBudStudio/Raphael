@@ -15,6 +15,7 @@ import { emblemFor } from './emblem-for';
 import { PressableFeedback } from './PressableFeedback';
 import { ShapeMark, type MarkKind } from './ShapeMark';
 import { StatePill } from './StatePill';
+import { useWaitingPulse } from './waiting-pulse';
 
 /** Rows arrive, leave and close gaps the way `Handshake` settles: calm, linear, no travel. */
 const ENTER_MS = 220;
@@ -45,8 +46,12 @@ export interface ListRowProps {
   mark: { kind: MarkKind; id: number };
   /** Sora 16, at most two lines. */
   title: string;
-  /** The kind in a word - "Area", "Project", "Note" - from the caller. */
+  /** The second line's first words: the kind ("Area", "Note"), or a state ("Draft"). */
   kindLabel: string;
+  /** Plain words after the label - " · Work" - for lists that say one line rather than pills. */
+  detail?: string | undefined;
+  /** Breathes the label, for a row whose work is in flight right now. */
+  pending?: boolean | undefined;
   /** Drawn after the kind word, and spoken after it too. */
   status?: ListRowStatus | undefined;
   /** Drawn last on the second line. Leave it out when the container cannot be named truthfully. */
@@ -76,6 +81,18 @@ function ParentPill({ parent }: { parent: ListRowParent }) {
   );
 }
 
+const LABEL = 'font-body text-[14px] text-ink-soft';
+
+function PendingLabel({ children }: { children: string }) {
+  const pulse = useWaitingPulse();
+
+  return (
+    <Animated.Text className={LABEL} style={pulse}>
+      {children}
+    </Animated.Text>
+  );
+}
+
 /**
  * One row of a flat list - Search, Favorites, and any flat list after them.
  *
@@ -95,6 +112,8 @@ export function ListRow({
   mark,
   title,
   kindLabel,
+  detail,
+  pending = false,
   status,
   parent,
   trailing,
@@ -114,6 +133,7 @@ export function ListRow({
   const spoken = [
     title,
     kindLabel,
+    detail ?? null,
     status === undefined ? null : status.label.toLowerCase(),
     parent === undefined ? null : `in ${parent.title}`,
   ]
@@ -136,7 +156,18 @@ export function ListRow({
               {title}
             </Text>
             <View className="flex-row flex-wrap items-center gap-2">
-              <Text className="font-body text-[14px] text-ink-soft">{kindLabel}</Text>
+              {/* Bounded to the row, so a long detail - a server's refusal - wraps instead of
+                  running under the trailing control. */}
+              <View className="max-w-full flex-row">
+                {pending ? (
+                  <PendingLabel>{kindLabel}</PendingLabel>
+                ) : (
+                  <Text className={LABEL}>{kindLabel}</Text>
+                )}
+                {detail === undefined ? null : (
+                  <Text className={`${LABEL} shrink`}>{` · ${detail}`}</Text>
+                )}
+              </View>
               {status === undefined ? null : <StatePill icon={status.icon} label={status.label} />}
               {parent === undefined ? null : <ParentPill parent={parent} />}
             </View>

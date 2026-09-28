@@ -537,6 +537,12 @@ test('no throwaway mock surface survives', () => {
       'mock-favorites',
       'FavoritesMock',
       'Temporary: favorites mock',
+      // The online-only plan's sync-states mock: invented offline, change-server, composer, editor,
+      // Unfinished and failed-action screens, their routes and the Settings door to them. Their final
+      // designs were promoted into `connection`, `capture` and `ui/core` as real components.
+      'sync-mock',
+      'Temporary: sync-states mock',
+      'MockControls',
     ]) {
       assert.ok(!source.includes(name), `${file}: still reaches the retired mock surface ${name}`);
     }
