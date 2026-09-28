@@ -3,14 +3,23 @@ import test from 'node:test';
 import { inspect } from 'node:util';
 
 import {
-  createNode,
+  createNode as createNodeRaw,
   getNode,
   listNodes,
   toPublicError,
   updateNode,
   type NodeError,
 } from '../src/modules/nodes/index.ts';
-import { clockAt, expectLeft, expectRight, runNodes, withMigrated } from './support.ts';
+import {
+  clockAt,
+  expectLeft,
+  expectRight,
+  runNodes,
+  withMigrated,
+  withDerivedSlug,
+} from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 /**
  * Sentinels chosen to look like private data. They appear as submitted values *and* as arbitrary
@@ -59,7 +68,7 @@ test('a rejected title never echoes the submitted title', () => {
         }),
       ),
     );
-    assert.equal(toPublicError(error).details['reason'], 'title_too_long');
+    assert.equal(toPublicError(error).message, 'Title is longer than 200 characters.');
     assertClean(error, 'title too long');
   });
 });
@@ -110,9 +119,9 @@ test('an unsupported body reports a location, never the content at that location
     );
     const published = toPublicError(error);
     assert.equal(published.code, 'unsupported_content');
-    assert.deepEqual(
-      published.details['path'],
-      [1],
+    assert.match(
+      published.message,
+      /content\[1\]/u,
       'the location is published; the content is not',
     );
     assertClean(error, 'unsupported body');
@@ -166,12 +175,12 @@ test('a rejected update echoes neither its submitted change nor its excess prope
     ).entity;
 
     // Three refusals that each reach the decoder by a different route: an oversized title, an
-    // unpatchable property the envelope has no field for, and a tag named in both lists. All three are
-    // rejected before anything is written, and none of them may carry the submitted value back.
+    // unpatchable property the envelope has no field for, and a repeated tag. All three are rejected
+    // before anything is written, and none of them may carry the submitted value back.
     const envelopes = [
       { title: `${SECRETS[0]} ${'x'.repeat(300)}` },
       { title: 'Fine title', metadata: { [SECRETS[3]]: SECRETS[1] } },
-      { addTags: [SECRETS[2]], removeTags: [SECRETS[2]] },
+      { tags: [SECRETS[2], ` ${SECRETS[2]}`] },
     ];
 
     for (const change of envelopes) {
@@ -208,8 +217,8 @@ test('an unexpected failure publishes nothing, while keeping its cause for the o
     const error = expectLeft(runNodes(connection, getNode({ target: { id: created.id } })));
     const published = toPublicError(error);
     assert.equal(published.code, 'internal_error');
-    assert.deepEqual(published.details, {});
-    assert.equal(published.message, 'The request could not be completed.');
+    assert.equal(published.message, 'The server could not complete the request.');
+    assert.equal(published.message, 'The server could not complete the request.');
 
     // The public projection is clean. The error instance is not asserted clean here: an unexpected
     // failure may retain its cause, which is the point of retaining it, and is why phase 05 must project
@@ -225,7 +234,7 @@ test('the public projection is built field by field, not spread from the error',
   withMigrated('disclosure-projection', (connection) => {
     const error = expectLeft(runNodes(connection, getNode({ target: { id: 999_999 } })));
     const published = toPublicError(error);
-    assert.deepEqual(Object.keys(published).sort(), ['code', 'details', 'message']);
+    assert.deepEqual(Object.keys(published).sort(), ['code', 'message']);
     assert.equal('_tag' in published, false, 'an internal tag is not part of the wire contract');
     assert.equal('stack' in published, false);
     assert.equal('cause' in published, false);

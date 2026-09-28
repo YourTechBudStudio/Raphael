@@ -89,7 +89,7 @@ describe('archive and restore', () => {
     const { transport } = answering(200, { node: node(false), archiveCauses: [inherited] });
     const result = await restore(transport, { target: { id: 7 }, revision: 10 });
     assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.failure.kind, 'invalid_response');
+    if (!result.ok) assert.equal(result.failure.kind, 'bad_response');
   });
 
   it('refuse a malformed request before sending it', async () => {

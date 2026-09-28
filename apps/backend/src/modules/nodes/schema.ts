@@ -2,7 +2,6 @@ import { sql } from 'drizzle-orm';
 import {
   check,
   foreignKey,
-  index,
   integer,
   primaryKey,
   sqliteTable,
@@ -45,11 +44,10 @@ const safeEpochMillis = (column: string) =>
  * actually have. The two constraints solve different problems and neither replaces the other. Neither
  * detects a multi-node cycle; `move.ts` refuses one before writing.
  *
- * This table also backs `nodes_fts`, the lexical search index, which is declared only in
- * `drizzle/0004_search_index.sql` because Drizzle cannot express a virtual table. Three triggers there
- * keep it current, and they are a second reason - after the identity trigger `0001` installs - that a
- * generated table rebuild must never be applied to `nodes`. Read that migration's header before
- * changing anything here.
+ * The identity trigger and `nodes_fts`, the lexical search index, are declared only in
+ * `drizzle/0001_triggers_and_seed.sql`, because Drizzle cannot express them. A generated table rebuild
+ * of `nodes` would silently drop all four triggers, so a change here that `db:generate` answers with a
+ * rebuild must be hand-authored instead. Read that migration's header before changing anything here.
  */
 export const nodes = sqliteTable(
   'nodes',
@@ -77,14 +75,8 @@ export const nodes = sqliteTable(
     metadata: text('metadata').notNull().default('{}'),
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
-    /**
-     * The plain-text projection of `body`, derived at mutation time (ADR 0005).
-     *
-     * Nullable, and the null means something specific: no projection has been derived for this row.
-     * That is a different fact from a body whose text is empty, which is stored as the empty string.
-     * Confusing the two would let a maintenance pass declare a row done that it never read.
-     */
-    bodyText: text('body_text'),
+    /** The plain-text projection of `body`, derived at mutation time (ADR 0005). */
+    bodyText: text('body_text').notNull(),
   },
   (t) => [
     // Required as the parent key of the composite foreign key below. `id` is already unique on its
@@ -107,16 +99,12 @@ export const nodes = sqliteTable(
 
     check('nodes_type_supported', sql`type IN ('area', 'project', 'resource')`),
 
-    // A resource has a kind, a container does not, and a present kind is one core admits. Declared
-    // here for parity with `0002`, where it is a column-level CHECK rather than a table-level one -
-    // `ALTER TABLE ... ADD COLUMN` can only attach a constraint to the column it adds. The rule is
-    // identical; only its attachment point differs, and `db:generate` is not the authority on either.
+    // A resource has a kind, a container does not, and a present kind is one core admits.
     check(
       'nodes_kind_valid',
       sql`(type = 'resource') = (kind IS NOT NULL) AND (kind IS NULL OR kind IN ('note'))`,
     ),
-    // Only a project can be active. Declared here at table level and attached to the column itself in
-    // `0003`, the same split as `nodes_kind_valid` above and for the same reason.
+    // Only a project can be active.
     //
     // No `typeof(active) = 'integer'` guard, unlike the open-range integer columns below: those admit
     // any integer and must exclude non-integers and unsafe magnitudes, while this is a closed
@@ -150,33 +138,6 @@ export const nodes = sqliteTable(
 );
 
 /**
- * Historical creation results, keyed by idempotency key (ADR 0002). `result_json` is the complete
- * saved response body, so these rows can hold private note content and carry the same filesystem
- * protection obligation as the rest of the database.
- *
- * Lifetime is independent of the node it describes: a replay must return the historical result even
- * if the node has since been relocated, so there is no cascade from `nodes`.
- */
-export const creationReplays = sqliteTable(
-  'creation_replays',
-  {
-    key: text('key').primaryKey(),
-    fingerprint: text('fingerprint').notNull(),
-    resultJson: text('result_json').notNull(),
-    createdAt: integer('created_at').notNull(),
-    expiresAt: integer('expires_at').notNull(),
-  },
-  (t) => [
-    // Supports expiry lookup and the periodic collection that phase 05 owns.
-    index('creation_replays_expires_at').on(t.expiresAt),
-    check('creation_replays_created_at_safe', safeEpochMillis('created_at')),
-    check('creation_replays_expires_at_safe', safeEpochMillis('expires_at')),
-    check('creation_replays_key_present', sql`length(key) > 0`),
-    check('creation_replays_result_json', sql`json_valid(result_json)`),
-  ],
-);
-
-/**
  * Why a node is archived: one row per cause, stored only at its origin (ADR 0003).
  *
  * - **Origin rows only.** Archiving a container writes one row on that container and nothing on its
@@ -190,9 +151,6 @@ export const creationReplays = sqliteTable(
  *   pair written today; the columns do not preclude an extension owning its own cause (#13).
  * - **`RESTRICT`**, because no operation deletes a node. Should one arrive, it has to decide what
  *   happens to the node's causes rather than having them vanish silently.
- *
- * Nothing here touches `nodes`: no column, trigger, or index is added there, which is what keeps this
- * migration clear of the table rebuild `0004`'s header warns about.
  */
 export const archiveCauses = sqliteTable(
   'archive_causes',
@@ -219,8 +177,7 @@ export const archiveCauses = sqliteTable(
  *   never copied here, so a rename, move or archive can never leave a stale copy behind.
  * - **The primary key is the no-duplicate rule**, which makes add (`ON CONFLICT DO NOTHING`) and
  *   remove (a `DELETE` that may match nothing) idempotent.
- * - **Nothing here touches `nodes`**, so toggling a favorite never changes a revision, and this
- *   migration stays clear of the table rebuild `0004`'s header warns about.
+ * - **Nothing here touches `nodes`**, so toggling a favorite never changes a revision.
  * - **`RESTRICT`**, for the reason `archive_causes` gives: no operation deletes a node.
  * - `favorites.ts` is the only module that writes this table; `projection.ts::favoriteExpression` is
  *   the only reader of membership.

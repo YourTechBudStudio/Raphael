@@ -10,7 +10,6 @@ import {
   SEARCH_QUERIES_MAX_COUNT,
   SLUG_MAX_CODE_POINTS,
   LIST_LIMIT_MAX,
-  REQUEST_FIELDS,
   METADATA_MAX_SERIALIZED_BYTES,
   METADATA_MAX_TOP_LEVEL_KEYS,
   TAGS_MAX_COUNT,
@@ -51,6 +50,7 @@ const create = (overrides: Record<string, unknown> = {}): Record<string, unknown
   type: 'area',
   parent: { path: '/' },
   title: 'Backend',
+  slug: 'backend',
   ...overrides,
 });
 
@@ -252,17 +252,6 @@ test('a search response is hits, and a hit tolerates an unknown sibling of node'
   );
 });
 
-test('the request-field vocabulary matches the fields the operations now have', () => {
-  for (const field of ['scopes', 'filter', 'queries']) {
-    assert.ok((REQUEST_FIELDS as readonly string[]).includes(field), field);
-  }
-  assert.equal((REQUEST_FIELDS as readonly string[]).includes('types'), false);
-  // `parent` survives because creation still has one.
-  assert.ok((REQUEST_FIELDS as readonly string[]).includes('parent'));
-  // A move names where it goes under its own field.
-  assert.ok((REQUEST_FIELDS as readonly string[]).includes('destination'));
-});
-
 const move = (destination: unknown): Record<string, unknown> => ({
   target: { id: 3 },
   revision: 2,
@@ -414,8 +403,9 @@ test('a title is mandatory and bounded by code points', () => {
   );
 });
 
-test('an explicit slug must already be canonical', () => {
+test('a slug is mandatory and must already be canonical', () => {
   assert.equal(Either.isRight(decodeCreateRequest(create({ slug: 'backend' }))), true);
+  assert.equal(Either.isLeft(decodeCreateRequest(create({ slug: undefined }))), true);
   assert.equal(Either.isLeft(decodeCreateRequest(create({ slug: 'Backend' }))), true);
   assert.equal(Either.isLeft(decodeCreateRequest(create({ slug: 'back end' }))), true);
 });
@@ -513,18 +503,6 @@ test('body input is Markdown unless TipTap is chosen explicitly', () => {
 test('an unrecognized request property is refused', () => {
   assert.equal(Either.isLeft(decodeCreateRequest(create({ surprise: true }))), true);
   assert.equal(Either.isLeft(decodeListRequest({ scopes: [{ id: 1 }], sort: 'title' })), true);
-});
-
-test('an idempotency key is an opaque bounded string', () => {
-  assert.equal(
-    Either.isRight(
-      decodeCreateRequest(create({ idempotencyKey: '3f1a9d0e-6b4c-4a7f-8f5e-2c0b9d8a1e44' })),
-    ),
-    true,
-  );
-  assert.equal(Either.isLeft(decodeCreateRequest(create({ idempotencyKey: '' }))), true);
-  assert.equal(Either.isLeft(decodeCreateRequest(create({ idempotencyKey: ' abc ' }))), true);
-  assert.equal(Either.isLeft(decodeCreateRequest(create({ idempotencyKey: 'a\tb' }))), true);
 });
 
 test('an entity response is fully populated, with null for a root child', () => {
@@ -801,11 +779,11 @@ test('a decoded request survives encoding and decoding again', () => {
     type: 'project',
     parent: { path: '/work' },
     title: '  Backend  ',
+    slug: 'backend',
     description: 'Server work',
     body: { value: '# Notes' },
     tags: ['  Work ', 'e\u0301tude'],
     metadata: { source: 'cli' },
-    idempotencyKey: '3f1a9d0e-6b4c-4a7f-8f5e-2c0b9d8a1e44',
   };
   const decoded = right(decodeCreateRequest(submitted));
   const encoded = right(Schema.encodeEither(CreateRequest)(decoded));
@@ -876,39 +854,8 @@ test('a container may not carry a kind, and a resource must', () => {
   // Bare `resource` creation is impossible at the contract, which is where it costs nothing: no
   // storage rule has to run to discover that nobody said what this resource is.
   assert.equal(
-    Either.isLeft(decodeCreateRequest({ type: 'resource', parent: { id: 1 }, title: 'A' })),
-    true,
-  );
-  assert.equal(
     Either.isLeft(
-      decodeCreateRequest({ type: 'resource', kind: 'sketch', parent: { id: 1 }, title: 'A' }),
-    ),
-    true,
-  );
-
-  const note = right(
-    decodeCreateRequest({ type: 'resource', kind: 'note', parent: { id: 1 }, title: 'A' }),
-  );
-  assert.equal(note['kind'], 'note');
-});
-
-test('a note may omit its title; a container may not', () => {
-  // The asymmetry the union exists for. An omitted note title is resolved by core from content, and
-  // there is nothing a contract could put in its place that would not be an invented name.
-  const untitled = right(
-    decodeCreateRequest({ type: 'resource', kind: 'note', parent: { id: 1 } }),
-  );
-  assert.equal('title' in untitled, false);
-
-  // A container without a title still fails on the title itself, so the existing `title_required`
-  // recovery wording is reached by the same route it always was.
-  const { title: _title, ...withoutTitle } = create();
-  assert.equal(Either.isLeft(decodeCreateRequest(withoutTitle)), true);
-
-  // A supplied note title is still authored input and still bounded.
-  assert.equal(
-    Either.isLeft(
-      decodeCreateRequest({ type: 'resource', kind: 'note', parent: { id: 1 }, title: '   ' }),
+      decodeCreateRequest({ type: 'resource', parent: { id: 1 }, title: 'A', slug: 'a' }),
     ),
     true,
   );
@@ -916,19 +863,49 @@ test('a note may omit its title; a container may not', () => {
     Either.isLeft(
       decodeCreateRequest({
         type: 'resource',
-        kind: 'note',
+        kind: 'sketch',
         parent: { id: 1 },
-        title: 'x'.repeat(TITLE_MAX_CODE_POINTS + 1),
+        title: 'A',
+        slug: 'a',
       }),
     ),
     true,
   );
+
+  const note = right(
+    decodeCreateRequest({
+      type: 'resource',
+      kind: 'note',
+      parent: { id: 1 },
+      title: 'A',
+      slug: 'a',
+    }),
+  );
+  assert.equal(note['kind'], 'note');
+});
+
+test('every type requires a title and a slug', () => {
+  const note = { type: 'resource', kind: 'note', parent: { id: 1 }, title: 'A', slug: 'a' };
+  for (const base of [create(), note]) {
+    const { title: _title, ...withoutTitle } = base;
+    const { slug: _slug, ...withoutSlug } = base;
+    assert.equal(Either.isLeft(decodeCreateRequest(withoutTitle)), true);
+    assert.equal(Either.isLeft(decodeCreateRequest(withoutSlug)), true);
+  }
 });
 
 test('the body format default applies to both members of the creation union', () => {
   assert.equal(right(decodeCreateRequest(create()))['format'], 'markdown');
   assert.equal(
-    right(decodeCreateRequest({ type: 'resource', kind: 'note', parent: { id: 1 } }))['format'],
+    right(
+      decodeCreateRequest({
+        type: 'resource',
+        kind: 'note',
+        parent: { id: 1 },
+        title: 'A',
+        slug: 'a',
+      }),
+    )['format'],
     'markdown',
   );
 });
@@ -1045,21 +1022,19 @@ test('an update carries only what it supplied, and supplying nothing is refused'
         description: '',
         slug: 'backend',
         body: { value: '# Notes' },
-        addTags: ['reviewed'],
-        removeTags: ['draft'],
+        tags: ['reviewed'],
         active: true,
       }),
     ),
   );
   assert.deepEqual(Object.keys(combined).sort(), [
     'active',
-    'addTags',
     'body',
     'description',
     'format',
-    'removeTags',
     'revision',
     'slug',
+    'tags',
     'target',
     'title',
   ]);
@@ -1081,7 +1056,7 @@ test('every field named a change is one, and every other field is not', () => {
     const value =
       field === 'body'
         ? { value: '' }
-        : field === 'addTags' || field === 'removeTags'
+        : field === 'tags'
           ? ['tag']
           : field === 'slug'
             ? 'backend'
@@ -1123,22 +1098,8 @@ test('an update that changes nothing is refused against the request rather than 
   }
 });
 
-test('mentioning a change field is the test, so an empty list is an ordinary write', () => {
-  // `hasChange` asks about presence, not value. This is a write that changes no value - the same
-  // semantic as resubmitting a field's current value - and neither first-party client sends one.
-  assert.equal(Either.isRight(decodeUpdateRequest(update({ addTags: [] }))), true);
-  assert.equal(Either.isRight(decodeUpdateRequest(update({ removeTags: [] }))), true);
-});
-
-test('a tag cannot be both added and removed, compared after normalization', () => {
-  assert.deepEqual(
-    issuesOf(decodeUpdateRequest(update({ addTags: ['a'], removeTags: [' a'] })))[0]?.path,
-    [],
-  );
-  assert.equal(
-    Either.isRight(decodeUpdateRequest(update({ addTags: ['a'], removeTags: ['b'] }))),
-    true,
-  );
+test('an empty tag list is a change: it clears the tags', () => {
+  assert.deepEqual(right(decodeUpdateRequest(update({ tags: [] })))['tags'], []);
 });
 
 test('identity, parentage and metadata are unpatchable because the schema never mentions them', () => {

@@ -13,7 +13,7 @@ import { eq, sql } from 'drizzle-orm';
 import { Effect, Either } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
-import { FAVORITE_FIELDS, FAVORITE_LIST_FIELDS, invalidInputFrom } from './diagnostics.ts';
+import { invalidInputFrom } from './diagnostics.ts';
 import { InvalidInput, type NodeError } from './errors.ts';
 import { ARCHIVED_CONTAINERS, IS_ARCHIVED } from './lifecycle.ts';
 import { SUMMARY_COLUMNS, checkedResponse, summaryProjection } from './projection.ts';
@@ -124,7 +124,7 @@ export const listFavorites = (input: unknown): Effect.Effect<ListResponse, NodeE
       try: () => {
         const request = decodeFavoriteListRequest(input);
         if (Either.isLeft(request)) {
-          return raise(invalidInputFrom(request.left, FAVORITE_LIST_FIELDS, input));
+          return raise(invalidInputFrom(request.left, input));
         }
         const { skip, limit } = request.right;
 
@@ -156,7 +156,7 @@ export const listFavorites = (input: unknown): Effect.Effect<ListResponse, NodeE
 /** Decodes an add or remove request and detaches its selector, so what is validated is what is used. */
 const decodedTarget = (input: unknown): Selector => {
   const request = decodeFavoriteRequest(input);
-  if (Either.isLeft(request)) return raise(invalidInputFrom(request.left, FAVORITE_FIELDS, input));
+  if (Either.isLeft(request)) return raise(invalidInputFrom(request.left, input));
   const { target } = request.right;
   return 'id' in target ? { id: target.id } : { path: target.path };
 };

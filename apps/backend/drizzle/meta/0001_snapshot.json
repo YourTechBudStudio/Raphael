@@ -1,28 +1,28 @@
 {
-  "id": "09c33ed8-d510-464a-a615-cdd8100aec4c",
-  "prevId": "1edca227-d028-4151-943f-6eded9e75580",
+  "id": "46c6ee4f-83ac-479a-994d-cc0e6ac11b44",
+  "prevId": "af62a430-9e7f-49c5-a596-e63c715b5183",
   "version": "6",
   "dialect": "sqlite",
   "tables": {
-    "creation_replays": {
-      "name": "creation_replays",
+    "archive_causes": {
+      "name": "archive_causes",
       "columns": {
-        "key": {
-          "name": "key",
-          "type": "text",
-          "primaryKey": true,
+        "node_id": {
+          "name": "node_id",
+          "type": "integer",
+          "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "fingerprint": {
-          "name": "fingerprint",
+        "owner": {
+          "name": "owner",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
         },
-        "result_json": {
-          "name": "result_json",
+        "reason": {
+          "name": "reason",
           "type": "text",
           "primaryKey": false,
           "notNull": true,
@@ -34,45 +34,80 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "archive_causes_node_id_nodes_id_fk": {
+          "name": "archive_causes_node_id_nodes_id_fk",
+          "tableFrom": "archive_causes",
+          "columnsFrom": [
+            "node_id"
+          ],
+          "tableTo": "nodes",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "restrict"
+        }
+      },
+      "compositePrimaryKeys": {
+        "archive_causes_pk": {
+          "columns": [
+            "node_id",
+            "owner",
+            "reason"
+          ],
+          "name": "archive_causes_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "archive_causes_owner_present": {
+          "name": "archive_causes_owner_present",
+          "value": "length(owner) BETWEEN 1 AND 64"
         },
-        "expires_at": {
-          "name": "expires_at",
+        "archive_causes_reason_present": {
+          "name": "archive_causes_reason_present",
+          "value": "length(reason) BETWEEN 1 AND 64"
+        },
+        "archive_causes_created_at_safe": {
+          "name": "archive_causes_created_at_safe",
+          "value": "typeof(created_at) = 'integer' AND created_at >= 0 AND created_at <= 9007199254740991"
+        }
+      }
+    },
+    "favorites": {
+      "name": "favorites",
+      "columns": {
+        "node_id": {
+          "name": "node_id",
           "type": "integer",
-          "primaryKey": false,
+          "primaryKey": true,
           "notNull": true,
           "autoincrement": false
         }
       },
-      "indexes": {
-        "creation_replays_expires_at": {
-          "name": "creation_replays_expires_at",
-          "columns": [
-            "expires_at"
+      "indexes": {},
+      "foreignKeys": {
+        "favorites_node_id_nodes_id_fk": {
+          "name": "favorites_node_id_nodes_id_fk",
+          "tableFrom": "favorites",
+          "columnsFrom": [
+            "node_id"
           ],
-          "isUnique": false
+          "tableTo": "nodes",
+          "columnsTo": [
+            "id"
+          ],
+          "onUpdate": "no action",
+          "onDelete": "restrict"
         }
       },
-      "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
-      "checkConstraints": {
-        "creation_replays_created_at_safe": {
-          "name": "creation_replays_created_at_safe",
-          "value": "typeof(created_at) = 'integer' AND created_at >= 0 AND created_at <= 9007199254740991"
-        },
-        "creation_replays_expires_at_safe": {
-          "name": "creation_replays_expires_at_safe",
-          "value": "typeof(expires_at) = 'integer' AND expires_at >= 0 AND expires_at <= 9007199254740991"
-        },
-        "creation_replays_key_present": {
-          "name": "creation_replays_key_present",
-          "value": "length(key) > 0"
-        },
-        "creation_replays_result_json": {
-          "name": "creation_replays_result_json",
-          "value": "json_valid(result_json)"
-        }
-      }
+      "checkConstraints": {}
     },
     "nodes": {
       "name": "nodes",
@@ -89,6 +124,13 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
+          "autoincrement": false
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "parent_id": {
@@ -150,6 +192,14 @@
           "autoincrement": false,
           "default": "'[]'"
         },
+        "active": {
+          "name": "active",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
         "metadata": {
           "name": "metadata",
           "type": "text",
@@ -168,6 +218,13 @@
         "updated_at": {
           "name": "updated_at",
           "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "body_text": {
+          "name": "body_text",
+          "type": "text",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -223,6 +280,14 @@
         "nodes_type_supported": {
           "name": "nodes_type_supported",
           "value": "type IN ('area', 'project', 'resource')"
+        },
+        "nodes_kind_valid": {
+          "name": "nodes_kind_valid",
+          "value": "(type = 'resource') = (kind IS NOT NULL) AND (kind IS NULL OR kind IN ('note'))"
+        },
+        "nodes_active_valid": {
+          "name": "nodes_active_valid",
+          "value": "active IN (0, 1) AND (active = 0 OR type = 'project')"
         },
         "nodes_title_present": {
           "name": "nodes_title_present",

@@ -7,8 +7,7 @@ import { move } from './index.ts';
 /**
  * What `move` establishes, and what it leaves to the server.
  *
- * Driven through the real transport with a stubbed `fetch`, as `update.test.ts` is, so request
- * decoding, response decoding and error classification are the real ones. The destination is
+ * Driven through the real transport with a stubbed `fetch`, as `update.test.ts` is. The destination is
  * asserted to travel exactly as given: whether a path names a container or a new address is the
  * server's decision, and nothing here may split or resolve it.
  */
@@ -111,12 +110,7 @@ describe('move', () => {
     });
 
     assert.equal(result.ok, false);
-    if (!result.ok && result.failure.kind === 'invalid_request') {
-      assert.equal(result.failure.mutationOutcome, 'not_dispatched');
-      assert.equal(result.failure.path[0], 'destination');
-    } else {
-      assert.fail('expected an invalid_request failure');
-    }
+    if (!result.ok) assert.equal(result.failure.kind, 'invalid_request');
     assert.equal(sent.length, 0);
   });
 
@@ -130,46 +124,12 @@ describe('move', () => {
     });
 
     assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.failure.kind, 'invalid_response');
+    if (!result.ok) assert.equal(result.failure.kind, 'bad_response');
   });
 
-  it('reports a revision conflict as a definite rejection with the revision to re-read', async () => {
-    const { transport } = answering(409, {
-      error: {
-        code: 'revision_conflict',
-        message: 'This was changed since you read it.',
-        details: { field: 'revision', currentRevision: 12 },
-      },
-    });
-
-    const result = await move(transport, {
-      target: { id: 7 },
-      revision: 8,
-      destination: { path: '/engineering' },
-    });
-
-    assert.equal(result.ok, false);
-    if (!result.ok && result.failure.kind === 'api_error') {
-      assert.equal(result.failure.mutationOutcome, 'rejected');
-      assert.equal(result.failure.status, 409);
-      assert.equal(result.failure.details.currentRevision, 12);
-    } else {
-      assert.fail('expected an api_error failure');
-    }
-  });
-
-  it('carries a cycle refusal with its reason and field', async () => {
+  it('carries a refusal as the server code and sentence', async () => {
     const { transport } = answering(422, {
-      error: {
-        code: 'invalid_parent',
-        message: 'Something cannot be moved inside itself.',
-        details: {
-          field: 'destination',
-          reason: 'cycle',
-          parentType: 'project',
-          childType: 'area',
-        },
-      },
+      error: { code: 'invalid_parent', message: 'Something cannot be moved inside itself.' },
     });
 
     const result = await move(transport, {
@@ -179,17 +139,14 @@ describe('move', () => {
     });
 
     assert.equal(result.ok, false);
-    if (!result.ok && result.failure.kind === 'api_error') {
-      assert.equal(result.failure.mutationOutcome, 'rejected');
-      assert.equal(result.failure.error.code, 'invalid_parent');
-      assert.equal(result.failure.details.reason, 'cycle');
-      assert.equal(result.failure.details.field, 'destination');
-    } else {
-      assert.fail('expected an api_error failure');
+    if (!result.ok) {
+      assert.equal(result.failure.kind, 'http');
+      assert.equal(result.failure.code, 'invalid_parent');
+      assert.equal(result.failure.message, 'Something cannot be moved inside itself.');
     }
   });
 
-  it('leaves a socket that dies after dispatch unresolved', async () => {
+  it('reports a socket that dies after dispatch as a network failure', async () => {
     const transport = transportOver(() => Promise.reject(new TypeError('fetch failed')));
 
     const result = await move(transport, {
@@ -199,9 +156,6 @@ describe('move', () => {
     });
 
     assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.equal(result.failure.kind, 'transport');
-      assert.equal(result.failure.mutationOutcome, 'unknown');
-    }
+    if (!result.ok) assert.equal(result.failure.kind, 'network');
   });
 });

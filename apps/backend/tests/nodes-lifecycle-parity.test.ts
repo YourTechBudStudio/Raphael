@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createNode, getNode, listNodes } from '../src/modules/nodes/index.ts';
-import { clockAt, expectRight, many, runNodes, withMigrated } from './support.ts';
+import { createNode as createNodeRaw, getNode, listNodes } from '../src/modules/nodes/index.ts';
+import { clockAt, expectRight, many, runNodes, withMigrated, withDerivedSlug } from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 /**
  * The two evaluators of the lifecycle rule, pinned to each other.

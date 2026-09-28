@@ -31,15 +31,13 @@ const invalidInput = (): OperationFailure => ({
   error: {
     code: 'invalid_input',
     message: 'Verification takes no input.',
-    details: { reason: 'invalid' },
   },
 });
 
 const internalFailure = (detail: string): OperationFailure => ({
   error: {
     code: 'internal_error',
-    message: 'The request could not be completed.',
-    details: {},
+    message: 'The server could not complete the request.',
   },
   diagnostic: { stage: 'connection.verify', detail },
 });

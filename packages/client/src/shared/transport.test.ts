@@ -5,23 +5,15 @@ import { after, describe, it } from 'node:test';
 
 import { AUTHORIZATION_SCHEME } from '@raphael/contracts/connection';
 
-import type { ClientResult } from './failure.ts';
+import { retryable, type ClientResult } from './failure.ts';
 import {
   createTransport,
   isTransportRejection,
-  RESPONSE_MAX_BYTES,
   type FetchLike,
   type Transport,
 } from './transport.ts';
 
-/**
- * Real sockets wherever the behaviour under test is a network behaviour.
- *
- * A stub `fetch` is used only where the point is how this code reacts to a response shape - a null
- * body, a missing stream API - which a real server cannot produce on demand. Everything about headers,
- * redirects, statuses, and body reading runs against `node:http`, because a fake that returns the
- * object we expect would assert our own assumptions rather than the runtime's behaviour.
- */
+/** Real sockets wherever the behaviour under test is a network behaviour. */
 
 const servers: Server[] = [];
 
@@ -72,7 +64,6 @@ const call = (transport: Transport, overrides: Record<string, unknown> = {}) =>
     body: { target: { id: 1 } },
     decode: anyObject,
     successStatus: 200,
-    mutating: false,
     ...overrides,
   });
 
@@ -219,11 +210,8 @@ describe('redirects', () => {
     const result = await call(transportFor(endpoint));
     assert.equal(result.ok, false);
     if (!result.ok) {
-      assert.equal(result.failure.kind, 'invalid_response');
-      assert.equal(
-        result.failure.kind === 'invalid_response' ? result.failure.reason : '',
-        'redirect_refused',
-      );
+      assert.equal(result.failure.kind, 'bad_response');
+      assert.equal(result.failure.status, 302);
     }
     // The decisive assertion: the server was contacted exactly once. A followed redirect would be two.
     assert.equal(hops, 1);
@@ -237,12 +225,17 @@ describe('redirects', () => {
       });
       const result = await call(transportFor(endpoint));
       assert.equal(result.ok, false, `${status}`);
-      if (!result.ok && result.failure.kind === 'invalid_response') {
-        assert.equal(result.failure.reason, 'redirect_refused', `${status}`);
-      }
+      if (!result.ok) assert.equal(result.failure.kind, 'bad_response', `${status}`);
     }
   });
 });
+
+const failureOf = async (endpoint: string, overrides: Record<string, unknown> = {}) => {
+  const result = await call(transportFor(endpoint), overrides);
+  assert.equal(result.ok, false);
+  if (result.ok) throw new Error('unreachable');
+  return result.failure;
+};
 
 describe('response reading', () => {
   it('decodes a successful answer', async () => {
@@ -258,244 +251,104 @@ describe('response reading', () => {
     const endpoint = await listen((_request, response) =>
       json(response, 202, { entity: { id: 4 } }),
     );
-    const result = await call(transportFor(endpoint));
-    assert.equal(result.ok, false);
+    const failure = await failureOf(endpoint);
+    assert.equal(failure.kind, 'bad_response');
+    assert.equal(failure.status, 202);
   });
 
-  it('refuses statuses that carry no body, and 304 is not treated as a redirect', async () => {
-    for (const status of [204, 304]) {
-      const endpoint = await listen((_request, response) => {
-        response.writeHead(status);
-        response.end();
-      });
-      const result = await call(transportFor(endpoint));
-      assert.equal(result.ok, false, `${status}`);
-      if (!result.ok && result.failure.kind === 'invalid_response') {
-        assert.equal(result.failure.reason, 'unexpected_status', `${status}`);
-      }
-    }
-  });
-
-  it('reports an empty body as an empty response, not as malformed JSON', async () => {
-    const endpoint = await listen((_request, response) => {
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end();
-    });
-    const result = await call(transportFor(endpoint));
-    assert.equal(result.ok, false);
-    if (!result.ok && result.failure.kind === 'invalid_response') {
-      assert.equal(result.failure.reason, 'empty_response');
-    }
-  });
-
-  it('reports invalid UTF-8 separately from malformed JSON', async () => {
-    const endpoint = await listen((_request, response) => {
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(Buffer.from([0x7b, 0xff, 0xfe, 0x7d]));
-    });
-    const result = await call(transportFor(endpoint));
-    assert.equal(result.ok, false);
-    if (!result.ok && result.failure.kind === 'invalid_response') {
-      assert.equal(result.failure.reason, 'invalid_utf8');
-    }
-  });
-
-  it('never quotes the response body in a parse failure', async () => {
+  it('reports an unreadable success body as a bad response without quoting it', async () => {
     const secret = 'leaked-secret-value';
-    const endpoint = await listen((_request, response) => {
-      response.writeHead(200, { 'content-type': 'application/json' });
-      response.end(`{not json, ${secret}`);
-    });
-    const result = await call(transportFor(endpoint));
-    assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.equal(result.failure.kind, 'invalid_response');
-      assert.equal(JSON.stringify(result.failure).includes(secret), false);
+    for (const body of ['', `{not json, ${secret}`, '"a string"']) {
+      const endpoint = await listen((_request, response) => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(body);
+      });
+      const failure = await failureOf(endpoint);
+      assert.equal(failure.kind, 'bad_response', body);
+      assert.equal(JSON.stringify(failure).includes(secret), false);
     }
   });
 
-  it('answers HTML from a proxy as an unreadable error, never as a verified success', async () => {
-    const endpoint = await listen((_request, response) => {
-      response.writeHead(401, { 'content-type': 'text/html' });
-      response.end('<html><body>Please sign in</body></html>');
+  it('carries the code and message of a Raphael error envelope', async () => {
+    const endpoint = await listen((_request, response) =>
+      json(response, 409, {
+        error: { code: 'slug_conflict', message: '"idea" is already used here.' },
+      }),
+    );
+    assert.deepEqual(await failureOf(endpoint), {
+      kind: 'http',
+      status: 409,
+      code: 'slug_conflict',
+      message: '"idea" is already used here.',
     });
-    const result = await call(transportFor(endpoint));
-    assert.equal(result.ok, false);
-    if (!result.ok && result.failure.kind === 'invalid_response') {
-      assert.equal(result.failure.reason, 'unrecognized_error');
-      assert.equal(result.failure.status, 401);
-    }
-  });
-});
-
-describe('the response ceiling', () => {
-  it('aborts a response that exceeds the limit instead of buffering it', async () => {
-    // The server offers far more than the ceiling and never finishes. If the limit were checked after
-    // buffering, this test would exhaust memory rather than fail.
-    let written = 0;
-    const chunk = Buffer.alloc(1024 * 1024, 0x61);
-    const endpoint = await listen((_request, response) => {
-      response.writeHead(200, { 'content-type': 'application/json' });
-      const pump = (): void => {
-        while (response.write(chunk)) {
-          written += chunk.byteLength;
-          if (written > RESPONSE_MAX_BYTES * 2) return;
-        }
-        response.once('drain', pump);
-      };
-      pump();
-    });
-
-    const result = await call(transportFor(endpoint));
-    assert.equal(result.ok, false);
-    if (!result.ok && result.failure.kind === 'invalid_response') {
-      assert.equal(result.failure.reason, 'response_too_large');
-    }
   });
 
-  it('reads a large but legal response', async () => {
-    const payload = { entity: { description: 'x'.repeat(2 * 1024 * 1024) } };
-    const endpoint = await listen((_request, response) => json(response, 200, payload));
-    const result = await call(transportFor(endpoint));
-    assert.equal(result.ok, true);
+  it('keeps an unfamiliar code as sent', async () => {
+    const endpoint = await listen((_request, response) =>
+      json(response, 429, { error: { code: 'quota_exhausted', message: 'Later.' } }),
+    );
+    const failure = await failureOf(endpoint);
+    assert.equal(failure.code, 'quota_exhausted');
+  });
+
+  it('reports a page from a proxy as a bare status, never as a success', async () => {
+    const endpoint = await listen((_request, response) => {
+      response.writeHead(502, { 'content-type': 'text/html' });
+      response.end('<html><body>Bad gateway</body></html>');
+    });
+    const failure = await failureOf(endpoint);
+    assert.deepEqual(failure, { kind: 'http', status: 502, message: 'The server answered 502.' });
+    assert.equal(retryable(failure), true);
   });
 });
 
 describe('timeout and cancellation', () => {
   it('bounds the whole exchange, not just the wait for headers', async () => {
-    // Headers arrive immediately; the body never finishes. A timer that stopped at headers would let
-    // this hang forever.
     const endpoint = await listen((_request, response) => {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.write('{"partial":');
+      // Never finishes.
     });
-
     const result = await call(transportFor(endpoint, { timeoutMs: 1_000 }));
     assert.equal(result.ok, false);
     if (!result.ok) assert.equal(result.failure.kind, 'timeout');
   });
 
-  it('reports cancellation before dispatch as not dispatched', async () => {
-    const endpoint = await listen((_request, response) => json(response, 200, {}));
-    const controller = new AbortController();
-    controller.abort();
-    const result = await call(transportFor(endpoint), { signal: controller.signal });
-    assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.equal(result.failure.kind, 'cancelled');
-      assert.equal(result.failure.mutationOutcome, 'not_dispatched');
-    }
-  });
+  it('reports a caller cancellation before or after dispatch as cancelled', async () => {
+    const endpoint = await listen(() => {
+      // Never answers.
+    });
+    const early = new AbortController();
+    early.abort();
+    assert.equal((await failureOf(endpoint, { signal: early.signal })).kind, 'cancelled');
 
-  it('reports cancellation after dispatch as unknown for a mutation', async () => {
-    // Aborting the local wait does not undo a transaction the server may already have committed.
-    const endpoint = await listen((_request, response) => {
-      response.writeHead(201, { 'content-type': 'application/json' });
-      response.write('{"entity":');
-    });
-    const controller = new AbortController();
-    const pending = call(transportFor(endpoint), {
-      signal: controller.signal,
-      mutating: true,
-      successStatus: 201,
-    });
-    setTimeout(() => controller.abort(), 50);
-    const result = await pending;
-    assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.equal(result.failure.kind, 'cancelled');
-      assert.equal(result.failure.mutationOutcome, 'unknown');
-    }
+    const late = new AbortController();
+    setTimeout(() => late.abort(), 50);
+    assert.equal((await failureOf(endpoint, { signal: late.signal })).kind, 'cancelled');
   });
 });
 
 describe('an unreachable server', () => {
-  it('is uncertain for a mutation, even though the connection was refused', async () => {
-    // Deliberate over-caution. Undici would let us read ECONNREFUSED and say "nothing was sent", but
-    // React Native's fetch would not, and a certainty claim that depends on the platform is worse
-    // than one that is uniformly conservative.
-    const server = createServer();
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
-    const { port } = server.address() as AddressInfo;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-
-    const transport = transportFor(`http://127.0.0.1:${port}`);
-    const result = await transport.invoke({
-      route: { method: 'POST', path: '/api/nodes/create' },
-      body: {},
-      decode: anyObject,
-      successStatus: 201,
-      mutating: true,
-    });
-
-    assert.equal(result.ok, false);
-    if (!result.ok) {
-      assert.equal(result.failure.kind, 'transport');
-      assert.equal(result.failure.mutationOutcome, 'unknown');
-    }
-  });
-
-  it('is not applicable for a read', async () => {
-    const server = createServer();
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
-    const { port } = server.address() as AddressInfo;
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-
-    const result = await call(transportFor(`http://127.0.0.1:${port}`));
-    assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.failure.mutationOutcome, 'not_applicable');
+  it('is a network failure', async () => {
+    const endpoint = await listen(() => {});
+    const server = servers.at(-1);
+    await new Promise<void>((resolve) => server?.close(() => resolve()));
+    const failure = await failureOf(endpoint);
+    assert.equal(failure.kind, 'network');
+    assert.equal(retryable(failure), true);
   });
 });
 
-describe('a fetch implementation that cannot stream', () => {
-  const respondWith =
-    (body: unknown): FetchLike =>
-    () =>
-      Promise.resolve({ status: 200, type: 'default', body } as unknown as Response);
-
-  it('fails loudly rather than falling back to buffering', async () => {
-    const transport = createTransport({
-      endpoint: 'https://example.com',
-      apiKey: KEY,
-      // A body object with no getReader: what a non-streaming implementation looks like.
-      fetch: respondWith({}),
-    }) as Transport;
-
-    const result = await call(transport);
-    assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.failure.kind, 'unsupported_fetch');
-  });
-
-  it('resolves rather than rejecting when the implementation defines no body at all', async () => {
-    // React Native's XHR-backed fetch is the case this guards. `undefined` is not `null`, so the
-    // empty-body check does not catch it, and `readResponse` runs outside the `catch` that builds
-    // transport failures - so dereferencing it threw a `TypeError` past the failure model entirely
-    // and reached callers as a rejected promise. Asserting on the resolved value is the point of
-    // this test: `rejects` would pass just as well against the bug.
-    const transport = createTransport({
-      endpoint: 'https://example.com',
-      apiKey: KEY,
-      fetch: respondWith(undefined),
-    }) as Transport;
-
-    const result = await call(transport);
-    assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.failure.kind, 'unsupported_fetch');
-  });
-
-  it('distinguishes a genuinely empty body from a missing streaming API', async () => {
-    // A null body is a broken response, not evidence about the implementation - so it must not be
-    // reported as an unsupported fetch, which would send someone to fix the wrong thing.
-    const transport = createTransport({
-      endpoint: 'https://example.com',
-      apiKey: KEY,
-      fetch: respondWith(null),
-    }) as Transport;
-
-    const result = await call(transport);
-    assert.equal(result.ok, false);
-    if (!result.ok && result.failure.kind === 'invalid_response') {
-      assert.equal(result.failure.reason, 'empty_response');
-    }
+describe('retryable', () => {
+  it('is network, timeout and 5xx only', () => {
+    assert.equal(retryable({ kind: 'timeout', message: '' }), true);
+    assert.equal(retryable({ kind: 'http', status: 503, code: 'storage_busy', message: '' }), true);
+    assert.equal(
+      retryable({ kind: 'http', status: 409, code: 'slug_conflict', message: '' }),
+      false,
+    );
+    assert.equal(retryable({ kind: 'bad_response', status: 500, message: '' }), false);
+    assert.equal(retryable({ kind: 'cancelled', message: '' }), false);
+    assert.equal(retryable({ kind: 'invalid_request', message: '' }), false);
   });
 });

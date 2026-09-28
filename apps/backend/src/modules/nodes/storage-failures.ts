@@ -13,13 +13,11 @@ import { InternalFailure, SlugConflict, StorageBusy, type NodeError } from './er
  * sibling slug duplicate   SQLITE_CONSTRAINT_UNIQUE      UNIQUE constraint failed: nodes.parent_id, nodes.slug
  * missing parent           SQLITE_CONSTRAINT_FOREIGNKEY  FOREIGN KEY constraint failed
  * mistyped parent          SQLITE_CONSTRAINT_FOREIGNKEY  FOREIGN KEY constraint failed
- * replay key duplicate     SQLITE_CONSTRAINT_PRIMARYKEY  UNIQUE constraint failed: creation_replays.key
  * ```
  *
- * Three consequences are load-bearing. A missing parent and a mistyped parent are indistinguishable,
+ * Two consequences are load-bearing. A missing parent and a mistyped parent are indistinguishable,
  * so parentage is validated in core *before* the insert and a foreign-key violation afterwards is a
- * bug of ours rather than a user error. A replay-key collision is `PRIMARYKEY`, not `UNIQUE`, so a
- * classifier keyed on `UNIQUE` alone would have misread it. And only the slug indexes are recognized
+ * bug of ours rather than a user error. And only the slug indexes are recognized
  * from an error, by an exact code-and-message pair: if a future SQLite reworded that diagnostic, a
  * slug conflict degrades to an internal failure, which is the safe direction to fail.
  */

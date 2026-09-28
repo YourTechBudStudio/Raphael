@@ -35,14 +35,14 @@ test('the two measured slug violations are the only ones recognized', () => {
   assert.equal((root as { scope: string }).scope, 'root');
 });
 
-test('other uniqueness failures are internal, including the replay key', () => {
-  // A replay-key collision is PRIMARYKEY rather than UNIQUE. A classifier keyed on UNIQUE alone would
-  // have read it as a slug conflict and told the caller to rename something.
-  const replay = classifyFailure(
+test('other uniqueness failures are internal, including a primary key', () => {
+  // A primary-key collision is PRIMARYKEY rather than UNIQUE, with the same message prefix. It is not
+  // a slug conflict, so it must not tell the caller to rename something.
+  const primary = classifyFailure(
     context,
-    sqliteError('SQLITE_CONSTRAINT_PRIMARYKEY', 'UNIQUE constraint failed: creation_replays.key'),
+    sqliteError('SQLITE_CONSTRAINT_PRIMARYKEY', 'UNIQUE constraint failed: favorites.node_id'),
   );
-  assert.equal(replay._tag, 'InternalFailure');
+  assert.equal(primary._tag, 'InternalFailure');
 
   const identity = classifyFailure(
     context,

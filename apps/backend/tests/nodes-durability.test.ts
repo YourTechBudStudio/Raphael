@@ -1,16 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createNode, getNode, listNodes } from '../src/modules/nodes/index.ts';
+import {
+  createNode as createNodeRaw,
+  getNode,
+  listNodes,
+  toPublicError,
+} from '../src/modules/nodes/index.ts';
 import {
   clockAt,
   count,
+  expectLeft,
   expectRight,
   one,
   openMigrated,
   runNodes,
   tempDatabase,
+  withDerivedSlug,
 } from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 const T0 = 1_700_000_000_000;
 
@@ -34,7 +43,6 @@ test('what was created survives closing and reopening the database', () => {
             tags: ['planning'],
             metadata: { owner: 'me' },
             body: { value: body },
-            idempotencyKey: 'survives-restart',
           }),
           clockAt(T0),
         ),
@@ -69,28 +77,15 @@ test('what was created survives closing and reopening the database', () => {
         ['quarterly-plan'],
       );
 
-      // The replay record outlived the restart too, so a retry after a crash still deduplicates.
-      const replayed = expectRight(
+      // A retry after a crash resubmits the same slug and meets its own first attempt.
+      const retried = expectLeft(
         runNodes(
           second,
-          createNode({
-            type: 'project',
-            parent: { path: '/work' },
-            title: 'Quarterly plan',
-            description: 'The plan',
-            tags: ['planning'],
-            metadata: { owner: 'me' },
-            body: { value: body },
-            idempotencyKey: 'survives-restart',
-          }),
+          createNode({ type: 'project', parent: { path: '/work' }, title: 'Quarterly plan' }),
           clockAt(T0 + 5_000),
         ),
       );
-      assert.equal(
-        replayed.entity.id,
-        createdId,
-        'a retry after a restart replays rather than duplicates',
-      );
+      assert.equal(toPublicError(retried).code, 'slug_conflict');
     } finally {
       second.close();
     }
@@ -99,15 +94,14 @@ test('what was created survives closing and reopening the database', () => {
   }
 });
 
-test('a note created without a title comes back whole after a restart', () => {
+test('a note comes back whole after a restart, and a retry does not duplicate it', () => {
   const temp = tempDatabase('durability-note');
   const body = '# API design\n\nRequest contracts.';
   let createdId = 0;
   let createdAt = 0;
 
   try {
-    // First process: create a note that names itself from its content, then release ownership the
-    // way a clean shutdown does.
+    // First process: create a note, then release ownership the way a clean shutdown does.
     const first = openMigrated(temp.file);
     try {
       const created = expectRight(
@@ -117,13 +111,12 @@ test('a note created without a title comes back whole after a restart', () => {
             type: 'resource',
             kind: 'note',
             parent: { path: '/work' },
+            title: 'API design',
             body: { value: body },
-            idempotencyKey: 'note-survives-restart',
           }),
           clockAt(T0),
         ),
       );
-      assert.equal(created.entity.title, 'API design', 'the title was derived, not supplied');
       assert.equal(created.entity.slug, 'api-design');
       createdId = created.entity.id;
       createdAt = one<{ updatedAt: number }>(
@@ -150,8 +143,6 @@ test('a note created without a title comes back whole after a restart', () => {
       );
 
       // The derived projection is storage, not a response field, so it is inspected where it lives.
-      // Its survival is what makes the maintenance pass a backfill for older rows rather than
-      // something every restart has to redo.
       const stored = one<{ kind: string | null; bodyText: string | null }>(
         second.db,
         'SELECT kind, body_text AS bodyText FROM nodes WHERE id = ?',
@@ -174,30 +165,24 @@ test('a note created without a title comes back whole after a restart', () => {
       );
       assert.equal(listed.items[0]?.kind, 'note');
 
-      // The receipt outlived the restart, and it answers with the title the server resolved - which
-      // the request never carried, so a retry after a crash learns what was actually created.
-      const replayed = expectRight(
+      // A retry after a lost reply resubmits the same slug, so it is refused rather than duplicated.
+      const retried = expectLeft(
         runNodes(
           second,
           createNode({
             type: 'resource',
             kind: 'note',
             parent: { path: '/work' },
+            title: 'API design',
             body: { value: body },
-            idempotencyKey: 'note-survives-restart',
           }),
           clockAt(T0 + 5_000),
         ),
       );
-      assert.deepEqual(replayed.entity, reread.entity);
-      assert.equal(
-        count(second.db, `SELECT count(*) AS c FROM nodes WHERE type = 'resource'`),
-        1,
-        'a replay reports the entity that exists rather than creating a second one',
-      );
+      assert.equal(toPublicError(retried).code, 'slug_conflict');
+      assert.equal(count(second.db, `SELECT count(*) AS c FROM nodes WHERE type = 'resource'`), 1);
 
-      // A replay is not an edit, so it must not make the note look recently touched - which would
-      // silently reorder a recency-ordered feed.
+      // The refused retry did not touch the note.
       assert.equal(
         one<{ updatedAt: number }>(
           second.db,

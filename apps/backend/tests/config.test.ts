@@ -79,8 +79,6 @@ describe('defaults and resolution', () => {
       assert.equal(options.server.host, CONFIG_DEFAULTS.host);
       assert.equal(options.server.port, CONFIG_DEFAULTS.port);
       assert.equal(options.database.busyTimeoutMs, CONFIG_DEFAULTS.busyTimeoutMs);
-      assert.equal(options.idempotency.gcIntervalMinutes, CONFIG_DEFAULTS.gcIntervalMinutes);
-      assert.equal(options.idempotency.gcBatchSize, CONFIG_DEFAULTS.gcBatchSize);
       // With no file, a relative default resolves against the invocation directory.
       assert.equal(options.database.databasePath, resolve(dir, CONFIG_DEFAULTS.databasePath));
     });
@@ -114,14 +112,12 @@ describe('defaults and resolution', () => {
     withTempDir('config-values', (dir) => {
       const path = writeConfig(
         dir,
-        'server:\n  host: 0.0.0.0\n  port: 8080\ndatabase:\n  busyTimeoutMs: 250\nidempotency:\n  gcIntervalMinutes: 5\n  gcBatchSize: 10\n',
+        'server:\n  host: 0.0.0.0\n  port: 8080\ndatabase:\n  busyTimeoutMs: 250\n',
       );
       const { options } = load({ dir, configPath: path, readEnvFile: false });
       assert.equal(options.server.host, '0.0.0.0');
       assert.equal(options.server.port, 8080);
       assert.equal(options.database.busyTimeoutMs, 250);
-      assert.equal(options.idempotency.gcIntervalMinutes, 5);
-      assert.equal(options.idempotency.gcBatchSize, 10);
     });
   });
 });
@@ -231,12 +227,6 @@ describe('bounds', () => {
         'server:\n  port: 3000.5\n',
         'database:\n  busyTimeoutMs: -1\n',
         'database:\n  busyTimeoutMs: 600000\n',
-        'idempotency:\n  gcIntervalMinutes: 0\n',
-        'idempotency:\n  gcBatchSize: 0\n',
-        // A negative LIMIT means *no limit* to SQLite, so a negative batch size must never get past
-        // validation into the delete statement.
-        'idempotency:\n  gcBatchSize: -1\n',
-        'idempotency:\n  gcBatchSize: 100000\n',
       ];
       for (const source of outOfRange) {
         const path = writeConfig(dir, source);
@@ -402,7 +392,6 @@ describe('programmatic options', () => {
   const valid = {
     server: { host: '127.0.0.1', port: 0 },
     database: { databasePath: '/tmp/raphael-validate/raphael.sqlite', busyTimeoutMs: 5_000 },
-    idempotency: { gcIntervalMinutes: 60, gcBatchSize: 500 },
   };
 
   test('an ephemeral port is allowed here, though a configuration file may not ask for one', () => {
@@ -413,12 +402,7 @@ describe('programmatic options', () => {
 
   test('every bound that applies to a file applies to a caller too', () => {
     const cases: [string, BackendOptions][] = [
-      // SQLite reads a negative LIMIT as *no limit*, so this value would turn one bounded batch into
-      // the whole backlog in a single transaction. It is the reason this function exists.
-      ['negative batch size', { ...valid, idempotency: { ...valid.idempotency, gcBatchSize: -1 } }],
-      ['zero batch size', { ...valid, idempotency: { ...valid.idempotency, gcBatchSize: 0 } }],
-      ['huge batch size', { ...valid, idempotency: { ...valid.idempotency, gcBatchSize: 1e9 } }],
-      ['zero interval', { ...valid, idempotency: { ...valid.idempotency, gcIntervalMinutes: 0 } }],
+      ['huge busy timeout', { ...valid, database: { ...valid.database, busyTimeoutMs: 1e9 } }],
       ['negative busy timeout', { ...valid, database: { ...valid.database, busyTimeoutMs: -1 } }],
       ['port above range', { ...valid, server: { ...valid.server, port: 70_000 } }],
       ['negative port', { ...valid, server: { ...valid.server, port: -1 } }],
@@ -439,7 +423,6 @@ describe('programmatic options', () => {
     const options: BackendOptions = {
       server: { host: '127.0.0.1', port: 0 },
       database: { databasePath: '/tmp/raphael-validate/raphael.sqlite', busyTimeoutMs: 5_000 },
-      idempotency: { gcIntervalMinutes: 60, gcBatchSize: 500 },
     };
     const validated = validateOptions(options);
     assert.notEqual(
@@ -448,14 +431,11 @@ describe('programmatic options', () => {
       'the caller must not keep a handle on what the server uses',
     );
 
-    // Startup is asynchronous and the batch size is not read until after the listener is acquired, so
-    // returning the caller's object would have left the check decorative. Measured against an earlier
-    // version: this put -1 back into the delete statement.
-    (options.idempotency as { gcBatchSize: number }).gcBatchSize = -1;
+    (options.database as { busyTimeoutMs: number }).busyTimeoutMs = -1;
     (options.database as { databasePath: string }).databasePath = '/etc/passwd';
     (options.server as { port: number }).port = 70_000;
 
-    assert.equal(validated.idempotency.gcBatchSize, 500);
+    assert.equal(validated.database.busyTimeoutMs, 5_000);
     assert.equal(validated.database.databasePath, '/tmp/raphael-validate/raphael.sqlite');
     assert.equal(validated.server.port, 0);
   });
@@ -464,21 +444,20 @@ describe('programmatic options', () => {
     let reads = 0;
     const options: BackendOptions = {
       server: { host: '127.0.0.1', port: 0 },
-      database: { databasePath: '/tmp/raphael-validate/raphael.sqlite', busyTimeoutMs: 5_000 },
-      idempotency: {
-        gcIntervalMinutes: 60,
-        // Valid when inspected, unbounded afterwards.
-        get gcBatchSize() {
+      database: {
+        databasePath: '/tmp/raphael-validate/raphael.sqlite',
+        // Valid when inspected, out of range afterwards.
+        get busyTimeoutMs() {
           reads += 1;
-          return reads === 1 ? 500 : -1;
+          return reads === 1 ? 5_000 : -1;
         },
       },
     };
 
     const validated = validateOptions(options);
     assert.equal(reads, 1, "the caller's value must be read exactly once");
-    assert.equal(validated.idempotency.gcBatchSize, 500);
-    assert.equal(validated.idempotency.gcBatchSize, 500, 'the snapshot must be a plain value');
+    assert.equal(validated.database.busyTimeoutMs, 5_000);
+    assert.equal(validated.database.busyTimeoutMs, 5_000, 'the snapshot must be a plain value');
     assert.equal(reads, 1, "nothing may go back to the caller's object after validation");
   });
 
@@ -490,8 +469,7 @@ describe('programmatic options', () => {
           serve({
             options: {
               server: { host: '127.0.0.1', port: 0 },
-              database: { databasePath: temp.file, busyTimeoutMs: 5_000 },
-              idempotency: { gcIntervalMinutes: 60, gcBatchSize: -1 },
+              database: { databasePath: temp.file, busyTimeoutMs: -1 },
             },
             credential: ApiCredential.fromKey(GOOD_KEY),
             logger: silentLogger,
@@ -509,7 +487,7 @@ describe('programmatic options', () => {
 
   test("serve reads the caller's options once and runs from the snapshot", async () => {
     const temp = tempDatabase('validate-serve-snapshot');
-    const reads = { gcBatchSize: 0, databasePath: 0, port: 0 };
+    const reads = { busyTimeoutMs: 0, databasePath: 0, port: 0 };
     try {
       const options: BackendOptions = {
         server: {
@@ -524,16 +502,9 @@ describe('programmatic options', () => {
             reads.databasePath += 1;
             return temp.file;
           },
-          busyTimeoutMs: 5_000,
-        },
-        idempotency: {
-          gcIntervalMinutes: 60,
-          get gcBatchSize() {
-            reads.gcBatchSize += 1;
-            // Valid on the first read, unbounded on any later one. If startup went back to this
-            // object - after acquiring the listener, where the collector is forked - SQLite would be
-            // handed a negative LIMIT and one batch would become the whole backlog.
-            return reads.gcBatchSize === 1 ? 500 : -1;
+          get busyTimeoutMs() {
+            reads.busyTimeoutMs += 1;
+            return reads.busyTimeoutMs === 1 ? 5_000 : -1;
           },
         },
       };
@@ -556,7 +527,7 @@ describe('programmatic options', () => {
 
       assert.deepEqual(
         reads,
-        { gcBatchSize: 1, databasePath: 1, port: 1 },
+        { busyTimeoutMs: 1, databasePath: 1, port: 1 },
         'startup must read each supplied value exactly once and then use its own snapshot',
       );
     } finally {

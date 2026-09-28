@@ -40,6 +40,7 @@ describe('operations over HTTP', () => {
           type: 'project',
           parent: { path: '/work' },
           title: 'Quarterly plan',
+          slug: 'quarterly-plan',
           description: 'budget and headcount',
         }),
       });
@@ -74,7 +75,7 @@ describe('operations over HTTP', () => {
       assert.equal(response.status, 400);
       const error = envelope(response.json);
       assert.equal(error.code, 'invalid_input');
-      assert.deepEqual(error.details, { field: 'queries', reason: 'query_malformed' });
+      assert.equal(error.message, 'The search query is not well formed.');
       assert.doesNotMatch(JSON.stringify(response.json), /confidentialword/u);
     });
   });
@@ -90,7 +91,12 @@ describe('operations over HTTP', () => {
       );
 
       const created = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'project', parent: { path: '/work' }, title: 'Ship it' }),
+        body: JSON.stringify({
+          type: 'project',
+          parent: { path: '/work' },
+          title: 'Ship it',
+          slug: 'ship-it',
+        }),
       });
       assert.equal(created.status, 201);
       const entity = (
@@ -114,67 +120,32 @@ describe('operations over HTTP', () => {
     });
   });
 
-  test('a replayed creation is a success with the same 201, not a distinct outcome', async () => {
-    await withServer('http-replay', async (server) => {
-      const request = JSON.stringify({
+  test('a slug collision answers 409 naming the slug, and the error is only a code and a message', async () => {
+    await withServer('http-slug-conflict', async (server) => {
+      const body = JSON.stringify({
         type: 'area',
         parent: { path: '/' },
-        title: 'Reading',
-        idempotencyKey: '2f8a6b20-0d0e-4a6f-bb5e-2a1f3c4d5e6f',
+        title: 'Work',
+        slug: 'work',
       });
-      const first = await call(server, '/api/nodes/create', { body: request });
-      const second = await call(server, '/api/nodes/create', { body: request });
-
-      assert.equal(first.status, 201);
-      assert.equal(second.status, 201);
-      assert.deepEqual(second.json, first.json);
-    });
-  });
-
-  test('a differing retry on the same key conflicts, with the capability’s own reason', async () => {
-    await withServer('http-replay-conflict', async (server) => {
-      const key = '3a9b7c31-1e1f-4b7a-9c6f-3b2e4d5f6a7b';
-      await call(server, '/api/nodes/create', {
-        body: JSON.stringify({
-          type: 'area',
-          parent: { path: '/' },
-          title: 'First',
-          idempotencyKey: key,
-        }),
-      });
-      const differing = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({
-          type: 'area',
-          parent: { path: '/' },
-          title: 'Second',
-          idempotencyKey: key,
-        }),
-      });
-
-      assert.equal(differing.status, 409);
-      const error = envelope(differing.json);
-      assert.equal(error.code, 'idempotency_conflict');
-      assert.equal(error.details.reason, 'different_input');
-    });
-  });
-
-  test('a slug collision answers 409 with the conflicting slug and scope', async () => {
-    await withServer('http-slug-conflict', async (server) => {
-      const body = JSON.stringify({ type: 'area', parent: { path: '/' }, title: 'Work' });
       const response = await call(server, '/api/nodes/create', { body });
 
       assert.equal(response.status, 409);
-      const error = envelope(response.json);
-      assert.equal(error.code, 'slug_conflict');
-      assert.equal(error.details.slug, 'work');
-      assert.equal(error.details.scope, 'root');
+      assert.deepEqual(response.json, {
+        error: { code: 'slug_conflict', message: '"work" is already used here.' },
+      });
     });
   });
 
   test('a move answers 200 with the summary under node', async () => {
     await withServer('http-move', async (server) => {
       const created = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'project', parent: { path: '/work' }, title: 'Ship it' }),
+        body: JSON.stringify({
+          type: 'project',
+          parent: { path: '/work' },
+          title: 'Ship it',
+          slug: 'ship-it',
+        }),
       });
       const entity = (created.json as { entity: { id: number; revision: number } }).entity;
 
@@ -202,7 +173,12 @@ describe('operations over HTTP', () => {
   test('archive and restore answer 200, and an archived target refuses an update with 409', async () => {
     await withServer('http-archive', async (server) => {
       const created = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'project', parent: { path: '/work' }, title: 'Ship it' }),
+        body: JSON.stringify({
+          type: 'project',
+          parent: { path: '/work' },
+          title: 'Ship it',
+          slug: 'ship-it',
+        }),
       });
       const entity = (created.json as { entity: { id: number; revision: number } }).entity;
 
@@ -230,7 +206,7 @@ describe('operations over HTTP', () => {
       assert.equal(refused.status, 409);
       const error = envelope(refused.json);
       assert.equal(error.code, 'node_archived');
-      assert.deepEqual(error.details, { field: 'target', reason: 'direct' });
+      assert.equal(error.message, 'This is archived.');
 
       const restored = await call(server, '/api/nodes/restore', {
         body: JSON.stringify({ target: { id: entity.id }, revision: answer.node.revision }),
@@ -243,7 +219,12 @@ describe('operations over HTTP', () => {
   test('adding, listing and removing a favorite each answer 200', async () => {
     await withServer('http-favorites', async (server) => {
       const created = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'project', parent: { path: '/work' }, title: 'Ship it' }),
+        body: JSON.stringify({
+          type: 'project',
+          parent: { path: '/work' },
+          title: 'Ship it',
+          slug: 'ship-it',
+        }),
       });
       const entity = (created.json as { entity: { id: number } }).entity;
 
@@ -273,7 +254,12 @@ describe('operations over HTTP', () => {
   test('an update answers 200, and a stale one 409 with the revision to re-read', async () => {
     await withServer('http-update', async (server) => {
       const created = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'project', parent: { path: '/work' }, title: 'Ship it' }),
+        body: JSON.stringify({
+          type: 'project',
+          parent: { path: '/work' },
+          title: 'Ship it',
+          slug: 'ship-it',
+        }),
       });
       const entity = (created.json as { entity: { id: number; revision: number } }).entity;
 
@@ -282,7 +268,7 @@ describe('operations over HTTP', () => {
           target: { id: entity.id },
           revision: entity.revision,
           title: 'Ship it, properly',
-          addTags: ['launch'],
+          tags: ['launch'],
           active: true,
         }),
       });
@@ -311,28 +297,40 @@ describe('operations over HTTP', () => {
       assert.equal(stale.status, 409);
       const error = envelope(stale.json);
       assert.equal(error.code, 'revision_conflict');
-      assert.equal(error.details.field, 'revision');
-      assert.equal(error.details.currentRevision, after.revision);
+      assert.equal(
+        error.message,
+        `This changed on the server. It is now at revision ${after.revision}.`,
+      );
     });
   });
 
   test('an illegal parent answers 422, and a missing one 404', async () => {
     await withServer('http-parentage', async (server) => {
       const atRoot = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'project', parent: { path: '/' }, title: 'Rootless' }),
+        body: JSON.stringify({
+          type: 'project',
+          parent: { path: '/' },
+          title: 'Rootless',
+          slug: 'rootless',
+        }),
       });
       assert.equal(atRoot.status, 422);
       assert.equal(envelope(atRoot.json).code, 'invalid_parent');
 
       const missing = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'project', parent: { path: '/nowhere' }, title: 'Lost' }),
+        body: JSON.stringify({
+          type: 'project',
+          parent: { path: '/nowhere' },
+          title: 'Lost',
+          slug: 'lost',
+        }),
       });
       assert.equal(missing.status, 404);
       assert.equal(envelope(missing.json).code, 'node_not_found');
     });
   });
 
-  test('a refused kind is a bounded 400 that creates nothing and settles no key', async () => {
+  test('a refused kind is a bounded 400 that creates nothing', async () => {
     await withServer('http-kind-refusals', async (server) => {
       // Every shape the creation union refuses, over the wire rather than against the decoder
       // directly. The union changed which member reports what, and this is the whole path that
@@ -358,17 +356,14 @@ describe('operations over HTTP', () => {
 
       for (const refusal of refusals) {
         const response = await call(server, '/api/nodes/create', {
-          body: JSON.stringify({ ...refusal.body, idempotencyKey: `key-${refusal.field}` }),
+          body: JSON.stringify({ ...refusal.body, slug: 'refused' }),
         });
         assert.equal(response.status, 400, refusal.what);
         const error = envelope(response.json);
         assert.equal(error.code, 'invalid_input', refusal.what);
-        assert.equal(error.details.field, refusal.field, refusal.what);
-        assert.equal(error.details.reason, 'invalid', refusal.what);
+        assert.equal(error.message, `The ${refusal.field} is not valid.`, refusal.what);
 
-        // Nothing from the decoder escapes. Its formatted messages can carry the submitted value and
-        // arbitrary property names, so the published details are only our own closed vocabulary.
-        assert.deepEqual(Object.keys(error.details).sort(), ['field', 'reason'], refusal.what);
+        // Nothing from the decoder escapes: its messages can carry the submitted value.
         assert.doesNotMatch(JSON.stringify(response.json), /sketch|Kinded area|Nameless kind/u);
       }
 
@@ -388,44 +383,33 @@ describe('operations over HTTP', () => {
         true,
         'the two seeded root areas, and nothing the refusals left behind',
       );
-
-      // And no key was settled. A receipt written for a refused request would make this reuse replay
-      // the failure instead of creating, so a 201 here is what proves the ledger stayed clean.
-      const reused = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({
-          type: 'resource',
-          kind: 'note',
-          parent: { path: '/work' },
-          title: 'Now valid',
-          idempotencyKey: 'key-kind',
-        }),
-      });
-      assert.equal(reused.status, 201);
-      const entity = (reused.json as { entity: { kind: string; type: string } }).entity;
-      assert.equal(entity.type, 'resource');
-      assert.equal(entity.kind, 'note');
     });
   });
 
-  test('a note that cannot be named is refused with the title reason, over HTTP', async () => {
+  test('an untitled note or container is refused with the title reason, over HTTP', async () => {
     await withServer('http-untitled-note', async (server) => {
       // The union made every non-matching member report `type`, which would have replaced this
       // reason with a complaint about the one field the caller got right.
       const response = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'resource', kind: 'note', parent: { path: '/work' } }),
+        body: JSON.stringify({
+          type: 'resource',
+          kind: 'note',
+          parent: { path: '/work' },
+          slug: 'untitled',
+          body: { value: '# A heading the server does not use' },
+        }),
       });
       assert.equal(response.status, 400);
-      const error = envelope(response.json);
-      assert.equal(error.code, 'invalid_input');
-      assert.equal(error.details.field, 'title');
-      assert.equal(error.details.reason, 'title_required');
+      assert.deepEqual(envelope(response.json), {
+        code: 'invalid_input',
+        message: 'Title is required.',
+      });
 
-      // A container missing its title still reaches the same reason by the same route.
       const container = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'area', parent: { path: '/' } }),
+        body: JSON.stringify({ type: 'area', parent: { path: '/' }, slug: 'untitled' }),
       });
       assert.equal(container.status, 400);
-      assert.equal(envelope(container.json).details.reason, 'title_required');
+      assert.equal(envelope(container.json).message, 'Title is required.');
     });
   });
 
@@ -436,13 +420,15 @@ describe('operations over HTTP', () => {
           type: 'resource',
           kind: 'note',
           parent: { path: '/work' },
-          body: { value: '# Derived over the wire' },
+          title: 'Over the wire',
+          slug: 'over-the-wire',
+          body: { value: '# Over the wire' },
         }),
       });
       assert.equal(note.status, 201);
       const created = (note.json as { entity: { id: number; kind: string; title: string } }).entity;
       assert.equal(created.kind, 'note');
-      assert.equal(created.title, 'Derived over the wire');
+      assert.equal(created.title, 'Over the wire');
 
       const read = await call(server, '/api/nodes/get', {
         body: JSON.stringify({ target: { id: created.id } }),
@@ -466,17 +452,21 @@ describe('operations over HTTP', () => {
     });
   });
 
-  test('an invalid title carries the capability’s structured reason and its limit', async () => {
+  test('an invalid title is refused with a message naming its limit', async () => {
     await withServer('http-invalid-title', async (server) => {
       const response = await call(server, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'area', parent: { path: '/' }, title: 'x'.repeat(201) }),
+        body: JSON.stringify({
+          type: 'area',
+          parent: { path: '/' },
+          title: 'x'.repeat(201),
+          slug: 'long',
+        }),
       });
       assert.equal(response.status, 400);
-      const error = envelope(response.json);
-      assert.equal(error.code, 'invalid_input');
-      assert.equal(error.details.field, 'title');
-      assert.equal(error.details.reason, 'title_too_long');
-      assert.equal(error.details.limit, 200);
+      assert.deepEqual(envelope(response.json), {
+        code: 'invalid_input',
+        message: 'Title is longer than 200 characters.',
+      });
     });
   });
 });

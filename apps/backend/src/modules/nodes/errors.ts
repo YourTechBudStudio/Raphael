@@ -1,6 +1,5 @@
-import type { ContentFailure } from '@raphael/content';
-import type { ApiErrorCode, JsonObject } from '@raphael/contracts';
-import type { RequestField } from '@raphael/contracts/nodes';
+import { describeContentFailure, type ContentFailure } from '@raphael/content';
+import type { ApiErrorCode } from '@raphael/contracts';
 import { Data } from 'effect';
 
 import type { NodeType } from './types.ts';
@@ -9,26 +8,16 @@ import type { NodeType } from './types.ts';
  * The expected failures of the node operations, and the single place where any of them becomes
  * something a caller may see.
  *
- * Two properties matter more than the shapes themselves.
- *
- * First, every class carries a fixed API error code, so the transport translates a tag into a status
- * rather than re-deciding what a failure means. Second, the public projection is explicit: it is
- * built field by field in `toPublicError`, never by serializing an error instance. That is not
- * defensive style. `JSON.stringify` on a tagged error includes every property it carries, a retained
- * cause included, so an error instance is not a wire value and must never be treated as one.
- *
- * `unauthorized` and `payload_too_large` are deliberately absent: they belong to the transport, which
- * rejects a request before any operation here runs.
+ * Every class carries a fixed API error code, and the public projection is built field by field in
+ * `toPublicError`, never by serializing an error instance, so a retained cause cannot leak. Messages
+ * are shown to people as they are, so each one explains itself without repeating note content.
  */
 
-/** Structured reasons a caller can act on. Anything without a deliberate reason is `invalid`. */
 export type InvalidInputReason =
   | 'invalid'
   | 'title_required'
   | 'title_too_long'
-  | 'slug_underivable'
   | 'slug_too_long'
-  | 'tags_too_many'
   | 'active_requires_project'
   | 'favorite_requires_container'
   | 'query_malformed'
@@ -36,14 +25,36 @@ export type InvalidInputReason =
   | 'query_too_many_terms'
   | 'filter_unsupported';
 
-/**
- * The request fields an operation can name in a failure.
- *
- * The vocabulary itself lives in `@raphael/contracts/nodes`, because both sides need the same list:
- * this module produces the names, and a client validates a received `details.field` against a closed
- * set before showing it to anyone. Re-exported here so callers of this capability keep one import.
- */
-export type { RequestField };
+/** Request fields a failure may name. Our own vocabulary, so naming one discloses nothing submitted. */
+export const REQUEST_FIELDS = [
+  'type',
+  'kind',
+  'parent',
+  'target',
+  'revision',
+  'destination',
+  'title',
+  'slug',
+  'description',
+  'body',
+  'tags',
+  'active',
+  'metadata',
+  'format',
+  'recursive',
+  'scopes',
+  'filter',
+  'queries',
+  'skip',
+  'limit',
+  'orderBy',
+  'includeArchived',
+] as const;
+
+export type RequestField = (typeof REQUEST_FIELDS)[number];
+
+export const isRequestField = (value: unknown): value is RequestField =>
+  (REQUEST_FIELDS as readonly unknown[]).includes(value);
 
 export class InvalidInput extends Data.TaggedError('InvalidInput')<{
   readonly field?: RequestField;
@@ -55,26 +66,15 @@ export class InvalidInput extends Data.TaggedError('InvalidInput')<{
 /** The request fields a selector can be named under when it does not resolve. */
 export type SelectorField = 'target' | 'parent' | 'scopes' | 'destination';
 
-/**
- * `index` is the position of the offending element in a submitted list, and is present only for a
- * field that *is* a list - `scopes` today. A position is not content: it says which of the caller's
- * own entries was at fault without repeating any of them, which is the one thing that makes a refused
- * multi-scope request actionable rather than merely refused.
- */
+/** `index` is the position of the offending entry, for a field that is a list (`scopes`). */
 export class NodeNotFound extends Data.TaggedError('NodeNotFound')<{
   readonly field: SelectorField;
   readonly index?: number;
 }> {}
 
 /**
- * A parent that cannot hold this entity, for one of two reasons under one code.
- *
- * `parentage` is the product type rule (`root -> area`, ...): `parentType` is the type that cannot hold
- * the requested child, and `root` is the virtual root. `cycle` is a move destination that is the
- * target or lies inside it; the types may be perfectly legal, and the useful truth is "you cannot
- * move something inside itself". Both types are always published, because a cycle's parent has a real
- * type and one detail shape is simpler than an optional one. `field` is the request field that named
- * the parent.
+ * A parent that cannot hold this entity: the type rule (`parentage`, where `root` is the virtual
+ * root), or a move destination inside the target (`cycle`).
  */
 export class InvalidParent extends Data.TaggedError('InvalidParent')<{
   readonly field: 'parent' | 'destination';
@@ -83,28 +83,14 @@ export class InvalidParent extends Data.TaggedError('InvalidParent')<{
   readonly childType: NodeType;
 }> {}
 
-/**
- * An address that is already taken. `field` says which input to change: `slug` for an address the
- * write would have produced - submitted or retained - and `destination` for a move whose destination
- * path already names a resource.
- */
+/** An address that is already taken, by the slug the write would have produced. */
 export class SlugConflict extends Data.TaggedError('SlugConflict')<{
   readonly field: 'slug' | 'destination';
   readonly slug: string;
   readonly scope: 'root' | 'sibling';
 }> {}
 
-export class IdempotencyConflict extends Data.TaggedError('IdempotencyConflict')<{
-  readonly reason: 'different_input';
-}> {}
-
-/**
- * A write that named a revision the row is not at.
- *
- * `current` is published deliberately: it is not a diagnostic but the one fact a caller needs in order
- * to recover, since the only way forward is to re-read the entity and rebuild the change against what
- * is actually stored. It is a revision number, not content, so it discloses nothing.
- */
+/** A write that named a revision the row is not at. */
 export class RevisionConflict extends Data.TaggedError('RevisionConflict')<{
   /** The revision the row holds now. */
   readonly current: number;
@@ -112,12 +98,8 @@ export class RevisionConflict extends Data.TaggedError('RevisionConflict')<{
 
 /**
  * A mutation that would change something archived, or put something under an archived container.
- *
- * `field` says which part of the request is archived: the target itself, the parent a creation names,
- * or the destination a move names. `standing` says how: by a cause of its own (`direct`), or only
- * through a container above it (`inherited`). The distinction is what recovery turns on - a direct
- * target is restored first, while an inherited-only one can still move somewhere active. Archive and
- * restore never raise it: they stay available under every standing.
+ * `standing` says whether it is archived itself (`direct`) or only through a container above it.
+ * Archive and restore never raise it.
  */
 export class NodeArchived extends Data.TaggedError('NodeArchived')<{
   readonly field: 'target' | 'parent' | 'destination';
@@ -152,7 +134,6 @@ export type NodeError =
   | NodeNotFound
   | InvalidParent
   | SlugConflict
-  | IdempotencyConflict
   | RevisionConflict
   | NodeArchived
   | UnsupportedContent
@@ -162,54 +143,65 @@ export type NodeError =
 export interface PublicApiError {
   readonly code: ApiErrorCode;
   readonly message: string;
-  readonly details: JsonObject;
 }
 
-const withoutUndefined = (entries: Record<string, unknown>): JsonObject => {
-  const details: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(entries)) {
-    if (value !== undefined) details[key] = value;
+/** Fields named in the plural, so a sentence about them agrees. */
+const PLURAL_FIELDS: ReadonlySet<RequestField> = new Set(['tags', 'scopes', 'queries']);
+
+const invalidInputMessage = ({ field, reason, limit }: InvalidInput): string => {
+  switch (reason) {
+    case 'invalid':
+      if (field === undefined) return 'The request was not valid.';
+      return `The ${field} ${PLURAL_FIELDS.has(field) ? 'are' : 'is'} not valid.`;
+    case 'title_required':
+      return 'Title is required.';
+    case 'title_too_long':
+      return `Title is longer than ${limit} characters.`;
+    case 'slug_too_long':
+      return `The address is longer than ${limit} characters.`;
+    case 'active_requires_project':
+      return 'Only a project can be marked active.';
+    case 'favorite_requires_container':
+      return 'Only areas and projects can be favorites.';
+    case 'query_malformed':
+      return 'The search query is not well formed.';
+    case 'query_too_long':
+      return `The search query is longer than ${limit} characters.`;
+    case 'query_too_many_terms':
+      return `The search query has more than ${limit} terms.`;
+    case 'filter_unsupported':
+      return 'The filter uses a key or operator that is not supported.';
   }
-  return details as JsonObject;
 };
 
-const INVALID_INPUT_MESSAGES: Readonly<Record<InvalidInputReason, string>> = {
-  invalid: 'The request was not valid.',
-  title_required: 'A title is required.',
-  title_too_long: 'The title is longer than the limit.',
-  slug_underivable: 'No address could be derived from this title.',
-  slug_too_long: 'The address is longer than the limit.',
-  tags_too_many: 'Too many tags.',
-  active_requires_project: 'Only a project can be marked active.',
-  favorite_requires_container: 'Favorites hold areas and projects.',
-  query_malformed: 'The search query is not well formed.',
-  query_too_long: 'The search query is longer than the limit.',
-  query_too_many_terms: 'The search query has more terms than the limit.',
-  filter_unsupported: 'The filter uses a key or operator that is not supported.',
+const notFoundMessage = ({ field, index }: NodeNotFound): string => {
+  switch (field) {
+    case 'target':
+      return 'Nothing exists at that address.';
+    case 'parent':
+      return 'The parent does not exist.';
+    case 'destination':
+      return 'The destination does not exist.';
+    case 'scopes':
+      return index === undefined ? 'A scope does not exist.' : `Scope ${index + 1} does not exist.`;
+  }
 };
 
-/**
- * The complete public projection. Every field is chosen here; nothing is spread from an error
- * instance, so a field added to an error for diagnostic purposes cannot reach a caller by accident.
- */
+const archivedMessage = ({ field, standing }: NodeArchived): string => {
+  const subject =
+    field === 'target' ? 'This' : field === 'parent' ? 'The parent' : 'The destination';
+  return standing === 'direct'
+    ? `${subject} is archived.`
+    : `${subject} is inside something archived.`;
+};
+
+/** The complete public projection. Every field is chosen here; nothing is spread from an error. */
 export const toPublicError = (error: NodeError): PublicApiError => {
   switch (error._tag) {
     case 'InvalidInput':
-      return {
-        code: 'invalid_input',
-        message: INVALID_INPUT_MESSAGES[error.reason],
-        details: withoutUndefined({
-          field: error.field,
-          reason: error.reason,
-          limit: error.limit,
-        }),
-      };
+      return { code: 'invalid_input', message: invalidInputMessage(error) };
     case 'NodeNotFound':
-      return {
-        code: 'node_not_found',
-        message: 'No entity exists at that address.',
-        details: withoutUndefined({ field: error.field, index: error.index }),
-      };
+      return { code: 'node_not_found', message: notFoundMessage(error) };
     case 'InvalidParent':
       return {
         code: 'invalid_parent',
@@ -220,68 +212,26 @@ export const toPublicError = (error: NodeError): PublicApiError => {
               ? 'Only areas can exist at the root.'
               : error.parentType === 'resource'
                 ? 'A note holds nothing, so it cannot be a parent.'
-                : 'That parent cannot contain this kind of entity.',
-        details: {
-          field: error.field,
-          reason: error.reason,
-          parentType: error.parentType,
-          childType: error.childType,
-        },
+                : `A ${error.parentType} cannot contain a ${error.childType === 'resource' ? 'note' : error.childType}.`,
       };
     case 'SlugConflict':
-      return {
-        code: 'slug_conflict',
-        message: 'Something here already uses that address.',
-        details: { field: error.field, slug: error.slug, scope: error.scope },
-      };
-    case 'IdempotencyConflict':
-      return {
-        code: 'idempotency_conflict',
-        message: 'That idempotency key was already used for a different request.',
-        details: { field: 'idempotencyKey', reason: error.reason },
-      };
+      return { code: 'slug_conflict', message: `"${error.slug}" is already used here.` };
     case 'RevisionConflict':
       return {
         code: 'revision_conflict',
-        message: 'This has changed since that revision was read.',
-        details: { field: 'revision', currentRevision: error.current },
+        message: `This changed on the server. It is now at revision ${error.current}.`,
       };
     case 'NodeArchived':
-      return {
-        code: 'node_archived',
-        message:
-          error.field === 'target'
-            ? 'This is archived.'
-            : error.field === 'parent'
-              ? 'That parent is archived.'
-              : 'That destination is archived.',
-        details: { field: error.field, reason: error.standing },
-      };
+      return { code: 'node_archived', message: archivedMessage(error) };
     case 'UnsupportedContent':
       return {
         code: 'unsupported_content',
-        message: 'The submitted body is not supported.',
-        details: withoutUndefined({
-          field: 'body',
-          reason: error.failure.reason,
-          path: [...error.failure.path],
-          element: error.failure.element,
-          limit: error.failure.limit,
-        }),
+        message: `The body is not supported: ${describeContentFailure(error.failure)}.`,
       };
     case 'StorageBusy':
-      return {
-        code: 'storage_busy',
-        message: 'Storage was busy. The request was not applied; try again.',
-        details: {},
-      };
+      return { code: 'storage_busy', message: 'The server is busy. Try again.' };
     case 'InternalFailure':
-      // Neither `detail` nor `cause` is published. The operator reads those; the caller learns only
-      // that the request failed for a reason that is ours to fix.
-      return {
-        code: 'internal_error',
-        message: 'The request could not be completed.',
-        details: {},
-      };
+      // Neither `detail` nor `cause` is published; the operator reads those in the log.
+      return { code: 'internal_error', message: 'The server could not complete the request.' };
   }
 };

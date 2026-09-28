@@ -146,8 +146,8 @@ describe('exclusive ownership', () => {
       connection.db.exec('BEGIN IMMEDIATE');
       connection.db
         .prepare(
-          `INSERT INTO nodes (type, parent_id, parent_type, slug, title, body, created_at, updated_at)
-           VALUES ('project', 1, 'area', 'committed', 'C', '{"type":"doc"}', 1, 1)`,
+          `INSERT INTO nodes (type, parent_id, parent_type, slug, title, body, body_text, created_at, updated_at)
+           VALUES ('project', 1, 'area', 'committed', 'C', '{"type":"doc"}', '', 1, 1)`,
         )
         .run();
       connection.db.exec('COMMIT');

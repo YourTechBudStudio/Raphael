@@ -8,7 +8,7 @@ import { sql } from 'drizzle-orm';
 import { Effect, Either } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
-import { LIST_FIELDS, invalidInputFrom } from './diagnostics.ts';
+import { invalidInputFrom } from './diagnostics.ts';
 import type { NodeError } from './errors.ts';
 import { SUMMARY_COLUMNS, checkedResponse, summaryProjection } from './projection.ts';
 import { resolveScopes } from './resolve.ts';
@@ -49,7 +49,7 @@ export const listNodes = (input: unknown): Effect.Effect<ListResponse, NodeError
       try: () => {
         const request = decodeListRequest(input);
         if (Either.isLeft(request)) {
-          return raise(invalidInputFrom(request.left, LIST_FIELDS, input));
+          return raise(invalidInputFrom(request.left, input));
         }
         const { scopes, recursive, filter, orderBy, skip, limit, includeArchived } = request.right;
         const ordering = effectiveOrderBy(orderBy);

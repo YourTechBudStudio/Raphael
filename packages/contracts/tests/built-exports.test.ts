@@ -36,12 +36,9 @@ test('the shared root exposes the error envelope and decoding policies', async (
   assert.equal(typeof contracts.responseDecoder, 'function');
 
   const decoded = contracts.decodeApiErrorEnvelope({
-    error: { code: 'node_not_found', message: 'Gone.', details: {} },
+    error: { code: 'node_not_found', message: 'Gone.' },
   });
   assert.equal(Either.isRight(decoded), true);
-  if (Either.isRight(decoded)) {
-    assert.equal(contracts.classifyApiError(decoded.right).kind, 'known');
-  }
 });
 
 test('the root does not re-export capability vocabulary', async () => {
@@ -56,7 +53,12 @@ test('the nodes entry point decodes a request and a response', async () => {
   assert.equal(nodes.NODE_ROUTES.create.path, '/api/nodes/create');
   assert.equal(
     Either.isRight(
-      nodes.decodeCreateRequest({ type: 'area', parent: { path: '/' }, title: 'Backend' }),
+      nodes.decodeCreateRequest({
+        type: 'area',
+        parent: { path: '/' },
+        title: 'Backend',
+        slug: 'backend',
+      }),
     ),
     true,
   );

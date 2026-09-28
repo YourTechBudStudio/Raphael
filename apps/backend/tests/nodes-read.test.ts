@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createNode, getNode, listNodes, toPublicError } from '../src/modules/nodes/index.ts';
+import {
+  createNode as createNodeRaw,
+  getNode,
+  listNodes,
+  toPublicError,
+} from '../src/modules/nodes/index.ts';
 import {
   clockAt,
   expectLeft,
@@ -10,7 +15,10 @@ import {
   one,
   runNodes,
   withMigrated,
+  withDerivedSlug,
 } from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 const T0 = 1_700_000_000_000;
 
@@ -72,7 +80,7 @@ test('a missing entity is not found, by id or by path', () => {
     ]) {
       const error = toPublicError(expectLeft(runNodes(connection, getNode({ target }))));
       assert.equal(error.code, 'node_not_found');
-      assert.deepEqual(error.details, { field: 'target' });
+      assert.equal(error.message, 'Nothing exists at that address.');
     }
   });
 });
@@ -83,7 +91,7 @@ test('the root is a scope, not an entity, and saying so is an input problem', ()
       expectLeft(runNodes(connection, getNode({ target: { path: '/' } }))),
     );
     assert.equal(error.code, 'invalid_input');
-    assert.deepEqual(error.details, { field: 'target', reason: 'invalid' });
+    assert.equal(error.message, 'The target is not valid.');
   });
 });
 
@@ -120,7 +128,7 @@ test('a noncanonical path is an input problem rather than a missing node', () =>
     for (const path of ['/Work', '/work/', 'work', '/work//plan', '/work/../personal']) {
       const error = toPublicError(expectLeft(runNodes(connection, getNode({ target: { path } }))));
       assert.equal(error.code, 'invalid_input', path);
-      assert.equal(error.details['field'], 'target');
+      assert.equal(error.message, 'The target is not valid.');
     }
   });
 });
@@ -157,7 +165,11 @@ test('a stored body that is not valid canonical content is an integrity failure'
         expectLeft(runNodes(connection, getNode({ target: { id: created.id } }))),
       );
       assert.equal(error.code, 'internal_error', body);
-      assert.deepEqual(error.details, {}, 'nothing about stored content reaches the caller');
+      assert.equal(
+        error.message,
+        'The server could not complete the request.',
+        'nothing about stored content reaches the caller',
+      );
     }
 
     // Valid content that is not in its canonical form: the default attributes are missing. It would
@@ -267,7 +279,11 @@ test('a stored kind that contradicts its type is an integrity failure on read an
         expectLeft(runNodes(connection, getNode({ target: { id: scenario.id } }))),
       );
       assert.equal(read.code, 'internal_error', scenario.what);
-      assert.deepEqual(read.details, {}, 'nothing about the malformed row reaches the caller');
+      assert.equal(
+        read.message,
+        'The server could not complete the request.',
+        'nothing about the malformed row reaches the caller',
+      );
 
       // List refuses too, rather than silently dropping the row or returning a partial page. The
       // scope is chosen so the malformed row is inside the page being projected - a listing that
@@ -276,7 +292,7 @@ test('a stored kind that contradicts its type is an integrity failure on read an
       const page = runNodes(connection, listNodes({ scopes: [scope] }));
       const listed = toPublicError(expectLeft(page));
       assert.equal(listed.code, 'internal_error', scenario.what);
-      assert.deepEqual(listed.details, {});
+      assert.equal(listed.message, 'The server could not complete the request.');
 
       // And nothing was repaired on the way past.
       const after = one<{ kind: string | null }>(

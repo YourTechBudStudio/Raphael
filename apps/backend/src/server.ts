@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { Effect, Fiber, Layer, Runtime, type Scope } from 'effect';
+import { Effect, Layer, Runtime, type Scope } from 'effect';
 
 import {
   validateOptions,
@@ -15,22 +15,20 @@ import { DEFAULT_DEADLINES, type Deadlines } from './infrastructure/http/deadlin
 import { consoleLogger, type Logger } from './infrastructure/http/log.ts';
 import type { OperationRoute } from './infrastructure/http/operation.ts';
 import { connectionRoutes } from './modules/connection/index.ts';
-import { DERIVED_TEXT_BATCH_SIZE, backfillDerivedText } from './modules/nodes/derived-text.ts';
-import { collectExpiredReplays } from './modules/nodes/gc.ts';
 import { nodeRoutes } from './modules/nodes/routes.ts';
 
 /**
  * Composition: configuration in, a listening server out, everything released on the way back.
  *
  * The whole thing is one scoped resource. Acquisition is ordered - validate, open and migrate the
- * database, build the runtime, register routes, start collection, listen - and any failure along the
+ * database, build the runtime, register routes, listen - and any failure along the
  * way unwinds what was already acquired, so a server that fails to start never leaves the database
  * owned.
  *
  * Release is the same order backwards, and it is written out explicitly rather than left to the scope,
  * because the sequence is the contract:
  *
- *   stop admitting -> stop scheduling collection -> drain in-flight requests -> close remaining
+ *   stop admitting -> drain in-flight requests -> close remaining
  *   connections -> release the runtime and the database
  *
  * The drain deadline bounds how long we wait for the *network*. It is not permission to close storage
@@ -163,68 +161,15 @@ export const serve = (
     server.timeout = deadlines.socketIdleMs;
     const connections = bindConnections(server, deadlines);
 
-    // The listener and the two background passes are acquired together, and released together.
-    //
-    // They are one resource on purpose. Forking the collector before the listener was acquired left
-    // it running when `listen` failed - the scope released the database, the orphaned fiber kept its
-    // schedule timer alive, and the process never exited. Forking inside the acquire means a startup
-    // that never listened never started maintenance either.
     const started = yield* Effect.acquireRelease(
       Effect.tryPromise({
         try: async () => {
           const address = await listen(server, options.server.host, options.server.port);
-          // Forked, never awaited: a server returning after an outage must accept requests while it
-          // works through its backlog, not afterwards.
-          const collector = Runtime.runFork(runtime)(
-            collectExpiredReplays({
-              batchSize: options.idempotency.gcBatchSize,
-              intervalMs: options.idempotency.gcIntervalMinutes * 60_000,
-              onSweep: (outcome) =>
-                logger.log('info', 'replay.collected', {
-                  deleted: outcome.deleted,
-                  batches: outcome.batches,
-                }),
-              onFailure: (failure) =>
-                logger.log('warn', 'replay.collection_failed', {
-                  // What was already deleted stays deleted. Reporting zero here would describe
-                  // committed batches as rolled back.
-                  deleted: failure.deleted,
-                  batches: failure.batches,
-                  detail: failure.detail,
-                }),
-            }),
-          );
-          // The derived-text pass runs once per start and is forked, never awaited: a cold start must
-          // accept requests while it fills in missing projections, not afterwards. It ends on its own
-          // when nothing is left to find.
-          const derivedText = Runtime.runFork(runtime)(
-            backfillDerivedText({
-              batchSize: DERIVED_TEXT_BATCH_SIZE,
-              onRowSkipped: (detail) =>
-                logger.log('warn', 'nodes.derived_text_skipped', {
-                  // Identity and stage only. The body is what could not be read; printing it is
-                  // exactly the thing a diagnostic must not do.
-                  nodeId: detail.nodeId,
-                  stage: detail.stage,
-                }),
-              onComplete: (outcome) => {
-                // A pass that found nothing is the ordinary case on every start after the first.
-                if (outcome.examined > 0) {
-                  logger.log('info', 'nodes.derived_text_filled', {
-                    examined: outcome.examined,
-                    written: outcome.written,
-                    skipped: outcome.skipped,
-                  });
-                }
-              },
-              onFailure: (detail) => logger.log('warn', 'nodes.derived_text_failed', { detail }),
-            }),
-          );
-          return { address, collector, derivedText };
+          return { address };
         },
         catch: (cause) => cause as Error,
       }),
-      ({ collector, derivedText }) =>
+      () =>
         Effect.promise(async () => {
           admitting = false;
           logger.log('info', 'server.stopping', {
@@ -232,14 +177,6 @@ export const serve = (
             connections: connections.speaking(),
             requests: inFlight.size,
           });
-
-          // Maintenance stops before the drain, so neither pass can start work the drain would wait
-          // on, and neither can still be writing when the database is released. Interruption is
-          // awaited rather than merely requested: a fiber asked to stop is not stopped until it says
-          // so. The backfill goes first because it is the one that holds write transactions for rows
-          // nobody is waiting for.
-          await Runtime.runPromise(runtime)(Fiber.interrupt(derivedText));
-          await Runtime.runPromise(runtime)(Fiber.interrupt(collector));
 
           const closed = stopAccepting(server);
           await tick();

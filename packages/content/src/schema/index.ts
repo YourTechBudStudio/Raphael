@@ -9,6 +9,7 @@
 export { contentExtensions } from './extensions.ts';
 export { canonicalizeDocument, contentSchema, emptyDocument } from './canonicalize.ts';
 export { deriveText } from './text.ts';
+export { deriveTitle } from './title.ts';
 /**
  * Structural validation lives in `@raphael/content/validation`, which has no ProseMirror or DOM
  * dependency. It is re-exported here so a caller that already holds the schema entry point does not

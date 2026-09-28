@@ -41,9 +41,7 @@ describe('what a caller is told', () => {
       const response = await call(server, '/api/nodes/get', { body: '{"target":{"id":999999}}' });
       assert.deepEqual(Object.keys(response.json as object), ['error']);
       const error = (response.json as { error: Record<string, unknown> }).error;
-      // `details` is always present, `{}` when there is nothing structured to say, so a client never
-      // has to handle two shapes.
-      assert.deepEqual(Object.keys(error).sort(), ['code', 'details', 'message']);
+      assert.deepEqual(Object.keys(error).sort(), ['code', 'message']);
     });
   });
 

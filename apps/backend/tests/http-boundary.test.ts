@@ -53,7 +53,7 @@ describe('authentication', () => {
         const error = envelope(response.json);
         assert.equal(error.code, 'unauthorized');
         // The caller is never told which part was wrong: that would be a hint about how to get closer.
-        assert.deepEqual(error.details, {});
+        assert.equal(error.message, 'A valid API key is required.');
       }
     });
   });
@@ -275,7 +275,7 @@ describe('representation', () => {
       assert.equal(response.status, 415);
       const error = envelope(response.json);
       assert.equal(error.code, 'unsupported_media_type');
-      assert.equal(error.details.reason, 'unsupported_media_type');
+      assert.equal(error.message, 'Request bodies must be application/json.');
     });
   });
 
@@ -309,7 +309,7 @@ describe('representation', () => {
         headers: { 'content-type': 'application/json; charset=iso-8859-1' },
       });
       assert.equal(refused.status, 415);
-      assert.equal(envelope(refused.json).details.reason, 'unsupported_charset');
+      assert.equal(envelope(refused.json).message, 'Request bodies must be encoded as UTF-8.');
     });
   });
 
@@ -320,7 +320,7 @@ describe('representation', () => {
         headers: { 'content-encoding': 'gzip' },
       });
       assert.equal(response.status, 415);
-      assert.equal(envelope(response.json).details.reason, 'unsupported_content_encoding');
+      assert.match(envelope(response.json).message, /^Compressed request bodies are not accepted/u);
     });
   });
 
@@ -343,7 +343,10 @@ describe('bodies', () => {
       assert.equal(response.status, 413);
       const error = envelope(response.json);
       assert.equal(error.code, 'payload_too_large');
-      assert.equal(error.details.limit, REQUEST_MAX_BYTES);
+      assert.equal(
+        error.message,
+        `The request body is larger than the ${REQUEST_MAX_BYTES} bytes this server accepts.`,
+      );
     });
   });
 
@@ -356,12 +359,12 @@ describe('bodies', () => {
       assert.equal(response.status, 400);
       const error = envelope(response.json);
       assert.equal(error.code, 'invalid_input');
-      assert.equal(error.details.reason, 'malformed_json');
+      assert.equal(error.message, 'The request body is not a JSON document.');
       // Nothing submitted is reflected: no fragment, no position, no parser message.
       assert.equal(response.text.includes(secret), false);
       assert.match(
         response.text,
-        /^\{"error":\{"code":"invalid_input","message":"[^"]+","details":\{"reason":"malformed_json"\}\}\}$/u,
+        /^\{"error":\{"code":"invalid_input","message":"The request body is not a JSON document\."\}\}$/u,
       );
     });
   });
@@ -372,7 +375,7 @@ describe('bodies', () => {
       const bytes = new Uint8Array([0x7b, 0x22, 0x61, 0x22, 0x3a, 0x22, 0x80, 0x22, 0x7d]);
       const response = await call(server, '/api/nodes/create', { body: bytes });
       assert.equal(response.status, 400);
-      assert.equal(envelope(response.json).details.reason, 'invalid_utf8');
+      assert.equal(envelope(response.json).message, 'The request body is not valid UTF-8.');
     });
   });
 
@@ -382,11 +385,11 @@ describe('bodies', () => {
       // succeed. It must not: a request that said nothing did not say `{}`.
       const empty = await call(server, '/api/connection/verify', { body: '' });
       assert.equal(empty.status, 400);
-      assert.equal(envelope(empty.json).details.reason, 'malformed_json');
+      assert.equal(envelope(empty.json).message, 'The request body is not a JSON document.');
 
       const absent = await call(server, '/api/connection/verify', {});
       assert.equal(absent.status, 400);
-      assert.equal(envelope(absent.json).details.reason, 'malformed_json');
+      assert.equal(envelope(absent.json).message, 'The request body is not a JSON document.');
     });
   });
 
@@ -397,7 +400,7 @@ describe('bodies', () => {
         // Parsed successfully by the transport, refused by the operation's own decoder.
         assert.equal(response.status, 400, `${body} answered ${response.status}`);
         assert.equal(envelope(response.json).code, 'invalid_input');
-        assert.equal(envelope(response.json).details.reason, 'invalid');
+        assert.equal(envelope(response.json).message, 'Verification takes no input.');
       }
     });
   });

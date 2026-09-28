@@ -17,24 +17,9 @@ export {
   type EndpointRejection,
   type EndpointRejectionReason,
 } from './shared/endpoint.ts';
-export {
-  isUnresolved,
-  type ApiErrorFailure,
-  type CancelledFailure,
-  type ClientFailure,
-  type ClientResult,
-  type FailureKind,
-  type InvalidRequestFailure,
-  type InvalidResponseFailure,
-  type InvalidResponseReason,
-  type MutationOutcome,
-  type TimeoutFailure,
-  type TransportFailure,
-  type UnsupportedFetchFailure,
-} from './shared/failure.ts';
+export { retryable, type ClientFailure, type ClientResult } from './shared/failure.ts';
 export {
   DEFAULT_TIMEOUT_MS,
-  RESPONSE_MAX_BYTES,
   createTransport,
   isTransportRejection,
   type FetchLike,

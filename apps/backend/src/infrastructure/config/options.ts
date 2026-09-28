@@ -71,18 +71,6 @@ const FileShape = Schema.Struct({
       busyTimeoutMs: Schema.optional(boundedInteger('busyTimeoutMs', 0, 60_000)),
     }),
   ),
-  idempotency: Schema.optional(
-    Schema.Struct({
-      gcIntervalMinutes: Schema.optional(boundedInteger('gcIntervalMinutes', 1, 1_440)),
-      /**
-       * The batch bound is validated as a positive integer here and nowhere else has to re-check it.
-       * That matters more than it looks: SQLite treats a negative `LIMIT` as *no limit*, so a batch
-       * size that reached the delete statement unvalidated would turn a bounded sweep into an
-       * unbounded one.
-       */
-      gcBatchSize: Schema.optional(boundedInteger('gcBatchSize', 1, 10_000)),
-    }),
-  ),
 });
 
 export const CONFIG_DEFAULTS = {
@@ -90,8 +78,6 @@ export const CONFIG_DEFAULTS = {
   port: 3000,
   databasePath: './data/raphael.sqlite',
   busyTimeoutMs: 5_000,
-  gcIntervalMinutes: 60,
-  gcBatchSize: 500,
 } as const;
 
 export interface ServerOptions {
@@ -106,16 +92,10 @@ export interface DatabaseSettings {
   readonly busyTimeoutMs: number;
 }
 
-export interface IdempotencySettings {
-  readonly gcIntervalMinutes: number;
-  readonly gcBatchSize: number;
-}
-
 /** Validated, defaulted, non-secret options. Holds no credential and is safe to inspect. */
 export interface BackendOptions {
   readonly server: ServerOptions;
   readonly database: DatabaseSettings;
-  readonly idempotency: IdempotencySettings;
 }
 
 const decodeFileShape = Schema.decodeUnknownEither(FileShape, {
@@ -159,10 +139,6 @@ export const resolveOptions = (
         : resolve(context.baseDirectory, databasePath),
       busyTimeoutMs: file.database?.busyTimeoutMs ?? CONFIG_DEFAULTS.busyTimeoutMs,
     },
-    idempotency: {
-      gcIntervalMinutes: file.idempotency?.gcIntervalMinutes ?? CONFIG_DEFAULTS.gcIntervalMinutes,
-      gcBatchSize: file.idempotency?.gcBatchSize ?? CONFIG_DEFAULTS.gcBatchSize,
-    },
   };
 };
 
@@ -172,19 +148,12 @@ export const resolveOptions = (
  *
  * `serve` is importable, so "the YAML loader validated it" is only true of options that came through
  * the YAML loader. A caller can construct a `BackendOptions` literal directly - the type is an
- * ordinary structure of `number` and `string` - and a value like `gcBatchSize: -1` would then reach
- * the delete statement, where SQLite reads a negative `LIMIT` as *no limit* and one batch becomes the
- * whole backlog in a single transaction. Bounds that hold for a file and not for a caller are not
- * bounds.
+ * ordinary structure of `number` and `string`. Bounds that hold for a file and not for a caller are
+ * not bounds.
  *
- * **Returning the caller's object would leave the check decorative.** Startup is asynchronous, and the
- * batch size is not read until after the listener has been acquired, so an object that was valid when
- * it was inspected can be a different object by the time it is used - by ordinary mutation, or by an
- * accessor that answers differently the second time it is asked. Both were measured against an earlier
- * version of this function, and both put `-1` back into the delete statement. So every value is read
- * **once**, into a local, and the result is a fresh structure built from what was actually validated.
- * Nothing the caller still holds a reference to survives into the server. This is the same discipline
- * the creation pipeline already applies to request fields.
+ * Startup is asynchronous, so an object that was valid when it was inspected could be a different
+ * object by the time it is used. Every value is therefore read **once**, into a local, and the result
+ * is a fresh structure built from what was actually validated.
  *
  * The bounds themselves are not restated here: this decodes against the same schema, so there is one
  * definition and it cannot drift. The single deliberate difference is the port. A configuration file
@@ -199,18 +168,12 @@ export const validateOptions = (options: BackendOptions): BackendOptions => {
     port: options.server.port,
     databasePath: options.database.databasePath,
     busyTimeoutMs: options.database.busyTimeoutMs,
-    gcIntervalMinutes: options.idempotency.gcIntervalMinutes,
-    gcBatchSize: options.idempotency.gcBatchSize,
   };
 
   const ephemeralPort = supplied.port === 0;
   const decoded = decodeFileShape({
     server: { host: supplied.host, ...(ephemeralPort ? {} : { port: supplied.port }) },
     database: { path: supplied.databasePath, busyTimeoutMs: supplied.busyTimeoutMs },
-    idempotency: {
-      gcIntervalMinutes: supplied.gcIntervalMinutes,
-      gcBatchSize: supplied.gcBatchSize,
-    },
   });
   if (Either.isLeft(decoded)) {
     const described = ParseResult.ArrayFormatter.formatErrorSync(decoded.left)
@@ -247,10 +210,6 @@ export const validateOptions = (options: BackendOptions): BackendOptions => {
     database: {
       databasePath: checked.database?.path ?? supplied.databasePath,
       busyTimeoutMs: checked.database?.busyTimeoutMs ?? supplied.busyTimeoutMs,
-    },
-    idempotency: {
-      gcIntervalMinutes: checked.idempotency?.gcIntervalMinutes ?? supplied.gcIntervalMinutes,
-      gcBatchSize: checked.idempotency?.gcBatchSize ?? supplied.gcBatchSize,
     },
   };
 };

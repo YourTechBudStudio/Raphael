@@ -41,7 +41,7 @@ import { updateNode } from './update.ts';
 const failureOf = (error: NodeError): OperationFailure => {
   const projected = toPublicError(error);
   const failure: OperationFailure = {
-    error: { code: projected.code, message: projected.message, details: projected.details },
+    error: { code: projected.code, message: projected.message },
   };
   return error._tag === 'InternalFailure'
     ? { ...failure, diagnostic: { stage: error.operation, detail: error.detail } }
@@ -58,8 +58,7 @@ const adapt =
  * is no second validation here: the operation below is the one validation boundary, so a rule cannot
  * be enforced in one place and forgotten in the other.
  *
- * Creation answers 201, including a replay - a replay is a success that reports the entity that
- * exists, not a distinct outcome with a status of its own. Reads answer 200, and so do an update, a
+ * Creation answers 201. Reads answer 200, and so do an update, a
  * move, an archive and a restore: each changed an entity that already existed rather than bringing one
  * into being. Adding and removing a favorite answer 200 too: each changes a collection that already
  * exists.

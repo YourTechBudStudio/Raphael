@@ -9,7 +9,7 @@ import { and, eq } from 'drizzle-orm';
 import { Effect, Either, type Clock } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
-import { ARCHIVE_FIELDS, invalidInputFrom } from './diagnostics.ts';
+import { invalidInputFrom } from './diagnostics.ts';
 import { InternalFailure, RevisionConflict, type NodeError } from './errors.ts';
 import { addDirectUserCause, effectiveCauses, removeDirectUserCause } from './lifecycle.ts';
 import { causeProjection, checkedResponse, summaryProjection } from './projection.ts';
@@ -86,7 +86,7 @@ const lifecycleOperation = (
         try: () => {
           const request = decodeLifecycleRequest(input);
           if (Either.isLeft(request)) {
-            return raise(invalidInputFrom(request.left, ARCHIVE_FIELDS, input));
+            return raise(invalidInputFrom(request.left, input));
           }
           return prepareLifecycle(request.right);
         },

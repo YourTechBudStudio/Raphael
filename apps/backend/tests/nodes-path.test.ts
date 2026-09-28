@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createNode, getNode, getNodePath, toPublicError } from '../src/modules/nodes/index.ts';
+import {
+  createNode as createNodeRaw,
+  getNode,
+  getNodePath,
+  toPublicError,
+} from '../src/modules/nodes/index.ts';
 import {
   clockAt,
   expectLeft,
@@ -10,7 +15,10 @@ import {
   one,
   runNodes,
   withMigrated,
+  withDerivedSlug,
 } from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 const T0 = 1_700_000_000_000;
 
@@ -78,7 +86,7 @@ test('the root itself has no path to compute', () => {
       expectLeft(runNodes(connection, getNodePath({ target: { path: '/' } }))),
     );
     assert.equal(error.code, 'invalid_input');
-    assert.deepEqual(error.details, { field: 'target', reason: 'invalid' });
+    assert.equal(error.message, 'The target is not valid.');
   });
 });
 
@@ -115,7 +123,7 @@ test('a missing target is not found', () => {
       expectLeft(runNodes(connection, getNodePath({ target: { id: 999_999 } }))),
     );
     assert.equal(error.code, 'node_not_found');
-    assert.deepEqual(error.details, { field: 'target' });
+    assert.equal(error.message, 'Nothing exists at that address.');
   });
 });
 
@@ -156,7 +164,7 @@ test('cyclic stored ancestry is detected exactly, without a depth cap', () => {
         expectLeft(runNodes(connection, getNodePath({ target: { id } }))),
       );
       assert.equal(error.code, 'internal_error', `cycle reached through ${id}`);
-      assert.deepEqual(error.details, {});
+      assert.equal(error.message, 'The server could not complete the request.');
     }
   });
 });

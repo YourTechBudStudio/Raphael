@@ -3,7 +3,11 @@ import test from 'node:test';
 
 import { compareNodeOrder } from '@raphael/contracts/nodes';
 
-import { createNode, listNodes, toPublicError } from '../src/modules/nodes/index.ts';
+import {
+  createNode as createNodeRaw,
+  listNodes,
+  toPublicError,
+} from '../src/modules/nodes/index.ts';
 import {
   clockAt,
   expectLeft,
@@ -13,7 +17,10 @@ import {
   one,
   runNodes,
   withMigrated,
+  withDerivedSlug,
 } from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 const T0 = 1_700_000_000_000;
 
@@ -335,7 +342,7 @@ test('a missing or malformed scope is distinguished from an empty one', () => {
     const missing = toPublicError(expectLeft(list(connection, { scopes: [{ id: 777_777 }] })));
     assert.equal(missing.code, 'node_not_found');
     // The field is `scopes` now, and it names the position in the caller's own list.
-    assert.deepEqual(missing.details, { field: 'scopes', index: 0 });
+    assert.equal(missing.message, 'Scope 1 does not exist.');
 
     const malformed = toPublicError(expectLeft(list(connection, { scopes: [{ path: 'work' }] })));
     assert.equal(malformed.code, 'invalid_input');
@@ -355,7 +362,7 @@ test('a missing or malformed scope is distinguished from an empty one', () => {
       expectLeft(list(connection, { scopes: [{ path: '/' }, { id: 777_777 }] })),
     );
     assert.equal(second.code, 'node_not_found');
-    assert.deepEqual(second.details, { field: 'scopes', index: 1 });
+    assert.equal(second.message, 'Scope 2 does not exist.');
   });
 });
 
@@ -670,9 +677,9 @@ test('invalid ordering is refused with a bounded error that names the field and 
         expectLeft(list(connection, { scopes: [{ path: '/' }], orderBy })),
       );
       assert.equal(error.code, 'invalid_input', JSON.stringify(orderBy));
-      assert.deepEqual(
-        error.details,
-        { field: 'orderBy', reason: 'invalid' },
+      assert.equal(
+        error.message,
+        'The orderBy is not valid.',
         'never the submitted clause, and never a decoder string',
       );
     }

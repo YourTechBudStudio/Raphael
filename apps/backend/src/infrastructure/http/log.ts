@@ -1,8 +1,7 @@
 /**
  * What this server writes to an operator's terminal.
  *
- * There is no access log. Startup, shutdown, replay collection that did something, and failures we
- * did not expect are the whole vocabulary, because those are the events an operator acts on and
+ * There is no access log. Startup, shutdown, and failures we did not expect are the whole vocabulary, because those are the events an operator acts on and
  * everything else would be volume that has to be stored, rotated, and kept free of content.
  *
  * The field list is a whitelist, not a filter. Nothing arrives here from a request except a matched
@@ -11,7 +10,7 @@
  * so the raw URL is never given to this module in the first place. Unmatched requests are one fixed
  * word.
  *
- * Also absent by construction: headers, bodies, error `details`, configuration objects, credentials,
+ * Also absent by construction: headers, bodies, configuration objects, credentials,
  * and cause chains. A retained cause can carry SQL text and bound parameters, which is why phase 04
  * keeps it in memory for a debugger and forbids printing it, and this module honors that.
  */

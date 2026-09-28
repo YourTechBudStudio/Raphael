@@ -31,7 +31,6 @@ export const METADATA_MAX_TOP_LEVEL_KEYS = 50;
 export const METADATA_MAX_DEPTH = 5;
 export const METADATA_MAX_KEY_CODE_POINTS = 100;
 export const METADATA_MAX_SERIALIZED_BYTES = 16_384;
-export const IDEMPOTENCY_KEY_MAX_CODE_POINTS = 200;
 
 /**
  * Document bounds. Depth is enforced here because it is structural and cheap. The authoritative
@@ -66,48 +65,6 @@ export const SEARCH_QUERY_MAX_CODE_POINTS = 1_000;
 export const SEARCH_QUERY_MAX_TERMS = 32;
 
 export { SLUG_MAX_CODE_POINTS };
-
-/**
- * The request fields an operation can name when it reports a failure.
- *
- * This is our own vocabulary, not anything a caller submitted, so naming one discloses nothing; an
- * absent field means the request as a whole. It lives in the contracts because both sides need the
- * same list: the backend produces these names in its failure projections, and a client validates a
- * received `details.field` against a closed set before showing it to anyone. Two copies of a list
- * that has to agree is a drift hazard, so there is one.
- */
-export const REQUEST_FIELDS = [
-  'type',
-  'kind',
-  'parent',
-  'target',
-  'revision',
-  'destination',
-  'title',
-  'slug',
-  'description',
-  'body',
-  'tags',
-  'addTags',
-  'removeTags',
-  'active',
-  'metadata',
-  'idempotencyKey',
-  'format',
-  'recursive',
-  'scopes',
-  'filter',
-  'queries',
-  'skip',
-  'limit',
-  'orderBy',
-  'includeArchived',
-] as const;
-
-export type RequestField = (typeof REQUEST_FIELDS)[number];
-
-export const isRequestField = (value: string): value is RequestField =>
-  (REQUEST_FIELDS as readonly string[]).includes(value);
 
 export const NodeId = PositiveSafeInt;
 export const NodeRevision = PositiveSafeInt;
@@ -439,19 +396,6 @@ export const BodyInput = Schema.Union(
 export const BodyOutput = Schema.Union(
   Schema.Struct({ format: Schema.Literal('markdown'), value: Schema.String }),
   Schema.Struct({ format: Schema.Literal('tiptap'), value: DocumentTransportOutput }),
-);
-
-export const IdempotencyKeyInput = Schema.String.pipe(
-  Schema.filter((value) => {
-    if (value.trim() !== value) {
-      return 'an idempotency key must not have leading or trailing whitespace';
-    }
-    if (value.length === 0) return 'an idempotency key must not be empty';
-    if (/\p{Cc}/u.test(value)) return 'an idempotency key must not contain control characters';
-    return codePointLength(value) <= IDEMPOTENCY_KEY_MAX_CODE_POINTS
-      ? true
-      : `an idempotency key may be at most ${IDEMPOTENCY_KEY_MAX_CODE_POINTS} characters`;
-  }),
 );
 
 export const ListSkipInput = NonNegativeSafeInt;

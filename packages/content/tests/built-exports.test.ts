@@ -56,6 +56,7 @@ describe('built exports', () => {
     });
     assert.ok(Either.isRight(result));
     assert.equal(schema.deriveText(result.right), 'hello');
+    assert.equal(schema.deriveTitle(result.right, ''), 'hello');
   });
 
   it('validates through the validation entry point', async () => {

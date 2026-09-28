@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { TITLE_MAX_CODE_POINTS, SLUG_MAX_CODE_POINTS } from '@raphael/contracts/nodes';
+import { TITLE_MAX_CODE_POINTS } from '@raphael/contracts/nodes';
 
 import { createNode, toPublicError, type NodeError } from '../src/modules/nodes/index.ts';
 import {
@@ -10,9 +10,11 @@ import {
   count,
   expectLeft,
   expectRight,
+  fieldsOf,
   insertNode,
   one,
   runNodes,
+  withDerivedSlug,
   withMigrated,
 } from './support.ts';
 
@@ -24,13 +26,20 @@ const rootId = (connection: Parameters<typeof runNodes>[0], slug: string): numbe
     slug,
   ).id;
 
-const create = (
+const createRaw = (
   connection: Parameters<typeof runNodes>[0],
   request: unknown,
   clock = clockAt(1_700_000_000_000),
 ) => runNodes(connection, createNode(request), clock);
 
-const publicOf = (error: NodeError) => toPublicError(error);
+/** Creates the way a first-party client does: a missing slug is derived from the title first. */
+const create = (
+  connection: Parameters<typeof runNodes>[0],
+  request: Record<string, unknown>,
+  clock = clockAt(1_700_000_000_000),
+) => createRaw(connection, withDerivedSlug(request), clock);
+
+const publicOf = (error: NodeError) => ({ ...toPublicError(error), fields: fieldsOf(error) });
 
 test('a fresh instance creates an area under a seeded root area', () => {
   withMigrated('create-basic', (connection) => {
@@ -96,18 +105,14 @@ test('a title is required, and its limit is measured on the trimmed value', () =
         expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title })),
       );
       assert.equal(error.code, 'invalid_input');
-      assert.deepEqual(error.details, { field: 'title', reason: 'title_required' });
+      assert.equal(error.message, 'Title is required.');
     }
 
     const tooLong = 'a'.repeat(TITLE_MAX_CODE_POINTS + 1);
     const error = publicOf(
       expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title: tooLong })),
     );
-    assert.deepEqual(error.details, {
-      field: 'title',
-      reason: 'title_too_long',
-      limit: TITLE_MAX_CODE_POINTS,
-    });
+    assert.equal(error.message, `Title is longer than ${TITLE_MAX_CODE_POINTS} characters.`);
 
     // An explicit slug isolates the title bound from the shorter slug bound a derived address would hit.
     const padded = `   ${'b'.repeat(TITLE_MAX_CODE_POINTS)}   `;
@@ -121,25 +126,23 @@ test('a title is required, and its limit is measured on the trimmed value', () =
 test('an absent title keeps the reason a client can act on', () => {
   withMigrated('create-title-absent', (connection) => {
     const absent = publicOf(
-      expectLeft(create(connection, { type: 'area', parent: { path: '/' } })),
+      expectLeft(createRaw(connection, { type: 'area', parent: { path: '/' }, slug: 'a' })),
     );
     assert.equal(absent.code, 'invalid_input');
-    assert.deepEqual(
-      absent.details,
-      { field: 'title', reason: 'title_required' },
+    assert.equal(
+      absent.message,
+      'Title is required.',
       'a missing title is a missing title, not an unspecified invalid field',
     );
 
     // Present but the wrong type is a different problem, and "a title is required" would misdescribe it.
     for (const title of [42, null, { nested: true }, ['a']]) {
       const wrongType = publicOf(
-        expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title })),
+        expectLeft(
+          createRaw(connection, { type: 'area', parent: { path: '/' }, title, slug: 'a' }),
+        ),
       );
-      assert.deepEqual(
-        wrongType.details,
-        { field: 'title', reason: 'invalid' },
-        JSON.stringify(title),
-      );
+      assert.equal(wrongType.message, 'The title is not valid.', JSON.stringify(title));
     }
   });
 });
@@ -147,7 +150,7 @@ test('an absent title keeps the reason a client can act on', () => {
 test('a title behind an accessor is not invoked to improve a message', () => {
   withMigrated('create-title-accessor', (connection) => {
     let invoked = false;
-    const request = { type: 'area', parent: { path: '/' } };
+    const request = { type: 'area', parent: { path: '/' }, slug: 'a' };
     Object.defineProperty(request, 'title', {
       enumerable: true,
       get: () => {
@@ -156,64 +159,20 @@ test('a title behind an accessor is not invoked to improve a message', () => {
       },
     });
 
-    const error = publicOf(expectLeft(create(connection, request)));
+    const error = publicOf(expectLeft(createRaw(connection, request)));
     assert.equal(error.code, 'invalid_input');
     // The decoder reads the property once, which is unavoidable. What must not happen is a *second*
     // invocation during error handling purely to produce a nicer reason.
-    assert.deepEqual(
-      error.details,
-      { field: 'title', reason: 'invalid' },
+    assert.equal(
+      error.message,
+      'The title is not valid.',
       'an accessor is treated as unreadable rather than called again while handling a failure',
     );
     assert.equal(invoked, true);
   });
 });
 
-test('a title that derives no address is refused as a title problem, not a slug problem', () => {
-  withMigrated('create-underivable', (connection) => {
-    const error = publicOf(
-      expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title: '!!! ???' })),
-    );
-    assert.equal(error.code, 'invalid_input');
-    assert.deepEqual(error.details, { field: 'title', reason: 'slug_underivable' });
-  });
-});
-
-test('a title within its own bound can still derive past the slug bound', () => {
-  withMigrated('create-slug-too-long', (connection) => {
-    // Inside the 200-code-point title bound, past the 100-code-point slug bound.
-    const title = 'x'.repeat(SLUG_MAX_CODE_POINTS + 1);
-    const error = publicOf(
-      expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title })),
-    );
-    assert.deepEqual(error.details, {
-      field: 'title',
-      reason: 'slug_too_long',
-      limit: SLUG_MAX_CODE_POINTS,
-    });
-  });
-});
-
-test('slug derivation normalizes the way the frozen contract says it does', () => {
-  withMigrated('create-slug-derivation', (connection) => {
-    const cases: readonly [string, string][] = [
-      ['Reading List', 'reading-list'],
-      ['  Spaced   Out  ', 'spaced-out'],
-      ['Notes/Ideas', 'notes-ideas'],
-      ['Ünicode Wörks', 'ünicode-wörks'],
-      ['ＦＵＬＬ Width', 'full-width'],
-      ['snake_case_title', 'snake-case-title'],
-    ];
-    for (const [title, slug] of cases) {
-      const response = expectRight(
-        create(connection, { type: 'area', parent: { path: '/' }, title }),
-      );
-      assert.equal(response.entity.slug, slug, `${title} should derive ${slug}`);
-    }
-  });
-});
-
-test('an explicitly submitted slug is kept, and a noncanonical one names the slug field', () => {
+test('a slug is required and must already be canonical; the server never derives one', () => {
   withMigrated('create-explicit-slug', (connection) => {
     const ok = expectRight(
       create(connection, {
@@ -224,6 +183,12 @@ test('an explicitly submitted slug is kept, and a noncanonical one names the slu
       }),
     );
     assert.equal(ok.entity.slug, 'chosen-address');
+
+    const missing = publicOf(
+      expectLeft(createRaw(connection, { type: 'area', parent: { path: '/' }, title: 'No slug' })),
+    );
+    assert.equal(missing.code, 'invalid_input');
+    assert.equal(missing.message, 'The slug is not valid.');
 
     const error = publicOf(
       expectLeft(
@@ -236,7 +201,7 @@ test('an explicitly submitted slug is kept, and a noncanonical one names the slu
       ),
     );
     assert.equal(error.code, 'invalid_input');
-    assert.deepEqual(error.details, { field: 'slug', reason: 'invalid' });
+    assert.equal(error.message, 'The slug is not valid.');
   });
 });
 
@@ -249,7 +214,7 @@ test('sibling slugs collide across types, and the root has its own namespace', (
       expectLeft(create(connection, { type: 'area', parent: work, title: 'Shared name' })),
     );
     assert.equal(sibling.code, 'slug_conflict');
-    assert.deepEqual(sibling.details, { field: 'slug', slug: 'shared-name', scope: 'sibling' });
+    assert.equal(sibling.message, '"shared-name" is already used here.');
 
     // The same slug is free under a different parent.
     expectRight(
@@ -260,7 +225,7 @@ test('sibling slugs collide across types, and the root has its own namespace', (
       expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title: 'Work' })),
     );
     assert.equal(root.code, 'slug_conflict');
-    assert.deepEqual(root.details, { field: 'slug', slug: 'work', scope: 'root' });
+    assert.equal(root.message, '"work" is already used here.');
   });
 });
 
@@ -289,7 +254,7 @@ test('the parentage matrix is enforced as a product rule', () => {
       expectLeft(create(connection, { type: 'project', parent: { path: '/' }, title: 'Rootless' })),
     );
     assert.equal(atRoot.code, 'invalid_parent');
-    assert.deepEqual(atRoot.details, {
+    assert.deepEqual(atRoot.fields, {
       field: 'parent',
       reason: 'parentage',
       parentType: 'root',
@@ -301,7 +266,7 @@ test('the parentage matrix is enforced as a product rule', () => {
         expectLeft(create(connection, { type: childType, parent: { id: project }, title: 'Nope' })),
       );
       assert.equal(underProject.code, 'invalid_parent');
-      assert.deepEqual(underProject.details, {
+      assert.deepEqual(underProject.fields, {
         field: 'parent',
         reason: 'parentage',
         parentType: 'project',
@@ -315,7 +280,7 @@ test('the parentage matrix is enforced as a product rule', () => {
       );
       assert.equal(underResource.code, 'invalid_parent');
       assert.deepEqual(
-        underResource.details,
+        underResource.fields,
         { field: 'parent', reason: 'parentage', parentType: 'resource', childType },
         'a resource exists and cannot contain anything - that is not the same as it being absent',
       );
@@ -330,7 +295,7 @@ test('a parent that does not exist is a missing node, named by its field', () =>
         expectLeft(create(connection, { type: 'project', parent, title: 'X' })),
       );
       assert.equal(error.code, 'node_not_found');
-      assert.deepEqual(error.details, { field: 'parent' });
+      assert.equal(error.message, 'The parent does not exist.');
     }
   });
 });
@@ -393,60 +358,11 @@ test('unsupported submitted content is a content failure, with a location and no
       ),
     );
     assert.equal(error.code, 'unsupported_content');
-    assert.equal(error.details['field'], 'body');
-    assert.equal(error.details['reason'], 'unsupported_node');
-    assert.deepEqual(error.details['path'], [0]);
+    assert.equal(error.message, 'The body is not supported: unsupported_node at content[0].');
     assert.equal(
-      'element' in error.details,
+      error.message.includes('nonsense'),
       false,
       "an unrecognized node name is the caller's input and is never reflected back",
-    );
-  });
-});
-
-test('a failed replay write rolls back the node it was recording', () => {
-  withMigrated('create-rollback', (connection) => {
-    const nodesBefore = count(connection.db, 'SELECT count(*) AS c FROM nodes');
-
-    // The node insert and the replay record must commit as one fact, so the interesting failure is the
-    // one that happens *between* them. A trigger is the only way to reach it deliberately: every value
-    // core writes there is valid by construction. Test-only setup, removed immediately afterwards.
-    connection.db.exec(
-      `CREATE TRIGGER test_block_replay BEFORE INSERT ON creation_replays
-       BEGIN SELECT RAISE(ABORT, 'blocked by test'); END`,
-    );
-    try {
-      const error = publicOf(
-        expectLeft(
-          create(connection, {
-            type: 'project',
-            parent: { path: '/work' },
-            title: 'Doomed',
-            idempotencyKey: 'rollback-key',
-          }),
-        ),
-      );
-      assert.equal(error.code, 'internal_error');
-      assert.deepEqual(error.details, {}, 'an internal failure publishes nothing about itself');
-    } finally {
-      connection.db.exec('DROP TRIGGER test_block_replay');
-    }
-
-    assert.equal(
-      count(connection.db, 'SELECT count(*) AS c FROM nodes'),
-      nodesBefore,
-      'the entity must not survive a failure to record its replay result',
-    );
-    assert.equal(count(connection.db, 'SELECT count(*) AS c FROM creation_replays'), 0);
-
-    // The same request succeeds once the write can complete, which shows the rollback left no residue.
-    expectRight(
-      create(connection, {
-        type: 'project',
-        parent: { path: '/work' },
-        title: 'Doomed',
-        idempotencyKey: 'rollback-key',
-      }),
     );
   });
 });
@@ -471,7 +387,7 @@ test('a cyclic body is refused before conversion ever sees it', () => {
       ),
     );
     assert.equal(error.code, 'invalid_input');
-    assert.equal(error.details['field'], 'body');
+    assert.equal(error.message, 'The body is not valid.');
     assert.equal(
       count(connection.db, 'SELECT count(*) AS c FROM nodes WHERE slug = ?', 'hostile-body'),
       0,
@@ -541,7 +457,7 @@ test('the parentage matrix is the full rule now that resources can be created', 
     // Only areas at the root. A note there has no home.
     const atRoot = publicOf(expectLeft(note(connection, { parent: { path: '/' }, title: 'N' })));
     assert.equal(atRoot.code, 'invalid_parent');
-    assert.deepEqual(atRoot.details, {
+    assert.deepEqual(atRoot.fields, {
       field: 'parent',
       reason: 'parentage',
       parentType: 'root',
@@ -554,7 +470,7 @@ test('the parentage matrix is the full rule now that resources can be created', 
       expectLeft(note(connection, { parent: { id: parent.entity.id }, title: 'Child' })),
     );
     assert.equal(underNote.code, 'invalid_parent');
-    assert.deepEqual(underNote.details, {
+    assert.deepEqual(underNote.fields, {
       field: 'parent',
       reason: 'parentage',
       parentType: 'resource',
@@ -580,12 +496,11 @@ test('a bare resource and a kinded container are both refused at the contract', 
       expectLeft(create(connection, { type: 'resource', parent: { path: '/work' }, title: 'N' })),
     );
     assert.equal(bare.code, 'invalid_input');
-    assert.equal(bare.details['reason'], 'invalid');
-    assert.equal(bare.details['field'], 'kind');
+    assert.equal(bare.message, 'The kind is not valid.');
 
     const unsupported = publicOf(expectLeft(note(connection, { kind: 'sketch', title: 'N' })));
     assert.equal(unsupported.code, 'invalid_input');
-    assert.equal(unsupported.details['field'], 'kind');
+    assert.equal(unsupported.message, 'The kind is not valid.');
 
     // A kind on a container is refused too, and is attributed to the kind rather than to the type -
     // the type is the one thing that request got right.
@@ -600,7 +515,7 @@ test('a bare resource and a kinded container are both refused at the contract', 
       ),
     );
     assert.equal(kinded.code, 'invalid_input');
-    assert.equal(kinded.details['field'], 'kind');
+    assert.equal(kinded.message, 'The kind is not valid.');
 
     assert.equal(count(connection.db, `SELECT count(*) AS c FROM nodes WHERE kind IS NOT NULL`), 0);
   });
@@ -612,7 +527,7 @@ test('a container missing its title still gets title_required, not a discriminan
     // have silently replaced mobile's only specific recovery copy with "the type was wrong".
     const error = publicOf(expectLeft(create(connection, { type: 'area', parent: { path: '/' } })));
     assert.equal(error.code, 'invalid_input');
-    assert.deepEqual(error.details, { field: 'title', reason: 'title_required' });
+    assert.equal(error.message, 'Title is required.');
 
     const tooLong = publicOf(
       expectLeft(
@@ -623,131 +538,27 @@ test('a container missing its title still gets title_required, not a discriminan
         }),
       ),
     );
-    assert.deepEqual(tooLong.details, {
-      field: 'title',
-      reason: 'title_too_long',
-      limit: TITLE_MAX_CODE_POINTS,
-    });
+    assert.equal(tooLong.message, `Title is longer than ${TITLE_MAX_CODE_POINTS} characters.`);
 
     // A genuinely unknown type is still reported as the type, because nothing more specific is known.
     const unknown = publicOf(
       expectLeft(create(connection, { type: 'sketch', parent: { path: '/' }, title: 'A' })),
     );
-    assert.equal(unknown.details['field'], 'type');
+    assert.equal(unknown.message, 'The type is not valid.');
   });
 });
 
-/* ------------------------------------------------------------------ derived titles */
-
-test('an omitted note title is derived from the first usable line of the body', () => {
-  withMigrated('create-title-from-body', (connection) => {
-    const heading = expectRight(
-      note(connection, { body: { value: '# API design\n\nRequest contracts' } }),
+test('a note is not named by the server: an omitted title is refused', () => {
+  withMigrated('create-note-title', (connection) => {
+    const error = publicOf(
+      expectLeft(note(connection, { slug: 'api-design', body: { value: '# API design' } })),
     );
-    assert.equal(heading.entity.title, 'API design');
-    assert.equal(heading.entity.slug, 'api-design');
-
-    const sentence = expectRight(
-      note(connection, { body: { value: 'Just a sentence.' }, slug: 'sentence' }),
-    );
-    assert.equal(sentence.entity.title, 'Just a sentence.');
-
-    // Leading blank lines are skipped rather than read as an empty title.
-    const padded = expectRight(
-      note(connection, { body: { value: '\n\n   \nAfter the gap' }, slug: 'padded' }),
-    );
-    assert.equal(padded.entity.title, 'After the gap');
-
-    // Code and Mermaid source contribute their text: someone who wrote only a diagram expects to see
-    // its first line as the name.
-    const mermaid = expectRight(
-      note(connection, { body: { value: '```mermaid\ngraph TD\n  a-->b\n```' }, slug: 'diagram' }),
-    );
-    assert.equal(mermaid.entity.title, 'graph TD');
-  });
-});
-
-test('the description is the second source, and is only reached when the body has no text', () => {
-  withMigrated('create-title-from-description', (connection) => {
-    const fromDescription = expectRight(note(connection, { description: 'Weekly review' }));
-    assert.equal(fromDescription.entity.title, 'Weekly review');
-    assert.equal(fromDescription.entity.slug, 'weekly-review');
-
-    // The body wins when it has anything at all, even with a description present.
-    const bodyWins = expectRight(
-      note(connection, { body: { value: 'From the body' }, description: 'From the description' }),
-    );
-    assert.equal(bodyWins.entity.title, 'From the body');
-  });
-});
-
-test('a note with no usable text anywhere is asked for a title rather than given one', () => {
-  withMigrated('create-title-none', (connection) => {
-    for (const request of [{}, { body: { value: '' } }, { body: { value: '   \n\n  ' } }]) {
-      const error = publicOf(expectLeft(note(connection, request)));
-      assert.equal(error.code, 'invalid_input');
-      assert.deepEqual(
-        error.details,
-        { field: 'title', reason: 'title_required' },
-        'no generic fallback: an invented name is worse than a prompt',
-      );
-    }
+    assert.equal(error.code, 'invalid_input');
+    assert.equal(error.message, 'Title is required.');
     assert.equal(
       count(connection.db, `SELECT count(*) AS c FROM nodes WHERE type = 'resource'`),
       0,
     );
-  });
-});
-
-test('a derived title that cannot produce an address asks for a title, and never invents one', () => {
-  withMigrated('create-title-unaddressable', (connection) => {
-    // Nothing sluggable in the chosen candidate. `...` is a paragraph of punctuation, so it *is* a
-    // candidate - unlike `***`, which is a thematic break and contributes no text at all. The two
-    // reach different answers on purpose: one has a name that cannot be addressed, the other has no
-    // name to address.
-    const underivable = publicOf(expectLeft(note(connection, { body: { value: '...' } })));
-    assert.equal(underivable.code, 'invalid_input');
-    assert.deepEqual(underivable.details, { field: 'title', reason: 'slug_underivable' });
-
-    const noText = publicOf(expectLeft(note(connection, { body: { value: '***' } })));
-    assert.deepEqual(noText.details, { field: 'title', reason: 'title_required' });
-
-    // A 200-code-point title derives a slug past the address limit. Truncating an address the caller
-    // never saw would be the convenient answer and the wrong one.
-    const long = publicOf(expectLeft(note(connection, { body: { value: 'a'.repeat(250) } })));
-    assert.deepEqual(long.details, {
-      field: 'title',
-      reason: 'slug_too_long',
-      limit: SLUG_MAX_CODE_POINTS,
-    });
-
-    // It does not fall through to the description looking for a candidate that slugs more
-    // conveniently: the note's name must not depend on whether its own first line happens to contain
-    // sluggable characters.
-    const noFallthrough = publicOf(
-      expectLeft(note(connection, { body: { value: '...' }, description: 'Perfectly fine' })),
-    );
-    assert.deepEqual(noFallthrough.details, { field: 'title', reason: 'slug_underivable' });
-  });
-});
-
-test('an explicit slug with an omitted title keeps the slug and derives only the name', () => {
-  withMigrated('create-explicit-slug', (connection) => {
-    const response = expectRight(
-      note(connection, { slug: 'chosen-address', body: { value: '# A different name' } }),
-    );
-    assert.equal(response.entity.slug, 'chosen-address');
-    assert.equal(response.entity.title, 'A different name');
-  });
-});
-
-test('a title is truncated at the limit by code points, not by UTF-16 units', () => {
-  withMigrated('create-title-truncation', (connection) => {
-    // Astral characters are one code point each and two UTF-16 units. Measuring units would cut this
-    // title in half - and could split a surrogate pair into an unpaired one.
-    const emoji = '😀'.repeat(TITLE_MAX_CODE_POINTS + 50);
-    const response = expectRight(note(connection, { body: { value: emoji }, slug: 'emoji' }));
-    assert.equal([...response.entity.title].length, TITLE_MAX_CODE_POINTS);
   });
 });
 
@@ -770,7 +581,7 @@ test('nothing is created under something archived, directly or through a contain
     causeOn(connection, shelf.id);
     const before = count(connection.db, 'SELECT count(*) AS c FROM nodes');
 
-    for (const [parent, reason] of [
+    for (const [parent, standing] of [
       [{ id: shelf.id }, 'direct'],
       [{ path: '/work/shelf/inner' }, 'inherited'],
     ] as const) {
@@ -780,8 +591,13 @@ test('nothing is created under something archived, directly or through a contain
         ),
       );
       assert.equal(failure.code, 'node_archived');
-      assert.deepEqual(failure.details, { field: 'parent', reason });
-      assert.equal(failure.message, 'That parent is archived.');
+      assert.deepEqual(failure.fields, { field: 'parent', standing });
+      assert.equal(
+        failure.message,
+        standing === 'direct'
+          ? 'The parent is archived.'
+          : 'The parent is inside something archived.',
+      );
     }
     assert.equal(count(connection.db, 'SELECT count(*) AS c FROM nodes'), before);
     assert.equal(inner.archived, false, 'it was active when it was created');
@@ -800,28 +616,5 @@ test('nothing is created under something archived, directly or through a contain
       expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title: 'Personal' })),
     );
     assert.equal(taken.code, 'slug_conflict');
-  });
-});
-
-test('a replay whose parent was archived afterwards answers with the saved success', () => {
-  withMigrated('create-archived-replay', (connection) => {
-    const request = {
-      type: 'project',
-      parent: { path: '/work' },
-      title: 'Kept',
-      idempotencyKey: 'archived-later',
-    };
-    const original = expectRight(create(connection, request));
-    causeOn(connection, rootId(connection, 'work'));
-
-    const replayed = expectRight(create(connection, request, clockAt(1_700_000_060_000)));
-    assert.deepEqual(replayed, original);
-    assert.equal(replayed.entity.archived, false, 'a replay is a historical snapshot');
-
-    // A new key under the same archived parent is a new request, and is refused.
-    const fresh = publicOf(
-      expectLeft(create(connection, { ...request, idempotencyKey: 'another', title: 'Other' })),
-    );
-    assert.equal(fresh.code, 'node_archived');
   });
 });

@@ -10,7 +10,6 @@ import {
   BodyOutput,
   ContainerTypeSchema,
   DescriptionInput,
-  IdempotencyKeyInput,
   LIST_LIMIT_DEFAULT,
   LIST_SKIP_DEFAULT,
   ListLimitInput,
@@ -98,15 +97,18 @@ export const Scopes = Schema.Array(ScopeSelector).pipe(
   ),
 );
 
-/** Everything both members of the creation union accept, spelled once. */
+/**
+ * Everything both members of the creation union accept, spelled once. The caller names the node: a
+ * retry after a lost reply resubmits the same slug and meets its own first attempt as a slug conflict.
+ */
 const CreateCommon = {
   parent: ScopeSelector,
-  slug: Schema.optional(SlugInput),
+  title: TitleInput,
+  slug: SlugInput,
   description: Schema.optional(DescriptionInput),
   body: Schema.optional(BodyInput),
   tags: Schema.optional(TagsInput),
   metadata: Schema.optional(MetadataInput),
-  idempotencyKey: Schema.optional(IdempotencyKeyInput),
   /** The format the returned body is rendered in. `body.format` describes the submitted body. */
   format: Schema.optionalWith(BodyFormatSchema, {
     default: () => 'markdown' as const,
@@ -114,36 +116,21 @@ const CreateCommon = {
   }),
 };
 
-/** A container. It must be named, and it has no kind: a kind says what a leaf is. */
+/** A container has no kind: a kind says what a leaf is. */
 export const ContainerCreateRequest = Schema.Struct({
   type: ContainerTypeSchema,
-  title: TitleInput,
   ...CreateCommon,
 });
 
-/**
- * A resource. Its kind is required, and its title is not.
- *
- * An omitted title is resolved by core from the submitted content, which is why it is optional here
- * rather than defaulted: there is nothing a contract could put in its place that would not be an
- * invented name. A supplied title is still validated as authored input.
- */
 export const ResourceCreateRequest = Schema.Struct({
   type: Schema.Literal('resource'),
   kind: ResourceKindSchema,
-  title: Schema.optional(TitleInput),
   ...CreateCommon,
 });
 
 /**
- * Creation, as a discriminated union rather than one struct with an optional kind.
- *
- * The shape is what enforces the rules, so no downstream code has to. Strict request decoding
- * refuses excess properties, so `kind` on an area is rejected by the container member and by the type
- * literal in the resource member - a container cannot carry a kind. A resource without a kind, or with
- * an unsupported one, is refused before any storage rule runs, so bare `resource` creation is
- * impossible at the contract. And a container without a title still fails on `TitleInput`, so existing
- * `title_required` recovery wording for containers is unchanged.
+ * Creation, as a discriminated union. Strict request decoding refuses excess properties, so a
+ * container cannot carry a kind and a resource cannot omit one.
  */
 export const CreateRequest = Schema.Union(ContainerCreateRequest, ResourceCreateRequest);
 
@@ -244,34 +231,19 @@ export const UPDATE_CHANGE_FIELDS = [
   'description',
   'slug',
   'body',
-  'addTags',
-  'removeTags',
+  'tags',
   'active',
 ] as const;
 
 /**
- * Presence, not value, is the test: `Object.hasOwn` rather than `!== undefined`. With `exact: true`
- * the two agree today, and this one states the intent - an update must *mention* a change field.
- * `addTags: []` therefore counts, and is an ordinary write that happens to change no value.
+ * Presence, not value, is the test: an update must *mention* a change field. `tags: []` therefore
+ * counts, and clears the list.
  */
 const hasChange = (request: Record<string, unknown>): boolean =>
   UPDATE_CHANGE_FIELDS.some((field) => Object.hasOwn(request, field));
 
 /**
- * Both filters run on the decoded value, so this compares trimmed, NFC-normalized tags - the same
- * identity `TagsInput` uses for its own duplicate check.
- */
-const noTagInBothLists = (request: {
-  readonly addTags?: readonly string[];
-  readonly removeTags?: readonly string[];
-}): boolean => {
-  if (request.addTags === undefined || request.removeTags === undefined) return true;
-  const removed = new Set(request.removeTags);
-  return !request.addTags.some((tag) => removed.has(tag));
-};
-
-/**
- * The update envelope's shape, before its two request-scoped rules.
+ * The update envelope's shape, before its request-scoped rule.
  *
  * Exported for the drift assertion in `operations.test.ts` and deliberately not re-exported from
  * `nodes/index.ts`: `UpdateRequest` is the envelope, and this is the same struct without the rules
@@ -284,8 +256,8 @@ export const UpdateRequestFields = Schema.Struct({
   description: Schema.optionalWith(DescriptionInput, { exact: true }),
   slug: Schema.optionalWith(SlugInput, { exact: true }),
   body: Schema.optionalWith(BodyInput, { exact: true }),
-  addTags: Schema.optionalWith(TagsInput, { exact: true }),
-  removeTags: Schema.optionalWith(TagsInput, { exact: true }),
+  /** The full resulting list: it replaces what is stored. */
+  tags: Schema.optionalWith(TagsInput, { exact: true }),
   /**
    * Desired state, never a toggle: `true` means "the resulting state is active". Submitting the state
    * already stored is an ordinary successful write, which is what makes the revision guard meaningful -
@@ -312,13 +284,9 @@ export const UpdateRequestFields = Schema.Struct({
  * remember to apply. Every optional is `exact: true`, so "present" means "supplied" for an in-process
  * caller as well as over the wire: an omitted field stays unchanged, while `body: { value: "" }`
  * clears the body.
- *
- * Both rules are struct-level, so their issue path is empty and a caller is told the request as a
- * whole is wrong rather than being pointed at a field that is not at fault.
  */
 export const UpdateRequest = UpdateRequestFields.pipe(
   Schema.filter((request) => hasChange(request) || 'an update must change at least one field'),
-  Schema.filter((request) => noTagInBothLists(request) || 'a tag cannot be both added and removed'),
 );
 
 /**
@@ -337,10 +305,7 @@ export const MoveDestination = Schema.Union(
   Schema.Struct({ parent: ScopeSelector, slug: Schema.optionalWith(SlugInput, { exact: true }) }),
 );
 
-/**
- * Relocating one entity, against the revision the caller last read (ADR 0002). There is no
- * idempotency key: as with an update, a move's safety is the revision it names.
- */
+/** Relocating one entity, against the revision the caller last read (ADR 0002). */
 export const MoveRequest = Schema.Struct({
   target: EntitySelector,
   revision: NodeRevision,

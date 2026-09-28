@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { deriveSlug } from '@raphael/contracts/nodes';
 import { Clock, Effect, Either } from 'effect';
 
 import {
@@ -138,6 +139,7 @@ export const insertNode = (
     slug: string;
     title?: string;
     body?: string;
+    bodyText?: string;
     id?: number;
     revision?: number;
     /**
@@ -158,6 +160,7 @@ export const insertNode = (
     'slug',
     'title',
     'body',
+    'body_text',
     'revision',
     'active',
     'created_at',
@@ -171,6 +174,7 @@ export const insertNode = (
     values.slug,
     values.title ?? 'Title',
     values.body ?? EMPTY_BODY,
+    values.bodyText ?? '',
     values.revision ?? 1,
     values.active ?? 0,
     values.createdAt ?? 1_700_000_000_000,
@@ -188,9 +192,8 @@ export const insertNode = (
 /**
  * A clock the test controls.
  *
- * `next` is called for every sample, so a test can advance time between the preliminary replay lookup
- * and the authoritative one inside the transaction - and can also use the sample as a deliberate seam,
- * which is how the request-detachment tests reach the one instant between fingerprinting and storage.
+ * `next` is called for every sample, so a test can use a sample as a deliberate seam - which is how the
+ * request-detachment tests reach the instant between preparation and storage.
  */
 export const controlledClock = (next: () => number): Clock.Clock => ({
   [Clock.ClockTypeId]: Clock.ClockTypeId,
@@ -244,4 +247,18 @@ export const expectLeft = <A, E>(result: Either.Either<A, E>): E => {
 const publicOrTag = (error: unknown): unknown => {
   const tag = (error as { _tag?: unknown })._tag;
   return typeof tag === 'string' ? { _tag: tag, ...(error as object) } : error;
+};
+
+/** A tagged failure's own fields, without its tag. */
+export const fieldsOf = (error: object): Record<string, unknown> => {
+  const { _tag: _ignored, ...fields } = { ...error } as Record<string, unknown>;
+  return fields;
+};
+
+/** A creation request as a first-party client sends it: a missing slug is derived from the title. */
+export const withDerivedSlug = (request: unknown): unknown => {
+  if (typeof request !== 'object' || request === null || 'slug' in request) return request;
+  const title = (request as { title?: unknown }).title;
+  if (typeof title !== 'string') return request;
+  return { ...request, slug: Either.getOrElse(deriveSlug(title), () => 'unnamed') };
 };

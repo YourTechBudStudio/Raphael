@@ -3,7 +3,7 @@ import test from 'node:test';
 
 import {
   archiveNode,
-  createNode,
+  createNode as createNodeRaw,
   getNode,
   restoreNode,
   toPublicError,
@@ -17,7 +17,10 @@ import {
   one,
   runNodes,
   withMigrated,
+  withDerivedSlug,
 } from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 /**
  * Archive and restore: one cause row on the target, one revision bump when it changed, and an answer
@@ -151,7 +154,10 @@ test('a stale revision is a revision conflict before anything else, in both dire
         expectLeft(run(connection, { target: { id: target.id }, revision: target.revision + 1 })),
       );
       assert.equal(failure.code, 'revision_conflict');
-      assert.deepEqual(failure.details, { field: 'revision', currentRevision: target.revision });
+      assert.equal(
+        failure.message,
+        `This changed on the server. It is now at revision ${target.revision}.`,
+      );
     }
 
     // A stale restore of something archived is still a conflict, not a no-op or a removal.
@@ -271,7 +277,7 @@ test('the root path is refused at the decoder, and an unknown id is not found', 
         expectLeft(run(connection, { target: { path: '/' }, revision: 1 })),
       );
       assert.equal(root.code, 'invalid_input');
-      assert.equal(root.details['field'], 'target');
+      assert.equal(root.message, 'The target is not valid.');
 
       const excess = toPublicError(
         expectLeft(run(connection, { target: { id: 1 }, revision: 1, reason: 'direct' })),
@@ -282,7 +288,7 @@ test('the root path is refused at the decoder, and an unknown id is not found', 
         expectLeft(run(connection, { target: { id: 999_999 }, revision: 1 })),
       );
       assert.equal(missing.code, 'node_not_found');
-      assert.deepEqual(missing.details, { field: 'target' });
+      assert.equal(missing.message, 'Nothing exists at that address.');
     }
     assert.equal(count(connection.db, 'SELECT count(*) AS c FROM archive_causes'), 0);
   });

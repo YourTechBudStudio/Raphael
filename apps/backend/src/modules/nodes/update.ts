@@ -1,7 +1,6 @@
 import { deriveText } from '@raphael/content/schema';
 import type { JsonObject } from '@raphael/contracts';
 import {
-  TAGS_MAX_COUNT,
   decodeUpdateRequest,
   decodeUpdateResponse,
   type BodyFormat,
@@ -14,7 +13,7 @@ import { Effect, Either, type Clock } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
 import { convertBody, type PreparedBody } from './content.ts';
-import { UPDATE_FIELDS, invalidInputFrom } from './diagnostics.ts';
+import { invalidInputFrom } from './diagnostics.ts';
 import { InternalFailure, InvalidInput, RevisionConflict, type NodeError } from './errors.ts';
 import { requireActive } from './lifecycle.ts';
 import {
@@ -22,7 +21,6 @@ import {
   checkedResponse,
   entityProjection,
   favoriteExpression,
-  parseStored,
   validatedStoredBody,
 } from './projection.ts';
 import { loadEntity, type Selector } from './resolve.ts';
@@ -44,7 +42,6 @@ const OPERATION = 'nodes.update';
  *       require the target to be active                 (fail fast; not the verdict either)
  *   → convert content                (outside the transaction: the slow part, and it can fail)
  *   → project the response body      (and derive plain text, for a supplied body)
- *   → resolve the resulting tag set
  *   → assemble and validate the response    (nothing in it depends on the write)
  *   → immediate write transaction
  *       sample the clock
@@ -69,7 +66,7 @@ const OPERATION = 'nodes.update';
  * row this operation never read, so the returned entity and the resulting tag list would describe a
  * state nobody inspected. The write-time check is the verdict for the case the read cannot see - the
  * row moving between the two transactions. Both produce the same `RevisionConflict` with the same
- * details, because to a caller they are the same fact: what you wrote against is not what is there.
+ * message, because to a caller they are the same fact: what you wrote against is not what is there.
  *
  * Every successful update is a write. Submitting a value equal to the stored one still increments the
  * revision and advances `updated_at`; the server never compares submitted content to stored content,
@@ -98,7 +95,7 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
         try: () => {
           const request = decodeUpdateRequest(input);
           if (Either.isLeft(request)) {
-            return raise(invalidInputFrom(request.left, UPDATE_FIELDS, input));
+            return raise(invalidInputFrom(request.left, input));
           }
           return prepareUpdate(request.right);
         },
@@ -168,11 +165,6 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
         catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'body projection' }, cause),
       });
 
-      const tags = yield* Effect.try({
-        try: () => resultingTags(row.tags, prepared),
-        catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'tag resolution' }, cause),
-      });
-
       // `row.revision` and `prepared.revision` are equal here - the read step required it - so this is
       // also the caller's revision plus one. Taking it from the row is what makes the response describe
       // a state that was actually inspected.
@@ -205,7 +197,7 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
                   description: prepared.description ?? row.description,
                   slug: prepared.slug ?? row.slug,
                   revision: nextRevision,
-                  tags: JSON.stringify(tags),
+                  tags: prepared.tags === undefined ? row.tags : JSON.stringify(prepared.tags),
                   // Still the stored integer shape, so `summaryProjection` stays the one place the
                   // conversion to a boolean happens.
                   active: prepared.active === undefined ? row.active : prepared.active ? 1 : 0,
@@ -226,7 +218,7 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
       const isFavorite = yield* Effect.try({
         try: () =>
           writeTransaction(db, () =>
-            commit(db, { prepared, row, tags, content: projected.content, nextRevision, clock }),
+            commit(db, { prepared, row, content: projected.content, nextRevision, clock }),
           ),
         catch: (cause) =>
           // The slug context is passed only when a slug was supplied, so an unrelated unique violation
@@ -266,17 +258,16 @@ interface PreparedUpdate {
   readonly description: string | undefined;
   readonly slug: string | undefined;
   readonly body: PreparedBody | undefined;
-  readonly addTags: readonly string[];
-  readonly removeTags: readonly string[];
+  /** The full resulting list, or `undefined` to keep the stored one. */
+  readonly tags: readonly string[] | undefined;
   /** The desired resulting state, or `undefined` when the caller did not mention selection. */
   readonly active: boolean | undefined;
   readonly format: BodyFormat;
 }
 
 /**
- * Trims the title and detaches every pass-through value, exactly as `prepareCreate` does and for the
- * same reason: from here on the prepared request is not modified, so what is validated is what is
- * written. There is no fingerprint - an update has no idempotency key, and its safety is the revision.
+ * Trims the title and detaches every pass-through value, exactly as creation does, so what is
+ * validated is what is written.
  */
 const prepareUpdate = (request: UpdateRequest): PreparedUpdate => ({
   target: 'id' in request.target ? { id: request.target.id } : { path: request.target.path },
@@ -290,57 +281,10 @@ const prepareUpdate = (request: UpdateRequest): PreparedUpdate => ({
       : request.body.format === 'tiptap'
         ? { format: 'tiptap', value: structuredClone(request.body.value) as JsonObject }
         : { format: 'markdown', value: request.body.value },
-  addTags: request.addTags === undefined ? [] : [...request.addTags],
-  removeTags: request.removeTags === undefined ? [] : [...request.removeTags],
+  tags: request.tags === undefined ? undefined : [...request.tags],
   active: request.active,
   format: request.format,
 });
-
-/**
- * The tag list this update leaves behind.
- *
- * Set semantics, deliberately: adding a tag that is already there and removing one that is not are both
- * accepted no-ops inside an otherwise ordinary write. The caller asked for a resulting state, and that
- * state is what they get.
- *
- * Order is stored order with removals dropped, then additions appended in submitted order, and nothing
- * is sorted. Tags are the person's own, and a list that silently reorders itself is a list they cannot
- * predict.
- *
- * Comparison is against the raw stored strings. Every path that writes this column normalizes through
- * `TagsInput`, which trims and NFC-normalizes, so stored and submitted tags are already in one identity
- * - and re-normalizing here would make core a second normalization authority alongside the contract.
- *
- * The 25-tag bound is checked on the *result*, which is why it can only be enforced here: no decoder
- * can see the tags already on the row. It is attributed to `tags` rather than `addTags` for the same
- * reason - an overflow can be caused entirely by tags the caller did not submit.
- */
-const resultingTags = (storedJson: string, prepared: PreparedUpdate): readonly string[] => {
-  const parsed = parseStored(storedJson, OPERATION, 'tags');
-  if (!Array.isArray(parsed) || parsed.some((tag) => typeof tag !== 'string')) {
-    // This is data we wrote, so a malformed list is an integrity failure rather than caller input -
-    // the same classification the body projection gives a malformed stored document.
-    return raise(
-      new InternalFailure({
-        operation: OPERATION,
-        detail: 'stored tags are not an array of strings',
-      }),
-    );
-  }
-
-  const removed = new Set(prepared.removeTags);
-  const kept = (parsed as readonly string[]).filter((tag) => !removed.has(tag));
-  const keptTags = new Set(kept);
-  const added = prepared.addTags.filter((tag) => !keptTags.has(tag));
-  const result = [...kept, ...added];
-
-  if (result.length > TAGS_MAX_COUNT) {
-    return raise(
-      new InvalidInput({ field: 'tags', reason: 'tags_too_many', limit: TAGS_MAX_COUNT }),
-    );
-  }
-  return result;
-};
 
 /**
  * The verdict and the write, atomically.
@@ -358,22 +302,18 @@ const resultingTags = (storedJson: string, prepared: PreparedUpdate): readonly s
  * After those two checks nothing else can have changed the row inside this immediate transaction, so a
  * guard that matches nothing is our bug, as in `move.ts`. No operation removes rows (AC7), so a target
  * that vanished is one too.
- *
- * `tags` is written even when neither tag list was supplied. The write is one statement and the
- * resulting list is already known, so this costs nothing and keeps one `set` shape rather than two.
  */
 const commit = (
   db: Database.Database,
   context: {
     readonly prepared: PreparedUpdate;
     readonly row: StoredEntity;
-    readonly tags: readonly string[];
     readonly content: { readonly storedBody: string; readonly derivedText: string } | undefined;
     readonly nextRevision: number;
     readonly clock: Clock.Clock;
   },
 ): boolean => {
-  const { prepared, row, tags, content, nextRevision } = context;
+  const { prepared, row, content, nextRevision } = context;
   const handle = orm(db);
   // A revision past the safe integer bound trips `nodes_revision_safe` and surfaces as an internal
   // failure through the storage classifier, which is the right classification for something that
@@ -404,12 +344,9 @@ const commit = (
       ...(prepared.title === undefined ? {} : { title: prepared.title }),
       ...(prepared.description === undefined ? {} : { description: prepared.description }),
       ...(prepared.slug === undefined ? {} : { slug: prepared.slug }),
-      // A conditional spread like the three authored scalars above, not an unconditional write like
-      // `tags`: `tags` is the outlier because `resultingTags` computes a resolved value rather than
-      // patching a submitted one, which is what its "one `set` shape" note is about.
+      ...(prepared.tags === undefined ? {} : { tags: JSON.stringify(prepared.tags) }),
       ...(prepared.active === undefined ? {} : { active: prepared.active ? 1 : 0 }),
       ...(content === undefined ? {} : { body: content.storedBody, bodyText: content.derivedText }),
-      tags: JSON.stringify(tags),
       revision: nextRevision,
       updatedAt: now,
     })

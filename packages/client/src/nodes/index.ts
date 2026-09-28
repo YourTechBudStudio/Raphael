@@ -57,31 +57,8 @@ import {
 } from '@raphael/contracts/nodes';
 import { Either } from 'effect';
 
-import { fail, type ClientResult, type MutationOutcome } from '../shared/failure.ts';
+import { fail, type ClientResult } from '../shared/failure.ts';
 import type { Transport } from '../shared/transport.ts';
-
-/**
- * Creation, with everything the wire contract accepts, and one field made mandatory.
- *
- * The wire contract leaves it optional, because an arbitrary API caller may reasonably choose not to
- * use one. A first-party client may not: the key is the only way an uncertain creation can be
- * resolved, and "the client forgot to generate one" is a state in which recovery is impossible. It is
- * the caller's to generate rather than this package's, because `crypto.randomUUID` does not exist on
- * every runtime this code runs on, and a transport that silently produced a weaker identifier on one
- * platform would be worse than one that asks.
- *
- * The conditional is what makes the rewrite *distributive*. `CreateRequestInput` is a union of a
- * container request and a resource request, and a bare `Omit` over a union collapses it to the
- * properties its members share - which would silently erase `kind`, discard the discriminant, and make
- * a container's mandatory title optional. Distributing rewrites each member separately, so a container
- * still requires a title, a note still requires a kind and may omit its title, and a container still
- * cannot carry one.
- */
-type WithRequiredKey<T> = T extends unknown
-  ? Omit<T, 'idempotencyKey'> & { readonly idempotencyKey: string }
-  : never;
-
-export type CreateInput = WithRequiredKey<CreateRequestInput>;
 
 const run = async <A>(
   transport: Transport,
@@ -90,18 +67,11 @@ const run = async <A>(
   decodeResponse: Decoder<A>,
   request: unknown,
   successStatus: number,
-  mutating: boolean,
   signal?: AbortSignal,
 ): Promise<ClientResult<A>> => {
   const decoded = decodeRequest(request);
   if (Either.isLeft(decoded)) {
-    const issue = decoded.left.issues[0];
-    return fail({
-      kind: 'invalid_request',
-      mutationOutcome: 'not_dispatched' satisfies MutationOutcome,
-      message: decoded.left.message,
-      path: issue?.path ?? [],
-    });
+    return fail({ kind: 'invalid_request', message: decoded.left.message });
   }
   // The decoded value is what travels, not the caller's object. Effect Schema returns a new
   // structure, so a caller mutating its input after this point cannot change the logical attempt.
@@ -110,19 +80,14 @@ const run = async <A>(
     body: decoded.right,
     decode: decodeResponse,
     successStatus,
-    mutating,
     ...(signal === undefined ? {} : { signal }),
   });
 };
 
-/**
- * Create one node - a container or a resource. Answers 201, including when the answer is a replay of an
- * earlier attempt with the same key: a replay is a success reporting the entity that exists, not a
- * different outcome.
- */
+/** Create one node - a container or a resource. Answers 201. */
 export const create = (
   transport: Transport,
-  request: CreateInput,
+  request: CreateRequestInput,
   signal?: AbortSignal,
 ): Promise<ClientResult<CreateResponse>> =>
   run(
@@ -132,17 +97,12 @@ export const create = (
     decodeCreateResponse,
     request,
     201,
-    true,
     signal,
   );
 
 /**
- * Change one existing area, project, or note. Answers 200.
- *
- * No idempotency key and no replay, deliberately: an update's safety is the revision it names, not a
- * key. A caller sends the revision it read, and the server's compare-and-set either applies the change
- * to that exact version or refuses it as `revision_conflict`. There is nothing to replay, because a
- * repeat of an applied update would be a second write against a revision that has already moved.
+ * Change one existing area, project, or note. Answers 200. The revision it names is the safety: a
+ * stale one is refused as `revision_conflict`.
  */
 export const update = (
   transport: Transport,
@@ -156,17 +116,12 @@ export const update = (
     decodeUpdateResponse,
     request,
     200,
-    true,
     signal,
   );
 
 /**
- * Move one existing area, project, or note, optionally under a new address. Answers 200.
- *
- * `mutating`, and without an idempotency key for the reason `update` gives: the revision is the safety,
- * and a lost answer is reported as `mutationOutcome: 'unknown'` for the caller to reconcile by
- * re-reading. The destination travels exactly as decoded; whether a path names a container or a new
- * address is the server's decision, made against its current state.
+ * Move one existing area, project, or note, optionally under a new address. Answers 200. Whether a
+ * path names a container or a new address is the server's decision.
  */
 export const move = (
   transport: Transport,
@@ -180,17 +135,12 @@ export const move = (
     decodeMoveResponse,
     request,
     200,
-    true,
     signal,
   );
 
 /**
  * Archive one existing area, project, or note: add the user's own cause to it. Answers 200.
- *
- * `mutating`, and without an idempotency key for the reason `update` gives: the revision is the safety,
- * and a lost answer is reported as `mutationOutcome: 'unknown'` for the caller to reconcile by
- * re-reading. Archiving something the user already archived succeeds without a change. The response
- * states the resulting status and the causes that apply, which is what a caller words its result by.
+ * Archiving something the user already archived succeeds without a change.
  */
 export const archive = (
   transport: Transport,
@@ -204,7 +154,6 @@ export const archive = (
     decodeLifecycleResponse,
     request,
     200,
-    true,
     signal,
   );
 
@@ -226,7 +175,6 @@ export const restore = (
     decodeLifecycleResponse,
     request,
     200,
-    true,
     signal,
   );
 
@@ -242,7 +190,6 @@ export const get = (
     decodeGetResponse,
     request,
     200,
-    false,
     signal,
   );
 
@@ -258,7 +205,6 @@ export const list = (
     decodeListResponse,
     request,
     200,
-    false,
     signal,
   );
 
@@ -281,17 +227,12 @@ export const search = (
     decodeSearchResponse,
     request,
     200,
-    false,
     signal,
   );
 
 /**
- * Make an area or a project a favorite. Answers 200 with `{ nodeId, isFavorite: true }`.
- *
- * `mutating`, and without an idempotency key or a revision: the request states the desired result, so
- * sending it again is harmless while its selector still names the same node (an id always does; a path
- * may not after a move), and a lost answer is reported as `mutationOutcome: 'unknown'` for the
- * caller to settle by sending it again or re-reading. A note is refused by the server.
+ * Make an area or a project a favorite. Answers 200 with `{ nodeId, isFavorite: true }`. The request
+ * states the desired result, so sending it again is harmless. A note is refused by the server.
  */
 export const addFavorite = (
   transport: Transport,
@@ -305,7 +246,6 @@ export const addFavorite = (
     decodeAddFavoriteResponse,
     request,
     200,
-    true,
     signal,
   );
 
@@ -322,7 +262,6 @@ export const removeFavorite = (
     decodeRemoveFavoriteResponse,
     request,
     200,
-    true,
     signal,
   );
 
@@ -339,7 +278,6 @@ export const listFavorites = (
     decodeListResponse,
     request,
     200,
-    false,
     signal,
   );
 
@@ -355,6 +293,5 @@ export const getPath = (
     decodeGetPathResponse,
     request,
     200,
-    false,
     signal,
   );

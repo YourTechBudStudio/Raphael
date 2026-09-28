@@ -269,6 +269,9 @@ importers:
       '@raphael/client':
         specifier: workspace:*
         version: link:../../packages/client
+      '@raphael/content':
+        specifier: workspace:*
+        version: link:../../packages/content
       '@raphael/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts

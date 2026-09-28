@@ -90,7 +90,7 @@ describe('favorites', () => {
     const { transport } = answering(200, { nodeId: 7, isFavorite: false });
     const result = await addFavorite(transport, { target: { id: 7 } });
     assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.failure.kind, 'invalid_response');
+    if (!result.ok) assert.equal(result.failure.kind, 'bad_response');
   });
 
   it('refuse a malformed request before sending it', async () => {
@@ -100,10 +100,7 @@ describe('favorites', () => {
       await removeFavorite(transport, { target: { path: '/' } }),
     ]) {
       assert.equal(result.ok, false);
-      if (!result.ok) {
-        assert.equal(result.failure.kind, 'invalid_request');
-        assert.equal(result.failure.mutationOutcome, 'not_dispatched');
-      }
+      if (!result.ok) assert.equal(result.failure.kind, 'invalid_request');
     }
     const window = await listFavorites(transport, { limit: 0 });
     assert.equal(window.ok, false);
@@ -111,17 +108,14 @@ describe('favorites', () => {
     assert.deepEqual(sent, []);
   });
 
-  it('leave a lost add or remove unresolved, since either may have happened', async () => {
+  it('report a lost add or remove as a network failure', async () => {
     const transport = transportOver(() => Promise.reject(new TypeError('fetch failed')));
     for (const result of [
       await addFavorite(transport, { target: { id: 7 } }),
       await removeFavorite(transport, { target: { id: 7 } }),
     ]) {
       assert.equal(result.ok, false);
-      if (!result.ok) {
-        assert.equal(result.failure.kind, 'transport');
-        assert.equal(result.failure.mutationOutcome, 'unknown');
-      }
+      if (!result.ok) assert.equal(result.failure.kind, 'network');
     }
   });
 });

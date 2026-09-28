@@ -7,7 +7,7 @@ import {
 import { Effect, Either } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
-import { GET_PATH_FIELDS, invalidInputFrom } from './diagnostics.ts';
+import { invalidInputFrom } from './diagnostics.ts';
 import { type NodeError } from './errors.ts';
 import { checkedResponse } from './projection.ts';
 import { ancestorChain, resolveEntity } from './resolve.ts';
@@ -32,7 +32,7 @@ export const getNodePath = (input: unknown): Effect.Effect<GetPathResponse, Node
       try: () => {
         const request = decodeGetPathRequest(input);
         if (Either.isLeft(request)) {
-          return raise(invalidInputFrom(request.left, GET_PATH_FIELDS, input));
+          return raise(invalidInputFrom(request.left, input));
         }
         const { target } = request.right;
 

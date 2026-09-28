@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
@@ -12,23 +12,17 @@ import {
   readBundledMigrations,
 } from '../src/infrastructure/database/guard.ts';
 import { migrateToLatest, migrationsFolder } from '../src/infrastructure/database/migrate.ts';
-import { createNode } from '../src/modules/nodes/index.ts';
 import {
   EMPTY_BODY,
-  clockAt,
   count,
-  expectRight,
   insertNode,
   many,
   one,
   openMigrated,
   rejects,
-  runNodes,
   tempDatabase,
   withMigrated,
 } from './support.ts';
-
-const T_SAVED = 1_700_000_000_000;
 
 /**
  * The node ids the index matches for one term.
@@ -52,18 +46,9 @@ describe('migration assets', () => {
 
   test('the journal and its files agree', () => {
     const bundled = readBundledMigrations(migrationsFolder);
-    assert.equal(bundled.length, 7);
     assert.deepEqual(
       bundled.map((m) => m.tag),
-      [
-        '0000_init',
-        '0001_identity_trigger_and_root_areas',
-        '0002_resource_kind_and_body_text',
-        '0003_active_projects',
-        '0004_search_index',
-        '0005_archive_causes',
-        '0006_favorites',
-      ],
+      ['0000_init', '0001_triggers_and_seed'],
     );
     for (const migration of bundled) assert.match(migration.hash, /^[0-9a-f]{64}$/);
   });
@@ -86,11 +71,12 @@ describe('initialization', () => {
   test('a blank database reaches the bundled version with two root areas', () => {
     withMigrated('init', ({ db }) => {
       const roots = db
-        .prepare('SELECT type, slug, title, revision, body FROM nodes ORDER BY id')
+        .prepare('SELECT type, kind, slug, title, revision, body, body_text FROM nodes ORDER BY id')
         .all();
+      const root = { type: 'area', kind: null, revision: 1, body: EMPTY_BODY, body_text: '' };
       assert.deepEqual(roots, [
-        { type: 'area', slug: 'work', title: 'Work', revision: 1, body: EMPTY_BODY },
-        { type: 'area', slug: 'personal', title: 'Personal', revision: 1, body: EMPTY_BODY },
+        { ...root, slug: 'work', title: 'Work' },
+        { ...root, slug: 'personal', title: 'Personal' },
       ]);
     });
   });
@@ -143,9 +129,7 @@ describe('initialization', () => {
     });
   });
 
-  test('the search index is populated for rows that predate it', () => {
-    // `0001` seeds the two root areas long before `0004` exists, so the only thing that can make them
-    // searchable is the `rebuild` the migration issues.
+  test('the seeded root areas are indexed by the insert trigger', () => {
     withMigrated('fts-rebuild', ({ db }) => {
       const work = one<{ id: number }>(db, `SELECT id FROM nodes WHERE slug = 'work'`).id;
       assert.deepEqual(matching(db, 'work'), [work]);
@@ -168,13 +152,9 @@ describe('initialization', () => {
     // No operation deletes a node today, so the delete trigger ships unreachable from the application
     // - and it is the one whose failure mode is SQLITE_CORRUPT_VTAB, because an external-content table
     // trusts that a 'delete' names content it currently holds. This walks the whole lifecycle against
-    // raw SQL, on a row whose `body_text` is null for part of it, and asks the index whether it is
-    // still sound. It does not try to *cause* corruption: that would pin SQLite's behaviour rather
-    // than ours, and the hazard is recorded in the migration header instead.
+    // raw SQL and asks the index whether it is still sound.
     withMigrated('fts-lifecycle', ({ db }) => {
       const work = one<{ id: number }>(db, `SELECT id FROM nodes WHERE slug = 'work'`).id;
-      // The fixture writes no `body_text`, so this row starts out exactly like one the backfill has
-      // not reached: indexed on its title, with an empty body column.
       insertNode(db, {
         type: 'project',
         parentId: work,
@@ -186,7 +166,6 @@ describe('initialization', () => {
 
       assert.deepEqual(matching(db, 'indexed'), [id], 'the insert trigger indexed the new row');
 
-      // The shape the derived-text backfill writes: `body_text` alone, on a row that had none.
       db.prepare('UPDATE nodes SET body_text = ? WHERE id = ?').run('quarterly planning', id);
       assert.deepEqual(matching(db, 'quarterly'), [id], 'a later projection becomes searchable');
 
@@ -222,10 +201,7 @@ describe('initialization', () => {
         assert.equal(count(second.db, `SELECT count(*) AS c FROM nodes WHERE slug = 'kept'`), 1);
         assert.deepEqual(
           inspectMigrationHistory(second.db, readBundledMigrations(migrationsFolder)),
-          {
-            state: 'current',
-            applied: 7,
-          },
+          { state: 'current', applied: 2 },
         );
       } finally {
         second.close();
@@ -426,7 +402,7 @@ describe('migration history guard', () => {
     try {
       const tampered = join(temp.dir, 'drizzle');
       cpSync(migrationsFolder, tampered, { recursive: true });
-      const file = join(tampered, '0001_identity_trigger_and_root_areas.sql');
+      const file = join(tampered, '0001_triggers_and_seed.sql');
       writeFileSync(file, `${readFileSync(file, 'utf8')}\n-- changed after it was applied\n`);
       rejects(
         () => inspectMigrationHistory(connection.db, readBundledMigrations(tampered)),
@@ -480,15 +456,15 @@ describe('migration failure', () => {
       const journalPath = join(broken, 'meta', '_journal.json');
       const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
       journal.entries.push({
-        idx: 7,
+        idx: 2,
         version: '6',
         when: Date.now(),
-        tag: '0007_broken',
+        tag: '0002_broken',
         breakpoints: true,
       });
       writeFileSync(journalPath, JSON.stringify(journal));
       writeFileSync(
-        join(broken, '0007_broken.sql'),
+        join(broken, '0002_broken.sql'),
         'ALTER TABLE nodes ADD COLUMN experiment TEXT;\n--> statement-breakpoint\nTHIS IS NOT VALID SQL;',
       );
 
@@ -499,334 +475,10 @@ describe('migration failure', () => {
       );
       assert.ok(!columns.includes('experiment'), 'partial DDL must not survive');
       assert.equal(count(connection.db, `SELECT count(*) AS c FROM nodes WHERE slug = 'live'`), 1);
-      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 7);
+      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 2);
     } finally {
       connection.close();
       temp.cleanup();
     }
-  });
-});
-
-describe('adding the active column to a populated database', () => {
-  test('every existing row reaches 0003 as not selected', () => {
-    // The migration that matters is the one onto data that already exists, and `0003` adds a NOT NULL
-    // column with a CHECK that reads another column. SQLite evaluates that constraint against every
-    // current row and refuses the ALTER if any violates it, so this is the case that proves the
-    // default is a value every pre-existing row can actually take - whatever its type.
-    const temp = tempDatabase('active-backfill');
-    const partial = join(temp.dir, 'through-0002');
-    cpSync(migrationsFolder, partial, { recursive: true });
-    const journalPath = join(partial, 'meta', '_journal.json');
-    const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
-      entries: { idx: number; tag: string }[];
-    };
-    // "Through 0002" is expressed as that rule rather than as a list of the tags that happen to
-    // follow it today, because a list stops being true the moment a migration is added and does so
-    // silently. A fixture still carrying the newest migration applies it in `0003`'s place, and the
-    // `migrateToLatest` below then compares that applied hash against the bundled `0003` and refuses
-    // the database as changed SQL - failing this test with a message about migration history when
-    // the thing under test is a column default.
-    const dropped = journal.entries.filter((entry) => entry.idx > 2);
-    journal.entries = journal.entries.filter((entry) => entry.idx <= 2);
-    writeFileSync(journalPath, JSON.stringify(journal));
-    for (const entry of dropped) rmSync(join(partial, `${entry.tag}.sql`));
-
-    const connection = openDatabase({ databasePath: temp.file });
-    try {
-      migrateToLatest(connection.db, partial);
-      const columnsBefore = many<{ name: string }>(connection.db, 'PRAGMA table_xinfo(nodes)').map(
-        (c) => c.name,
-      );
-      assert.ok(!columnsBefore.includes('active'), 'the fixture is genuinely a pre-0003 database');
-
-      // One of each type, so the constraint is evaluated against a row it permits `0` on and a row it
-      // would refuse `1` on. Written without the fixture helper, which now knows about the column.
-      const work = one<{ id: number }>(
-        connection.db,
-        `SELECT id FROM nodes WHERE slug = 'work'`,
-      ).id;
-      const insert = connection.db.prepare(
-        `INSERT INTO nodes (type, kind, parent_id, parent_type, slug, title, body, revision, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1, 1700000000000, 1700000000000)`,
-      );
-      insert.run('area', null, work, 'area', 'reading', 'Reading', EMPTY_BODY);
-      insert.run('project', null, work, 'area', 'migration', 'Migration', EMPTY_BODY);
-      const project = one<{ id: number }>(
-        connection.db,
-        `SELECT id FROM nodes WHERE slug = 'migration'`,
-      ).id;
-      insert.run('resource', 'note', project, 'project', 'a-note', 'A note', EMPTY_BODY);
-      const before = count(connection.db, 'SELECT count(*) AS c FROM nodes');
-
-      migrateToLatest(connection.db);
-
-      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM nodes'), before, 'nothing lost');
-      assert.equal(
-        count(connection.db, 'SELECT count(*) AS c FROM nodes WHERE active = 0'),
-        before,
-        'every pre-existing row is not selected, which is the truth about all of them',
-      );
-      // And the identity trigger `0001` installs survived, which a generated table rebuild would have
-      // dropped along with the table it replaced.
-      rejects(
-        () => connection.db.prepare('UPDATE nodes SET type = ? WHERE id = ?').run('area', project),
-        /identity is immutable/i,
-      );
-      // An FTS assertion in a test about the `active` column is not drift. This is the only fixture in
-      // the suite where rows exist *before* `0004` does, so it is the only place that can show the
-      // migration's `rebuild` reaching rows no trigger ever saw - and these three were written with a
-      // null `body_text`, so it also shows a row indexes on its title alone.
-      assert.deepEqual(
-        matching(connection.db, 'migration'),
-        [project],
-        'rebuild indexed rows that predate the index',
-      );
-    } finally {
-      connection.close();
-      temp.cleanup();
-    }
-  });
-});
-
-describe('saved creation replays across the archive migration', () => {
-  test('a replay saved before 0005 still replays, and states the entity was active', () => {
-    // A replay returns the saved response through the current decoder, which now requires the two
-    // lifecycle fields. `0005` adds them to every saved result, with the values that were true when it
-    // was saved: nothing could be archived before `archive_causes` existed.
-    const temp = tempDatabase('replay-archive');
-    const partial = join(temp.dir, 'through-0004');
-    cpSync(migrationsFolder, partial, { recursive: true });
-    const journalPath = join(partial, 'meta', '_journal.json');
-    const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
-      entries: { idx: number; tag: string }[];
-    };
-    // "Through 0004" as a rule, for the reason the `0003` backfill case above gives.
-    const dropped = journal.entries.filter((entry) => entry.idx > 4);
-    journal.entries = journal.entries.filter((entry) => entry.idx <= 4);
-    writeFileSync(journalPath, JSON.stringify(journal));
-    for (const entry of dropped) rmSync(join(partial, `${entry.tag}.sql`));
-
-    const connection = openDatabase({ databasePath: temp.file });
-    try {
-      migrateToLatest(connection.db, partial);
-      const request = {
-        type: 'area',
-        parent: { path: '/' },
-        title: 'Garden',
-        idempotencyKey: 'before-archive',
-      };
-      // A root area needs no lifecycle query, so today's operation can create one against a `0004`
-      // database. What it saves is then put back into the shape a `0004` server saved.
-      const original = expectRight(runNodes(connection, createNode(request), clockAt(T_SAVED)));
-      connection.db.exec(
-        `UPDATE creation_replays SET result_json =
-           json_remove(result_json, '$.entity.archived', '$.entity.archiveCauses')`,
-      );
-      // A record with no entity is not repaired into one.
-      connection.db
-        .prepare(
-          `INSERT INTO creation_replays (key, fingerprint, result_json, created_at, expires_at)
-           VALUES ('no-entity', 'x', '{"unexpected":true}', ?, ?)`,
-        )
-        .run(T_SAVED, T_SAVED + 60_000);
-
-      migrateToLatest(connection.db);
-
-      const replayed = expectRight(
-        runNodes(connection, createNode(request), clockAt(T_SAVED + 1_000)),
-      );
-      assert.deepEqual(replayed, original);
-      assert.equal(replayed.entity.archived, false);
-      assert.deepEqual(replayed.entity.archiveCauses, []);
-      assert.equal(
-        one<{ result_json: string }>(
-          connection.db,
-          `SELECT result_json FROM creation_replays WHERE key = 'no-entity'`,
-        ).result_json,
-        '{"unexpected":true}',
-      );
-    } finally {
-      connection.close();
-      temp.cleanup();
-    }
-  });
-});
-
-describe('saved creation replays across the favorites migration', () => {
-  test('a replay saved before 0006 still replays, and states the entity was not a favorite', () => {
-    // A replay returns the saved response through the current decoder, which now requires
-    // `isFavorite`. `0006` adds it to every saved result as `false`, which was true when it was saved:
-    // a favorite references an existing node, and the node did not exist before its creation.
-    const temp = tempDatabase('replay-favorites');
-    const partial = join(temp.dir, 'through-0005');
-    cpSync(migrationsFolder, partial, { recursive: true });
-    const journalPath = join(partial, 'meta', '_journal.json');
-    const journal = JSON.parse(readFileSync(journalPath, 'utf8')) as {
-      entries: { idx: number; tag: string }[];
-    };
-    const dropped = journal.entries.filter((entry) => entry.idx > 5);
-    journal.entries = journal.entries.filter((entry) => entry.idx <= 5);
-    writeFileSync(journalPath, JSON.stringify(journal));
-    for (const entry of dropped) rmSync(join(partial, `${entry.tag}.sql`));
-
-    const connection = openDatabase({ databasePath: temp.file });
-    try {
-      migrateToLatest(connection.db, partial);
-      const request = {
-        type: 'area',
-        parent: { path: '/' },
-        title: 'Garden',
-        idempotencyKey: 'before-favorites',
-      };
-      // Creation reads no favorite, so today's operation can create against a `0005` database. What it
-      // saves is then put back into the shape a `0005` server saved.
-      const original = expectRight(runNodes(connection, createNode(request), clockAt(T_SAVED)));
-      connection.db.exec(
-        `UPDATE creation_replays SET result_json = json_remove(result_json, '$.entity.isFavorite')`,
-      );
-      assert.equal(
-        one<{ present: number }>(
-          connection.db,
-          `SELECT json_type(result_json, '$.entity.isFavorite') IS NOT NULL AS present
-             FROM creation_replays WHERE key = 'before-favorites'`,
-        ).present,
-        0,
-        'the saved answer is in its 0005 shape',
-      );
-      // A record with no entity is not repaired into one.
-      connection.db
-        .prepare(
-          `INSERT INTO creation_replays (key, fingerprint, result_json, created_at, expires_at)
-           VALUES ('no-entity', 'x', '{"unexpected":true}', ?, ?)`,
-        )
-        .run(T_SAVED, T_SAVED + 60_000);
-
-      migrateToLatest(connection.db);
-
-      const replayed = expectRight(
-        runNodes(connection, createNode(request), clockAt(T_SAVED + 1_000)),
-      );
-      assert.deepEqual(replayed, original);
-      assert.equal(replayed.entity.isFavorite, false);
-      assert.equal(
-        one<{ result_json: string }>(
-          connection.db,
-          `SELECT result_json FROM creation_replays WHERE key = 'no-entity'`,
-        ).result_json,
-        '{"unexpected":true}',
-      );
-    } finally {
-      connection.close();
-      temp.cleanup();
-    }
-  });
-});
-
-describe('generated artifact introspection', () => {
-  // Structural introspection rather than a byte-exact SQL snapshot: whitespace or a harmless generator
-  // spelling change must not read as an integrity regression, and the expectations below are written
-  // independently of the declarations that produced them.
-  test('columns and nullability match the intended shape', () => {
-    withMigrated('columns', ({ db }) => {
-      const columns = many<{ name: string; notnull: number }>(db, 'PRAGMA table_xinfo(nodes)').map(
-        (c) => `${c.name}:${c.notnull}`,
-      );
-      assert.deepEqual(columns, [
-        'id:1',
-        'type:1',
-        'parent_id:0',
-        'parent_type:0',
-        'slug:1',
-        'revision:1',
-        'title:1',
-        'description:1',
-        'body:1',
-        'tags:1',
-        'metadata:1',
-        'created_at:1',
-        'updated_at:1',
-        // Both nullable, and both deliberately so. A container has no kind; a null projection means
-        // no text has been derived for that row yet, which is not the same as text that is empty.
-        'kind:0',
-        'body_text:0',
-        // Not nullable, and there is no third state to represent: every row that predates selection
-        // is genuinely not selected, which is what the default `0` says.
-        'active:1',
-      ]);
-    });
-  });
-
-  test('the parent reference is composite and restrictive', () => {
-    withMigrated('fk', ({ db }) => {
-      const fks = many<{ table: string; from: string; to: string; on_delete: string }>(
-        db,
-        'PRAGMA foreign_key_list(nodes)',
-      );
-      assert.equal(fks.length, 2, 'one foreign key spanning two columns');
-      assert.deepEqual(
-        fks.map((f) => `${f.from}->${f.table}.${f.to}`),
-        ['parent_id->nodes.id', 'parent_type->nodes.type'],
-      );
-      for (const fk of fks) assert.equal(fk.on_delete, 'RESTRICT');
-    });
-  });
-
-  test('sibling slug indexes are unique and partial', () => {
-    withMigrated('idx', ({ db }) => {
-      const indexes = Object.fromEntries(
-        many<{ name: string; unique: number; partial: number }>(db, 'PRAGMA index_list(nodes)').map(
-          (i) => [i.name, { unique: i.unique, partial: i.partial }],
-        ),
-      );
-      assert.deepEqual(indexes.nodes_sibling_slug, { unique: 1, partial: 1 });
-      assert.deepEqual(indexes.nodes_root_slug, { unique: 1, partial: 1 });
-      assert.deepEqual(indexes.nodes_id_type, { unique: 1, partial: 0 });
-    });
-  });
-
-  test('index collation is binary', () => {
-    withMigrated('coll', ({ db }) => {
-      const info = many<{ name: string | null; coll: string }>(
-        db,
-        'PRAGMA index_xinfo(nodes_sibling_slug)',
-      );
-      const slug = info.find((c) => c.name === 'slug');
-      assert.equal(slug?.coll, 'BINARY');
-    });
-  });
-
-  test('only the intended objects exist', () => {
-    withMigrated('objects', ({ db }) => {
-      const objects = many<{ type: string; name: string }>(
-        db,
-        `SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
-      ).map((o) => `${o.type}:${o.name}`);
-      assert.deepEqual(objects, [
-        'index:creation_replays_expires_at',
-        'index:nodes_id_type',
-        'index:nodes_root_slug',
-        'index:nodes_sibling_slug',
-        'table:__drizzle_migrations',
-        // Archive causes, stored only at their origin. Its composite primary key is the only index it
-        // needs, and it adds nothing to `nodes`.
-        'table:archive_causes',
-        'table:creation_replays',
-        // Favorites, one row per favorited node. Its primary key is the only index it needs, and it
-        // adds nothing to `nodes`.
-        'table:favorites',
-        'table:nodes',
-        // One virtual table and the four shadow tables FTS5 creates to back it. They are the storage
-        // an external-content index needs and are not addressed directly by anything we write.
-        'table:nodes_fts',
-        'table:nodes_fts_config',
-        'table:nodes_fts_data',
-        'table:nodes_fts_docsize',
-        'table:nodes_fts_idx',
-        'trigger:nodes_fts_after_delete',
-        'trigger:nodes_fts_after_insert',
-        'trigger:nodes_fts_after_update',
-        'trigger:nodes_identity_immutable',
-      ]);
-    });
   });
 });

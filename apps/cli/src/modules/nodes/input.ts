@@ -9,6 +9,9 @@
 
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 
+import { createEmptyDocument } from '@raphael/content';
+import { fromMarkdown } from '@raphael/content/conversion';
+import { canonicalizeDocument, deriveTitle } from '@raphael/content/schema';
 import { REQUEST_MAX_BYTES, isJsonObject, type JsonObject } from '@raphael/contracts';
 import {
   CONTAINER_TYPES,
@@ -494,4 +497,22 @@ export const parseQueries = (values: readonly string[], command: string): readon
     }
   }
   return values;
+};
+
+/**
+ * A title from what a note already says, derived exactly as every client derives it: the body's
+ * first line, then the description's. `undefined` when there is nothing to name it by, or when the
+ * body cannot be read - the server reports what is wrong with a body once the note is named.
+ */
+export const titleFromContent = (
+  body: BodySource | undefined,
+  description: string,
+): string | undefined => {
+  const document =
+    body === undefined
+      ? Either.right(createEmptyDocument())
+      : body.format === 'markdown'
+        ? fromMarkdown(body.value)
+        : canonicalizeDocument(body.value);
+  return Either.isRight(document) ? deriveTitle(document.right, description) : undefined;
 };

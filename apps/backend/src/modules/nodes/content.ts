@@ -8,25 +8,12 @@ import { UnsupportedContent, type NodeError } from './errors.ts';
 import { unwrapFailure } from './storage-failures.ts';
 
 /**
- * Submitted content becoming canonical content, for every operation that accepts a body.
- *
- * This is a shared module rather than a helper inside creation because "empty body" must have exactly
- * one path. An omitted body on creation and an explicitly cleared body on update both arrive here as
- * empty Markdown, and the converter turns both into the canonical empty document - the same document
- * the seed migration writes. A second way to produce "empty" would be a second thing that could drift.
- *
- * The prepared shape lives here too, with the function that consumes it, rather than in the
- * creation-only fingerprint module it used to share a file with. Update has no fingerprint, so a
- * shared converter reaching into that module for its own parameter type would be a dependency on
- * creation's machinery for no reason beyond where the type happened to be written first.
+ * Submitted content becoming canonical content, for every operation that accepts a body. Shared so
+ * that "empty body" has exactly one path: an omitted body on creation and a cleared body on update
+ * both arrive as empty Markdown and become the canonical empty document.
  */
 
-/**
- * A submitted body, detached from the caller's value and still in the format it was submitted in.
- *
- * Markdown stays Markdown and TipTap stays as submitted: creation fingerprints this value, and
- * fingerprinting a converted document would let one idempotency key silently cover two different asks.
- */
+/** A submitted body, detached from the caller's value and still in the format it was submitted in. */
 export type PreparedBody =
   | { readonly format: 'markdown'; readonly value: string }
   | { readonly format: 'tiptap'; readonly value: JsonObject };

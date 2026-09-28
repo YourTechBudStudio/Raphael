@@ -2,7 +2,7 @@
  * Backend composition surface.
  *
  * Two things are published: the way to start a server, and the way to work out what to start it with.
- * Everything else - the HTTP pipeline, the route table, the replay collector, the database handle -
+ * Everything else - the HTTP pipeline, the route table, the database handle -
  * is reached through `serve`, because a caller that could assemble those independently could also
  * assemble them wrongly.
  *
@@ -15,7 +15,7 @@
  * The node operations stay published for an in-process caller - the SDK path an extension uses - and
  * with them the error contract, which is what makes those operations usable. Table declarations are
  * still absent: `Db` has to be public for composition, and publishing the canonical tables beside it
- * would hand a future runtime everything needed to write past the validation, parentage, replay, and
+ * would hand a future runtime everything needed to write past the validation, parentage, and
  * integrity rules these operations exist to enforce.
  *
  * `serve` yields a scoped resource. The caller holds the scope open for as long as the server should
@@ -32,7 +32,6 @@ export {
   type BackendOptions,
   type ConfigurationReason,
   type DatabaseSettings,
-  type IdempotencySettings,
   type LoadConfigurationContext,
   type LoadedConfiguration,
   type ServerOptions,
@@ -60,7 +59,6 @@ export {
   type Logger,
 } from './infrastructure/http/log.ts';
 export {
-  IdempotencyConflict,
   InternalFailure,
   InvalidInput,
   InvalidParent,

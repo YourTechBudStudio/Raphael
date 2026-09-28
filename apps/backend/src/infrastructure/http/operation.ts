@@ -36,7 +36,7 @@ export interface OperationRoute {
   readonly descriptor: RouteDescriptor;
   /** A fixed, caller-independent name for this route. The only route identity a log ever carries. */
   readonly label: string;
-  /** 201 for a single-entity creation, including a replay; 200 for reads and verification. */
+  /** 201 for a single-entity creation; 200 for reads and verification. */
   readonly successStatus: 200 | 201;
   /**
    * Runs the operation against an undecoded body. The body is JSON that parsed; nothing has inspected

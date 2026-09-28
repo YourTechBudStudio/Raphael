@@ -12,8 +12,8 @@ if (mode === 'hold') {
   migrateToLatest(connection.db);
   connection.db
     .prepare(
-      `INSERT INTO nodes (type, parent_id, parent_type, slug, title, body, created_at, updated_at)
-       VALUES ('project', 1, 'area', 'committed-before-crash', 'Committed', '{"type":"doc"}', 1, 1)`,
+      `INSERT INTO nodes (type, parent_id, parent_type, slug, title, body, body_text, created_at, updated_at)
+       VALUES ('project', 1, 'area', 'committed-before-crash', 'Committed', '{"type":"doc"}', '', 1, 1)`,
     )
     .run();
   process.stdout.write('HELD\n');

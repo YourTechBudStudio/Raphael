@@ -9,8 +9,8 @@ import * as capability from '../src/modules/nodes/index.ts';
  *
  * A capability is only as deep as its narrowest reachable surface. The database service has to be public
  * so the runtime can compose it, which is exactly why the canonical table declarations must not be:
- * together they would let a future runtime or extension write straight past validation, parentage,
- * replay, and integrity - every rule the operations exist to enforce. Migration tooling reads
+ * together they would let a future runtime or extension write straight past validation, parentage
+ * and integrity - every rule the operations exist to enforce. Migration tooling reads
  * `schema.ts` by path and storage tests import it directly, so nothing is lost by keeping it internal.
  *
  * These assertions are exhaustive rather than "does not include", so widening the surface is a decision
@@ -33,7 +33,6 @@ const OPERATIONS = [
 ] as const;
 
 const ERROR_CONTRACT = [
-  'IdempotencyConflict',
   'InternalFailure',
   'InvalidInput',
   'InvalidParent',

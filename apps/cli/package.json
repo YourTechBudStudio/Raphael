@@ -27,6 +27,7 @@
   "dependencies": {
     "@raphael/backend": "workspace:*",
     "@raphael/client": "workspace:*",
+    "@raphael/content": "workspace:*",
     "@raphael/contracts": "workspace:*",
     "@raphael/fs-trust": "workspace:*",
     "effect": "catalog:"

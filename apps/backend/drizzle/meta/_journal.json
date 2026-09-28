@@ -5,50 +5,15 @@
     {
       "idx": 0,
       "version": "6",
-      "when": 1789100497447,
+      "when": 1790573897887,
       "tag": "0000_init",
       "breakpoints": true
     },
     {
       "idx": 1,
       "version": "6",
-      "when": 1789100504294,
-      "tag": "0001_identity_trigger_and_root_areas",
-      "breakpoints": true
-    },
-    {
-      "idx": 2,
-      "version": "6",
-      "when": 1789100510000,
-      "tag": "0002_resource_kind_and_body_text",
-      "breakpoints": true
-    },
-    {
-      "idx": 3,
-      "version": "6",
-      "when": 1789763848520,
-      "tag": "0003_active_projects",
-      "breakpoints": true
-    },
-    {
-      "idx": 4,
-      "version": "6",
-      "when": 1789860371489,
-      "tag": "0004_search_index",
-      "breakpoints": true
-    },
-    {
-      "idx": 5,
-      "version": "6",
-      "when": 1790305125073,
-      "tag": "0005_archive_causes",
-      "breakpoints": true
-    },
-    {
-      "idx": 6,
-      "version": "6",
-      "when": 1790487897703,
-      "tag": "0006_favorites",
+      "when": 1790573901361,
+      "tag": "0001_triggers_and_seed",
       "breakpoints": true
     }
   ]

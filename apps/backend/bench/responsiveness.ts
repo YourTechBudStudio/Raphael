@@ -17,7 +17,7 @@ import { serve } from '../src/server.ts';
  *
  * It exists because of one property that no amount of transport engineering removes: content
  * conversion and every SQLite call are synchronous and run on the same thread as the event loop.
- * While one of them runs, nothing else does - no other request, no timer, no replay collection. The
+ * While one of them runs, nothing else does - no other request and no timer. The
  * transport deadlines bound stalled I/O; they cannot bound blocked computation, and this measures
  * what that actually costs.
  *
@@ -74,14 +74,13 @@ const main = async (): Promise<void> => {
   const file = join(dir, 'raphael.sqlite');
   const key = `bench-${'b'.repeat(40)}`;
 
-  // Seed a hierarchy and an expired replay backlog before the server takes ownership. The backlog is
-  // part of the workload: collection competes for the same thread as every request.
+  // Seed a hierarchy before the server takes ownership.
   const seed = openDatabase({ databasePath: file });
   try {
     migrateToLatest(seed.db);
     const insertNode = seed.db.prepare(
-      'INSERT INTO nodes (type, parent_id, parent_type, slug, title, body, revision, created_at, updated_at) ' +
-        'VALUES (?, ?, ?, ?, ?, \'{"type":"doc","content":[{"type":"paragraph"}]}\', 1, 1, 1)',
+      'INSERT INTO nodes (type, parent_id, parent_type, slug, title, body, body_text, revision, created_at, updated_at) ' +
+        'VALUES (?, ?, ?, ?, ?, \'{"type":"doc","content":[{"type":"paragraph"}]}\', \'\', 1, 1, 1)',
     );
     const workId = (
       seed.db.prepare("SELECT id FROM nodes WHERE slug = 'work'").get() as { id: number }
@@ -109,17 +108,6 @@ const main = async (): Promise<void> => {
         }
       }
     })();
-
-    const insertReplay = seed.db.prepare(
-      'INSERT INTO creation_replays (key, fingerprint, result_json, created_at, expires_at) VALUES (?, ?, ?, ?, ?)',
-    );
-    seed.db.transaction(() => {
-      // A large backlog, all sharing one expiry: the case where a tiebreaker in the delete would sort
-      // the whole cohort on every batch.
-      for (let index = 0; index < 20_000; index += 1) {
-        insertReplay.run(`expired-${index}`, 'f', '{}', 1, 1_000);
-      }
-    })();
   } finally {
     seed.close();
   }
@@ -134,7 +122,6 @@ const main = async (): Promise<void> => {
           options: {
             server: { host: '127.0.0.1', port: 0 },
             database: { databasePath: file, busyTimeoutMs: CONFIG_DEFAULTS.busyTimeoutMs },
-            idempotency: { gcIntervalMinutes: 1, gcBatchSize: CONFIG_DEFAULTS.gcBatchSize },
           },
           credential: ApiCredential.fromKey(key),
           logger: silentLogger,
@@ -195,6 +182,7 @@ const main = async (): Promise<void> => {
                 type: 'project',
                 parent: { path: '/work/area-0' },
                 title: `Large ${slot}`,
+                slug: `large-${slot}`,
                 body: { format: 'markdown', value: largeMarkdown },
               }),
             );
@@ -207,6 +195,7 @@ const main = async (): Promise<void> => {
                 type: 'project',
                 parent: { path: '/work/area-0' },
                 title: 'x'.repeat(400),
+                slug: 'oversize',
               }),
             );
             break;

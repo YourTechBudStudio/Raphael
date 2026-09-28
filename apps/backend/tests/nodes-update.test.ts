@@ -1,25 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { TAGS_MAX_COUNT } from '@raphael/contracts/nodes';
-
 import {
   RevisionConflict,
-  createNode,
+  createNode as createNodeRaw,
   getNode,
   toPublicError,
   updateNode,
 } from '../src/modules/nodes/index.ts';
 import {
-  EMPTY_BODY,
   clockAt,
   controlledClock,
+  EMPTY_BODY,
   expectLeft,
   expectRight,
+  fieldsOf,
   one,
   runNodes,
+  withDerivedSlug,
   withMigrated,
 } from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 /**
  * The revision-guarded write.
@@ -256,7 +258,7 @@ test('a combined update is one fact: a colliding slug leaves the title unchanged
 
     const published = toPublicError(error);
     assert.equal(published.code, 'slug_conflict');
-    assert.equal(published.details['scope'], 'sibling');
+    assert.equal(published.message, '"alpha" is already used here.');
     assert.deepEqual(stored(connection, beta.id), before);
   });
 });
@@ -283,7 +285,10 @@ test('a stale revision is refused, and refused before any content is converted',
     assert.equal(error._tag, 'RevisionConflict');
     const published = toPublicError(error);
     assert.equal(published.code, 'revision_conflict');
-    assert.deepEqual(published.details, { field: 'revision', currentRevision: current.revision });
+    assert.equal(
+      published.message,
+      `This changed on the server. It is now at revision ${current.revision}.`,
+    );
     assert.deepEqual(stored(connection, created.id), before);
   });
 });
@@ -304,10 +309,7 @@ test('a revision ahead of the row conflicts too', () => {
     // compare-and-set could match a row the operation never read, and the response would describe a
     // state nothing inspected.
     assert.equal(error._tag, 'RevisionConflict');
-    assert.deepEqual(toPublicError(error).details, {
-      field: 'revision',
-      currentRevision: created.revision,
-    });
+    assert.deepEqual(fieldsOf(error), { current: created.revision });
   });
 });
 
@@ -332,7 +334,7 @@ test('a revision the row only reaches later is refused by the read, not applied 
     );
 
     assert.equal(error._tag, 'RevisionConflict');
-    assert.deepEqual(toPublicError(error).details, { field: 'revision', currentRevision: 1 });
+    assert.deepEqual(fieldsOf(error), { current: 1 });
     assert.equal(samples, 0, 'refused before the write transaction was ever opened');
     assert.equal(stored(connection, created.id).title, 'Draft');
   });
@@ -370,7 +372,7 @@ test('the write guard is the verdict when the row moves between the read and the
     assert.equal(error._tag, 'RevisionConflict');
     // The bumped value, read back by the guard's own re-select. Asserting the row afterwards would be
     // asserting the rollback, which the atomicity test above already covers.
-    assert.deepEqual(toPublicError(error).details, { field: 'revision', currentRevision: 7 });
+    assert.deepEqual(fieldsOf(error), { current: 7 });
   });
 });
 
@@ -436,25 +438,24 @@ test('a target that disappears inside the write is an internal failure, since no
   });
 });
 
-test('what an update cannot change is refused as the request, not attributed to a field', () => {
+test('what an update cannot change is refused, naming the field only when it is ours', () => {
   withMigrated('update-unpatchable', (connection) => {
     const created = note(connection, 'Draft');
     const base = { target: { id: created.id }, revision: created.revision };
 
-    for (const [field, value] of [
-      ['parentId', 1],
-      ['parent', { path: '/personal' }],
-      ['id', 4],
-      ['type', 'area'],
-      ['kind', 'note'],
-      ['metadata', { a: 1 }],
+    for (const [field, value, expected] of [
+      ['parentId', 1, 'The request was not valid.'],
+      ['id', 4, 'The request was not valid.'],
+      ['parent', { path: '/personal' }, 'The parent is not valid.'],
+      ['type', 'area', 'The type is not valid.'],
+      ['kind', 'note', 'The kind is not valid.'],
+      ['metadata', { a: 1 }, 'The metadata is not valid.'],
     ] as const) {
       const error = expectLeft(update(connection, { ...base, title: 'Renamed', [field]: value }));
       const published = toPublicError(error);
       assert.equal(published.code, 'invalid_input', field);
-      // None of these is in `UPDATE_FIELDS`, so there is no field to name - and naming one would point
-      // the caller at something that was not at fault.
-      assert.deepEqual(published.details, { reason: 'invalid' }, field);
+      assert.equal(published.message, expected, field);
+      assert.deepEqual(stored(connection, created.id).title, 'Draft');
     }
   });
 });
@@ -467,80 +468,33 @@ test('an envelope that changes nothing is refused as the request as a whole', ()
       update(connection, { target: { id: created.id }, revision: created.revision }),
     );
 
-    assert.deepEqual(toPublicError(error).details, { reason: 'invalid' });
+    assert.deepEqual(fieldsOf(error), { reason: 'invalid' });
   });
 });
 
-test('tags are a set: additions append in submitted order and removals drop', () => {
+test('tags replace the stored list, in submitted order, and an empty list clears it', () => {
   withMigrated('update-tags', (connection) => {
     const created = note(connection, 'Draft', { tags: ['alpha', 'beta'] });
 
-    const added = expectRight(
+    const replaced = expectRight(
       update(connection, {
         target: { id: created.id },
         revision: created.revision,
-        addTags: ['delta', 'gamma'],
+        tags: ['gamma', 'alpha'],
       }),
     ).entity;
-    assert.deepEqual(
-      added.tags,
-      ['alpha', 'beta', 'delta', 'gamma'],
-      'stored order, then submitted',
-    );
+    assert.deepEqual(replaced.tags, ['gamma', 'alpha']);
+    assert.deepEqual(stored(connection, created.id).tags, '["gamma","alpha"]');
 
-    const removed = expectRight(
-      update(connection, {
-        target: { id: created.id },
-        revision: added.revision,
-        removeTags: ['beta'],
-      }),
+    const untouched = expectRight(
+      update(connection, { target: { id: created.id }, revision: replaced.revision, title: 'X' }),
     ).entity;
-    assert.deepEqual(removed.tags, ['alpha', 'delta', 'gamma']);
-  });
-});
+    assert.deepEqual(untouched.tags, ['gamma', 'alpha'], 'an omitted list keeps the stored one');
 
-test('adding a present tag and removing an absent one are no-ops that are still writes', () => {
-  withMigrated('update-tags-noop', (connection) => {
-    const created = note(connection, 'Draft', { tags: ['alpha'] });
-
-    const response = expectRight(
-      update(connection, {
-        target: { id: created.id },
-        revision: created.revision,
-        addTags: ['alpha'],
-        removeTags: ['nothing-here'],
-      }),
+    const cleared = expectRight(
+      update(connection, { target: { id: created.id }, revision: untouched.revision, tags: [] }),
     ).entity;
-
-    assert.deepEqual(response.tags, ['alpha']);
-    assert.equal(response.revision, 2, 'the caller asked for a resulting state and got it');
-  });
-});
-
-test('the tag bound is checked on the resulting set, and an overflow changes nothing', () => {
-  withMigrated('update-tags-overflow', (connection) => {
-    const full = Array.from({ length: TAGS_MAX_COUNT }, (_, index) => `t${index}`);
-    const created = note(connection, 'Draft', { tags: full });
-    const before = stored(connection, created.id);
-
-    const error = expectLeft(
-      update(connection, {
-        target: { id: created.id },
-        revision: created.revision,
-        addTags: ['one-too-many'],
-      }),
-    );
-
-    const published = toPublicError(error);
-    assert.equal(published.code, 'invalid_input');
-    // Attributed to `tags` rather than `addTags`: the overflow is caused by the resulting set, most of
-    // which the caller did not submit.
-    assert.deepEqual(published.details, {
-      field: 'tags',
-      reason: 'tags_too_many',
-      limit: TAGS_MAX_COUNT,
-    });
-    assert.deepEqual(stored(connection, created.id), before);
+    assert.deepEqual(cleared.tags, []);
   });
 });
 
@@ -557,7 +511,7 @@ test('a container and a note accept the same envelope', () => {
         target: { id: project.id },
         revision: project.revision,
         title: 'Migration, phase two',
-        addTags: ['planning'],
+        tags: ['planning'],
       }),
     ).entity;
 
@@ -675,10 +629,6 @@ test('only a project can be marked active, and mentioning the field at all is th
         );
         const published = toPublicError(error);
         assert.equal(published.code, 'invalid_input');
-        assert.deepEqual(published.details, {
-          field: 'active',
-          reason: 'active_requires_project',
-        });
         assert.equal(published.message, 'Only a project can be marked active.');
         assert.deepEqual(stored(connection, target.id), before, 'nothing is written');
       }
@@ -714,7 +664,7 @@ test('selection travels in one atomic write with the other changes, or not at al
         active: true,
       }),
     );
-    assert.deepEqual(toPublicError(error).details, {
+    assert.deepEqual(fieldsOf(error), {
       field: 'active',
       reason: 'active_requires_project',
     });
@@ -753,7 +703,7 @@ test('a malformed selection is attributed to its own field, not to the request a
     );
     const published = toPublicError(error);
     assert.equal(published.code, 'invalid_input');
-    assert.deepEqual(published.details, { field: 'active', reason: 'invalid' });
+    assert.equal(published.message, 'The active is not valid.');
   });
 });
 
@@ -764,14 +714,14 @@ test('an update against a target that does not exist names the target', () => {
     );
 
     assert.equal(toPublicError(error).code, 'node_not_found');
-    assert.deepEqual(toPublicError(error).details, { field: 'target' });
+    assert.deepEqual(fieldsOf(error), { field: 'target' });
   });
 });
 
 test('a revision conflict publishes the revision to re-read, and nothing else', () => {
   const published = toPublicError(new RevisionConflict({ current: 4 }));
   assert.equal(published.code, 'revision_conflict');
-  assert.deepEqual(published.details, { field: 'revision', currentRevision: 4 });
+  assert.equal(published.message, `This changed on the server. It is now at revision ${4}.`);
 });
 
 const WORK = 1;
@@ -813,11 +763,11 @@ test('something archived directly or through a container is not updated, selecti
     ] as const) {
       for (const change of [{ title: 'Renamed' }, { active: false }, { active: true }]) {
         const before = stored(connection, target);
-        const failure = toPublicError(
-          expectLeft(update(connection, { target: { id: target }, revision, ...change })),
+        const error = expectLeft(
+          update(connection, { target: { id: target }, revision, ...change }),
         );
-        assert.equal(failure.code, 'node_archived', JSON.stringify(change));
-        assert.deepEqual(failure.details, { field: 'target', reason });
+        assert.equal(toPublicError(error).code, 'node_archived', JSON.stringify(change));
+        assert.deepEqual(fieldsOf(error), { field: 'target', standing: reason });
         assert.deepEqual(stored(connection, target), before, 'nothing was written');
       }
     }
@@ -848,7 +798,7 @@ test('revision, then active_requires_project, then lifecycle', () => {
       ),
     );
     assert.equal(notProject.code, 'invalid_input');
-    assert.equal(notProject.details['reason'], 'active_requires_project');
+    assert.equal(notProject.message, 'Only a project can be marked active.');
 
     const archived = toPublicError(
       expectLeft(
@@ -893,7 +843,7 @@ test('an ancestor archived between the read and the write is refused by the writ
         }),
       );
       assert.equal(archivedBetween, 1, 'the cause landed once, as the write transaction opened');
-      assert.deepEqual(toPublicError(failure).details, { field: 'target', reason: 'inherited' });
+      assert.deepEqual(fieldsOf(failure), { field: 'target', standing: 'inherited' });
       assert.equal(toPublicError(failure).code, 'node_archived');
     } finally {
       connection.db.transaction = original;

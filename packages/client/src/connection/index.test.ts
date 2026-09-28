@@ -60,18 +60,8 @@ describe('verifying a connection', () => {
 
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.deepEqual(
-      {
-        kind: result.failure.kind,
-        reason: 'reason' in result.failure ? result.failure.reason : undefined,
-        mutationOutcome: result.failure.mutationOutcome,
-      },
-      {
-        kind: 'invalid_response',
-        reason: 'incompatible_protocol',
-        mutationOutcome: 'not_applicable',
-      },
-    );
+    assert.equal(result.failure.kind, 'bad_response');
+    assert.equal(result.failure.code, 'incompatible_protocol');
     assert.ok(result.failure.message.includes('speaks protocol 2026-09-10;'));
     assert.ok(result.failure.message.includes(`understands ${PROTOCOL_VERSION}.`));
     assert.match(result.failure.message, /Update the server\./u);
@@ -89,12 +79,8 @@ describe('verifying a connection', () => {
 
       assert.equal(result.ok, false, `${protocolVersion} must not verify`);
       if (result.ok) return;
-      assert.equal(result.failure.kind, 'invalid_response');
-      assert.equal(
-        'reason' in result.failure ? result.failure.reason : undefined,
-        'incompatible_protocol',
-      );
-      assert.equal(result.failure.mutationOutcome, 'not_applicable');
+      assert.equal(result.failure.kind, 'bad_response');
+      assert.equal(result.failure.code, 'incompatible_protocol');
       // In sentence position: a bare search for `1` would pass on the current date alone.
       assert.ok(result.failure.message.includes(`speaks protocol ${protocolVersion};`));
       assert.ok(result.failure.message.includes(`understands ${PROTOCOL_VERSION}.`));
@@ -110,8 +96,8 @@ describe('verifying a connection', () => {
 
     assert.equal(result.ok, false);
     if (result.ok) return;
-    assert.equal(result.failure.kind, 'transport');
-    assert.equal('reason' in result.failure, false);
+    assert.equal(result.failure.kind, 'network');
+    assert.equal(result.failure.code, undefined);
   });
 
   it('does not turn an answer that is not a Raphael answer into a protocol mismatch', async () => {
@@ -122,12 +108,8 @@ describe('verifying a connection', () => {
 
       assert.equal(result.ok, false, JSON.stringify(payload));
       if (result.ok) return;
-      assert.equal(result.failure.kind, 'invalid_response');
-      assert.equal(
-        'reason' in result.failure ? result.failure.reason : undefined,
-        'invalid_payload',
-        'a malformed identifier is not a mismatch',
-      );
+      assert.equal(result.failure.kind, 'bad_response');
+      assert.equal(result.failure.code, undefined, 'a malformed identifier is not a mismatch');
     }
   });
 });

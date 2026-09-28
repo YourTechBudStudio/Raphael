@@ -9,7 +9,7 @@ import { sql, type SQL } from 'drizzle-orm';
 import { Effect, Either } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
-import { SEARCH_FIELDS, invalidInputFrom } from './diagnostics.ts';
+import { invalidInputFrom } from './diagnostics.ts';
 import { InternalFailure, type NodeError } from './errors.ts';
 import { SUMMARY_COLUMNS, checkedResponse, summaryProjection } from './projection.ts';
 import { resolveScopes } from './resolve.ts';
@@ -44,11 +44,6 @@ const OPERATION = 'nodes.search';
  * bm25 is lower-is-better, so `ASC` is best-first. `n.id ASC` behind it is the stable tie-break, which
  * is what makes two requests for the same page agree about the row on the boundary.
  *
- * **Legacy bodies.** A row whose `body_text` has not been projected yet is searchable by its title and
- * description from the moment it commits, and gains body matching when the backfill writes the
- * projection through the ordinary update trigger. No operation reads the backfill's state, and there
- * is no readiness gate: incomplete legacy body coverage is accepted, not tracked.
- *
  * A search that matches nothing is a successful empty page. `hasMore: false` means the page sequence
  * ended; it never claims coverage.
  *
@@ -64,7 +59,7 @@ export const searchNodes = (input: unknown): Effect.Effect<SearchResponse, NodeE
       try: () => {
         const request = decodeSearchRequest(input);
         if (Either.isLeft(request)) {
-          return raise(invalidInputFrom(request.left, SEARCH_FIELDS, input));
+          return raise(invalidInputFrom(request.left, input));
         }
         const { scopes, recursive, filter, queries, skip, limit, includeArchived } = request.right;
 

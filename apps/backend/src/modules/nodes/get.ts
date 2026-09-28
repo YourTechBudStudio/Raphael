@@ -2,7 +2,7 @@ import { decodeGetRequest, decodeGetResponse, type GetResponse } from '@raphael/
 import { Effect, Either } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
-import { GET_FIELDS, invalidInputFrom } from './diagnostics.ts';
+import { invalidInputFrom } from './diagnostics.ts';
 import type { NodeError } from './errors.ts';
 import { effectiveCauses } from './lifecycle.ts';
 import {
@@ -38,7 +38,7 @@ export const getNode = (input: unknown): Effect.Effect<GetResponse, NodeError, D
       try: () => {
         const request = decodeGetRequest(input);
         if (Either.isLeft(request)) {
-          return raise(invalidInputFrom(request.left, GET_FIELDS, input));
+          return raise(invalidInputFrom(request.left, input));
         }
         const { target, format } = request.right;
         return readTransaction(db, () => {

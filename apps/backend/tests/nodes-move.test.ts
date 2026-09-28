@@ -4,14 +4,26 @@ import test from 'node:test';
 import { SLUG_MAX_CODE_POINTS } from '@raphael/contracts/nodes';
 
 import {
-  createNode,
+  createNode as createNodeRaw,
   getNode,
   getNodePath,
   moveNode,
   searchNodes,
   toPublicError,
 } from '../src/modules/nodes/index.ts';
-import { clockAt, count, expectLeft, expectRight, one, runNodes, withMigrated } from './support.ts';
+import {
+  clockAt,
+  count,
+  expectLeft,
+  expectRight,
+  fieldsOf,
+  one,
+  runNodes,
+  withMigrated,
+  withDerivedSlug,
+} from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 /**
  * Relocation, decided and written in one transaction.
@@ -60,8 +72,10 @@ const stored = (connection: Connection, id: number): StoredRow =>
     id,
   );
 
-const refused = (connection: Connection, request: unknown) =>
-  toPublicError(expectLeft(move(connection, request)));
+const refused = (connection: Connection, request: unknown) => {
+  const error = expectLeft(move(connection, request));
+  return { ...toPublicError(error), fields: fieldsOf(error) };
+};
 
 const pathOf = (connection: Connection, id: number) =>
   expectRight(runNodes(connection, getNodePath({ target: { id } }))).path;
@@ -84,21 +98,21 @@ test('a malformed move is refused at the decoder and attributed to the field at 
       destination: { path: '/work', slug: 'x' },
     });
     assert.equal(badDestination.code, 'invalid_input');
-    assert.deepEqual(badDestination.details, { field: 'destination', reason: 'invalid' });
+    assert.equal(badDestination.message, 'The destination is not valid.');
 
     const badSlug = refused(connection, {
       target: { id: target.id },
       revision: target.revision,
       destination: { parent: { id: PERSONAL }, slug: 'Not A Slug' },
     });
-    assert.deepEqual(badSlug.details, { field: 'destination', reason: 'invalid' });
+    assert.equal(badSlug.message, 'The destination is not valid.');
 
     const badRevision = refused(connection, {
       target: { id: target.id },
       revision: 0,
       destination: { path: '/personal' },
     });
-    assert.deepEqual(badRevision.details, { field: 'revision', reason: 'invalid' });
+    assert.equal(badRevision.message, 'The revision is not valid.');
   });
 });
 
@@ -113,12 +127,12 @@ test('a new slug is held to the submission bound, while an existing long slug st
       destination: { path: `/personal/${long}` },
     });
     assert.equal(tooLong.code, 'invalid_input');
-    assert.deepEqual(tooLong.details, {
+    assert.deepEqual(tooLong.fields, {
       field: 'destination',
       reason: 'slug_too_long',
       limit: SLUG_MAX_CODE_POINTS,
     });
-    assert.equal(tooLong.message, 'The address is longer than the limit.');
+    assert.equal(tooLong.message, 'The address is longer than 100 characters.');
 
     // A container whose stored slug predates today's bound is still a destination by path.
     const legacy = area(connection, { path: '/personal' }, 'Legacy');
@@ -141,7 +155,7 @@ test('an unknown target is not found, by id and by path', () => {
     for (const target of [{ id: 999 }, { path: '/work/nowhere' }]) {
       const failure = refused(connection, { target, revision: 1, destination: { path: '/work' } });
       assert.equal(failure.code, 'node_not_found');
-      assert.deepEqual(failure.details, { field: 'target' });
+      assert.equal(failure.message, 'Nothing exists at that address.');
     }
   });
 });
@@ -156,7 +170,10 @@ test('a stale revision is reported before anything about the destination', () =>
       destination: { parent: { id: 999 } },
     });
     assert.equal(failure.code, 'revision_conflict');
-    assert.deepEqual(failure.details, { field: 'revision', currentRevision: target.revision });
+    assert.equal(
+      failure.message,
+      `This changed on the server. It is now at revision ${target.revision}.`,
+    );
   });
 });
 
@@ -170,7 +187,7 @@ test('a destination parent that does not exist is not found, in both forms', () 
         destination,
       });
       assert.equal(failure.code, 'node_not_found', JSON.stringify(destination));
-      assert.deepEqual(failure.details, { field: 'destination' });
+      assert.equal(failure.message, 'The destination does not exist.');
     }
   });
 });
@@ -186,7 +203,7 @@ test('a destination path naming a resource is a taken address, even when it is t
       destination: { path: '/personal/theirs' },
     });
     assert.equal(onOther.code, 'slug_conflict');
-    assert.deepEqual(onOther.details, { field: 'destination', slug: 'theirs', scope: 'sibling' });
+    assert.deepEqual(onOther.fields, { field: 'destination', slug: 'theirs', scope: 'sibling' });
     assert.equal(stored(connection, other.id).revision, other.revision);
 
     // A row does not conflict with its own index entry, which is why core refuses this itself.
@@ -196,7 +213,7 @@ test('a destination path naming a resource is a taken address, even when it is t
       destination: { path: '/work/mine' },
     });
     assert.equal(onSelf.code, 'slug_conflict');
-    assert.deepEqual(onSelf.details, { field: 'destination', slug: 'mine', scope: 'sibling' });
+    assert.deepEqual(onSelf.fields, { field: 'destination', slug: 'mine', scope: 'sibling' });
   });
 });
 
@@ -215,7 +232,7 @@ test('a container named as its own destination is a cycle, not a type mismatch',
         destination,
       });
       assert.equal(failure.code, 'invalid_parent', JSON.stringify(destination));
-      assert.deepEqual(failure.details, {
+      assert.deepEqual(failure.fields, {
         field: 'destination',
         reason: 'cycle',
         parentType: 'project',
@@ -238,7 +255,7 @@ test('an area cannot move under its own descendant', () => {
     });
     assert.equal(failure.code, 'invalid_parent');
     assert.equal(failure.message, 'Something cannot be moved inside itself.');
-    assert.deepEqual(failure.details, {
+    assert.deepEqual(failure.fields, {
       field: 'destination',
       reason: 'cycle',
       parentType: 'area',
@@ -257,7 +274,7 @@ test('a parent that cannot hold the target is refused by the parentage rule', ()
     const cases: readonly [unknown, string, string][] = [
       [{ path: '/' }, 'root', 'Only areas can exist at the root.'],
       [{ parent: { path: '/' } }, 'root', 'Only areas can exist at the root.'],
-      [{ path: '/work/gemini' }, 'project', 'That parent cannot contain this kind of entity.'],
+      [{ path: '/work/gemini' }, 'project', 'A project cannot contain a project.'],
       [
         { parent: { id: holder.id } },
         'resource',
@@ -274,7 +291,7 @@ test('a parent that cannot hold the target is refused by the parentage rule', ()
       });
       assert.equal(failure.code, 'invalid_parent', JSON.stringify(destination));
       assert.equal(failure.message, message);
-      assert.deepEqual(failure.details, {
+      assert.deepEqual(failure.fields, {
         field: 'destination',
         reason: 'parentage',
         parentType,
@@ -300,14 +317,14 @@ test('an address already taken in the destination is a slug conflict on the writ
       destination: { path: '/personal/beta' },
     });
     assert.equal(retained.code, 'slug_conflict');
-    assert.deepEqual(retained.details, { field: 'slug', slug: 'shared', scope: 'sibling' });
+    assert.deepEqual(retained.fields, { field: 'slug', slug: 'shared', scope: 'sibling' });
 
     const renamed = refusedUnchanged(connection, target.id, {
       target: { id: target.id },
       revision: target.revision,
       destination: { parent: { id: beta.id }, slug: 'taken' },
     });
-    assert.deepEqual(renamed.details, { field: 'slug', slug: 'taken', scope: 'sibling' });
+    assert.deepEqual(renamed.fields, { field: 'slug', slug: 'taken', scope: 'sibling' });
 
     // The root has its own namespace.
     const nested = area(connection, { path: '/personal' }, 'Work');
@@ -316,7 +333,7 @@ test('an address already taken in the destination is a slug conflict on the writ
       revision: nested.revision,
       destination: { path: '/' },
     });
-    assert.deepEqual(atRoot.details, { field: 'slug', slug: 'work', scope: 'root' });
+    assert.deepEqual(atRoot.fields, { field: 'slug', slug: 'work', scope: 'root' });
   });
 });
 
@@ -543,7 +560,7 @@ test('something archived by a cause of its own is restored before it moves', () 
       destination: { path: '/personal' },
     });
     assert.equal(failure.code, 'node_archived');
-    assert.deepEqual(failure.details, { field: 'target', reason: 'direct' });
+    assert.deepEqual(failure.fields, { field: 'target', standing: 'direct' });
   });
 });
 
@@ -605,7 +622,7 @@ test('an archived destination is refused, directly or through a container above 
         destination,
       });
       assert.equal(failure.code, 'node_archived', JSON.stringify(destination));
-      assert.deepEqual(failure.details, { field: 'destination', reason });
+      assert.deepEqual(failure.fields, { field: 'destination', standing: reason });
     }
     assert.equal(inner.archived, false);
   });
@@ -623,7 +640,7 @@ test('an inherited-only target "moved" to its current archived parent is refused
       destination: { parent: { id: shelf.id } },
     });
     assert.equal(failure.code, 'node_archived');
-    assert.deepEqual(failure.details, { field: 'destination', reason: 'direct' });
+    assert.deepEqual(failure.fields, { field: 'destination', standing: 'direct' });
   });
 });
 
@@ -647,14 +664,14 @@ test('lifecycle is decided after revision, destination, cycle and parentage, tar
         target: { id: inside.id },
         revision: inside.revision,
         destination: { parent: { id: inside.id } },
-      }).details['reason'],
+      }).fields['reason'],
       'cycle',
     );
     assert.equal(at({ parent: { id: other.id } }).code, 'invalid_parent');
     // Both the target and the destination are archived: the target is named.
-    assert.deepEqual(at({ parent: { id: shelf.id } }).details, {
+    assert.deepEqual(at({ parent: { id: shelf.id } }).fields, {
       field: 'target',
-      reason: 'direct',
+      standing: 'direct',
     });
   });
 });

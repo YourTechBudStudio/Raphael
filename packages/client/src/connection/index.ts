@@ -52,7 +52,6 @@ export const verify = async (
     body: {},
     decode: decodeVerifyResponse,
     successStatus: 200,
-    mutating: false,
     ...(signal === undefined ? {} : { signal }),
   });
 
@@ -61,9 +60,8 @@ export const verify = async (
   const { protocolVersion } = result.value;
   if (!isCompatibleProtocolVersion(protocolVersion)) {
     return fail({
-      kind: 'invalid_response',
-      reason: 'incompatible_protocol',
-      mutationOutcome: 'not_applicable',
+      kind: 'bad_response',
+      code: 'incompatible_protocol',
       message: describeProtocolMismatch(protocolVersion),
     });
   }

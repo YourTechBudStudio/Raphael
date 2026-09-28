@@ -4,7 +4,7 @@ import test from 'node:test';
 import {
   addFavorite,
   archiveNode,
-  createNode,
+  createNode as createNodeRaw,
   getNode,
   listFavorites,
   listNodes,
@@ -15,7 +15,18 @@ import {
   toPublicError,
   updateNode,
 } from '../src/modules/nodes/index.ts';
-import { clockAt, expectLeft, expectRight, many, one, runNodes, withMigrated } from './support.ts';
+import {
+  clockAt,
+  expectLeft,
+  expectRight,
+  many,
+  one,
+  runNodes,
+  withMigrated,
+  withDerivedSlug,
+} from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 /**
  * Favorites: a side table of node ids, written only by add and remove, read by every node response as
@@ -136,7 +147,7 @@ test('a selector that names nothing is node_not_found, except remove by id', () 
       expectLeft(remove(connection, { target: { path: '/work/nowhere' } })),
     ].map(toPublicError)) {
       assert.equal(error.code, 'node_not_found');
-      assert.deepEqual(error.details, { field: 'target' });
+      assert.equal(error.message, 'Nothing exists at that address.');
     }
     assert.deepEqual(favoriteRows(connection), []);
   });
@@ -154,7 +165,7 @@ test('the root and malformed requests are invalid_input on the field at fault', 
         expectLeft(remove(connection, request)),
       ].map(toPublicError)) {
         assert.equal(error.code, 'invalid_input', JSON.stringify(request));
-        assert.equal(error.details['field'], 'target', JSON.stringify(request));
+        assert.equal(error.message, 'The target is not valid.', JSON.stringify(request));
       }
     }
     // A revision is not part of this request, so strict decoding refuses it.
@@ -166,7 +177,11 @@ test('the root and malformed requests are invalid_input on the field at fault', 
     for (const window of [{ limit: 0 }, { limit: 501 }, { skip: -1 }, { limit: 1.5 }]) {
       const error = toPublicError(expectLeft(runNodes(connection, listFavorites(window))));
       assert.equal(error.code, 'invalid_input', JSON.stringify(window));
-      assert.equal(error.details['field'], Object.keys(window)[0], JSON.stringify(window));
+      assert.equal(
+        error.message,
+        `The ${Object.keys(window)[0]} is not valid.`,
+        JSON.stringify(window),
+      );
     }
   });
 });
@@ -178,8 +193,7 @@ test('a note is refused with a reason on target, and nothing is written; removin
 
     const error = toPublicError(expectLeft(add(connection, { target: { id: runbook.id } })));
     assert.equal(error.code, 'invalid_input');
-    assert.equal(error.message, 'Favorites hold areas and projects.');
-    assert.deepEqual(error.details, { field: 'target', reason: 'favorite_requires_container' });
+    assert.equal(error.message, 'Only areas and projects can be favorites.');
     assert.deepEqual(favoriteRows(connection), []);
 
     assert.deepEqual(expectRight(remove(connection, { target: { id: runbook.id } })), {

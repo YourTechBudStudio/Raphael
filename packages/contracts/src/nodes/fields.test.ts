@@ -13,7 +13,6 @@ import {
   NODE_ORDER_FIELDS,
   NODE_TYPES,
   ORDER_DIRECTIONS,
-  REQUEST_FIELDS,
   TAGS_MAX_COUNT,
   TAG_MAX_CODE_POINTS,
   TagsInput,
@@ -23,7 +22,6 @@ import {
   inspectMetadataInput,
   inspectTagsInput,
   inspectTitleInput,
-  isRequestField,
   normalizeTag,
 } from './fields.ts';
 
@@ -123,25 +121,6 @@ test('containers are a strict subset of the node types, and kinds are their own 
   for (const kind of RESOURCE_KINDS) {
     assert.ok(!(NODE_TYPES as readonly string[]).includes(kind), `${kind} must not be a node type`);
   }
-});
-
-test('the failure vocabulary can name the fields the new request shapes added', () => {
-  // Both sides need the same list: the backend produces these names, a client validates a received
-  // field against them. A field the server can fail on but a client cannot recognize reads as an
-  // unexplained refusal.
-  assert.ok(isRequestField('kind'));
-  assert.ok(isRequestField('orderBy'));
-  assert.ok(isRequestField('revision'));
-  assert.ok(isRequestField('addTags'));
-  assert.ok(isRequestField('removeTags'));
-  // Without this entry the backend's `InvalidInput { field: 'active' }` does not survive the
-  // `isRequestField` projection in `recovery.ts`, and the refusal reaches a client with no field at
-  // all - "the request was wrong" where "only a project can be marked active" was meant.
-  assert.ok(isRequestField('active'));
-  // The archive read flag, so a refused `includeArchived` names its field.
-  assert.ok(isRequestField('includeArchived'));
-  assert.ok(!isRequestField('body_text'));
-  assert.equal(new Set(REQUEST_FIELDS).size, REQUEST_FIELDS.length, 'no duplicate field names');
 });
 
 test('the ordering vocabulary is closed and has no implicit direction', () => {

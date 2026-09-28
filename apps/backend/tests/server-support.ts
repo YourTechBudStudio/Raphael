@@ -33,24 +33,16 @@ export const testOptions = (
   databasePath: string,
   overrides?: {
     readonly port?: number;
-    readonly gcBatchSize?: number;
-    readonly gcIntervalMinutes?: number;
   },
 ): BackendOptions => ({
   server: { host: '127.0.0.1', port: overrides?.port ?? 0 },
   database: { databasePath, busyTimeoutMs: CONFIG_DEFAULTS.busyTimeoutMs },
-  idempotency: {
-    gcIntervalMinutes: overrides?.gcIntervalMinutes ?? CONFIG_DEFAULTS.gcIntervalMinutes,
-    gcBatchSize: overrides?.gcBatchSize ?? CONFIG_DEFAULTS.gcBatchSize,
-  },
 });
 
 export interface WithServerOptions {
   /** Use this key instead of the generated one. Only for tests about the key policy itself. */
   readonly key?: string;
   readonly deadlines?: Partial<Deadlines>;
-  readonly gcBatchSize?: number;
-  readonly gcIntervalMinutes?: number;
   /** Seed the database before the server opens it. Ownership is exclusive, so it cannot be done after. */
   readonly seed?: (databasePath: string) => void;
 }
@@ -68,12 +60,7 @@ export const withServer = async <T>(
   const scope = Effect.runSync(Scope.make());
 
   try {
-    const backendOptions = testOptions(temp.file, {
-      ...(options.gcBatchSize === undefined ? {} : { gcBatchSize: options.gcBatchSize }),
-      ...(options.gcIntervalMinutes === undefined
-        ? {}
-        : { gcIntervalMinutes: options.gcIntervalMinutes }),
-    });
+    const backendOptions = testOptions(temp.file);
     const running = await Effect.runPromise(
       Scope.extend(
         serve({
@@ -147,11 +134,9 @@ export const rawRequest = (
   });
 
 /** The `error` object of an envelope, or a failed assertion naming what arrived instead. */
-export const envelope = (
-  payload: unknown,
-): { code: string; message: string; details: Record<string, unknown> } => {
+export const envelope = (payload: unknown): { code: string; message: string } => {
   const error = (payload as { error?: unknown } | undefined)?.error;
   if (error === undefined)
     throw new Error(`expected an error envelope, got ${JSON.stringify(payload)}`);
-  return error as { code: string; message: string; details: Record<string, unknown> };
+  return error as { code: string; message: string };
 };

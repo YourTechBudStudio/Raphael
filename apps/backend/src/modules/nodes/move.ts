@@ -13,7 +13,7 @@ import { and, eq } from 'drizzle-orm';
 import { Effect, Either, type Clock } from 'effect';
 
 import { Db } from '../../infrastructure/database/index.ts';
-import { MOVE_FIELDS, invalidInputFrom } from './diagnostics.ts';
+import { invalidInputFrom } from './diagnostics.ts';
 import {
   InternalFailure,
   InvalidInput,
@@ -96,7 +96,7 @@ export const moveNode = (input: unknown): Effect.Effect<MoveResponse, NodeError,
         try: () => {
           const request = decodeMoveRequest(input);
           if (Either.isLeft(request)) {
-            return raise(invalidInputFrom(request.left, MOVE_FIELDS, input));
+            return raise(invalidInputFrom(request.left, input));
           }
           return prepareMove(request.right);
         },

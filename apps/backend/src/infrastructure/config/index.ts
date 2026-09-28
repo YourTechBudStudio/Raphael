@@ -68,7 +68,6 @@ export {
   validateOptions,
   type BackendOptions,
   type DatabaseSettings,
-  type IdempotencySettings,
   type ServerOptions,
 } from './options.ts';
 export { CONFIG_MAX_BYTES, readConfigFile } from './yaml.ts';

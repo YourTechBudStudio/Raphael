@@ -4,7 +4,7 @@ import test from 'node:test';
 import { SEARCH_QUERY_MAX_CODE_POINTS, SEARCH_QUERY_MAX_TERMS } from '@raphael/contracts/nodes';
 
 import {
-  createNode,
+  createNode as createNodeRaw,
   getNode,
   searchNodes,
   toPublicError,
@@ -15,11 +15,15 @@ import {
   clockAt,
   expectLeft,
   expectRight,
+  fieldsOf,
   insertNode,
   one,
   runNodes,
   withMigrated,
+  withDerivedSlug,
 } from './support.ts';
+
+const createNode = (request: unknown) => createNodeRaw(withDerivedSlug(request));
 
 const T0 = 1_700_000_000_000;
 
@@ -529,48 +533,6 @@ test('the index follows every write that changes indexed text', () => {
   });
 });
 
-test('a row whose body_text is still null is searchable by its title, and gains body matching later', () => {
-  withMigrated('search-legacy-body', (connection) => {
-    const work = idOf(connection, 'work');
-    // The shape the backfill has not reached yet: written directly, with no `body_text`.
-    insertNode(connection.db, {
-      type: 'resource',
-      parentId: work,
-      parentType: 'area',
-      slug: 'legacy',
-      title: 'Legacy heading',
-    });
-    assert.equal(
-      one<{ bodyText: string | null }>(
-        connection.db,
-        'SELECT body_text AS bodyText FROM nodes WHERE slug = ?',
-        'legacy',
-      ).bodyText,
-      null,
-    );
-
-    const find = (word: string) =>
-      slugsOf(
-        expectRight(
-          search(connection, { scopes: [{ path: '/' }], recursive: true, queries: [word] }),
-        ),
-      );
-
-    // Searchable by title from the moment it exists: FTS5 tokenizes NULL to nothing, so the row is
-    // indexed with an empty body column rather than being absent.
-    assert.deepEqual(find('legacy'), ['legacy']);
-    assert.deepEqual(find('projected'), []);
-
-    // The backfill writes `body_text` alone; the update trigger names that column, so the index
-    // follows. No operation had to read the backfill's state.
-    connection.db
-      .prepare('UPDATE nodes SET body_text = ? WHERE slug = ?')
-      .run('projected sentence', 'legacy');
-    assert.deepEqual(find('projected'), ['legacy']);
-    assert.deepEqual(find('legacy'), ['legacy']);
-  });
-});
-
 test('indexing is part of the writing transaction, so a rollback un-indexes', () => {
   withMigrated('search-rollback', (connection) => {
     const work = idOf(connection, 'work');
@@ -610,21 +572,21 @@ test('every published failure is our own vocabulary, and echoes nothing submitte
       readonly what: string;
       readonly request: unknown;
       readonly code: string;
-      readonly details: Record<string, unknown>;
+      readonly fields: Record<string, unknown>;
       readonly secret?: string;
     }[] = [
       {
         what: 'a malformed query',
         request: { ...base, queries: ['topsecretword AND'] },
         code: 'invalid_input',
-        details: { field: 'queries', reason: 'query_malformed' },
+        fields: { field: 'queries', reason: 'query_malformed' },
         secret: 'topsecretword',
       },
       {
         what: 'a query over the length bound',
         request: { ...base, queries: ['z'.repeat(SEARCH_QUERY_MAX_CODE_POINTS + 1)] },
         code: 'invalid_input',
-        details: {
+        fields: {
           field: 'queries',
           reason: 'query_too_long',
           limit: SEARCH_QUERY_MAX_CODE_POINTS,
@@ -639,7 +601,7 @@ test('every published failure is our own vocabulary, and echoes nothing submitte
           ],
         },
         code: 'invalid_input',
-        details: {
+        fields: {
           field: 'queries',
           reason: 'query_too_many_terms',
           limit: SEARCH_QUERY_MAX_TERMS,
@@ -649,82 +611,83 @@ test('every published failure is our own vocabulary, and echoes nothing submitte
         what: 'an unsupported filter key',
         request: { ...base, queries: ['auth'], filter: { secretkeyname: 1 } },
         code: 'invalid_input',
-        details: { field: 'filter', reason: 'filter_unsupported' },
+        fields: { field: 'filter', reason: 'filter_unsupported' },
         secret: 'secretkeyname',
       },
       {
         what: 'an unsupported filter operator',
         request: { ...base, queries: ['auth'], filter: { type: { $nin: ['area'] } } },
         code: 'invalid_input',
-        details: { field: 'filter', reason: 'filter_unsupported' },
+        fields: { field: 'filter', reason: 'filter_unsupported' },
       },
       {
         what: 'a bad filter value',
         request: { ...base, queries: ['auth'], filter: { type: 'folder' } },
         code: 'invalid_input',
-        details: { field: 'filter', reason: 'invalid' },
+        fields: { field: 'filter', reason: 'invalid' },
         secret: 'folder',
       },
       {
         what: 'an empty $in',
         request: { ...base, queries: ['auth'], filter: { type: { $in: [] } } },
         code: 'invalid_input',
-        details: { field: 'filter', reason: 'invalid' },
+        fields: { field: 'filter', reason: 'invalid' },
       },
       {
         what: 'a bad tag',
         request: { ...base, queries: ['auth'], filter: { tags: '   ' } },
         code: 'invalid_input',
-        details: { field: 'filter', reason: 'invalid' },
+        fields: { field: 'filter', reason: 'invalid' },
       },
       {
         what: 'an empty scope list',
         request: { scopes: [], queries: ['auth'] },
         code: 'invalid_input',
-        details: { field: 'scopes', reason: 'invalid' },
+        fields: { field: 'scopes', reason: 'invalid' },
       },
       {
         what: 'a repeated scope',
         request: { scopes: [{ path: '/work' }, { path: '/work' }], queries: ['auth'] },
         code: 'invalid_input',
-        details: { field: 'scopes', reason: 'invalid' },
+        fields: { field: 'scopes', reason: 'invalid' },
       },
       {
         what: 'too many queries',
         request: { ...base, queries: Array.from({ length: 11 }, () => 'auth') },
         code: 'invalid_input',
-        details: { field: 'queries', reason: 'invalid' },
+        fields: { field: 'queries', reason: 'invalid' },
       },
       {
         what: 'no queries at all',
         request: { ...base, queries: [] },
         code: 'invalid_input',
-        details: { field: 'queries', reason: 'invalid' },
+        fields: { field: 'queries', reason: 'invalid' },
       },
       {
         what: 'a non-string query',
         request: { ...base, queries: [42] },
         code: 'invalid_input',
-        details: { field: 'queries', reason: 'invalid' },
+        fields: { field: 'queries', reason: 'invalid' },
       },
       {
         what: 'a scope that does not resolve',
         request: { scopes: [{ path: '/work' }, { id: 777_777 }], queries: ['auth'] },
         code: 'node_not_found',
-        details: { field: 'scopes', index: 1 },
+        fields: { field: 'scopes', index: 1 },
       },
       {
         what: 'the first scope not resolving',
         request: { scopes: [{ id: 777_777 }], queries: ['auth'] },
         code: 'node_not_found',
-        details: { field: 'scopes', index: 0 },
+        fields: { field: 'scopes', index: 0 },
       },
     ];
 
     for (const scenario of cases) {
-      const projected = toPublicError(expectLeft(search(connection, scenario.request)));
+      const error = expectLeft(search(connection, scenario.request));
+      const projected = toPublicError(error);
       assert.equal(projected.code, scenario.code, scenario.what);
-      assert.deepEqual(projected.details, scenario.details, scenario.what);
+      assert.deepEqual(fieldsOf(error), scenario.fields, scenario.what);
 
       const serialized = JSON.stringify(projected);
       if (scenario.secret !== undefined) {
@@ -745,7 +708,7 @@ test('a single-selector operation still reports no position', () => {
       expectLeft(runNodes(connection, getNode({ target: { id: 777_777 } }))),
     );
     assert.equal(missing.code, 'node_not_found');
-    assert.deepEqual(missing.details, { field: 'target' });
+    assert.equal(missing.message, 'Nothing exists at that address.');
   });
 });
 

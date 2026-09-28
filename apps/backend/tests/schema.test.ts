@@ -6,10 +6,12 @@ import {
   EMPTY_BODY,
   count,
   insertNode,
+  many,
   one,
   openMigrated,
   rejects,
   tempDatabase,
+  withMigrated,
 } from './support.ts';
 
 /**
@@ -173,16 +175,16 @@ describe('authored field integrity', () => {
     rejects(
       () =>
         db
-          .prepare(`INSERT INTO nodes (type, slug, title, body, tags, created_at, updated_at)
-        VALUES ('area', 't1', 'T', ?, '{}', 1, 1)`)
+          .prepare(`INSERT INTO nodes (type, slug, title, body, body_text, tags, created_at, updated_at)
+        VALUES ('area', 't1', 'T', ?, '', '{}', 1, 1)`)
           .run(EMPTY_BODY),
       /nodes_tags_json/,
     );
     rejects(
       () =>
         db
-          .prepare(`INSERT INTO nodes (type, slug, title, body, metadata, created_at, updated_at)
-        VALUES ('area', 'm1', 'T', ?, '[]', 1, 1)`)
+          .prepare(`INSERT INTO nodes (type, slug, title, body, body_text, metadata, created_at, updated_at)
+        VALUES ('area', 'm1', 'T', ?, '', '[]', 1, 1)`)
           .run(EMPTY_BODY),
       /nodes_metadata_json/,
     );
@@ -239,19 +241,6 @@ describe('integer safety', () => {
     rejects(
       () => insertNode(db, { type: 'area', slug: 't2', createdAt: 1.5 }),
       /nodes_created_at_safe/,
-    );
-  });
-
-  test('replay expiry columns carry the same bound', () => {
-    rejects(
-      () =>
-        db
-          .prepare(
-            `INSERT INTO creation_replays (key, fingerprint, result_json, created_at, expires_at)
-             VALUES ('k', 'f', '{}', 1, ?)`,
-          )
-          .run(MAX_SAFE_DB_INTEGER + 1),
-      /creation_replays_expires_at_safe/,
     );
   });
 });
@@ -398,12 +387,10 @@ describe('resource kind', () => {
     );
   });
 
-  test('the seeded root areas have no kind and no projection until one is derived', () => {
-    // Null is "no projection has been derived", which the maintenance pass distinguishes from a body
-    // whose text is genuinely empty. The seeds keep their null until that pass reads them.
+  test('the seeded root areas have no kind and an empty projection', () => {
     const seeds = count(
       db,
-      `SELECT count(*) AS c FROM nodes WHERE parent_id IS NULL AND kind IS NULL AND body_text IS NULL`,
+      `SELECT count(*) AS c FROM nodes WHERE parent_id IS NULL AND kind IS NULL AND body_text = ''`,
     );
     assert.equal(seeds >= 2, true);
     assert.equal(
@@ -528,6 +515,7 @@ describe('active selection', () => {
     assert.deepEqual(columns, [
       'id',
       'type',
+      'kind',
       'parent_id',
       'parent_type',
       'slug',
@@ -536,12 +524,11 @@ describe('active selection', () => {
       'description',
       'body',
       'tags',
+      'active',
       'metadata',
       'created_at',
       'updated_at',
-      'kind',
       'body_text',
-      'active',
     ]);
   });
 });
@@ -621,5 +608,204 @@ describe('favorites', () => {
     const before = one(db, 'SELECT revision, updated_at FROM nodes WHERE id = ?', WORK);
     favorite(WORK);
     assert.deepEqual(one(db, 'SELECT revision, updated_at FROM nodes WHERE id = ?', WORK), before);
+  });
+});
+
+/** A fresh migrated database, so these assertions see nothing the fixtures above inserted. */
+const withMigratedDb = (body: (fresh: import('better-sqlite3').Database) => void): void =>
+  withMigrated('schema-shape', (migrated) => body(migrated.db));
+
+describe('the migrated schema, stated explicitly', () => {
+  // Structural introspection rather than a byte-exact SQL snapshot, written independently of the
+  // declarations and migrations that produced it.
+  test('columns and nullability match the intended shape', () => {
+    withMigratedDb((fresh) => {
+      const columns = many<{ name: string; notnull: number }>(
+        fresh,
+        'PRAGMA table_xinfo(nodes)',
+      ).map((c) => `${c.name}:${c.notnull}`);
+      assert.deepEqual(columns, [
+        'id:1',
+        'type:1',
+        // A container has no kind.
+        'kind:0',
+        'parent_id:0',
+        'parent_type:0',
+        'slug:1',
+        'revision:1',
+        'title:1',
+        'description:1',
+        'body:1',
+        'tags:1',
+        'active:1',
+        'metadata:1',
+        'created_at:1',
+        'updated_at:1',
+        'body_text:1',
+      ]);
+    });
+  });
+
+  test('the parent reference is composite and restrictive', () => {
+    withMigratedDb((fresh) => {
+      const fks = many<{ table: string; from: string; to: string; on_delete: string }>(
+        fresh,
+        'PRAGMA foreign_key_list(nodes)',
+      );
+      assert.equal(fks.length, 2, 'one foreign key spanning two columns');
+      assert.deepEqual(
+        fks.map((f) => `${f.from}->${f.table}.${f.to}`),
+        ['parent_id->nodes.id', 'parent_type->nodes.type'],
+      );
+      for (const fk of fks) assert.equal(fk.on_delete, 'RESTRICT');
+    });
+  });
+
+  test('sibling slug indexes are unique and partial', () => {
+    withMigratedDb((fresh) => {
+      const indexes = Object.fromEntries(
+        many<{ name: string; unique: number; partial: number }>(
+          fresh,
+          'PRAGMA index_list(nodes)',
+        ).map((i) => [i.name, { unique: i.unique, partial: i.partial }]),
+      );
+      assert.deepEqual(indexes.nodes_sibling_slug, { unique: 1, partial: 1 });
+      assert.deepEqual(indexes.nodes_root_slug, { unique: 1, partial: 1 });
+      assert.deepEqual(indexes.nodes_id_type, { unique: 1, partial: 0 });
+    });
+  });
+
+  test('index collation is binary', () => {
+    withMigratedDb((fresh) => {
+      const info = many<{ name: string | null; coll: string }>(
+        fresh,
+        'PRAGMA index_xinfo(nodes_sibling_slug)',
+      );
+      const slug = info.find((c) => c.name === 'slug');
+      assert.equal(slug?.coll, 'BINARY');
+    });
+  });
+
+  test('only the intended objects exist', () => {
+    withMigratedDb((fresh) => {
+      const objects = many<{ type: string; name: string }>(
+        fresh,
+        `SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name`,
+      ).map((o) => `${o.type}:${o.name}`);
+      assert.deepEqual(objects, [
+        'index:nodes_id_type',
+        'index:nodes_root_slug',
+        'index:nodes_sibling_slug',
+        'table:__drizzle_migrations',
+        // Archive causes, stored only at their origin. Its composite primary key is the only index it
+        // needs, and it adds nothing to `nodes`.
+        'table:archive_causes',
+        // Favorites, one row per favorited node. Its primary key is the only index it needs, and it
+        // adds nothing to `nodes`.
+        'table:favorites',
+        'table:nodes',
+        // One virtual table and the four shadow tables FTS5 creates to back it. They are the storage
+        // an external-content index needs and are not addressed directly by anything we write.
+        'table:nodes_fts',
+        'table:nodes_fts_config',
+        'table:nodes_fts_data',
+        'table:nodes_fts_docsize',
+        'table:nodes_fts_idx',
+        'trigger:nodes_fts_after_delete',
+        'trigger:nodes_fts_after_insert',
+        'trigger:nodes_fts_after_update',
+        'trigger:nodes_identity_immutable',
+      ]);
+    });
+  });
+  test('every named constraint is in place', () => {
+    withMigratedDb((fresh) => {
+      const named = (table: string): string[] =>
+        [
+          ...one<{ sql: string }>(
+            fresh,
+            `SELECT sql FROM sqlite_master WHERE name = ?`,
+            table,
+          ).sql.matchAll(/CONSTRAINT "(\w+)"/gu),
+        ]
+          .map((match) => match[1]!)
+          .sort();
+      assert.deepEqual(named('nodes'), [
+        'nodes_active_valid',
+        'nodes_allowed_parentage',
+        'nodes_body_json',
+        'nodes_created_at_safe',
+        'nodes_id_safe',
+        'nodes_kind_valid',
+        'nodes_metadata_json',
+        'nodes_not_self_parent',
+        'nodes_parent_pair',
+        'nodes_revision_safe',
+        'nodes_root_is_area',
+        'nodes_slug_present',
+        'nodes_tags_json',
+        'nodes_title_present',
+        'nodes_type_supported',
+        'nodes_updated_at_safe',
+      ]);
+      assert.deepEqual(named('archive_causes'), [
+        'archive_causes_created_at_safe',
+        'archive_causes_owner_present',
+        'archive_causes_reason_present',
+      ]);
+    });
+  });
+
+  test('the triggers cover identity and the three index maintenance events', () => {
+    withMigratedDb((fresh) => {
+      const triggers = many<{ name: string; sql: string }>(
+        fresh,
+        `SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name`,
+      );
+      const byName = Object.fromEntries(triggers.map((t) => [t.name, t.sql]));
+      assert.match(
+        byName['nodes_identity_immutable'] ?? '',
+        /BEFORE UPDATE OF id, type, created_at ON nodes/u,
+      );
+      assert.match(byName['nodes_fts_after_insert'] ?? '', /AFTER INSERT ON nodes/u);
+      assert.match(byName['nodes_fts_after_delete'] ?? '', /AFTER DELETE ON nodes/u);
+      assert.match(
+        byName['nodes_fts_after_update'] ?? '',
+        /AFTER UPDATE OF title, description, body_text ON nodes/u,
+      );
+    });
+  });
+
+  test('a fresh database holds exactly the two root areas, with an empty projection', () => {
+    withMigratedDb((fresh) => {
+      assert.deepEqual(
+        many(
+          fresh,
+          'SELECT type, kind, parent_id, slug, title, body, body_text, active FROM nodes ORDER BY id',
+        ),
+        [
+          {
+            type: 'area',
+            kind: null,
+            parent_id: null,
+            slug: 'work',
+            title: 'Work',
+            body: EMPTY_BODY,
+            body_text: '',
+            active: 0,
+          },
+          {
+            type: 'area',
+            kind: null,
+            parent_id: null,
+            slug: 'personal',
+            title: 'Personal',
+            body: EMPTY_BODY,
+            body_text: '',
+            active: 0,
+          },
+        ],
+      );
+    });
   });
 });

@@ -7,8 +7,6 @@
  * could disagree with the first.
  */
 
-import { randomUUID } from 'node:crypto';
-
 import type { ClientFailure, Transport } from '@raphael/client';
 import {
   addFavorite,
@@ -73,6 +71,7 @@ import {
   scopesFrom,
   selectorFrom,
   splitCreatePath,
+  titleFromContent,
   type Selector,
 } from './input.ts';
 
@@ -145,36 +144,6 @@ const writePageFooter = (
 };
 
 /**
- * Report a scope-page failure, and name the scope when the server says one could not be resolved.
- *
- * `reportFailure` already prints `index: 0` from the projected details, because the projection carries
- * it and the detail lines are generic. That number counts the list that was *sent* - paths first, then
- * ids - which is not the order the person typed, so leaving them to count it themselves would be
- * unkind. This adds the one translation on top and changes nothing else about the report.
- *
- * Silent whenever the failure is anything else, or the index falls outside the list. An out-of-range
- * index is a server answer this build cannot interpret, and inventing a scope for it would be worse
- * than printing only what was actually said.
- */
-const reportScopeFailure = (
-  streams: Streams,
-  failure: ClientFailure,
-  scopes: readonly ScopeSelector[],
-): ExitCode => {
-  const code = reportFailure(streams, failure);
-  if (failure.kind !== 'api_error' || failure.error.code !== 'node_not_found') return code;
-  const { field, index } = failure.details;
-  if (field !== 'scopes' || index === undefined) return code;
-  const scope = scopes[index];
-  if (scope === undefined) return code;
-  writeLine(
-    streams.err,
-    `  scope: ${'id' in scope ? `--id ${scope.id}` : forTerminal(scope.path)}`,
-  );
-  return code;
-};
-
-/**
  * The options every scope page accepts, declared once.
  *
  * List and Search take the same request and differ only in how they order what they found, so the
@@ -198,10 +167,6 @@ const SCOPE_PAGE_OPTIONS = {
  *
  * Returns the request fragment ready to spread. `--include-archived`, and any other field both
  * operations come to share, lands here once.
- *
- * The fragment carries its own scopes, which is also what a failure is reported against: the list a
- * caller sends *is* the list the server indexes into, so `reportScopeFailure` reads it back off the
- * fragment rather than being handed a second copy to keep in step - see `reportScopeFailure`.
  */
 const scopePageFrom = (
   parsed: ParsedArgs,
@@ -250,8 +215,8 @@ under "/work/raphael". The id form addresses the parent by its durable identifie
 
 Types: ${CREATE_TARGETS.join(', ')}
 
-A note may omit --title, in which case the server names it from the first line of its body, or
-from its description. A note with no usable text in either is refused rather than named for you.
+A note may omit --title, in which case it is named from the first line of its body, or from its
+description. A note with no usable text in either needs --title.
 
 Examples:
   raphael create resource.note /work/api-design --title "API design" --body '# API design'
@@ -270,7 +235,6 @@ Options:
       --body-literal <text>  Body text that starts with "@" and is not a path.
       --body-format <fmt>    Format of the submitted body: ${BODY_FORMATS.join(' or ')}. Default markdown.
       --format <fmt>         Format of the returned body: ${BODY_FORMATS.join(' or ')}. Default markdown.
-      --idempotency-key <k>  Reuse a key from an earlier uncertain attempt.
       --json                 Print the result as JSON.
   -h, --help                 Show this help.`;
 
@@ -291,7 +255,6 @@ export const runCreate = async (
       'body-literal': { type: 'string' },
       'body-format': { type: 'string' },
       format: { type: 'string' },
-      'idempotency-key': { type: 'string' },
       json: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -307,11 +270,7 @@ export const runCreate = async (
     throw new UsageError(`Unexpected argument "${extra[0]}".`, 'create');
   }
 
-  // A container must be named here; a resource need not be. The CLI does not decide whether a kind may
-  // omit a title - it declines to invent one, omits the field, and lets the server answer. A refusal
-  // comes back as the server's own `title_required` sentence, which the recovery projection already
-  // carries.
-  const title = stringOption(parsed, 'title', 'create');
+  const titleFlag = stringOption(parsed, 'title', 'create');
 
   const parentId = stringOption(parsed, 'parent-id', 'create');
   const slugFlag = stringOption(parsed, 'slug', 'create');
@@ -349,16 +308,26 @@ export const runCreate = async (
   const description = stringOption(parsed, 'description', 'create');
   const format = choiceOption(parsed, 'format', 'create', BODY_FORMATS);
 
-  // A key is always present. Generated here rather than inside the client, because
-  // `crypto.randomUUID` does not exist on every runtime the client has to run on, and a transport
-  // that silently produced a weaker identifier on one platform would be worse than one that asks.
-  const suppliedKey = stringOption(parsed, 'idempotency-key', 'create');
-  const idempotencyKey = suppliedKey ?? randomUUID();
+  // Every creation is named by the caller. A container must be named here; a note may be named from
+  // what it already says, the same way every client does it.
+  let title = titleFlag;
+  if (title === undefined) {
+    if (target.type !== 'resource') {
+      throw new UsageError('--title is required. Every container has a name.', 'create');
+    }
+    title = titleFromContent(body, description ?? '');
+    if (title === undefined) {
+      throw new UsageError(
+        '--title is required: nothing in the body or description can name this note.',
+        'create',
+      );
+    }
+  }
 
   const common = {
     parent,
     slug,
-    idempotencyKey,
+    title,
     ...(description === undefined ? {} : { description }),
     ...(tags.length === 0 ? {} : { tags }),
     ...(metadata === undefined ? {} : { metadata }),
@@ -366,37 +335,14 @@ export const runCreate = async (
     ...(format === undefined ? {} : { format }),
   };
 
-  // Assembled per branch rather than by spreading the target over one object. A container request and a
-  // note request are genuinely different requests - one must carry a title and cannot carry a kind, the
-  // other the reverse - and the shared request type says so. The container branch is where the title
-  // becomes mandatory, so the usage error and the type narrowing are the same check rather than two that
-  // could drift apart.
-  let request;
-  if (target.type === 'resource') {
-    request = {
-      ...common,
-      type: target.type,
-      kind: target.kind,
-      ...(title === undefined ? {} : { title }),
-    };
-  } else {
-    if (title === undefined) {
-      throw new UsageError('--title is required. Every container has a name.', 'create');
-    }
-    request = { ...common, type: target.type, title };
-  }
+  // A container request cannot carry a kind, so the two are assembled separately.
+  const request =
+    target.type === 'resource'
+      ? { ...common, type: target.type, kind: target.kind }
+      : { ...common, type: target.type };
 
-  const dispatchedAt = new Date();
   const result = await create(context.transport(), request);
-
-  if (!result.ok) {
-    return reportFailure(context.streams, result.failure, {
-      operation: 'create',
-      idempotencyKey,
-      dispatchedAt,
-      keyWasSupplied: suppliedKey !== undefined,
-    });
-  }
+  if (!result.ok) return reportFailure(context.streams, result.failure);
 
   if (booleanOption(parsed, 'json')) {
     writeJson(context.streams.out, result.value);
@@ -420,7 +366,7 @@ on its own.
 
 Examples:
   raphael update /work/contracts --body @./contracts.md --revision 8
-  raphael update /work/contracts --add-tag reviewed --remove-tag draft
+  raphael update /work/contracts --tag reviewed --tag contracts
   raphael update --id 42 --title "Contract review" --description ""
 
 Changes (at least one):
@@ -430,8 +376,8 @@ Changes (at least one):
       --body <text|@file|@->  Replace the body. "" clears it. Requires --revision.
       --body-literal <text>   Body text that starts with "@" and is not a path. Requires --revision.
       --body-format <fmt>     Format of the submitted body: ${BODY_FORMATS.join(' or ')}. Default markdown.
-      --add-tag <tag>         Repeatable.
-      --remove-tag <tag>      Repeatable.
+      --tag <tag>             Repeatable. Replaces the whole tag list with the tags given.
+      --no-tags               Remove every tag.
       --active                Mark the project as currently being worked on.
       --inactive              Mark it as not being worked on. Only a project can be either.
 
@@ -450,8 +396,8 @@ const CHANGE_FLAGS = [
   'slug',
   'body',
   'body-literal',
-  'add-tag',
-  'remove-tag',
+  'tag',
+  'no-tags',
   'active',
   'inactive',
 ] as const;
@@ -508,8 +454,8 @@ export const runUpdate = async (
       body: { type: 'string' },
       'body-literal': { type: 'string' },
       'body-format': { type: 'string' },
-      'add-tag': { type: 'string', multiple: true },
-      'remove-tag': { type: 'string', multiple: true },
+      tag: { type: 'string', multiple: true },
+      'no-tags': { type: 'boolean' },
       active: { type: 'boolean' },
       inactive: { type: 'boolean' },
       revision: { type: 'string' },
@@ -536,7 +482,7 @@ export const runUpdate = async (
   // being told the command was wrong.
   if (!CHANGE_FLAGS.some((flag) => wasGiven(parsed, flag))) {
     throw new UsageError(
-      'Give at least one change: --title, --description, --slug, --body, --add-tag, --remove-tag, --active or --inactive.',
+      'Give at least one change: --title, --description, --slug, --body, --tag, --no-tags, --active or --inactive.',
       'update',
     );
   }
@@ -545,6 +491,9 @@ export const runUpdate = async (
   // other refusal above and below it.
   if (wasGiven(parsed, 'active') && wasGiven(parsed, 'inactive')) {
     throw new UsageError('Give --active or --inactive, not both.', 'update');
+  }
+  if (wasGiven(parsed, 'tag') && wasGiven(parsed, 'no-tags')) {
+    throw new UsageError('Give --tag or --no-tags, not both.', 'update');
   }
   if (
     (wasGiven(parsed, 'body') || wasGiven(parsed, 'body-literal')) &&
@@ -565,8 +514,12 @@ export const runUpdate = async (
   const title = stringOption(parsed, 'title', 'update');
   const description = stringOption(parsed, 'description', 'update');
   const slug = stringOption(parsed, 'slug', 'update');
-  const addTags = stringListOption(parsed, 'add-tag');
-  const removeTags = stringListOption(parsed, 'remove-tag');
+  // The full resulting list: given tags replace the stored ones, and --no-tags clears them.
+  const tags = wasGiven(parsed, 'no-tags')
+    ? []
+    : wasGiven(parsed, 'tag')
+      ? stringListOption(parsed, 'tag')
+      : undefined;
   // Desired state, never a toggle: the two flags name the state to result in, so neither has to know
   // what the current one is. Neither needs --revision - the pre-read below pins the target by
   // identifier exactly as it does for a title change.
@@ -591,16 +544,12 @@ export const runUpdate = async (
   } else {
     const pinned = await pinTarget(transport, target);
     if ('failure' in pinned) {
-      return reportFailure(context.streams, pinned.failure, {
-        operation: 'update',
-        beforeDispatch: true,
-      });
+      return reportFailure(context.streams, pinned.failure, { beforeDispatch: true });
     }
     sendTo = pinned.target;
     revision = pinned.revision;
   }
 
-  const dispatchedAt = new Date();
   const result = await update(transport, {
     target: sendTo,
     revision,
@@ -608,15 +557,12 @@ export const runUpdate = async (
     ...(description === undefined ? {} : { description }),
     ...(slug === undefined ? {} : { slug }),
     ...(body === undefined ? {} : { body }),
-    ...(addTags.length === 0 ? {} : { addTags }),
-    ...(removeTags.length === 0 ? {} : { removeTags }),
+    ...(tags === undefined ? {} : { tags }),
     ...(active === undefined ? {} : { active }),
     ...(format === undefined ? {} : { format }),
   });
 
-  if (!result.ok) {
-    return reportFailure(context.streams, result.failure, { operation: 'update', dispatchedAt });
-  }
+  if (!result.ok) return reportFailure(context.streams, result.failure);
 
   if (booleanOption(parsed, 'json')) {
     writeJson(context.streams.out, result.value);
@@ -696,16 +642,12 @@ export const runMove = async (
   } else {
     const pinned = await pinTarget(transport, target);
     if ('failure' in pinned) {
-      return reportFailure(context.streams, pinned.failure, {
-        operation: 'move',
-        beforeDispatch: true,
-      });
+      return reportFailure(context.streams, pinned.failure, { beforeDispatch: true });
     }
     sendTo = pinned.target;
     revision = pinned.revision;
   }
 
-  const dispatchedAt = new Date();
   const result = await move(transport, {
     target: sendTo,
     revision,
@@ -713,11 +655,7 @@ export const runMove = async (
   });
 
   if (!result.ok) {
-    return reportFailure(context.streams, result.failure, {
-      operation: 'move',
-      dispatchedAt,
-      ...('id' in sendTo ? { targetId: sendTo.id } : {}),
-    });
+    return reportFailure(context.streams, result.failure);
   }
 
   if (booleanOption(parsed, 'json')) {
@@ -818,20 +756,16 @@ const runLifecycle = async (
   } else {
     const pinned = await pinTarget(transport, target);
     if ('failure' in pinned) {
-      return reportFailure(context.streams, pinned.failure, {
-        operation: verb,
-        beforeDispatch: true,
-      });
+      return reportFailure(context.streams, pinned.failure, { beforeDispatch: true });
     }
     sendTo = pinned.target;
     revision = pinned.revision;
   }
 
-  const dispatchedAt = new Date();
   const send = verb === 'archive' ? archive : restore;
   const result = await send(transport, { target: sendTo, revision });
   if (!result.ok) {
-    return reportFailure(context.streams, result.failure, { operation: verb, dispatchedAt });
+    return reportFailure(context.streams, result.failure);
   }
 
   if (booleanOption(parsed, 'json')) {
@@ -904,18 +838,11 @@ const runFavoriteChange = async (
   if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, verb);
 
   const target = selectorFrom(path, stringOption(parsed, 'id', verb), verb);
-  const dispatchedAt = new Date();
-  // Only an id names the same node on a second try; the recovery advice depends on which was used.
-  const targetId = 'id' in target ? target.id : undefined;
   const result = wanted
     ? await addFavorite(context.transport(), { target })
     : await removeFavorite(context.transport(), { target });
   if (!result.ok) {
-    return reportFailure(context.streams, result.failure, {
-      operation: verb,
-      dispatchedAt,
-      ...(targetId === undefined ? {} : { targetId }),
-    });
+    return reportFailure(context.streams, result.failure);
   }
 
   if (booleanOption(parsed, 'json')) writeJson(context.streams.out, result.value);
@@ -1137,7 +1064,7 @@ export const runList = async (
     ...scopePage,
     ...(orderBy === undefined ? {} : { orderBy }),
   });
-  if (!result.ok) return reportScopeFailure(context.streams, result.failure, scopePage.scopes);
+  if (!result.ok) return reportFailure(context.streams, result.failure);
 
   if (booleanOption(parsed, 'json')) {
     writeJson(context.streams.out, result.value);
@@ -1207,7 +1134,7 @@ export const runSearch = async (
   const queries = parseQueries(stringListOption(parsed, 'query'), 'search');
 
   const result = await search(context.transport(), { ...scopePage, queries });
-  if (!result.ok) return reportScopeFailure(context.streams, result.failure, scopePage.scopes);
+  if (!result.ok) return reportFailure(context.streams, result.failure);
 
   if (booleanOption(parsed, 'json')) {
     writeJson(context.streams.out, result.value);

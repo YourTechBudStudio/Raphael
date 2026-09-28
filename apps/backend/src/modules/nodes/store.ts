@@ -43,8 +43,7 @@ export const readTransaction = <T>(db: Database.Database, body: () => T): T =>
  * A short write.
  *
  * Immediate, so the write lock is taken when the transaction opens rather than part-way through. A
- * failure inside the body rolls the whole thing back, which is what lets the node insert and its
- * replay record commit as one fact.
+ * failure inside the body rolls the whole thing back.
  */
 export const writeTransaction = <T>(db: Database.Database, body: () => T): T =>
   db.transaction(body).immediate();

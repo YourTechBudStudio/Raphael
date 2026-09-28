@@ -186,7 +186,12 @@ describe('release', () => {
       // not finished. `fetch` cannot express that, and a request merely *written* before shutdown is
       // still on the network - the server never received it, so a reset is the only honest answer and
       // there is nothing here to test.
-      const body = JSON.stringify({ type: 'area', parent: { path: '/' }, title: 'Halfway' });
+      const body = JSON.stringify({
+        type: 'area',
+        parent: { path: '/' },
+        title: 'Halfway',
+        slug: 'halfway',
+      });
       const socket = connect(running.port, running.host);
       await new Promise((ready) => socket.once('connect', ready));
 
@@ -220,7 +225,7 @@ describe('release', () => {
         `expected an honest refusal, got: ${JSON.stringify(received.slice(0, 120))}`,
       );
       assert.match(received, /"code":"storage_busy"/u);
-      assert.match(received, /"reason":"shutting_down"/u);
+      assert.match(received, /"message":"The server is shutting down\. Try again\."/u);
 
       // Refused means refused: nothing was written.
       assert.ok(isReleased(temp.file));
@@ -259,7 +264,12 @@ describe('release', () => {
         ),
       );
       const created = await call({ ...running, key }, '/api/nodes/create', {
-        body: JSON.stringify({ type: 'area', parent: { path: '/' }, title: 'Committed' }),
+        body: JSON.stringify({
+          type: 'area',
+          parent: { path: '/' },
+          title: 'Committed',
+          slug: 'committed',
+        }),
       });
       assert.equal(created.status, 201);
 
@@ -276,82 +286,6 @@ describe('release', () => {
       } finally {
         reopened.close();
       }
-    } finally {
-      temp.cleanup();
-    }
-  });
-});
-
-describe('derived-text maintenance', () => {
-  test('runs at startup, fills the seeded projections, and never gates the listener', async () => {
-    const temp = tempDatabase('lifecycle-backfill');
-    const key = testKey();
-    const logger = recordingLogger();
-    const scope = Effect.runSync(Scope.make());
-    try {
-      const running = await Effect.runPromise(
-        Scope.extend(
-          serve({
-            options: testOptions(temp.file),
-            credential: ApiCredential.fromKey(key),
-            logger,
-          }),
-          scope,
-        ),
-      );
-
-      // The listener answers straight away. The pass is forked, never awaited: a cold start must
-      // accept requests while it works, not afterwards.
-      assert.equal(
-        (await call({ ...running, key }, '/api/connection/verify', { body: '{}' })).status,
-        200,
-      );
-
-      // Give the forked pass its turn. It is bounded and tiny here, so a few macrotasks is plenty.
-      for (let i = 0; i < 20; i += 1) await new Promise((resolve) => setImmediate(resolve));
-
-      await Effect.runPromise(Scope.close(scope, Exit.void));
-
-      // Observed through storage after release, which is the only honest place to look: if the pass
-      // were still running when the database was released, this read could not succeed at all.
-      const reopened = openDatabase({ databasePath: temp.file, acquisitionTimeoutMs: 200 });
-      try {
-        const remaining = reopened.db
-          .prepare('SELECT count(*) AS c FROM nodes WHERE body_text IS NULL')
-          .get() as { c: number };
-        assert.equal(remaining.c, 0, 'the seeded rows have their projection');
-      } finally {
-        reopened.close();
-      }
-
-      const skipped = logger.lines.filter((line) => line.event === 'nodes.derived_text_skipped');
-      assert.deepEqual(skipped, [], 'nothing in a fresh database is unreadable');
-    } finally {
-      temp.cleanup();
-    }
-  });
-
-  test('maintenance is interrupted and awaited before the database is released', async () => {
-    const temp = tempDatabase('lifecycle-backfill-release');
-    const key = testKey();
-    const scope = Effect.runSync(Scope.make());
-    try {
-      await Effect.runPromise(
-        Scope.extend(
-          serve({
-            options: testOptions(temp.file),
-            credential: ApiCredential.fromKey(key),
-            logger: silentLogger,
-          }),
-          scope,
-        ),
-      );
-
-      // Closed immediately, with the pass very likely still in flight. Releasing storage beneath a
-      // running write transaction is the failure this ordering exists to prevent, and it would show
-      // up here as the release throwing or the database staying locked.
-      await Effect.runPromise(Scope.close(scope, Exit.void));
-      assert.ok(isReleased(temp.file), 'maintenance must be stopped before storage is released');
     } finally {
       temp.cleanup();
     }
@@ -416,7 +350,12 @@ describe('deadlines', () => {
         // handling that follows. A deadline that bounded handling would be a claim this server cannot
         // make: the operation below is synchronous and not interruptible.
         const created = await call(server, '/api/nodes/create', {
-          body: JSON.stringify({ type: 'area', parent: { path: '/' }, title: 'Unhurried' }),
+          body: JSON.stringify({
+            type: 'area',
+            parent: { path: '/' },
+            title: 'Unhurried',
+            slug: 'unhurried',
+          }),
         });
         assert.equal(created.status, 201);
       },

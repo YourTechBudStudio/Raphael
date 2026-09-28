@@ -28,8 +28,7 @@ export const contentSchema: Schema = getSchema(contentExtensions());
  *
  * Step 5 normalizes further: it inserts schema default attributes and merges adjacent text nodes
  * carrying identical marks. That is canonical serialization, not discarded authored data. The result is what
- * callers store; it is never the request fingerprint, which is computed from the normalized request
- * so that two different inputs converging on one document still conflict under one idempotency key.
+ * callers store.
  */
 export const canonicalizeDocument = (
   input: unknown,
