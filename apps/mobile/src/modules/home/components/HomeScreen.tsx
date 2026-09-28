@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Text, View } from 'react-native';
 
 import { Chip, Screen, SectionHeading, Snackbar, SNACKBAR_GAP } from '../../../ui';
-import { CaptureDock, useSaveNotice, useUnfinishedTally } from '../../capture';
+import { CaptureDock } from '../../capture';
 import {
   activeProjects,
   containerTitleLookup,
@@ -14,7 +14,7 @@ import { RejectionNotice } from '../../connection';
 import {
   openBrowse,
   openEditor,
-  openRecovery,
+  openUnfinished,
   openSearch,
   openSettings,
   HomeTopBar,
@@ -26,6 +26,7 @@ import {
   useNoteFeed,
   useSessionMedia,
 } from '../../resources';
+import { useNotice, useUnfinished } from '../../unsent';
 import { ActiveProjectCard } from './ActiveProjectCard';
 import { ActiveSkeleton } from './Skeletons';
 
@@ -43,28 +44,16 @@ import { ActiveSkeleton } from './Skeletons';
  * The Notes feed is the server's, newest edit first, paged as the scroll reaches its end. Nothing
  * local is mixed into it and nothing is sorted here.
  *
- * What is local is counted instead of drawn. Home used to lead the grid with cards for the notes this
- * phone holds and the server does not; it now carries one chip beside the Notes heading saying how
- * many things are not on the server, and Recovery - which the chip opens - is where they are read and
- * acted on. The chip is absent at zero, so an ordinary Home says nothing about unfinished work at
- * all, and it counts everything Recovery lists, transient rows included, because a number that
- * disagreed with the screen it opens would be worse than either alone.
- *
- * It is drawn without a number when a store could not be read. This chip is the only way to reach
- * Recovery, so a failure that reported zero would hide the unsent work *and* the failure behind a
- * door nothing opens - and "none" is not what this phone knows in that moment.
- *
- * A save that landed is told here, once, by a snackbar, and the receipt that made it appear is spent
- * only when it has actually been shown. That is why a success survives a crash: the record is
- * retained precisely so it can be reported on the next launch rather than disappearing with the
- * process that earned it.
+ * What is local is counted instead of drawn: one chip beside the Notes heading says how many things
+ * in Unfinished need the person, and opens it. It is absent at zero. A sentence about what happened
+ * to someone's writing - saved, or kept in Unfinished - is shown here once, by a snackbar.
  */
 export function HomeScreen() {
   const tree = useHierarchy();
   const feed = useNoteFeed();
   const media = useSessionMedia();
-  const unfinished = useUnfinishedTally();
-  const notice = useSaveNotice();
+  const unfinished = useUnfinished().length;
+  const notice = useNotice();
   const [snackbarHeight, setSnackbarHeight] = useState(0);
   const hierarchy = tree.hierarchy;
   const projects = hierarchy === undefined ? undefined : activeProjects(hierarchy);
@@ -125,17 +114,12 @@ export function HomeScreen() {
           <NoteSection
             copy={HOME_NOTES_COPY}
             headingTrailing={
-              // Drawn when there is something to say *or* when this phone could not find out, which
-              // are different facts and only one of them is "nothing". A chip with no number is the
-              // honest form of the second: Recovery is where what could not be read is named.
-              unfinished.count === 0 && unfinished.complete ? undefined : (
+              unfinished === 0 ? undefined : (
                 <Chip
                   accessibilityHint="Opens everything not yet on your server"
                   icon={CloudOff}
-                  label={
-                    unfinished.complete ? `${String(unfinished.count)} unfinished` : 'Unfinished'
-                  }
-                  onPress={openRecovery}
+                  label={`${String(unfinished)} unfinished`}
+                  onPress={openUnfinished}
                   testID="home-unfinished-chip"
                 />
               )
@@ -156,7 +140,6 @@ export function HomeScreen() {
         message={notice.message}
         onHeight={setSnackbarHeight}
         onHidden={notice.onHidden}
-        onShown={notice.onShown}
         testID="home-snackbar"
       />
     </View>

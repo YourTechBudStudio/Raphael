@@ -10,9 +10,7 @@
  *
  * **The hierarchy only names parents.** The server decides which favorites exist and in what order;
  * the tree only supplies the parent pill, and a stale tree supplies nothing.
- *
- * **Each row owns its verdict.** A refusal for one row stays on that row when another row is tapped
- * while the first is still in flight.
+
  */
 
 import assert from 'node:assert/strict';
@@ -21,15 +19,7 @@ import { after, afterEach, beforeEach, describe, it } from 'node:test';
 import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
 
 import { installDom } from './support/browser-dom.mjs';
-import {
-  ADD,
-  LIST,
-  REMOVE,
-  ok,
-  refused,
-  summary,
-  unreachable,
-} from './support/favorites-server.mjs';
+import { ADD, LIST, REMOVE, ok, summary, unreachable } from './support/favorites-server.mjs';
 import { installNativeStubs } from './support/native-stub-loader.mjs';
 
 const hooks = installNativeStubs();
@@ -41,6 +31,12 @@ const { createRoot } = await import('react-dom/client');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { scopeKey } = await import('../src/infrastructure/query/keys.ts');
 const { FavoritesList } = await import('../src/modules/browse/components/FavoritesList.tsx');
+const { useFavoriteToggle } = await import('../src/modules/favorites/client/toggle.ts');
+
+/** The screen holds the toggle and shows its failures; this stands in for it. */
+function Tab(props) {
+  return createElement(FavoritesList, { ...props, favorite: useFavoriteToggle() });
+}
 const { useConnectionStore } = await import('../src/modules/connection/state/connection.ts');
 
 after(async () => {
@@ -203,7 +199,7 @@ const openTab = async (pages, { query = '', hierarchy, before } = {}) => {
         createElement(
           QueryClientProvider,
           { client },
-          createElement(FavoritesList, {
+          createElement(Tab, {
             query: text,
             onSelect: (ref) => {
               selected.push(ref);
@@ -454,27 +450,5 @@ describe('the row star', () => {
     });
 
     assert.deepEqual(tab.rows(), ['Auth rework, Project, in Work']);
-  });
-
-  it('keeps each verdict with its own row', async () => {
-    const tab = await openTab([[AUTH, GARDEN]]);
-
-    await tab.press(tab.starOf('Auth rework'));
-    await tab.press(tab.starOf('Garden'));
-    assert.equal(server.of(REMOVE).length, 2, 'both are in flight');
-
-    await flush(() => {
-      server.release(REMOVE, refused);
-    });
-    await flush(() => {
-      server.release(REMOVE, 'accept');
-    });
-
-    assert.deepEqual(tab.rows(), ['Auth rework, Project, in Work']);
-    assert.ok(tab.rowOf('Auth rework').textContent.includes('Favorite did not update. Try again.'));
-    assert.equal(
-      tab.starOf('Auth rework').getAttribute('aria-label'),
-      'Remove Auth rework from favorites',
-    );
   });
 });

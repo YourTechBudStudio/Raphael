@@ -1,11 +1,8 @@
 /**
- * Starting a note, and the two things that must not happen twice.
+ * Starting a note, and keeping what is on screen in its row.
  *
- * A double tap is one turn, not two renders. Admitting both presses would insert two drafts and push
- * two routes, leaving one of them behind a screen nobody came back to - writing kept on a phone that
- * nothing on screen points at.
- *
- * And leaving the foreground asks the editor for a copy, unlocked, because the renderer is the one
+ * A double tap is one turn, not two renders: admitting both presses would make two drafts and push
+ * two routes. And leaving the foreground asks the editor for a copy, because the renderer is the one
  * place writing can exist that a process death takes with it.
  */
 
@@ -14,6 +11,7 @@ import { after, beforeEach, describe, it } from 'node:test';
 
 import { installDom } from './support/browser-dom.mjs';
 import { installNativeStubs } from './support/native-stub-loader.mjs';
+import { nodeDriver } from './support/node-sqlite.mjs';
 
 const hooks = installNativeStubs();
 const dom = installDom();
@@ -22,12 +20,16 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 const { act, createElement } = await import('react');
 const { createRoot } = await import('react-dom/client');
 const { useNewNote } = await import('../src/modules/capture/client/new-note.ts');
-const { useBackgroundFlush } = await import('../src/modules/capture/client/background.ts');
-const { useCaptureOwner } = await import('../src/modules/capture/client/owner.ts');
-const { useStorageGate } = await import('../src/modules/capture/state/storage-gate.ts');
+const { useRowWriting } = await import('../src/modules/capture/client/writing.ts');
+const { discardAllUnsent, resumeUnsent, startUnsent, useUnsentState, writeEdit } =
+  await import('../src/modules/unsent/client/unsent.ts');
+const { queryClient } = await import('../src/infrastructure/query/query-client.ts');
+const { nodeKey } = await import('../src/infrastructure/query/keys.ts');
 const { useConnectionStore } = await import('../src/modules/connection/state/connection.ts');
 const { setAppState } = await import('./support/stubs/react-native.mjs');
 const { navigations, resetNavigations } = await import('expo-router');
+
+await startUnsent(nodeDriver());
 
 after(async () => {
   await new Promise((resolve) => {
@@ -56,46 +58,22 @@ const mount = (element) => {
   };
 };
 
-beforeEach(() => {
-  resetNavigations();
-  useStorageGate.setState({ fatal: false });
-  useConnectionStore.setState({
-    phase: {
-      kind: 'active',
-      rejection: null,
-      session: {
-        activation: 1,
-        transport: () => Promise.reject(new Error('no server in this test')),
-        connection: {
-          connectionId: 'c1',
-          base: 'https://raphael.example',
-          origin: 'https://raphael.example',
-          protocolVersion: 1,
-        },
-      },
-    },
+const settle = () =>
+  act(async () => {
+    await new Promise((resolve) => {
+      setImmediate(resolve);
+    });
   });
+
+beforeEach(async () => {
+  resetNavigations();
+  await discardAllUnsent();
+  // The wipe seals writes for a server switch; a test's reset is not one.
+  resumeUnsent();
 });
 
 describe('pressing New note', () => {
   it('starts one note for two presses in the same turn', async () => {
-    let release;
-    const created = [];
-    const held = new Promise((resolve) => {
-      release = resolve;
-    });
-
-    useCaptureOwner.setState({
-      status: 'ready',
-      problem: null,
-      createDraft: async () => {
-        created.push(1);
-        await held;
-
-        return { kind: 'created', draftId: `d${String(created.length)}` };
-      },
-    });
-
     const handle = {};
 
     function Probe() {
@@ -108,24 +86,18 @@ describe('pressing New note', () => {
 
     try {
       // Both calls happen before anything has re-rendered, which is exactly what a double tap is.
-      // A guard held in React state would let both through: they read the same rendered value.
       handle.start();
       handle.start();
+      await settle();
 
-      assert.equal(created.length, 1, 'one draft is asked for');
+      const rows = useUnsentState.getState().rows;
 
-      release();
-      await act(async () => {
-        await new Promise((resolve) => {
-          setImmediate(resolve);
-        });
-      });
-
-      assert.equal(created.length, 1);
+      assert.equal(rows.length, 1, 'one draft');
+      assert.equal(rows[0].status, 'draft');
       assert.deepEqual(navigations, [
         {
           method: 'push',
-          target: { pathname: '/capture/[draftId]', params: { draftId: 'd1' } },
+          target: { pathname: '/capture/[draftId]', params: { draftId: rows[0].id } },
         },
       ]);
     } finally {
@@ -134,18 +106,6 @@ describe('pressing New note', () => {
   });
 
   it('admits a later press once the first has finished', async () => {
-    const created = [];
-
-    useCaptureOwner.setState({
-      status: 'ready',
-      problem: null,
-      createDraft: async () => {
-        created.push(1);
-
-        return { kind: 'created', draftId: `d${String(created.length)}` };
-      },
-    });
-
     const handle = {};
 
     function Probe() {
@@ -157,20 +117,12 @@ describe('pressing New note', () => {
     const probe = mount(createElement(Probe));
 
     try {
-      await act(async () => {
-        handle.start();
-        await new Promise((resolve) => {
-          setImmediate(resolve);
-        });
-      });
-      await act(async () => {
-        handle.start();
-        await new Promise((resolve) => {
-          setImmediate(resolve);
-        });
-      });
+      handle.start();
+      await settle();
+      handle.start();
+      await settle();
 
-      assert.equal(created.length, 2, 'admission is released, not spent');
+      assert.equal(useUnsentState.getState().rows.length, 2);
       assert.equal(navigations.length, 2);
     } finally {
       probe.unmount();
@@ -178,89 +130,376 @@ describe('pressing New note', () => {
   });
 });
 
-describe('leaving the foreground', () => {
-  it('asks the editor for a copy, without taking the lock', async () => {
-    const flushes = [];
+describe('keeping a row in step with the screen', () => {
+  const editorGiving = (document) => {
+    const asked = [];
 
-    useCaptureOwner.setState({
-      status: 'ready',
-      problem: null,
-      flush: async (draftId, options) => {
-        flushes.push({ draftId, options });
+    return {
+      asked,
+      port: {
+        current: {
+          requestSnapshot: (options) => {
+            asked.push(options);
 
-        return { kind: 'flushed', version: 1, captured: 'editor' };
+            return Promise.resolve({
+              kind: 'captured',
+              unchanged: false,
+              snapshot: { sessionId: 1, editSeq: 1, document },
+            });
+          },
+        },
       },
-    });
-
-    // The hook takes the flush itself now, so one hook serves both owners. A stable reference,
-    // because an unstable one would resubscribe on every render.
-    const askOwner = () => {
-      void useCaptureOwner.getState().flush('d1');
     };
+  };
+
+  const probe = (save, editor, onScreen = () => ({ title: 'On screen' })) => {
+    const handle = {};
 
     function Probe() {
-      useBackgroundFlush(askOwner);
+      Object.assign(handle, useRowWriting(save, editor.port, onScreen));
 
       return null;
     }
 
-    const probe = mount(createElement(Probe));
+    return { handle, mounted: mount(createElement(Probe)) };
+  };
+
+  it('asks the editor for a copy when the app leaves the foreground, and writes it', async () => {
+    const written = [];
+    const editor = editorGiving({ type: 'doc', content: [] });
+    const { mounted } = probe(async (patch) => {
+      written.push(patch);
+
+      return true;
+    }, editor);
 
     try {
       act(() => {
         setAppState('inactive');
       });
-      assert.deepEqual(flushes, [{ draftId: 'd1', options: undefined }], 'unlocked, by design');
+      await settle();
+      assert.deepEqual(editor.asked, [undefined], 'unlocked, by design');
+      assert.deepEqual(written, [{ title: 'On screen', body: { type: 'doc', content: [] } }]);
 
-      act(() => {
-        setAppState('background');
-      });
-      assert.equal(flushes.length, 2);
-
-      // Coming back is not a reason to ask: the editor is right there, and the next thing typed
-      // schedules its own write.
+      // Coming back is not a reason to ask: the editor is right there.
       act(() => {
         setAppState('active');
       });
-      assert.equal(flushes.length, 2);
+      await settle();
+      assert.equal(editor.asked.length, 1);
     } finally {
-      probe.unmount();
+      mounted.unmount();
     }
   });
 
-  it('stops asking once the composer is gone', () => {
-    const flushes = [];
+  it('answers a flush only once what is on screen has reached the phone', async () => {
+    let finish;
+    const editor = editorGiving({ type: 'doc', content: ['typed'] });
+    const { handle, mounted } = probe(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      editor,
+    );
 
-    useCaptureOwner.setState({
-      status: 'ready',
-      problem: null,
-      flush: async (draftId) => {
-        flushes.push(draftId);
+    try {
+      let answered = null;
 
-        return { kind: 'flushed', version: 1, captured: 'editor' };
-      },
-    });
+      void handle.flush().then((ok) => {
+        answered = ok;
+      });
+      await settle();
+      assert.equal(answered, null, 'still waiting on the write');
 
-    // The hook takes the flush itself now, so one hook serves both owners. A stable reference,
-    // because an unstable one would resubscribe on every render.
-    const askOwner = () => {
-      void useCaptureOwner.getState().flush('d1');
-    };
+      finish(true);
+      await settle();
+      assert.equal(answered, true);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it('says so when a flush did not reach the phone, until a later one does', async () => {
+    let ok = false;
+    const editor = editorGiving({ type: 'doc', content: [] });
+    const { handle, mounted } = probe(async () => ok, editor);
+
+    try {
+      let answered;
+
+      await act(async () => {
+        answered = await handle.flush();
+      });
+      assert.equal(answered, false, 'Close and Save stay put');
+      assert.equal(handle.failed, true);
+
+      ok = true;
+      await act(async () => {
+        answered = await handle.flush();
+      });
+      assert.equal(answered, true);
+      assert.equal(handle.failed, false, 'the full write made up for it');
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it('writes what the editor last reported when the screen goes', async () => {
+    const written = [];
+    const handle = {};
+    const editor = editorGiving(null);
 
     function Probe() {
-      useBackgroundFlush(askOwner);
+      Object.assign(
+        handle,
+        useRowWriting(
+          async (patch) => {
+            written.push(patch);
+
+            return true;
+          },
+          editor.port,
+          () => ({}),
+        ),
+      );
 
       return null;
     }
 
-    const probe = mount(createElement(Probe));
+    const screen = mount(createElement(Probe));
 
-    probe.unmount();
+    handle.onSnapshot({ sessionId: 1, editSeq: 2, document: { type: 'doc', content: ['late'] } });
+    screen.unmount();
 
-    act(() => {
-      setAppState('background');
+    assert.deepEqual(written, [{ body: { type: 'doc', content: ['late'] } }]);
+  });
+
+  it('will not let the screen go when the editor does not hand over what it holds', async () => {
+    const written = [];
+    const unanswering = {
+      port: { current: { requestSnapshot: async () => ({ kind: 'unanswered' }) } },
+    };
+    const { handle, mounted } = probe(async (patch) => {
+      written.push(patch);
+
+      return true;
+    }, unanswering);
+
+    try {
+      let answered;
+
+      // Before the editor's first, delayed edit report: nothing reported yet is not nothing typed.
+      await act(async () => {
+        answered = await handle.flush();
+      });
+      assert.equal(answered, false);
+      assert.equal(handle.failed, true);
+
+      handle.onSnapshot({
+        sessionId: 1,
+        editSeq: 1,
+        document: { type: 'doc', content: ['typed'] },
+      });
+      await act(async () => {
+        answered = await handle.flush();
+      });
+      assert.equal(answered, false, 'nor after a report');
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it('still writes what the editor reported when it stops answering as the app backgrounds', async () => {
+    const written = [];
+    const unanswering = {
+      port: { current: { requestSnapshot: async () => ({ kind: 'unanswered' }) } },
+    };
+    const { handle, mounted } = probe(async (patch) => {
+      written.push(patch);
+
+      return true;
+    }, unanswering);
+
+    try {
+      // Reported, with its debounced write not yet due when the app goes to the background.
+      handle.onSnapshot({
+        sessionId: 1,
+        editSeq: 1,
+        document: { type: 'doc', content: ['typed'] },
+      });
+      act(() => {
+        setAppState('background');
+      });
+      await settle();
+
+      assert.deepEqual(written, [
+        { title: 'On screen', body: { type: 'doc', content: ['typed'] } },
+      ]);
+      assert.equal(handle.failed, true, 'and still says the flush did not take everything');
+    } finally {
+      act(() => {
+        setAppState('active');
+      });
+      mounted.unmount();
+    }
+  });
+
+  it('will not let the screen go when the editor refuses to hand over what it holds', async () => {
+    const refusing = {
+      port: { current: { requestSnapshot: async () => ({ kind: 'refused', code: 'too_large' }) } },
+    };
+    const { handle, mounted } = probe(async () => true, refusing);
+
+    try {
+      let answered;
+
+      await act(async () => {
+        answered = await handle.flush();
+      });
+      assert.equal(answered, false);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
+  it('writes nothing more once its writing was discarded, not even on its way out', async () => {
+    const written = [];
+    const handle = {};
+    const editor = editorGiving(null);
+
+    function Probe() {
+      Object.assign(
+        handle,
+        useRowWriting(
+          async (patch) => {
+            written.push(patch);
+
+            return true;
+          },
+          editor.port,
+          () => ({ title: 'Mine' }),
+        ),
+      );
+
+      return null;
+    }
+
+    const screen = mount(createElement(Probe));
+
+    handle.onSnapshot({ sessionId: 1, editSeq: 2, document: { type: 'doc', content: ['mine'] } });
+    // Take server's.
+    handle.abandon();
+    screen.unmount();
+    await settle();
+
+    assert.deepEqual(written, [], 'the discarded writing does not come back');
+  });
+});
+
+describe('an edit after a server switch', () => {
+  const connect = (activation) => {
+    useConnectionStore.setState({
+      phase: {
+        kind: 'active',
+        rejection: null,
+        session: {
+          activation,
+          transport: {},
+          connection: {
+            connectionId: 'c1',
+            base: 'https://raphael.example',
+            origin: 'https://raphael.example',
+            protocolVersion: '2026-09-24',
+          },
+        },
+      },
+    });
+  };
+
+  const node = {
+    id: 42,
+    type: 'resource',
+    kind: 'note',
+    parentId: 1,
+    slug: 'field-notes',
+    revision: 3,
+    title: 'Field notes',
+    description: '',
+    tags: [],
+    active: false,
+    archived: false,
+    isFavorite: false,
+    archiveCauses: [],
+    body: { format: 'tiptap', value: { type: 'doc', content: [{ type: 'paragraph' }] } },
+    metadata: {},
+  };
+
+  it('is kept for a node this connection read, and not for one an earlier connection read', async () => {
+    connect(1);
+    queryClient.setQueryData(nodeKey(1, node.id), node);
+    assert.equal(await writeEdit(node.id, { title: 'Edited' }), true);
+    assert.equal(useUnsentState.getState().rows.length, 1);
+    assert.equal(useUnsentState.getState().rows[0].baseRevision, 3);
+
+    // The switch wipes the rows first and activates the new server only after its hold. An editor
+    // of the old server writing in between, with the old server's read still cached, is refused.
+    await discardAllUnsent();
+    assert.equal(await writeEdit(node.id, { title: 'Edited during the hold' }), false);
+    assert.equal(useUnsentState.getState().rows.length, 0);
+
+    // After activation, an editor from before the switch writes on its way out.
+    queryClient.clear();
+    connect(2);
+    await writeEdit(node.id, { title: 'Edited on the way out' });
+
+    assert.equal(useUnsentState.getState().rows.length, 0, 'nothing for the new server to send');
+  });
+});
+
+describe('a switch that does not happen', () => {
+  it('lets this server’s screens write again', async () => {
+    await discardAllUnsent();
+    resumeUnsent();
+
+    useConnectionStore.setState({
+      phase: {
+        kind: 'active',
+        rejection: null,
+        session: {
+          activation: 7,
+          transport: {},
+          connection: {
+            connectionId: 'c1',
+            base: 'https://raphael.example',
+            origin: 'https://raphael.example',
+            protocolVersion: '2026-09-24',
+          },
+        },
+      },
+    });
+    queryClient.setQueryData(nodeKey(7, 9), {
+      id: 9,
+      type: 'resource',
+      kind: 'note',
+      parentId: 1,
+      slug: 'kept',
+      revision: 1,
+      title: 'Kept',
+      description: '',
+      tags: [],
+      active: false,
+      archived: false,
+      isFavorite: false,
+      archiveCauses: [],
+      body: { format: 'tiptap', value: { type: 'doc', content: [{ type: 'paragraph' }] } },
+      metadata: {},
     });
 
-    assert.deepEqual(flushes, [], 'a listener outliving its screen would flush a draft nobody has');
+    assert.equal(await writeEdit(9, { title: 'Still writing here' }), true);
+    assert.equal(useUnsentState.getState().rows.length, 1);
+    await discardAllUnsent();
+    resumeUnsent();
+    queryClient.clear();
   });
 });

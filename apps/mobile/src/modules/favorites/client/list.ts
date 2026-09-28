@@ -12,10 +12,7 @@ import {
 export type { FavoriteItem, FavoriteNode } from './options.ts';
 
 export interface FavoritePages {
-  /**
-   * Every loaded item, in server order, each stamped with its own page's request, and each node at
-   * most once (see `flattenFavoritePages`). Undefined until the first page has arrived.
-   */
+  /** Every loaded item, in server order, each node once. Undefined until the first page arrives. */
   readonly items: readonly FavoriteItem[] | undefined;
   readonly isPending: boolean;
   /** The first page failed and nothing is loaded. */

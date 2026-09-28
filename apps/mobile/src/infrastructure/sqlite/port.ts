@@ -50,6 +50,8 @@ export interface SqlConnection extends SqlReader {
  */
 export interface SqlDriver {
   open(name: string): Promise<SqlConnection>;
+  /** Deletes a database file that is not open. Rejects if there is none. */
+  remove(name: string): Promise<void>;
 }
 
 /**

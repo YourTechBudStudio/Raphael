@@ -13,9 +13,8 @@ const NOTE_HEIGHT = 0.9;
 /**
  * This grid draws the server's notes and nothing else.
  *
- * It used to take leading cards, for the unfinished notes Home drew before the feed. Home draws no
- * unfinished cards of any kind any more - it carries one count beside the Notes heading and Recovery
- * carries the list - so the mechanism is gone rather than left with no caller.
+ * Home draws no unfinished cards: it carries one count beside the Notes heading, and Unfinished
+ * carries the list.
  */
 export interface NoteGridProps {
   items: readonly NoteSummaryItem[];

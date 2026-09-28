@@ -2,7 +2,7 @@ import { GitCompareArrows } from 'lucide-react-native';
 import { Text, View } from 'react-native';
 
 import { colors, confirmDiscard, PressableFeedback } from '../../../ui';
-import { CONFLICT_BAND, KEEP_MINE_PROMPT, TAKE_SERVERS_PROMPT } from '../sync-copy.ts';
+import { CONFLICT_BAND, KEEP_MINE_PROMPT, TAKE_SERVERS_PROMPT } from '../copy.ts';
 
 export interface ConflictBandProps {
   /** Called once the person has confirmed dropping their version. */
@@ -14,8 +14,6 @@ export interface ConflictBandProps {
 /**
  * The editor's answer to "this changed on your server while you were editing": one sentence and two
  * ways out, both confirmed, above the bar. Not the error colour - nothing failed, two versions exist.
- *
- * Not mounted yet: phase 03 of the online-only plan puts it in `EditView` over an `unsent` row.
  */
 export function ConflictBand({ onTakeServers, onKeepMine }: ConflictBandProps) {
   return (

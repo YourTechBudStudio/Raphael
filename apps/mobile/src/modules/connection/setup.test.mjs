@@ -70,8 +70,6 @@ test('empty fields ask for what is missing rather than reciting a rule', () => {
 test('a timeout says the server was silent, and that nothing was saved', () => {
   const { title, detail } = describeVerifyFailure({
     kind: 'timeout',
-    timeoutMs: 15_000,
-    mutationOutcome: 'not_applicable',
     message: 'The server did not answer in time.',
   });
   assert.match(title, /did not answer/i);
@@ -82,8 +80,7 @@ test('a timeout says the server was silent, and that nothing was saved', () => {
 
 test('an unreachable address names every possibility instead of choosing one', () => {
   const { detail } = describeVerifyFailure({
-    kind: 'transport',
-    mutationOutcome: 'unknown',
+    kind: 'network',
     message: 'The server could not be reached.',
   });
   // React Native cannot tell these apart, so the copy must not pretend it can.
@@ -94,12 +91,10 @@ test('an unreachable address names every possibility instead of choosing one', (
 
 test('a refused key says the server was reached, because it was', () => {
   const { title, detail } = describeVerifyFailure({
-    kind: 'api_error',
+    kind: 'http',
     status: 401,
-    mutationOutcome: 'rejected',
     message: 'Unauthorized.',
-    error: { code: 'unauthorized', kind: 'client' },
-    details: {},
+    code: 'unauthorized',
   });
   assert.match(title, /key was refused/i);
   assert.match(detail, /there and answering/i);
@@ -107,10 +102,8 @@ test('a refused key says the server was reached, because it was', () => {
 
 test('a redirect explains the refusal in terms of the key, not the status code', () => {
   const { detail } = describeVerifyFailure({
-    kind: 'invalid_response',
-    reason: 'redirect_refused',
+    kind: 'bad_response',
     status: 302,
-    mutationOutcome: 'not_applicable',
     message: 'Redirect refused.',
   });
   assert.match(detail, /key/i);
@@ -118,32 +111,21 @@ test('a redirect explains the refusal in terms of the key, not the status code',
 });
 
 test('anything unreadable is reported as not-Raphael rather than as a parser error', () => {
-  const reasons = [
-    'unexpected_status',
-    'empty_response',
-    'invalid_utf8',
-    'malformed_json',
-    'invalid_payload',
-    'inconsistent_error',
-    'unrecognized_error',
+  const unreadable = [
+    { kind: 'bad_response', status: 200, message: 'unreadable' },
+    { kind: 'http', status: 502, message: 'The server answered 502.' },
   ];
-  for (const reason of reasons) {
-    const { title, detail } = describeVerifyFailure({
-      kind: 'invalid_response',
-      reason,
-      mutationOutcome: 'not_applicable',
-      message: 'unreadable',
-    });
-    assert.match(title, /not Raphael/i, reason);
-    assert.doesNotMatch(`${title} ${detail}`, /JSON|UTF-8|payload|envelope/i, reason);
+  for (const failure of unreadable) {
+    const { title, detail } = describeVerifyFailure(failure);
+    assert.match(title, /not Raphael/i, failure.kind);
+    assert.doesNotMatch(`${title} ${detail}`, /JSON|UTF-8|payload|envelope/i, failure.kind);
   }
 });
 
 test('a version mismatch passes through the shared wording, which is not terminal jargon', () => {
   const { title, detail } = describeVerifyFailure({
-    kind: 'invalid_response',
-    reason: 'incompatible_protocol',
-    mutationOutcome: 'not_applicable',
+    kind: 'bad_response',
+    code: 'incompatible_protocol',
     message: 'This server speaks protocol 2; Raphael here understands 1. Update Raphael here.',
   });
   assert.match(title, /different version/i);
@@ -152,25 +134,17 @@ test('a version mismatch passes through the shared wording, which is not termina
 
 test('every failure the client can produce has something to say', () => {
   const failures = [
-    { kind: 'invalid_request', mutationOutcome: 'not_dispatched', message: 'x', path: [] },
-    { kind: 'timeout', mutationOutcome: 'not_applicable', message: 'x', timeoutMs: 1000 },
-    { kind: 'cancelled', mutationOutcome: 'not_dispatched', message: 'x' },
-    { kind: 'transport', mutationOutcome: 'unknown', message: 'x' },
-    { kind: 'unsupported_fetch', mutationOutcome: 'not_dispatched', message: 'x' },
+    { kind: 'invalid_request', message: 'x' },
+    { kind: 'timeout', message: 'x' },
+    { kind: 'cancelled', message: 'x' },
+    { kind: 'network', message: 'x' },
     {
-      kind: 'api_error',
+      kind: 'http',
       status: 500,
-      mutationOutcome: 'unknown',
       message: 'x',
-      error: { code: 'internal_error', kind: 'server' },
-      details: {},
+      code: 'internal_error',
     },
-    {
-      kind: 'invalid_response',
-      reason: 'response_too_large',
-      mutationOutcome: 'not_applicable',
-      message: 'x',
-    },
+    { kind: 'bad_response', message: 'x' },
   ];
   for (const failure of failures) {
     const problem = describeVerifyFailure(failure);
@@ -200,7 +174,7 @@ const view = (over = {}) =>
     endpoint: GOOD_ADDRESS,
     key: GOOD_KEY,
     settled: BOTH_SETTLED,
-    attempted: false,
+    pressed: false,
     phase: { kind: 'idle' },
     ...over,
   });
@@ -241,14 +215,14 @@ test('a blank field is left alone until Connect is pressed', () => {
   assert.ok(view(blank).every((row) => row.state === 'pending'));
 
   // Pressing Connect is a declaration of being done, so the button must not look inert.
-  const rows = view({ ...blank, attempted: true });
+  const rows = view({ ...blank, pressed: true });
   assert.equal(stateOf(rows, 'address'), 'failed');
   assert.equal(stateOf(rows, 'key'), 'failed');
   assert.match(rows[1].problem?.detail ?? '', /Paste the API key/);
 });
 
 test('both fields can be wrong at once, and each says its own reason', () => {
-  const rows = view({ endpoint: 'nonsense', key: '', attempted: true });
+  const rows = view({ endpoint: 'nonsense', key: '', pressed: true });
   assert.equal(stateOf(rows, 'address'), 'failed');
   assert.equal(stateOf(rows, 'key'), 'failed');
   assert.notEqual(rows[0].problem?.detail, rows[1].problem?.detail);
@@ -265,12 +239,10 @@ test('while connecting, only the condition being established is on screen', () =
 
 test('a refused key proves the server was reached, and proves nothing about its version', () => {
   const problem = describeVerifyFailure({
-    kind: 'api_error',
+    kind: 'http',
     status: 401,
-    mutationOutcome: 'rejected',
     message: 'Unauthorized.',
-    error: { code: 'unauthorized', kind: 'client' },
-    details: {},
+    code: 'unauthorized',
   });
   assert.equal(problem.step, 'accepted');
 
@@ -283,8 +255,7 @@ test('a refused key proves the server was reached, and proves nothing about its 
 
 test('an unreachable server proves only the two local checks', () => {
   const problem = describeVerifyFailure({
-    kind: 'transport',
-    mutationOutcome: 'unknown',
+    kind: 'network',
     message: 'The server could not be reached.',
   });
   assert.equal(problem.step, 'reachable');
@@ -297,9 +268,8 @@ test('an unreachable server proves only the two local checks', () => {
 
 test('a version mismatch means everything before it held', () => {
   const problem = describeVerifyFailure({
-    kind: 'invalid_response',
-    reason: 'incompatible_protocol',
-    mutationOutcome: 'not_applicable',
+    kind: 'bad_response',
+    code: 'incompatible_protocol',
     message: 'This server speaks protocol 2; Raphael here understands 1. Update Raphael here.',
   });
   assert.equal(problem.step, 'version');
@@ -315,8 +285,6 @@ test('a version mismatch means everything before it held', () => {
 test('the explanation sits on the condition it broke, and nowhere else', () => {
   const problem = describeVerifyFailure({
     kind: 'timeout',
-    timeoutMs: 15_000,
-    mutationOutcome: 'not_applicable',
     message: 'The server did not answer in time.',
   });
   const carrying = view({ phase: { kind: 'failed', problem } }).filter(
@@ -329,8 +297,7 @@ test('the explanation sits on the condition it broke, and nowhere else', () => {
 test('a network failure never leaves a local check looking unresolved', () => {
   // The fields were good enough to dispatch, so they stay confirmed while the network row fails.
   const problem = describeVerifyFailure({
-    kind: 'transport',
-    mutationOutcome: 'unknown',
+    kind: 'network',
     message: 'x',
   });
   const rows = view({
@@ -343,15 +310,9 @@ test('a network failure never leaves a local check looking unresolved', () => {
 
 test('every failure the client can produce lands on a real condition', () => {
   const failures = [
-    { kind: 'invalid_request', mutationOutcome: 'not_dispatched', message: 'x', path: [] },
-    { kind: 'cancelled', mutationOutcome: 'not_dispatched', message: 'x' },
-    { kind: 'unsupported_fetch', mutationOutcome: 'not_dispatched', message: 'x' },
-    {
-      kind: 'invalid_response',
-      reason: 'redirect_refused',
-      mutationOutcome: 'not_applicable',
-      message: 'x',
-    },
+    { kind: 'invalid_request', message: 'x' },
+    { kind: 'cancelled', message: 'x' },
+    { kind: 'bad_response', status: 302, message: 'x' },
   ];
   for (const failure of failures) {
     const { step } = describeVerifyFailure(failure);
@@ -368,12 +329,10 @@ test('a verified connection shows all five, with nothing outstanding', () => {
 
 test('no row is ever shown as pending after a failure', () => {
   const problem = describeVerifyFailure({
-    kind: 'api_error',
+    kind: 'http',
     status: 401,
-    mutationOutcome: 'rejected',
     message: 'x',
-    error: { code: 'unauthorized', kind: 'client' },
-    details: {},
+    code: 'unauthorized',
   });
   const rows = view({ phase: { kind: 'failed', problem } });
   assert.ok(rows.every((row) => row.state !== 'pending'));

@@ -24,8 +24,8 @@ import { decodeRecord, encodeRecord, type ConnectionRecord, type RecordProblem }
 /**
  * The platform's secure storage, or the fact that it has none.
  *
- * `unsupported` is a property of the platform, not a failure of an attempt, which is why it is a
- * shape of the port rather than an outcome of calling it. Nothing is ever attempted against a
+ * `unsupported` is a property of the platform, not a failure of a write, which is why it is a
+ * shape of the port rather than an outcome of calling it. Nothing is ever tried against a
  * platform that cannot store a secret, so no code path has to decide what a refused write means
  * when there was never a keychain to refuse.
  */

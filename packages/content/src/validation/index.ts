@@ -14,3 +14,6 @@
 export { inspectDocumentTransport } from './transport.ts';
 export { CODE_LANGUAGE, findDocumentFailure } from './validate.ts';
 export { LINK_HREF_MAX_CODE_POINTS, isAllowedHref } from './url.ts';
+// Plain JSON walks, so native can derive a title without taking the schema entry point.
+export { deriveText } from '../schema/text.ts';
+export { deriveTitle } from '../schema/title.ts';

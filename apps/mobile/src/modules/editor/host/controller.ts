@@ -66,7 +66,6 @@ export interface EditorController extends EditorPort {
   /** One raw payload from the renderer. */
   readonly receive: (raw: unknown) => void;
   readonly replaceDocument: (documentId: string, document: unknown) => void;
-  readonly setUnprotected: (unprotected: boolean) => void;
   readonly rendererTerminated: () => void;
   /** Settles everything outstanding and clears every timer. Nothing may outlive the mount. */
   readonly dispose: () => void;
@@ -80,7 +79,6 @@ export const createEditorController = (
     readonly documentId: string;
     readonly document: unknown;
     readonly editable: boolean;
-    readonly unprotected?: boolean | undefined;
     readonly snapshotTimeoutMs: number;
   },
   bindings: ControllerBindings,
@@ -94,7 +92,6 @@ export const createEditorController = (
     documentId: input.documentId,
     document: input.document,
     editable: input.editable,
-    ...(input.unprotected === undefined ? {} : { unprotected: input.unprotected }),
   });
   const waiters = new Map<number, (result: BarrierResult) => void>();
   const timers = new Map<number, unknown>();
@@ -187,9 +184,6 @@ export const createEditorController = (
     },
     replaceDocument: (documentId, document) => {
       run({ type: 'documentReplaced', documentId, document });
-    },
-    setUnprotected: (unprotected) => {
-      run({ type: 'unprotectedChanged', unprotected });
     },
     rendererTerminated: () => {
       run({ type: 'rendererTerminated' });

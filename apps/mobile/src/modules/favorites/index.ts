@@ -7,20 +7,10 @@
  * no star.
  */
 
-export {
-  useFavoriteToggle,
-  type FavoriteFailure,
-  type FavoriteRead,
-  type FavoriteToggle,
-} from './client/toggle';
+export { useFavoriteToggle, type FavoriteRead, type FavoriteToggle } from './client/toggle';
 export {
   useFavoritePages,
   type FavoriteItem,
   type FavoriteNode,
   type FavoritePages,
 } from './client/list';
-export {
-  FAVORITE_FAILED_SENTENCE,
-  FAVORITE_UNCONFIRMED_SENTENCE,
-  favoriteFailureSentence,
-} from './copy';

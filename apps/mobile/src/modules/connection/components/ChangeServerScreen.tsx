@@ -7,7 +7,7 @@ export interface ChangeServerScreenProps {
   currentReachable?: boolean | undefined;
   /** Unsent writing that switching would discard. Composed by the route, which can see both owners. */
   unsent?: number | undefined;
-  onDiscardUnsent?: (() => void) | undefined;
+  onDiscardUnsent?: (() => Promise<boolean>) | undefined;
 }
 
 /**

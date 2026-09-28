@@ -38,24 +38,12 @@ export const page = (body, items, hasMore = false) =>
 
 export const refused = () => ({
   ok: false,
-  failure: {
-    kind: 'api_error',
-    status: 404,
-    mutationOutcome: 'rejected',
-    message: 'That node is not here.',
-    error: { code: 'node_not_found', message: 'not found' },
-    details: {},
-  },
-});
-
-export const lost = () => ({
-  ok: false,
-  failure: { kind: 'transport', mutationOutcome: 'unknown', message: 'No answer came back.' },
+  failure: { kind: 'http', status: 404, code: 'node_not_found', message: 'Node 3 does not exist.' },
 });
 
 export const unreachable = () => ({
   ok: false,
-  failure: { kind: 'transport', mutationOutcome: 'not_applicable', message: 'Unreachable.' },
+  failure: { kind: 'network', message: 'Unreachable.' },
 });
 
 export const onDemandServer = () => {

@@ -31,3 +31,15 @@ export const activationOf = (key: readonly unknown[]): number | null => {
 
   return typeof activation === 'number' ? activation : null;
 };
+
+const NODE = 'node';
+
+/**
+ * One node as the editor opened it. Only the editor reads it; `unsent` and the editor's own actions
+ * write it. It is never refreshed in the background, because its revision is the one new local
+ * writing is based on: a silent refetch could hand that writing someone else's revision.
+ */
+export const nodeKey = (activation: number, id: number): readonly unknown[] =>
+  scopeKey(activation, NODE, id);
+
+export const isNodeKey = (key: readonly unknown[]): boolean => key[2] === NODE;

@@ -19,26 +19,14 @@ import { asClientFailure } from '../../../infrastructure/query/failure.ts';
 import { flattenSearchPages, type SearchPage, type SearchResultItem } from './requests.ts';
 
 /**
- * The server looked for the scope and it is not there.
- *
- * Narrow on purpose, and narrower than "a 404": only `node_not_found` reported against the `scopes`
- * field is the scope being gone. The same code against another field, or any other failure, is an
- * ordinary failed search with an ordinary retry.
- *
- * This is the one place mobile depends on the contract's own spelling of that failure, so it lives
- * here beside the state it decides rather than inside the hook, where nothing could reach it: if the
- * field is ever reported differently, the screen would silently fall back from "That project is no
- * longer here." to a retry that cannot succeed, which is precisely the state `isScopeGone` exists to
- * prevent. A test holds the spelling in place.
+ * The server looked for the scope and it is not there: a search that cannot succeed, rather than one
+ * worth retrying. A test holds the spelling in place.
  */
 export const isScopeGone = (error: unknown): boolean => {
   const failure = asClientFailure(error);
 
-  return (
-    failure?.kind === 'api_error' &&
-    failure.error.code === 'node_not_found' &&
-    failure.details.field === 'scopes'
-  );
+  // A search names nothing but its scopes, so a missing node can only be one of them.
+  return failure?.kind === 'http' && failure.code === 'node_not_found';
 };
 
 /**

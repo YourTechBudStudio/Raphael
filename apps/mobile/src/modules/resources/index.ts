@@ -9,9 +9,8 @@
  * caller holding a key could read a page into a different cache entry, invalidate half a traversal,
  * or ask for an ordering nothing else uses and get a feed that silently disagrees with Home's.
  *
- * **There is no single-entity read here any more.** Opening a note is editing it, and the editor
- * reads through the edit owner's own Get, so a note detail query would be a second authority on what
- * one note says. Its cards still open by id; what they open is `/edit/[id]`.
+ * **There is no single-entity read here.** Opening a note is editing it, and the editor reads it
+ * itself. Cards open by id; what they open is `/edit/[id]`.
  */
 
 export { deriveNoteFeed, type NoteFeedView, type NoteQueryObservation } from './client/feed-state';

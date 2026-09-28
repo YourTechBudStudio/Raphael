@@ -15,6 +15,6 @@ import type { SqlConnection, SqlDriver } from './port.ts';
 export const SQLITE_SUPPORTED = false;
 
 export const sqlDriver: SqlDriver = {
-  open: (): Promise<SqlConnection> =>
-    Promise.reject(new Error('This platform has no database for saved attempts.')),
+  open: (): Promise<SqlConnection> => Promise.reject(new Error('This platform has no database.')),
+  remove: (): Promise<void> => Promise.resolve(),
 };

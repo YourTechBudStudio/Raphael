@@ -94,8 +94,6 @@ export interface SessionState {
   readonly lastAcceptedSeq: number;
   /** The newest document this host holds. Never replaced by older content. */
   readonly latestAccepted: EditorSnapshot | null;
-  /** Carried through crash recovery unchanged; the owner decides what it means. */
-  readonly unprotected: boolean;
   /** The renderer refused to hand over its live document, so only the renderer has it. */
   readonly rendererOnlyWriting: boolean;
   readonly barrier: Barrier | null;
@@ -108,7 +106,6 @@ export interface SessionState {
 export type SessionEvent =
   | { readonly type: 'message'; readonly raw: unknown }
   | { readonly type: 'documentReplaced'; readonly documentId: string; readonly document: unknown }
-  | { readonly type: 'unprotectedChanged'; readonly unprotected: boolean }
   | { readonly type: 'rendererTerminated' }
   | { readonly type: 'barrierRequested'; readonly lock: boolean }
   | { readonly type: 'barrierTimedOut'; readonly requestId: number }
@@ -150,7 +147,6 @@ export const createSession = (input: {
   readonly documentId: string;
   readonly document: unknown;
   readonly editable: boolean;
-  readonly unprotected?: boolean;
 }): SessionState => ({
   phase: 'loading',
   sessionId: 1,
@@ -159,7 +155,6 @@ export const createSession = (input: {
   locked: false,
   lastAcceptedSeq: 0,
   latestAccepted: null,
-  unprotected: input.unprotected ?? false,
   rendererOnlyWriting: false,
   barrier: null,
   nextRequestId: 1,
@@ -442,9 +437,6 @@ export const reduce = (state: SessionState, event: SessionEvent): Reduction => {
   switch (event.type) {
     case 'message':
       return onMessage(state, event.raw);
-
-    case 'unprotectedChanged':
-      return { state: { ...state, unprotected: event.unprotected }, effects: [] };
 
     case 'documentReplaced': {
       // An unrelated rerender must not overwrite newer accepted work, so identity decides, not

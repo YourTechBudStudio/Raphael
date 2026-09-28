@@ -40,7 +40,7 @@ export interface HierarchyStaleProps {
 }
 
 /**
- * A complete reading is on screen and the most recent attempt to replace it failed.
+ * A complete reading is on screen and the most recent read to replace it failed.
  *
  * The wording used to be hardcoded on each screen as "the most recent check did not reach the
  * server", which is one of the three things that can have happened and the only one that is not a

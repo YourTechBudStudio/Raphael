@@ -36,9 +36,8 @@ export interface CaptureBarProps {
  * It does not name where a capture would land and must not: a destination is chosen while writing,
  * so a bar promising one beforehand would be naming a place nobody had picked.
  *
- * New note is back, and it is real. Pressing it asks the owner for a durable draft **before** the
- * route opens, so there is never a composer over writing that has nowhere to be kept - which is why
- * it is busy-guarded rather than optimistic.
+ * Pressing New note makes a draft row **before** the route opens, so there is never a composer over
+ * writing that has nowhere to be kept - which is why it is busy-guarded rather than optimistic.
  */
 export function CaptureBar({
   onNewNote,

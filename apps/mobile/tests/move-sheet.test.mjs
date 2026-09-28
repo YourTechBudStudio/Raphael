@@ -3,9 +3,8 @@
  *
  * The real sheet over the app's own `QueryClient`, with the hierarchy seeded into the cache rather than
  * fetched. The move itself is the composition's `onMove`, substituted here, because what this sheet
- * owns is presentational: which places it offers, where the check starts, what a tap sends, what it
- * ignores, and what it says when a move does not happen. The owner's side of a move is proved in
- * `edit-move.test.mjs` and across the wire in `cross-client.test.mjs`.
+ * owns is presentational: which places it offers, where the check starts, what a tap sends, and what
+ * it ignores while the answer is out.
  */
 
 import assert from 'node:assert/strict';
@@ -26,13 +25,8 @@ const { createRoot } = await import('react-dom/client');
 const { QueryClientProvider } = await import('@tanstack/react-query');
 const { createTransport } = await import('@raphael/client');
 const { MoveSheet } = await import('../src/modules/capture/components/MoveSheet.tsx');
-const {
-  MOVE_CLOSE_WAITING_HINT,
-  MOVE_ROOT_CURRENT_HINT,
-  MOVE_ROOT_HINT,
-  MOVE_TREE_FAILED,
-  moveNotSentSentence,
-} = await import('../src/modules/capture/edit-composer.ts');
+const { MOVE_CLOSE_WAITING_HINT, MOVE_ROOT_CURRENT_HINT, MOVE_ROOT_HINT, MOVE_TREE_FAILED } =
+  await import('../src/modules/capture/copy.ts');
 const { useConnectionStore } = await import('../src/modules/connection/state/connection.ts');
 const { queryClient } = await import('../src/infrastructure/query/query-client.ts');
 const { scopeKey } = await import('../src/infrastructure/query/keys.ts');
@@ -95,7 +89,7 @@ const activate = (transport) => {
 
 activate({});
 
-const NOTE = { id: 42, type: 'resource', kind: 'note', slug: 'sync-notes' };
+const NOTE = { id: 42, type: 'resource', kind: 'note' };
 
 /** A promise the test answers when it chooses, so "while the answer is out" is a real interval. */
 const deferred = () => {
@@ -136,7 +130,7 @@ const open = (options = {}) => {
           onMove: (destination) => {
             asked.push(destination);
 
-            return answers.shift() ?? Promise.resolve({ kind: 'moved', parentId: null });
+            return answers.shift() ?? Promise.resolve();
           },
           onClose: () => closed.push(true),
         }),
@@ -212,7 +206,6 @@ describe('the move sheet', () => {
       await sheet.settle();
 
       assert.deepEqual(sheet.asked, [{ parentId: 5 }]);
-      assert.equal(sheet.byTestId('move-problem'), null);
     } finally {
       sheet.unmount();
     }
@@ -255,7 +248,7 @@ describe('the move sheet', () => {
       });
       assert.equal(sheet.closed.length, 0);
 
-      answer.resolve({ kind: 'moved', parentId: 5 });
+      answer.resolve();
       await sheet.settle();
 
       assert.notEqual(sheet.byTestId('move-close').getAttribute('aria-disabled'), 'true');
@@ -264,61 +257,15 @@ describe('the move sheet', () => {
     }
   });
 
-  it('puts the check back and says why when the server refuses', async () => {
-    const sheet = open({
-      answers: [
-        Promise.resolve({
-          kind: 'refused',
-          failure: {
-            kind: 'api_error',
-            status: 409,
-            mutationOutcome: 'not_applied',
-            message: 'conflict',
-            error: { code: 'slug_conflict', message: 'conflict' },
-            details: { field: 'destination' },
-          },
-        }),
-      ],
-    });
+  it('puts the check back once the answer comes, whichever way it went', async () => {
+    const sheet = open({ answers: [Promise.resolve()] });
 
     try {
       sheet.tap('Personal');
       await sheet.settle();
 
-      const problem = sheet.byTestId('move-problem');
-
-      assert.equal(
-        problem.textContent,
-        'Something in Personal already uses the note ID “sync-notes”. Change this note ID in Details, then move it.',
-      );
-      assert.equal(problem.getAttribute('aria-live'), 'assertive');
       assert.deepEqual(sheet.checked(), ['Raphael']);
-      assert.equal(sheet.closed.length, 0, 'the sheet stays open');
       assert.ok(sheet.text().includes('In Raphael now.'));
-    } finally {
-      sheet.unmount();
-    }
-  });
-
-  it('says why a move was not sent, and stays open', async () => {
-    const sheet = open({
-      answers: [Promise.resolve({ kind: 'not_sent', reason: 'unsent_writing' })],
-    });
-
-    try {
-      sheet.tap('Work');
-      await sheet.settle();
-
-      assert.equal(
-        sheet.byTestId('move-problem').textContent,
-        moveNotSentSentence('unsent_writing'),
-      );
-      assert.deepEqual(sheet.checked(), ['Raphael']);
-      assert.equal(sheet.closed.length, 0);
-
-      // The next tap is a fresh attempt, and the old sentence does not stand over it.
-      sheet.tap('Personal');
-      assert.equal(sheet.byTestId('move-problem'), null);
     } finally {
       sheet.unmount();
     }
@@ -326,7 +273,7 @@ describe('the move sheet', () => {
 
   it('offers a project areas only', () => {
     const sheet = open({
-      entity: { id: 2, type: 'project', kind: null, slug: 'raphael' },
+      entity: { id: 2, type: 'project', kind: null },
       parentId: 1,
       currentName: 'Work',
     });
@@ -344,7 +291,7 @@ describe('the move sheet', () => {
   });
 
   describe('for an area', () => {
-    const RESEARCH = { id: 3, type: 'area', kind: null, slug: 'research' };
+    const RESEARCH = { id: 3, type: 'area', kind: null };
 
     it('offers the top level as "Areas", and every area but itself and what is beneath it', () => {
       const sheet = open({ entity: RESEARCH, parentId: 1, currentName: 'Work' });
@@ -378,7 +325,7 @@ describe('the move sheet', () => {
         assert.ok(sheet.text().includes('Moving to the top level…'));
         assert.equal(sheet.byTestId('move-root').getAttribute('aria-selected'), 'true');
 
-        answer.resolve({ kind: 'moved', parentId: null });
+        answer.resolve();
         await sheet.settle();
       } finally {
         sheet.unmount();
@@ -386,7 +333,7 @@ describe('the move sheet', () => {
     });
 
     it('checks the root row for an area already at the top level, and closes on it', () => {
-      const WORK = { id: 1, type: 'area', kind: null, slug: 'work' };
+      const WORK = { id: 1, type: 'area', kind: null };
       const sheet = open({ entity: WORK, parentId: null, currentName: 'Areas' });
 
       try {
@@ -408,7 +355,7 @@ describe('the move sheet', () => {
     it('shows only the top level when nothing else can hold it, with no empty sentence', () => {
       const only = node(1, 'area', 'Work', null);
       const sheet = open({
-        entity: { id: 1, type: 'area', kind: null, slug: 'work' },
+        entity: { id: 1, type: 'area', kind: null },
         parentId: null,
         currentName: 'Areas',
         tree: { roots: [only], byId: new Map([[1, only]]) },
@@ -481,7 +428,7 @@ describe('the move sheet over a tree that did not load', () => {
 
   it('keeps the top level for an area, which needs no tree to choose', async () => {
     const { sheet } = await failing({
-      entity: { id: 3, type: 'area', kind: null, slug: 'research' },
+      entity: { id: 3, type: 'area', kind: null },
       parentId: 1,
       currentName: 'Work',
     });

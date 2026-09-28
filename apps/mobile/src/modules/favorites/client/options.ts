@@ -11,7 +11,6 @@ import type { Transport } from '../../../infrastructure/api';
 import type { ContainerType } from '../../../infrastructure/api/contracts';
 import { unwrap } from '../../../infrastructure/query/failure.ts';
 import { scopeKey } from '../../../infrastructure/query/keys.ts';
-import { nextReadStamp } from '../../../infrastructure/query/read-stamp.ts';
 import type { FavoriteRead } from './toggle.ts';
 
 /**
@@ -19,30 +18,17 @@ import type { FavoriteRead } from './toggle.ts';
  *
  * The server owns membership and order: favorites that are not archived, by title then id. Nothing
  * here filters, sorts or resolves names against the hierarchy; a row is exactly what the page said.
+ * Pages are 500 items, the most the contract allows, so an ordinary list arrives in one request.
  *
- * Pages are 500 items, the most the contract allows, so an ordinary list of shortcuts arrives in one
- * request. **Each page carries the stamp of the request that produced it**, because the star on each
- * row decides from it whether that row can have seen a confirmed change (`toggle.ts`). A next page
- * gets a new stamp and the pages before it keep theirs; a full refetch - after any favorite change,
- * on focus, or on Retry - re-requests every page and so re-stamps them all. A refetch that fails keeps
- * the previous pages, with their old stamps.
- *
- * The transport is captured from the session at render, as the notes feed does, so a list read under
- * one connection stays a read of that connection's server.
- *
- * Separated from the hook in `list.ts` for the reason `resources/client/options.ts` is: what this
- * promises about pages, stamps and the next-page guard is a promise about how the query library
- * behaves under these options, and a test can drive it against a real client and a real server with
- * no renderer and no connection store in the way. Private to the capability.
+ * Separated from the hook in `list.ts` so a test can drive it against a real client and a real
+ * server with no renderer and no connection store in the way. Private to the capability.
  */
 
 const FAVORITES = 'favorites';
 
-/** One page, and when it was asked for. */
+/** One page of the favorites list. */
 export interface FavoritePage {
   readonly page: ListResponse;
-  /** The `nextReadStamp()` taken just before this page was requested. */
-  readonly requestedAt: number;
 }
 
 /** A favorite is always a container: the server refuses a note. */
@@ -60,34 +46,21 @@ const isContainer = (node: NodeSummary): node is FavoriteNode =>
 /**
  * The loaded pages as one list, with each node once.
  *
- * Pages are not a snapshot across requests, so one node can be on two of them: page 1 returns A and
- * B, B is renamed to sort after C, and page 2 returns C and B. Only the copy from the most recently
- * requested page is kept - its title, its place in the order and its stamp are the newest this phone
- * has - and the list keeps page order otherwise. Row keys are node ids, so this is also what keeps
- * each row's star attached to one node. A node that moved the other way, from page 2's range into
- * page 1's, can be missed until the next refresh: the accepted cost of paging without a snapshot.
- *
- * An item that is not a container cannot arrive, because the server refuses to favorite a note. One
- * is dropped rather than drawn, as search drops a kind it does not know.
+ * Pages are not a snapshot across requests, so one node can be on two of them when it was renamed
+ * between them. The copy from the later page is kept - it was requested later - and page order is
+ * kept otherwise. A note cannot be a favorite, so anything that is not a container is dropped.
  */
 export const flattenFavoritePages = (pages: readonly FavoritePage[]): readonly FavoriteItem[] => {
-  const items = pages.flatMap(({ page, requestedAt }) =>
-    page.items.filter(isContainer).map((node): FavoriteItem => ({
-      node,
-      read: { id: node.id, isFavorite: node.isFavorite, requestedAt },
-    })),
+  const items = pages.flatMap(({ page }) =>
+    page.items
+      .filter(isContainer)
+      .map((node): FavoriteItem => ({ node, read: { id: node.id, isFavorite: node.isFavorite } })),
   );
-  const newest = new Map<number, FavoriteItem>();
+  const last = new Map<number, FavoriteItem>();
 
-  for (const item of items) {
-    const held = newest.get(item.node.id);
+  for (const item of items) last.set(item.node.id, item);
 
-    if (held === undefined || item.read.requestedAt > held.read.requestedAt) {
-      newest.set(item.node.id, item);
-    }
-  }
-
-  return items.filter((item) => newest.get(item.node.id) === item);
+  return items.filter((item) => last.get(item.node.id) === item);
 };
 
 /** Everything the paged favorites read is. Built from the transport the session held at render. */
@@ -98,14 +71,11 @@ export const favoritePagesOptions = (activation: number, transport: Transport | 
     queryFn: async ({ pageParam, signal }): Promise<FavoritePage> => {
       if (transport === null) throw new Error('No connection');
 
-      // Taken before the request leaves, so the stamp says when the server was asked, not when it
-      // answered. See `toggle.ts` for why that is the order that matters.
-      const requestedAt = nextReadStamp();
       const page = unwrap(
         await listFavorites(transport, { skip: pageParam, limit: LIST_LIMIT_MAX }, signal),
       );
 
-      return { page, requestedAt };
+      return { page };
     },
     // From what the server said about the page it sent, never from how many items survived the
     // container guard. A dropped item still occupied an offset.

@@ -33,8 +33,11 @@ export interface SetupScreenProps {
    * answered.
    */
   unsent?: number | undefined;
-  /** Called once the switch has happened, to remove that writing. */
-  onDiscardUnsent?: (() => void) | undefined;
+  /**
+   * Removes that writing, before the switch. Answers whether it is gone; if not, nothing switches,
+   * so writing meant for one server can never be sent to another.
+   */
+  onDiscardUnsent?: (() => Promise<boolean>) | undefined;
 }
 
 /**
@@ -42,7 +45,7 @@ export interface SetupScreenProps {
  *
  * Order matters and mirrors `raphael login`. Check both fields locally, verify over the network,
  * and only record the connection once a Raphael server has answered with a protocol version this
- * app understands. Nothing is remembered before that, so a failed attempt leaves the device exactly
+ * app understands. Nothing is remembered before that, so a failed verification leaves the device exactly
  * as unconnected as it was.
  *
  * Connect is always pressable. The checks underneath report what is known; they do not stand
@@ -59,11 +62,14 @@ export function SetupScreen({
   const [key, setKey] = useState('');
   const [revealed, setRevealed] = useState(false);
   const [settled, setSettled] = useState({ endpoint: false, key: false });
-  const [attempted, setAttempted] = useState(false);
+  const [pressed, setPressed] = useState(false);
   const [phase, setPhase] = useState<SetupPhase>({ kind: 'idle' });
   // A verified server that could not be written down while another one is already in place. It is
   // not a handshake failure - all five conditions held - so it is said separately, under the button.
   const [notSaved, setNotSaved] = useState<string | null>(null);
+  const [notDiscarded, setNotDiscarded] = useState(false);
+  const unsentNow = useRef(unsent);
+  unsentNow.current = unsent;
   const establish = useConnectionStore((state) => state.establish);
   // A deletion that failed during a disconnect. It is read from the store rather than passed in,
   // because the screen that asked for the disconnect was unmounted by the gate the moment the
@@ -75,8 +81,8 @@ export function SetupScreen({
   const [retryingRemoval, setRetryingRemoval] = useState(false);
   const insets = useSafeAreaInsets();
 
-  // Kept in a ref so an in-flight verification cannot resolve into a later attempt's state.
-  const attempt = useRef(0);
+  // Kept in a ref so an in-flight verification cannot resolve into a later verification's state.
+  const verification = useRef(0);
   // The success hold is a timer that outlives the render that started it. Leaving without it being
   // cancelled would replace a working connection after the person had already backed out.
   const hold = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -90,13 +96,14 @@ export function SetupScreen({
 
   const edit = (set: (value: string) => void, field: 'endpoint' | 'key') => (value: string) => {
     set(value);
-    // Typing retracts what the last attempt established, rather than leaving ticks standing
+    // Typing retracts what the last verification established, rather than leaving ticks standing
     // against values that are no longer the ones we checked.
     setSettled((current) => ({ ...current, [field]: false }));
-    setAttempted(false);
+    setPressed(false);
     setNotSaved(null);
+    setNotDiscarded(false);
     // Typing during the success hold abandons it: the values are no longer the ones that answered.
-    attempt.current += 1;
+    verification.current += 1;
     setPhase({ kind: 'idle' });
   };
 
@@ -109,33 +116,46 @@ export function SetupScreen({
 
     // Pressing Connect is someone declaring they are done, so a missing or unusable field can
     // finally say why rather than leaving the button looking broken.
-    setAttempted(true);
+    setPressed(true);
     setSettled({ endpoint: true, key: true });
     setNotSaved(null);
+    setNotDiscarded(false);
     if (hasFieldProblem(inspectSetupInput(endpoint, key))) {
       setPhase({ kind: 'idle' });
       return;
     }
 
-    const mine = ++attempt.current;
+    const mine = ++verification.current;
     setPhase({ kind: 'verifying' });
     void verifyConnection(endpoint, key).then(async (outcome) => {
       // A verification that finishes after the person changed a field, backed out, or started
-      // another attempt is answering a question nobody is asking. It must not connect anything.
-      if (mine !== attempt.current) return;
+      // another verification is answering a question nobody is asking. It must not connect anything.
+      if (mine !== verification.current) return;
       if (!outcome.ok) {
         setPhase({ kind: 'failed', problem: outcome.problem });
         return;
       }
 
       // Asked once, and only now that there is a working server to switch to.
-      const discarding = replacing !== undefined && unsent > 0;
-      if (discarding) {
-        const confirmed = await confirmDiscard(discardPrompt(unsent, replacing.origin));
-        if (mine !== attempt.current) return;
-        if (!confirmed) {
+      if (replacing !== undefined) {
+        const count = unsentNow.current;
+
+        if (count > 0) {
+          const confirmed = await confirmDiscard(discardPrompt(count, replacing.origin));
+          if (mine !== verification.current) return;
+          if (!confirmed) {
+            setPhase({ kind: 'idle' });
+            setPressed(false);
+            return;
+          }
+        }
+
+        // Always, not only when something was counted: a write can land after the count was read.
+        const discarded = (await onDiscardUnsent?.()) ?? true;
+        if (mine !== verification.current) return;
+        if (!discarded) {
           setPhase({ kind: 'idle' });
-          setAttempted(false);
+          setNotDiscarded(true);
           return;
         }
       }
@@ -145,10 +165,10 @@ export function SetupScreen({
       // allowed to finish its sentence before the app moves on. Short enough to read, short
       // enough not to feel like a wait.
       hold.current = setTimeout(() => {
-        if (mine !== attempt.current) return;
+        if (mine !== verification.current) return;
 
         void establish(outcome.server).then((result) => {
-          if (mine !== attempt.current) return;
+          if (mine !== verification.current) return;
 
           // Replacing a working connection is the one case where a failed write changes nothing.
           // The old server stays live and the screen says why the new one did not take its place.
@@ -170,8 +190,6 @@ export function SetupScreen({
             return;
           }
 
-          if (result.kind === 'activated' && discarding) onDiscardUnsent?.();
-
           // `activated` leaves through the gate, which swaps this screen out on its own.
           // `superseded` means a newer decision already won, and this screen is no longer the one
           // in charge of anything.
@@ -180,7 +198,7 @@ export function SetupScreen({
     });
   };
 
-  const rows = handshakeRows({ endpoint, key, settled, attempted, phase });
+  const rows = handshakeRows({ endpoint, key, settled, pressed, phase });
 
   return (
     <KeyboardAvoidingView
@@ -195,7 +213,7 @@ export function SetupScreen({
             onPress={() => {
               // Abandons any pending success hold as well as leaving: the connection this device
               // has is the one it keeps.
-              attempt.current += 1;
+              verification.current += 1;
               onCancel?.();
             }}
           />
@@ -357,6 +375,14 @@ export function SetupScreen({
             phone.
           </Text>
         )}
+        {notDiscarded ? (
+          <Text
+            accessibilityLiveRegion="assertive"
+            className="font-body text-[14px] leading-[20px] text-danger"
+          >
+            {`Raphael could not remove the unfinished notes from this phone, so it did not switch. You are still connected to ${replacing?.origin ?? 'your server'}.`}
+          </Text>
+        ) : null}
         {notSaved === null ? null : (
           <View accessibilityLiveRegion="assertive" accessibilityRole="alert">
             <Text className="font-body-semibold text-[15px] leading-[21px] text-danger">

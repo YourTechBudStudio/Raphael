@@ -63,17 +63,14 @@ const OTHER = 6;
 const target = (id = PROJECT, revision = 3, active = false) => ({ id, revision, active });
 
 const conflict = () => ({
-  kind: 'api_error',
+  kind: 'http',
   status: 409,
-  mutationOutcome: 'rejected',
+  code: 'revision_conflict',
   message: 'This project changed since you read it.',
-  error: { code: 'revision_conflict', message: 'revision mismatch' },
-  details: {},
 });
 
 const unreachable = () => ({
-  kind: 'transport',
-  mutationOutcome: 'unknown',
+  kind: 'network',
   message: 'The server could not be reached.',
 });
 
@@ -387,7 +384,7 @@ describe('a write the server refuses', () => {
     });
   });
 
-  it('reports an archive made elsewhere as archived, with what to word it from', async () => {
+  it("reports an archive made elsewhere as archived, in the server's words", async () => {
     act(() => {
       screen.at('home').toggle(target());
     });
@@ -395,18 +392,16 @@ describe('a write the server refuses', () => {
     await flush(() => {
       server.settle(
         refused({
-          kind: 'api_error',
+          kind: 'http',
           status: 409,
-          mutationOutcome: 'rejected',
-          message: 'This project is archived.',
-          error: { code: 'node_archived', message: 'archived' },
-          details: { field: 'target', reason: 'inherited' },
+          code: 'node_archived',
+          message: 'The parent is inside something archived.',
         }),
       );
     });
 
     assert.equal(screen.at('home').failure, 'archived');
-    assert.deepEqual(screen.at('home').failureDetails, { field: 'target', reason: 'inherited' });
+    assert.equal(screen.at('home').failureMessage, 'The parent is inside something archived.');
 
     await flush(() => {
       entity.settle();

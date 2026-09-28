@@ -22,17 +22,8 @@
 /** The version this build writes. */
 export const RECORD_VERSION = 1;
 
-/**
- * Either identifier a verification could have established: today's calendar date string, or the
- * positive integer an older build of this app wrote before the identifier became a date.
- *
- * Historical either way. It records what one exchange proved at one moment and says nothing about
- * whether the server still speaks it now, which is why it is read rather than trusted, and why a
- * record written by an older build is still a perfectly good record. A stored number is read as the
- * fact it is, never rewritten in place and never converted into a date it never was; the next
- * successful verification stores the date string on its own.
- */
-export type StoredProtocolVersion = string | number;
+/** The calendar-date protocol identifier one verification established. Historical, never re-checked. */
+export type StoredProtocolVersion = string;
 
 export interface ConnectionRecord {
   readonly version: number;
@@ -50,7 +41,7 @@ export interface ConnectionRecord {
   /** Origin alone, for display. */
   readonly origin: string;
   readonly apiKey: string;
-  /** What one verification established, whenever it happened. See `StoredProtocolVersion`. */
+  /** What one verification established, whenever it happened. */
   readonly protocolVersion: StoredProtocolVersion;
   /** When that verification happened. Also historical, and only ever shown as such. */
   readonly verifiedAt: string;
@@ -87,17 +78,6 @@ const isCalendarDate = (value: string): boolean => {
 };
 
 /**
- * Accepting both identifiers is a widening of what can be *read*, not a softening of the check.
- * Anything that is neither is still "unreadable", exactly as before - a malformed identifier is a
- * record this build cannot vouch for, and saying so is what keeps a credential from being silently
- * discarded.
- */
-const isStoredProtocolVersion = (value: unknown): value is StoredProtocolVersion => {
-  if (typeof value === 'string') return isCalendarDate(value);
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
-};
-
-/**
  * Reads a stored record, or says exactly what is wrong with it.
  *
  * The version check runs before the field checks. A future record may legitimately carry fields
@@ -130,7 +110,8 @@ export const decodeRecord = (raw: string): DecodedRecord => {
     !isNonEmptyString(base) ||
     !isNonEmptyString(origin) ||
     !isNonEmptyString(apiKey) ||
-    !isStoredProtocolVersion(protocolVersion) ||
+    typeof protocolVersion !== 'string' ||
+    !isCalendarDate(protocolVersion) ||
     !isNonEmptyString(verifiedAt)
   ) {
     return { ok: false, problem: 'unreadable' };

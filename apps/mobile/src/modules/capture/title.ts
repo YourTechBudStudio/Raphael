@@ -1,18 +1,8 @@
 /**
  * What a note's title is: one line, however it arrives, and however large the text is drawn.
  *
- * The design gives the title two visible lines and makes Return move on rather than insert a break.
- * That covers typing and nothing else: a paste, a keyboard macro, or a title recovered from an older
- * build can all carry a line break. So the rule is stated twice, deliberately, at two different
- * boundaries.
- *
- * **In the composer**, arriving breaks are normalized to a space before the owner is told anything,
- * because that is the moment a person can still see and change what happened to their input.
- *
- * **At the freeze boundary**, a title that still holds a break is *refused*, never rewritten. By
- * then the bytes are about to become a frozen request under an idempotency key, and quietly
- * repairing them there would mean the stored request is not what anyone approved - which is the one
- * thing freezing exists to prevent.
+ * Return moves on rather than inserting a break, but a paste can still carry one, so arriving breaks
+ * become a space in the composer, where the person can still see and change what happened.
  */
 
 /**
@@ -23,8 +13,6 @@
  * of two and must not become two spaces.
  */
 const LINE_BREAKS = /[\r\n\u2028\u2029]+/gu;
-
-export const hasLineBreak = (value: string): boolean => /[\r\n\u2028\u2029]/u.test(value);
 
 /**
  * One line, with the authored spacing otherwise untouched.

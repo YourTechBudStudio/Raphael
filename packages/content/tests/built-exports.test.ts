@@ -73,6 +73,7 @@ describe('built exports', () => {
     );
     assert.equal(validation.isAllowedHref('https://example.com'), true);
     assert.equal(validation.isAllowedHref('javascript:alert(1)'), false);
+    assert.equal(validation.deriveTitle(document as never, ''), 'hello');
   });
 
   it('converts through the conversion entry point', async () => {

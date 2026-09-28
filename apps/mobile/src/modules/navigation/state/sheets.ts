@@ -20,9 +20,7 @@ import type { ContainerType } from '../../../infrastructure/api/contracts';
  * again for something already chosen, or inferring it from the current route, which is the inference
  * that was removed.
  *
- * **There is no resume sheet any more.** Container creation has no durable record to resume: it is
- * one request from the sheet that asked for it, and closing the sheet forgets the key. What used to
- * be resumed was an attempt record, and that whole subsystem is gone.
+ * A container sheet can also reopen a draft kept in Unfinished, by its `unsent` row id.
  */
 
 export type OpenSheet =
@@ -32,6 +30,8 @@ export type OpenSheet =
       readonly containerType: ContainerType;
       /** Null creates at the root, which holds only areas. */
       readonly parentAreaId: number | null;
+      /** A kept draft to reopen, or null for a new one. */
+      readonly draftId: string | null;
     };
 
 interface SheetsState {
@@ -45,6 +45,7 @@ interface SheetsState {
   session: number;
   openVoiceCapture: () => void;
   openNewContainer: (containerType: ContainerType, parentAreaId: number | null) => void;
+  openContainerDraft: (containerType: ContainerType, draftId: string) => void;
   close: () => void;
 }
 
@@ -60,7 +61,10 @@ export const useSheetsStore = create<SheetsState>((set) => {
       show({ kind: 'voice-capture' });
     },
     openNewContainer: (containerType, parentAreaId) => {
-      show({ kind: 'new-container', containerType, parentAreaId });
+      show({ kind: 'new-container', containerType, parentAreaId, draftId: null });
+    },
+    openContainerDraft: (containerType, draftId) => {
+      show({ kind: 'new-container', containerType, parentAreaId: null, draftId });
     },
     close: () => {
       set({ open: null });

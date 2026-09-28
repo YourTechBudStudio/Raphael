@@ -23,28 +23,12 @@ export function openProject(id: number): void {
   router.push({ pathname: '/project/[id]', params: { id: String(id) } });
 }
 
-/**
- * Opens the editor over one existing entity.
- *
- * By the server's numeric id, which is the only identity an entity has. There is no draft route here:
- * writing that exists only on this phone is not addressable by a server id and is opened from the
- * record that holds it.
- *
- * One route for notes and containers alike: opening something is editing it, and the owner's own read
- * establishes which of the two it is, so the caller does not have to know. There is no read-only view
- * to fall back to and no mode to enter.
- */
+/** Opens the editor over one existing entity: notes and containers alike. */
 export function openEditor(id: number): void {
   router.push({ pathname: '/edit/[id]', params: { id: String(id) } });
 }
 
-/**
- * Opens the composer over one durable draft.
- *
- * By the draft's own identifier, which is the only identity writing that is not on a server has.
- * The route carries nothing else: no title, no destination and no payload, because a copy of a
- * record in navigation state is a copy that goes stale, and the owner holds the record.
- */
+/** Opens the composer over one draft, by its `unsent` row id. The row holds everything else. */
 export function openCapture(draftId: string): void {
   router.push({ pathname: '/capture/[draftId]', params: { draftId } });
 }
@@ -78,9 +62,9 @@ export function openSettings(): void {
   router.push('/settings');
 }
 
-/** Opens the list of notes left unfinished on this phone. */
-export function openRecovery(): void {
-  router.push('/recovery');
+/** Opens Unfinished: writing on this phone that has not reached the server. */
+export function openUnfinished(): void {
+  router.push('/unfinished');
 }
 
 /** Opens the screen that points this device at a different server. */

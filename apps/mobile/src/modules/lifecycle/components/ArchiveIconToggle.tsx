@@ -12,6 +12,8 @@ export interface ArchiveIconToggleProps {
   view: LifecycleView | null;
   /** A request is running: the busy ring turns and nothing can be pressed. */
   busy: boolean;
+  /** Why it cannot be pressed right now, when it cannot: dimmed, and the hint says why. */
+  unavailable?: string | undefined;
   /** What is being edited, lowercased, for the spoken label: "note", "project", "area". */
   noun: string;
   onArchive: () => void;
@@ -30,21 +32,23 @@ export interface ArchiveIconToggleProps {
 export function ArchiveIconToggle({
   view,
   busy,
+  unavailable,
   noun,
   onArchive,
   onRestore,
   testID,
 }: ArchiveIconToggleProps) {
   const selected = view?.canRestore === true;
+  const disabled = busy || unavailable !== undefined;
 
   return (
     <Pressable
-      accessibilityHint={toggleHint(view)}
+      accessibilityHint={unavailable ?? toggleHint(view)}
       accessibilityLabel={iconToggleSpokenLabel(view, noun)}
       accessibilityRole="button"
-      accessibilityState={{ busy, checked: selected, disabled: busy, selected }}
-      className={busy ? 'opacity-60' : ''}
-      disabled={busy}
+      accessibilityState={{ busy, checked: selected, disabled, selected }}
+      className={disabled ? 'opacity-60' : ''}
+      disabled={disabled}
       hitSlop={4}
       onPress={selected ? onRestore : onArchive}
       testID={testID}

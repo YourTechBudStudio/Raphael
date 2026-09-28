@@ -6,23 +6,19 @@ import {
 } from '@expo-google-fonts/source-sans-3';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { useFonts } from 'expo-font';
-import { Stack } from 'expo-router';
+import { Stack, usePathname } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import '../../global.css';
 import { queryClient, startAppStateBridge } from '../infrastructure/query/query-client';
-import {
-  StorageGate,
-  useCaptureLifetime,
-  useEditLifetime,
-  VoiceCaptureSheet,
-} from '../modules/capture';
+import { StorageGate, VoiceCaptureSheet } from '../modules/capture';
 import { ContainerCreationHost } from '../modules/collections';
-import { ConnectionGate } from '../modules/connection';
+import { ConnectionGate, OfflineGate } from '../modules/connection';
+import { startUnsent } from '../modules/unsent';
 import { colors } from '../ui/theme';
 
 // Keep Home underneath directly opened routes, including the search modal.
@@ -52,23 +48,10 @@ export default function RootLayout() {
   // refresh when someone comes back rather than showing them what was true an hour ago.
   useEffect(startAppStateBridge, []);
 
-  /**
-   * Opened once, for the whole process, and deliberately above the connection gate.
-   *
-   * The owner has to outlive every route and every connection: an answer arriving after a switch
-   * still has to be classified and written against its original attempt, and a dispatcher that
-   * lived inside the connected branch would be destroyed by exactly the event that makes that
-   * answer interesting.
-   *
-   * Opening the database here is not the same as showing its contents. `ConnectionGate` still
-   * decides what a person may see, and without a configured connection that is setup and nothing
-   * else - no Home, no composer, no recovery, however much this has already read.
-   */
-  useCaptureLifetime();
-  // The second owner over the same database, mounted beside the first and for the same reasons: an
-  // answer arriving after someone navigates away still has to be written against its own record, and
-  // what is unsent has to be countable before any screen asks.
-  useEditLifetime();
+  // Unsent writing and the runner that sends it live for the whole process, outside every route.
+  useEffect(() => {
+    void startUnsent();
+  }, []);
 
   if (!ready) {
     return null;
@@ -79,41 +62,47 @@ export default function RootLayout() {
       <GestureHandlerRootView style={{ flex: 1 }}>
         <QueryClientProvider client={queryClient}>
           <StatusBar style="dark" />
-          {/* Setup is a prerequisite for using the app, not a screen with the app behind it.
-              There is no unfinished-note list under the setup form and no route to one: everything
-              on this phone stays exactly where it is and becomes reachable once a connection
-              exists. The storage gate sits inside, so a phone that cannot keep a note says so to
-              someone who is connected rather than becoming a way around setup. */}
+          {/* Setup is a prerequisite for using the app, not a screen with the app behind it. */}
           <ConnectionGate>
             <StorageGate>
-              <Stack
-                initialRouteName="index"
-                screenOptions={{
-                  headerShown: false,
-                  contentStyle: { backgroundColor: colors.canvas },
-                }}
-              >
-                <Stack.Screen name="index" />
-                <Stack.Screen name="browse" />
-                {/* Leaving the composer is always a controlled exit: the flush happens under a
-                    lock and the lock is held until the route actually goes. A swipe-back would
-                    unmount the renderer with neither, so it is off for this screen. */}
-                <Stack.Screen name="capture/[draftId]" options={{ gestureEnabled: false }} />
-                {/* The same rule for the same reason: leaving the editor is a controlled exit that
-                    waits for the server, and a swipe-back would unmount the renderer past both the
-                    locked flush and the wait. */}
-                <Stack.Screen name="edit/[id]" options={{ gestureEnabled: false }} />
-                <Stack.Screen name="recovery" />
-                <Stack.Screen name="settings" />
-                <Stack.Screen name="change-server" />
-                <Stack.Screen name="search" options={{ presentation: 'modal' }} />
-              </Stack>
-              <VoiceCaptureSheet />
-              <ContainerCreationHost />
+              <Offline>
+                <Stack
+                  initialRouteName="index"
+                  screenOptions={{
+                    headerShown: false,
+                    contentStyle: { backgroundColor: colors.canvas },
+                  }}
+                >
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="browse" />
+                  <Stack.Screen name="capture/[draftId]" />
+                  <Stack.Screen name="edit/[id]" />
+                  <Stack.Screen name="unfinished" />
+                  <Stack.Screen name="settings" />
+                  <Stack.Screen name="change-server" />
+                  <Stack.Screen name="search" options={{ presentation: 'modal' }} />
+                </Stack>
+                <VoiceCaptureSheet />
+                <ContainerCreationHost />
+              </Offline>
             </StorageGate>
           </ConnectionGate>
         </QueryClientProvider>
       </GestureHandlerRootView>
     </SafeAreaProvider>
   );
+}
+
+/**
+ * The offline screen covers the app, except where writing continues on the phone - the composer and
+ * the editor - and on Change server, which is the way out. It appears when the person navigates on.
+ */
+function Offline({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const exempt =
+    pathname.startsWith('/capture/') ||
+    pathname.startsWith('/edit/') ||
+    pathname === '/change-server';
+
+  return <OfflineGate exempt={exempt}>{children}</OfflineGate>;
 }

@@ -12,10 +12,11 @@ import {
   SectionHeading,
   Screen,
   SectionError,
+  Snackbar,
   ToggleLabel,
 } from '../../../ui';
 import { RejectionNotice } from '../../connection';
-import { favoriteFailureSentence, useFavoriteToggle, type FavoriteRead } from '../../favorites';
+import { useFavoriteToggle, type FavoriteRead } from '../../favorites';
 import {
   lifecycleView,
   UNAVAILABLE_WHILE_ARCHIVED_HINT,
@@ -58,11 +59,7 @@ import { ReadOnlyBody } from './ReadOnlyBody';
 import { TileGrid, type TileGridItem } from './TileGrid';
 
 /** Stands in when there is no client failure to inspect, so the not-found check stays total. */
-const NO_FAILURE = {
-  kind: 'transport',
-  mutationOutcome: 'not_applicable',
-  message: '',
-} as const;
+const NO_FAILURE = { kind: 'network', message: '' } as const;
 
 export interface AreaScreenProps {
   /** Null when the route parameter did not name a container. */
@@ -148,12 +145,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
   const favoriteRead: FavoriteRead | null =
     areaQuery.data === undefined || wrongType
       ? null
-      : {
-          id: areaQuery.data.entity.id,
-          isFavorite: areaQuery.data.entity.isFavorite,
-          requestedAt: areaQuery.data.requestedAt,
-        };
-  const favoriteFailure = favoriteFailureSentence(favorite.failure);
+      : { id: areaQuery.data.entity.id, isFavorite: areaQuery.data.entity.isFavorite };
 
   const header = (
     <LocationTopBar
@@ -318,11 +310,6 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
             )
           }
         />
-        {favoriteFailure === null ? null : (
-          <Text accessibilityLiveRegion="polite" className="mt-2 font-body text-[15px] text-danger">
-            {favoriteFailure}
-          </Text>
-        )}
         {view === null ? null : <ArchiveLines action={lifecycle} view={view} />}
 
         {entity === undefined ? null : (
@@ -414,6 +401,7 @@ export function AreaScreen({ areaId }: AreaScreenProps) {
           setAdding(null);
         }}
       />
+      <Snackbar message={favorite.failureMessage} onHidden={favorite.dismiss} />
     </View>
   );
 }

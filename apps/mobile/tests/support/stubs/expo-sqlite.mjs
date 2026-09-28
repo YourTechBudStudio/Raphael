@@ -11,3 +11,5 @@
 export const openDatabaseAsync = () => {
   throw new Error('a component test must not open a database');
 };
+
+export const deleteDatabaseAsync = () => Promise.resolve();

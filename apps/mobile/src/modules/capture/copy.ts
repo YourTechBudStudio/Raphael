@@ -1,147 +1,254 @@
 /**
- * What capture says about a note that is not finished.
+ * What the composer, the editor, the move sheet and Unfinished say.
  *
- * One file, because the same situation is described on a Home card, on a recovery card and at the
- * top of the composer, and three separately-written sentences about "we do not know whether this
- * saved" is how a product ends up telling someone two different things about one note.
- *
- * The rule every sentence here obeys: **a refusal of the latest request is never reported as
- * "nothing was created"** unless nothing was ever uncertain. A first dispatch can commit and lose
- * its answer, and a replay under the same key can then take a perfectly valid refusal - that refusal
- * is about the replay, and the creation remains genuinely unresolved.
+ * Pure, so the words run under `node --test`. "Slug" appears in no sentence: the interface says
+ * "note ID", "area ID" or "project ID".
  */
 
-import type { DraftProblem } from './types.ts';
-import type { UnfinishedStatus, WithdrawnReason } from './unfinished.ts';
+import type { NodeType, ResourceKind } from '@raphael/contracts/nodes';
 
-/** The line above the title on a card. Status where a saved note carries its location. */
-export const EYEBROW: Record<UnfinishedStatus, string> = {
-  unresolved: 'Save not confirmed',
-  unresolved_withdrawn: 'Save not confirmed',
-  unrecorded_success: 'Created · not recorded here',
-  refused: 'Not saved',
-  draft: 'Draft · on this phone',
-  remainder: 'On your server · newer writing here',
-  inconsistent: 'Save not confirmed',
-  unusable: 'Kept · cannot be opened here',
-};
+export interface StatusLine {
+  readonly text: string;
+  readonly tone: 'quiet' | 'alert';
+}
 
-/** Whether the eyebrow is said in the error colour. Drafts and remainders are not problems. */
-export const isAlarming = (status: UnfinishedStatus): boolean =>
-  status !== 'draft' && status !== 'remainder' && status !== 'unusable';
+/** A local write that did not reach SQLite. There is no repair flow; the next write tries again. */
+export const NOT_KEPT_STATUS: StatusLine = { text: 'Couldn’t save on this phone', tone: 'alert' };
 
-const WITHDRAWN: Record<WithdrawnReason, string> = {
-  window_ended:
-    'It is too late to send exactly the same request again, so look in the destination before creating it again.',
-  clock_anomaly:
-    'The clock changed, so Raphael cannot establish whether the same request can still be sent. Look in the destination before creating it again.',
-  conflict:
-    'Your server refused the last try as a conflict, so sending it again cannot help. Look in the destination before creating it again.',
-  unusable_payload:
-    'This request was saved by a different version of Raphael and cannot be sent again. What you wrote is kept on this phone.',
-};
+/* ------------------------------------------------------------------------------------ composer */
 
-/**
- * The one sentence a card says under its title.
- *
- * `withdrawn` only ever refines an unresolved save: it says why the same request can no longer be
- * sent, never that the note does not exist.
- */
-export const sentenceFor = (
-  status: UnfinishedStatus,
-  withdrawn: WithdrawnReason | null,
-  problem?: DraftProblem | undefined,
-): string => {
-  switch (status) {
-    case 'unresolved':
-      return 'Raphael sent this and never heard back, so it cannot tell whether your server created it.';
-    case 'unresolved_withdrawn':
-      return `Raphael sent this and never heard back. ${withdrawn === null ? '' : WITHDRAWN[withdrawn]}`.trim();
-    case 'unrecorded_success':
-      return 'Your server created this. Raphael could not write that down on this phone, so it is being kept in memory until it can.';
+/** What stops a draft from saving, first thing first. */
+export type DraftProblem = 'destination' | 'writing' | 'slug' | null;
+
+/** Where a new note stands. Only a refusal is said in the error colour: nothing else is wrong. */
+export type CreateStanding =
+  | { readonly kind: 'draft'; readonly problem: DraftProblem }
+  | { readonly kind: 'saving' }
+  | { readonly kind: 'retrying' }
+  | { readonly kind: 'refused'; readonly message: string };
+
+export const createStatus = (standing: CreateStanding): StatusLine => {
+  switch (standing.kind) {
+    case 'saving':
+      return { text: 'Saving…', tone: 'quiet' };
+    case 'retrying':
+      return { text: 'Couldn’t save · will retry', tone: 'quiet' };
     case 'refused':
-      return 'Your server refused this and created nothing. What you wrote is kept here.';
+      return { text: `Not saved: ${standing.message}`, tone: 'alert' };
     case 'draft':
-      return 'Written on this phone and not sent yet.';
-    case 'remainder':
-      return 'This note is on your server. What you wrote afterwards is kept here and is not on it.';
-    case 'inconsistent':
-      return 'Raphael’s record of this note contradicts itself, so it will not guess. Nothing has been removed.';
-    case 'unusable':
-      return UNUSABLE_SENTENCE[problem ?? 'unreadable_row'];
+      switch (standing.problem) {
+        case 'destination':
+          return { text: 'Draft · choose where it goes to save', tone: 'quiet' };
+        case 'writing':
+          return { text: 'Draft · add a title or some writing to save', tone: 'quiet' };
+        case 'slug':
+          return { text: 'Draft · the title needs a letter or number to save', tone: 'quiet' };
+        case null:
+          return { text: 'Draft · on this phone', tone: 'quiet' };
+      }
   }
 };
 
-/**
- * Why a retained note cannot be opened here.
- *
- * Three different facts, and none of them is "it is gone". Each says what was kept and what would
- * make it readable, because the one thing this app must never do with a row it cannot understand is
- * rewrite it or quietly drop it.
- */
-const UNUSABLE_SENTENCE: Record<DraftProblem, string> = {
-  unsupported_content_schema:
-    'This note was written by a different version of Raphael, and this one cannot open it. It is kept exactly as it is; a newer version will be able to read it.',
-  unusable_body:
-    'This note’s body is not something this version of Raphael can open. It is kept exactly as it is rather than changed or removed.',
-  unreadable_row:
-    'Raphael could not read this note’s record on this phone. It is kept exactly as it is rather than changed or removed.',
+/** Save retries on its own after a retryable failure, so pressing it then only skips the wait. */
+export const saveLabel = (standing: CreateStanding): string => {
+  if (standing.kind === 'saving') return 'Saving…';
+  if (standing.kind === 'retrying') return 'Try now';
+  return 'Save';
 };
 
-/** Discarding is three different acts, and the confirmation has to say which one it is. */
-export const discardPromptFor = (status: UnfinishedStatus) => {
-  switch (status) {
-    case 'unresolved':
-    case 'unresolved_withdrawn':
-    case 'inconsistent':
-      return {
-        title: 'Discard this note?',
-        message:
-          'What you wrote is removed from this phone. Raphael keeps its record of the save it could not confirm, because discarding writing cannot undo a creation your server may already have made.',
-        keepLabel: 'Keep it',
-      };
-    case 'unrecorded_success':
-    case 'remainder':
-      return {
-        title: 'Discard what is kept here?',
-        message:
-          'The note on your server is not touched. Only the writing kept on this phone is removed.',
-        keepLabel: 'Keep it',
-      };
-    case 'draft':
+/** Said on Home after leaving a composer that still holds writing. */
+export const KEPT_DRAFT_NOTICE = 'Kept in Unfinished as a draft.';
+export const KEPT_RETRYING_NOTICE = 'Kept in Unfinished. It will keep trying.';
+
+export const savedIn = (place: string | null): string =>
+  place === null ? 'Saved on your server.' : `Saved in ${place}.`;
+
+/** A chosen destination, named - or honestly not named. */
+export interface DestinationName {
+  /** `parent / leaf`, with a leading ellipsis when deeper. Null means nothing is chosen. */
+  readonly chip: string | null;
+  /** The whole path, or null where there is none to speak. */
+  readonly spoken: string | null;
+  /** Just the leaf, for "Saved in <leaf>". */
+  readonly leaf: string | null;
+}
+
+export interface DestinationEyebrow {
+  readonly label: string;
+  readonly spoken: string;
+  readonly hint: string;
+}
+
+/** The destination row above the title. A chosen place that cannot be named stays chosen. */
+export const destinationEyebrow = (name: DestinationName): DestinationEyebrow => {
+  const hint = 'Chooses the area or project this note goes in';
+
+  if (name.chip === null) {
+    return { label: 'Where does this go?', spoken: 'Choose where this note goes', hint };
+  }
+
+  return {
+    label: name.chip,
+    spoken:
+      name.spoken === null
+        ? 'Where this note goes, which your server has not named here yet'
+        : `Filed in ${name.spoken}`,
+    hint,
+  };
+};
+
+/* -------------------------------------------------------------------------------------- editor */
+
+/** Where an edit to something that exists stands. It autosaves; this is the line beside Close. */
+export type EditStanding =
+  | { readonly kind: 'saved' }
+  | { readonly kind: 'saving' }
+  | { readonly kind: 'offline' }
+  | { readonly kind: 'waiting' }
+  | { readonly kind: 'refused'; readonly message: string }
+  | { readonly kind: 'conflict' };
+
+export const editStatus = (standing: EditStanding): StatusLine => {
+  switch (standing.kind) {
+    case 'saved':
+      return { text: 'Saved', tone: 'quiet' };
+    case 'saving':
+      return { text: 'Saving…', tone: 'quiet' };
+    case 'offline':
+      return { text: 'Offline · kept on this phone', tone: 'quiet' };
+    case 'waiting':
+      return { text: 'Waiting for your server · kept on this phone', tone: 'quiet' };
     case 'refused':
-    case 'unusable':
-      return {
-        title: 'Discard this note?',
+      return { text: `Not saved: ${standing.message}`, tone: 'alert' };
+    case 'conflict':
+      return { text: 'Changed on your server', tone: 'quiet' };
+  }
+};
+
+/** Move and archive wait for unsent writing, and say so when pressed for. */
+export const UNAVAILABLE_UNTIL_SAVED_HINT = 'Available once your changes are saved';
+
+export const CONFLICT_BAND =
+  'This changed on your server while you were editing. Which version stays?';
+
+export const TAKE_SERVERS_PROMPT = {
+  title: 'Discard your changes?',
+  message: 'Your server’s version replaces what you wrote here.',
+  keepLabel: 'Cancel',
+  discardLabel: 'Discard mine',
+} as const;
+
+export const KEEP_MINE_PROMPT = {
+  title: 'Replace the version on your server?',
+  message: 'What you wrote here overwrites the changes made on your server.',
+  keepLabel: 'Cancel',
+  discardLabel: 'Replace',
+} as const;
+
+/** What the ID field is called, by what is being edited. Never "slug". */
+export const idLabelOf = (nodeType: NodeType, kind: ResourceKind | null): string => {
+  if (nodeType === 'area') return 'area ID';
+  if (nodeType === 'project') return 'project ID';
+
+  return kind === 'note' ? 'note ID' : 'ID';
+};
+
+export const editKindWord = (nodeType: NodeType, kind: ResourceKind | null): string => {
+  if (nodeType === 'area') return 'Area';
+  if (nodeType === 'project') return 'Project';
+
+  return kind === 'note' ? 'Note' : 'Item';
+};
+
+export interface DetailsChip {
+  readonly label: string;
+  readonly spoken: string;
+  readonly hint: string;
+}
+
+/** The Details chip. A null slug is a new note, which has no ID until it is saved. */
+export const detailsChip = (input: {
+  readonly nodeType: NodeType;
+  readonly kind: ResourceKind | null;
+  readonly slug: string | null;
+  readonly tagCount: number;
+}): DetailsChip => {
+  const idLabel = idLabelOf(input.nodeType, input.kind);
+  const tags = `${String(input.tagCount)} ${input.tagCount === 1 ? 'tag' : 'tags'}`;
+
+  if (input.slug === null) {
+    return {
+      label: input.tagCount === 0 ? 'Tags' : tags,
+      spoken: input.tagCount === 0 ? 'Details: no tags' : `Details: ${tags}`,
+      hint: 'Adds tags to this note',
+    };
+  }
+
+  return {
+    label: input.tagCount === 0 ? input.slug : `${input.slug} · ${tags}`,
+    spoken: `Details: ${idLabel} ${input.slug}, ${tags}`,
+    hint: `Changes the ${idLabel} and tags`,
+  };
+};
+
+/* ---------------------------------------------------------------------------------- move sheet */
+
+export const MOVE_SHEET_TITLE = 'Where should this go?';
+export const moveSheetSubtitle = (current: string): string =>
+  `In ${current} now. Tap a place to move this there.`;
+export const moveBusySubtitle = (place: string): string => `Moving to ${place}…`;
+
+export const MOVE_ROOT_LABEL = 'Areas';
+export const MOVE_ROOT_TAG = 'Top level';
+export const MOVE_ROOT_HINT = 'Moves this area to the top level';
+export const MOVE_ROOT_CURRENT_HINT = 'It is here now. Closes this sheet';
+export const MOVE_ROOT_PLACE = 'the top level';
+
+export const MOVE_EYEBROW_HINT = 'Moves this somewhere else';
+export const MOVE_CLOSE_WAITING_HINT = 'Available once your server has answered';
+
+export const MOVE_TREE_FAILED =
+  'Unable to load areas and projects. Where this is filed has not changed.';
+export const MOVE_TREE_NO_MATCH = 'Nothing here matches that. Try a shorter word.';
+export const MOVE_TREE_EMPTY = 'No area or project here can hold this.';
+
+export const moveRowCopy = (word: string) => ({
+  hint: (title: string) => `Moves this ${word} into ${title}`,
+  chosen: (title: string) => `${title} is where this goes`,
+});
+
+/* ---------------------------------------------------------------------------------- Unfinished */
+
+/** The four reasons something is listed in Unfinished. A row syncing normally is not listed. */
+export type UnfinishedStanding = 'draft' | 'waiting' | 'refused' | 'conflict';
+
+export const UNFINISHED_STATE: Record<UnfinishedStanding, string> = {
+  draft: 'Draft',
+  waiting: 'Waiting to sync',
+  refused: 'Not saved',
+  conflict: 'Changed on your server',
+};
+
+export const UNFINISHED_OPEN_HINT: Record<UnfinishedStanding, string> = {
+  draft: 'Opens the draft to finish and save it',
+  waiting: 'Opens it. Raphael keeps trying to send it',
+  refused: 'Opens it so you can fix what your server refused',
+  conflict: 'Opens it to choose which version stays',
+};
+
+export const UNFINISHED_INTRO = 'Writing that hasn’t reached your server yet.';
+export const UNFINISHED_EMPTY = 'Nothing unfinished. Everything you wrote made it to your server.';
+
+/** Discard is a shortcut for rows nobody cares about any more; opening a row is how to resolve it. */
+export const unfinishedDiscardPrompt = (standing: UnfinishedStanding) =>
+  standing === 'conflict'
+    ? {
+        title: 'Discard your changes?',
+        message: 'Your server’s version stays as it is.',
+        keepLabel: 'Keep it',
+      }
+    : {
+        title: standing === 'draft' ? 'Discard this draft?' : 'Discard this?',
         message: 'What you wrote will not be saved anywhere.',
         keepLabel: 'Keep it',
       };
-  }
-};
-
-/** A draft nobody has titled is not a draft with a bad title. */
-export const displayTitle = (title: string): string =>
-  title.trim() === '' ? 'Untitled note' : title;
-
-export const RETIRED_HEADING = 'From another server';
-
-/**
- * For rows whose own record could not be read well enough to say where they came from.
- *
- * Its own heading rather than a bucket in the previous one, because "from another server" is a
- * claim, and the whole reason these rows are here is that the claim cannot be made.
- */
-export const UNKNOWN_HEADING = 'Server not readable';
-
-export const UNKNOWN_SENTENCE =
-  'Raphael could not read which server these belong to. They are kept exactly as they are.';
-
-export const RETIRED_SENTENCE =
-  'This belongs to a server this phone is no longer connected to. Raphael will never send it or bind it to the current one; copy the writing into a new note here, or discard it.';
-
-export const COPY_NOTICE =
-  'Copied into a new note on this server. Choose where it goes before saving it.';
-
-/** The success snackbar, which never claims the save happened a moment ago. */
-export const savedIn = (destination: string | null): string =>
-  destination === null ? 'Saved on your server.' : `Saved in ${destination}.`;

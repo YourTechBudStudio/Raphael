@@ -12,16 +12,13 @@ import {
   type ListRowParent,
 } from '../../../ui';
 import { containerLookup, useHierarchy } from '../../collections';
-import {
-  favoriteFailureSentence,
-  useFavoritePages,
-  useFavoriteToggle,
-  type FavoriteItem,
-} from '../../favorites';
+import { useFavoritePages, type FavoriteItem, type FavoriteToggle } from '../../favorites';
 
 interface FavoritesListProps {
   query: string;
   onSelect: (ref: ContainerRef) => void;
+  /** Held by the screen, which shows its failures in a snackbar. */
+  favorite: FavoriteToggle;
 }
 
 const KIND_WORDS: Record<ContainerType, string> = { area: 'Area', project: 'Project' };
@@ -57,25 +54,16 @@ interface FavoriteRowProps {
   item: FavoriteItem;
   parent: ListRowParent | undefined;
   onSelect: (ref: ContainerRef) => void;
+  favorite: FavoriteToggle;
 }
 
-/**
- * One favorite, with its own star.
- *
- * One toggle per row, as `useProjectActive` requires: a mutation observer reports only its latest
- * dispatch, so a list-wide instance would lose row A's refusal as soon as row B was tapped. What is in
- * flight and what the server confirmed are still shared by every star, because they come from the
- * mutation cache and the confirmed-answer entry. Only the verdict belongs to the row, and a row that
- * leaves after a successful remove takes its verdict with it, which is right: that write succeeded.
- */
-function FavoriteRow({ item, parent, onSelect }: FavoriteRowProps) {
-  const favorite = useFavoriteToggle();
+/** One favorite, with its star. */
+function FavoriteRow({ item, parent, onSelect, favorite }: FavoriteRowProps) {
   const { node, read } = item;
 
   return (
     <ListRow
       accessibilityHint={OPEN_HINTS[node.type]}
-      failure={favoriteFailureSentence(favorite.failure)}
       kindLabel={KIND_WORDS[node.type]}
       mark={{ kind: node.type, id: node.id }}
       onPress={() => {
@@ -117,7 +105,7 @@ function FavoriteRow({ item, parent, onSelect }: FavoriteRowProps) {
  * the rows above it and says so under them. More pages load from "Show more" rather than on scroll,
  * because `BrowseScreen` owns the scroll view and with 500 favorites to a page a second is rare.
  */
-export function FavoritesList({ query, onSelect }: FavoritesListProps) {
+export function FavoritesList({ query, onSelect, favorite }: FavoritesListProps) {
   const needle = query.trim().toLowerCase();
   const filtering = needle !== '';
   const pages = useFavoritePages({ complete: filtering });
@@ -190,9 +178,8 @@ export function FavoritesList({ query, onSelect }: FavoritesListProps) {
       {stale}
       <View className="gap-0.5">
         {rows.map((item) => (
-          // Keyed by node, so a refetch or a reorder keeps each row's toggle, and its verdict, with
-          // the node it belongs to.
           <FavoriteRow
+            favorite={favorite}
             item={item}
             key={item.node.id}
             onSelect={onSelect}

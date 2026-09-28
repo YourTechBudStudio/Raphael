@@ -14,12 +14,7 @@
  * Nothing here imports from `react-native`, so the whole mapping runs under `node --test`.
  */
 
-import {
-  isEndpointRejection,
-  parseEndpoint,
-  type ClientFailure,
-  type InvalidResponseReason,
-} from '@raphael/client';
+import { isEndpointRejection, parseEndpoint, type ClientFailure } from '@raphael/client';
 import { hasApiKey } from '@raphael/contracts/connection';
 
 /**
@@ -91,9 +86,8 @@ export const hasFieldProblem = (problems: FieldProblems): boolean =>
 /**
  * A verification failure, in words, and where it stopped.
  *
- * The hard case is `transport`. React Native's fetch reports a server that is not running and a
- * connection dropped mid-exchange as the same opaque error, so this must not guess between them -
- * see the note in the client's `failure.ts`. It names the possibilities instead of picking one.
+ * A network failure cannot tell a server that is not running from a wrong address, so it names the
+ * possibilities instead of picking one.
  */
 export const describeVerifyFailure = (failure: ClientFailure): SetupProblem => {
   switch (failure.kind) {
@@ -111,7 +105,7 @@ export const describeVerifyFailure = (failure: ClientFailure): SetupProblem => {
       };
     case 'cancelled':
       return { step: 'reachable', title: 'Verification stopped.', detail: 'Nothing was saved.' };
-    case 'transport':
+    case 'network':
       return {
         step: 'reachable',
         title: 'Could not reach that address.',
@@ -119,63 +113,44 @@ export const describeVerifyFailure = (failure: ClientFailure): SetupProblem => {
           'From here, a server that is not running looks exactly like a wrong address or a network ' +
           'that cannot get there. Check all three.',
       };
-    case 'unsupported_fetch':
-      return {
-        step: 'reachable',
-        title: 'This device cannot make that request.',
-        detail: failure.message,
-      };
-    case 'api_error':
-      return describeApiError(failure.status, failure.message);
-    case 'invalid_response':
-      return describeInvalidResponse(failure.reason, failure.message);
+    case 'http':
+      // No Raphael envelope: a proxy or another service answered.
+      if (failure.code === undefined) return NOT_RAPHAEL;
+      if (failure.status === 401 || failure.status === 403) {
+        return {
+          step: 'accepted',
+          title: 'That key was refused.',
+          detail: 'The server is there and answering. It just does not accept this key.',
+        };
+      }
+      return { step: 'accepted', title: 'The server refused the check.', detail: failure.message };
+    case 'bad_response':
+      if (failure.code === 'incompatible_protocol') {
+        return {
+          step: 'version',
+          title: 'A different version of Raphael.',
+          detail: failure.message,
+        };
+      }
+      if (failure.status !== undefined && failure.status >= 300 && failure.status < 400) {
+        return {
+          step: 'reachable',
+          title: 'That address redirects somewhere else.',
+          detail:
+            'Raphael will not follow a redirect while carrying your key, because it would hand the ' +
+            'key to wherever the redirect points. Use the address the server answers on directly.',
+        };
+      }
+      return NOT_RAPHAEL;
   }
 };
 
-const describeApiError = (status: number, message: string): SetupProblem => {
-  if (status === 401 || status === 403) {
-    return {
-      step: 'accepted',
-      title: 'That key was refused.',
-      detail: 'The server is there and answering. It just does not accept this key.',
-    };
-  }
-  return { step: 'accepted', title: 'The server refused the check.', detail: message };
-};
-
-const describeInvalidResponse = (reason: InvalidResponseReason, message: string): SetupProblem => {
-  switch (reason) {
-    case 'incompatible_protocol':
-      return { step: 'version', title: 'A different version of Raphael.', detail: message };
-    case 'redirect_refused':
-      return {
-        step: 'reachable',
-        title: 'That address redirects somewhere else.',
-        detail:
-          'Raphael will not follow a redirect while carrying your key, because it would hand the ' +
-          'key to wherever the redirect points. Use the address the server answers on directly.',
-      };
-    case 'response_too_large':
-      return {
-        step: 'reachable',
-        title: 'The answer was too large to read.',
-        detail: 'Something other than Raphael is probably answering on that address.',
-      };
-    case 'unexpected_status':
-    case 'empty_response':
-    case 'invalid_utf8':
-    case 'malformed_json':
-    case 'invalid_payload':
-    case 'inconsistent_error':
-    case 'unrecognized_error':
-      return {
-        step: 'reachable',
-        title: 'Something answered, but not Raphael.',
-        detail:
-          'A router, a proxy, or another service is on that address. Check the port, and any path ' +
-          'the server is served under.',
-      };
-  }
+const NOT_RAPHAEL: SetupProblem = {
+  step: 'reachable',
+  title: 'Something answered, but not Raphael.',
+  detail:
+    'A router, a proxy, or another service is on that address. Check the port, and any path the ' +
+    'server is served under.',
 };
 
 /* -------------------------------------------------------------------------- the handshake view */
@@ -212,12 +187,12 @@ export interface HandshakeInput {
    * blurring past it says nothing - but pressing Connect is someone declaring they are done, and a
    * button that appears to do nothing because a field is empty is worse than being told.
    */
-  readonly attempted: boolean;
+  readonly pressed: boolean;
   readonly phase: SetupPhase;
 }
 
 /**
- * The conditions this attempt has actually established, and only those.
+ * The conditions this verification has actually established, and only those.
  *
  * A row appears when there is something true to say about it. The two local checks are always
  * present because typing settles them immediately; the three network ones arrive as they resolve.
@@ -290,8 +265,8 @@ const localRows = (input: HandshakeInput): readonly HandshakeRow[] => {
     const detail = problems[field];
     if (detail === undefined) return row(step, 'done');
 
-    // An empty field is unfinished rather than wrong, so only a deliberate attempt makes it speak.
-    const done = input.attempted || (input.settled[field] && filled(input));
+    // An empty field is unfinished rather than wrong, so only a deliberate press makes it speak.
+    const done = input.pressed || (input.settled[field] && filled(input));
     if (!done) return row(step, 'pending');
 
     return { ...row(step, 'failed'), problem: { step, title, detail } };

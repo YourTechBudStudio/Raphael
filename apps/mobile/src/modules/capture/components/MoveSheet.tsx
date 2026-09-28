@@ -15,7 +15,6 @@ import {
 } from '../../collections';
 import {
   editKindWord,
-  idLabelOf,
   MOVE_CLOSE_WAITING_HINT,
   MOVE_ROOT_CURRENT_HINT,
   MOVE_ROOT_HINT,
@@ -27,31 +26,27 @@ import {
   MOVE_TREE_FAILED,
   MOVE_TREE_NO_MATCH,
   moveBusySubtitle,
-  moveNotSentSentence,
-  moveRefusalSentence,
   moveRowCopy,
   moveSheetSubtitle,
-} from '../edit-composer.ts';
-import type { MoveOutcome } from '../edit-owner.ts';
+} from '../copy.ts';
 import { eligibleDestinations, offersRoot } from '../move-eligibility.ts';
 
 export interface MoveSheetProps {
   visible: boolean;
   /** Bumped per opening; the selection, the filter and any sentence are seeded from that moment. */
   sessionId: number;
-  /** What is moving. The slug is never sent from here; it names a collision. */
+  /** What is moving. It keeps its slug. */
   entity: {
     readonly id: number;
     readonly type: NodeType;
     readonly kind: ResourceKind | null;
-    readonly slug: string;
   };
-  /** Where it is now, as the owner confirmed it. Null is the top level. */
+  /** Where it is now. Null is the top level. */
   parentId: number | null;
   /** Where it is now, named the way the eyebrow names it. */
   currentName: string;
-  /** Issues the move. The composition closes the sheet on `moved`, `conflicted` and `unconfirmed`. */
-  onMove: (destination: { readonly parentId: number | null }) => Promise<MoveOutcome>;
+  /** Issues the move. The composition closes the sheet when it answers, whichever way. */
+  onMove: (destination: { readonly parentId: number | null }) => Promise<void>;
   onClose: () => void;
 }
 
@@ -64,18 +59,10 @@ interface Pending {
 /**
  * Where should this go?
  *
- * The destination sheet's tree, pruned to the places that can hold this, and **tapping a place is the
- * move**: there is no confirm, because the answer is what is worth reading, and a mis-tap is repaired
- * by moving it back. The check starts on where this is now; tapping that closes the sheet, the way
- * tapping the current row closes Browse.
- *
- * While the answer is out, further taps are ignored and nothing closes the sheet - not the cross, the
- * scrim, the handle or Back - and each says so. A refusal has to have somewhere to be read, and the
- * composition must not be closing a sheet the person has already left. The request's own timeout
- * bounds the wait.
- *
- * A refusal or a move that was never sent leaves the sheet open, puts the check back where this is,
- * and says why below the tree. Every other outcome is the composition's to act on.
+ * The destination sheet's tree, pruned to the places that can hold this, and tapping a place is the
+ * move: there is no confirm, and a mis-tap is repaired by moving it back. While the answer is out,
+ * nothing closes the sheet. The composition closes it when the answer comes, and says in a snackbar
+ * if the move did not go through.
  */
 export function MoveSheet({
   visible,
@@ -91,7 +78,6 @@ export function MoveSheet({
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set());
   const [selected, setSelected] = useState<number | null>(parentId);
   const [pending, setPending] = useState<Pending | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
   /** The opening an answer belongs to. An answer for an earlier opening says nothing about this one. */
   const opening = useRef(sessionId);
 
@@ -120,7 +106,6 @@ export function MoveSheet({
     setQuery('');
     setSelected(parentId);
     setPending(null);
-    setProblem(null);
     setExpanded(new Set());
     // Seeded per opening only: a location that changes while the sheet is open is an answer, and
     // what an answer does to the selection is decided where it is read.
@@ -149,26 +134,12 @@ export function MoveSheet({
 
     setSelected(target);
     setPending({ parentId: target, place });
-    setProblem(null);
 
-    void onMove({ parentId: target }).then((outcome) => {
+    void onMove({ parentId: target }).then(() => {
       if (opening.current !== asked) return;
 
       setPending(null);
-
-      if (outcome.kind === 'refused') {
-        setSelected(parentId);
-        setProblem(
-          moveRefusalSentence(outcome.failure, {
-            idLabel: idLabelOf(entity.type, entity.kind),
-            place,
-            slug: entity.slug,
-          }),
-        );
-      } else if (outcome.kind === 'not_sent') {
-        setSelected(parentId);
-        setProblem(moveNotSentSentence(outcome.reason));
-      }
+      setSelected(parentId);
     });
   };
 
@@ -295,16 +266,6 @@ export function MoveSheet({
           </>
         )}
       </SheetBody>
-
-      {problem === null ? null : (
-        <Text
-          accessibilityLiveRegion="assertive"
-          className="font-body text-[15px] leading-[22px] text-danger"
-          testID="move-problem"
-        >
-          {problem}
-        </Text>
-      )}
     </Sheet>
   );
 }

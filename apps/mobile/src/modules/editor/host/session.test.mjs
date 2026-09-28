@@ -509,14 +509,6 @@ describe('recovery', () => {
     assert.equal(recovery.problem.lostRendererWriting, true);
   });
 
-  it('carries the owner-supplied unprotected status through a restart unchanged', () => {
-    const marked = drive(initialized().state, [
-      { type: 'unprotectedChanged', unprotected: true },
-      { type: 'rendererTerminated' },
-    ]);
-    assert.equal(marked.state.unprotected, true);
-  });
-
   it('treats an unasked-for ready as the restart it is', () => {
     const live = drive(initialized().state, [
       raw({ type: 'snapshot', sessionId: 1, editSeq: 1, document: doc('held'), reason: 'edit' }),

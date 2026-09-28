@@ -16,14 +16,14 @@ import {
 import { filterTree, SelectableTree } from '../../browse';
 import {
   ancestorsOf,
-  useContainerCreationSession,
+  useContainerDraft,
   useHierarchy,
   type HierarchyNode,
 } from '../../collections';
 
 export interface DestinationSheetProps {
   visible: boolean;
-  /** Changes per opening, so each opening gets its own creation key and a fresh form. */
+  /** Changes per opening, so each opening gets a fresh form. */
   sessionId: number;
   selected: ContainerRef | null;
   /** The chosen place. Persisting it is the caller's, and it may refuse. */
@@ -34,6 +34,9 @@ export interface DestinationSheetProps {
 const SUBTITLE_UNCHOSEN = 'Pick an area or a project. Raphael will not choose one for you.';
 
 const CREATED_NOTE = 'Created on your server, whether or not this note is saved.';
+
+/** Said when a new container did not reach the server: it is kept, and Unfinished has it. */
+const KEPT_NOTE = 'Couldn’t save it yet. It’s kept in Unfinished and will keep trying.';
 
 /**
  * Where does this go?
@@ -47,7 +50,7 @@ const CREATED_NOTE = 'Created on your server, whether or not this note is saved.
  * were - a hierarchy that will not load is a hierarchy that will not load, not a reason to forget
  * where a note was going.
  *
- * Creating here is a plain request through `collections`, and the copy says so: the container is
+ * Creating here goes through `collections`' container draft, and the copy says so: the container is
  * made whether or not the note is ever saved.
  */
 export function DestinationSheet({
@@ -61,12 +64,8 @@ export function DestinationSheet({
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set());
   const [creating, setCreating] = useState<ContainerType | null>(null);
-  const [title, setTitle] = useState('');
-  const [problem, setProblem] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const titleInput = useRef<TextInput>(null);
-  const { submit, busy } = useContainerCreationSession(sessionId);
-
+  /** Counts forms, so each New area or New project press is its own draft. */
+  const [form, setForm] = useState(0);
   const hierarchy = tree.hierarchy;
   const roots = hierarchy?.roots ?? [];
   const filtering = query.trim() !== '';
@@ -86,9 +85,6 @@ export function DestinationSheet({
 
   useEffect(() => {
     setCreating(null);
-    setTitle('');
-    setProblem(null);
-    setNotice(null);
     setQuery('');
   }, [sessionId]);
 
@@ -112,47 +108,8 @@ export function DestinationSheet({
   const canCreateProject = insideArea !== null;
 
   const startCreating = (type: ContainerType) => {
+    setForm((value) => value + 1);
     setCreating(type);
-    setTitle('');
-    setProblem(null);
-    setNotice(null);
-    setTimeout(() => titleInput.current?.focus(), 0);
-  };
-
-  const create = () => {
-    if (creating === null) return;
-
-    void (async () => {
-      setProblem(null);
-      setNotice(null);
-
-      const outcome = await submit({
-        containerType: creating,
-        // Both kinds go inside the selected area. An area with none selected goes to the root; a
-        // project with none selected is not offered at all.
-        parentAreaId: insideArea,
-        title,
-      });
-
-      switch (outcome.kind) {
-        case 'created':
-          // Files the note there and closes, as the frozen design says. Only a container created
-          // under the connection this app is working under right now can be a destination.
-          onSelect(outcome.container);
-
-          return;
-        case 'refused':
-        case 'not_sent':
-          if (outcome.message !== '') setProblem(outcome.message);
-
-          return;
-        case 'unconfirmed':
-        case 'retired':
-          // The earlier selection and the writing stand. Refreshing the tree is how a container the
-          // server may have created is found again; nothing is adopted implicitly.
-          setNotice(outcome.message);
-      }
-    })();
   };
 
   return (
@@ -251,49 +208,108 @@ export function DestinationSheet({
           />
         </View>
       ) : (
-        <View className="gap-2">
-          <Text className="font-body text-[13px] leading-[18px] text-ink-soft">{CREATED_NOTE}</Text>
-          <View className="flex-row items-center gap-2">
-            <TextInput
-              accessibilityLabel={creating === 'area' ? 'Area title' : 'Project title'}
-              className="h-11 flex-1 rounded-full bg-card px-4 font-body text-[16px] text-ink"
-              editable={!busy}
-              onChangeText={setTitle}
-              onSubmitEditing={create}
-              placeholder={creating === 'area' ? 'New area' : 'New project'}
-              ref={titleInput}
-              returnKeyType="done"
-              value={title}
-            />
-            <SavePill
-              accessibilityHint={`Creates this ${creating} on your server`}
-              disabled={busy || title.trim() === ''}
-              label={busy ? 'Saving…' : 'Create'}
-              onPress={create}
-            />
-            <IconButton
-              icon={X}
-              label="Cancel"
-              onPress={() => {
-                setCreating(null);
-              }}
-            />
-          </View>
-          {problem === null ? null : (
-            <Text accessibilityLiveRegion="assertive" className="font-body text-[15px] text-danger">
-              {problem}
-            </Text>
-          )}
-          {notice === null ? null : (
-            <Text
-              accessibilityLiveRegion="assertive"
-              className="font-body text-[15px] leading-[22px] text-ink"
-            >
-              {notice}
-            </Text>
-          )}
-        </View>
+        <InlineCreate
+          containerType={creating}
+          key={form}
+          onCancel={() => {
+            setCreating(null);
+          }}
+          onCreated={onSelect}
+          parentAreaId={insideArea}
+        />
       )}
     </Sheet>
+  );
+}
+
+interface InlineCreateProps {
+  containerType: ContainerType;
+  parentAreaId: number | null;
+  onCreated: (container: ContainerRef) => void;
+  onCancel: () => void;
+}
+
+/** A title and Create, inside the sheet. Nothing is navigated to: the new place is selected. */
+function InlineCreate({ containerType, parentAreaId, onCreated, onCancel }: InlineCreateProps) {
+  const draft = useContainerDraft({ draftId: null, containerType, parentAreaId });
+  const [title, setTitle] = useState('');
+  const [kept, setKept] = useState(false);
+  const [unwritable, setUnwritable] = useState(false);
+  const titleInput = useRef<TextInput>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => titleInput.current?.focus(), 0);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, []);
+
+  const create = () => {
+    if (draft.saving || title.trim() === '') return;
+
+    void draft.save({ title }).then((outcome) => {
+      if (outcome.kind === 'created') onCreated(outcome.container);
+      setKept(outcome.kind === 'kept');
+      setUnwritable(outcome.kind === 'unwritable');
+    });
+  };
+
+  const refusal = draft.row?.status === 'refused' ? `Not saved: ${draft.row.error ?? ''}` : null;
+
+  return (
+    <View className="gap-2">
+      <Text className="font-body text-[13px] leading-[18px] text-ink-soft">{CREATED_NOTE}</Text>
+      <View className="flex-row items-center gap-2">
+        <TextInput
+          accessibilityLabel={containerType === 'area' ? 'Area title' : 'Project title'}
+          className="h-11 flex-1 rounded-full bg-card px-4 font-body text-[16px] text-ink"
+          editable={!draft.saving}
+          onChangeText={(value) => {
+            setTitle(value);
+            draft.write({ title: value });
+          }}
+          onSubmitEditing={create}
+          placeholder={containerType === 'area' ? 'New area' : 'New project'}
+          ref={titleInput}
+          returnKeyType="done"
+          value={title}
+        />
+        <SavePill
+          accessibilityHint={`Creates this ${containerType} on your server`}
+          disabled={draft.saving || title.trim() === ''}
+          label={draft.saving ? 'Saving…' : 'Create'}
+          onPress={create}
+        />
+        <IconButton
+          icon={X}
+          label="Cancel"
+          onPress={() => {
+            void draft.leave({ title }).then((left) => {
+              if (left === 'unwritable') setUnwritable(true);
+              else onCancel();
+            });
+          }}
+        />
+      </View>
+      {refusal === null ? null : (
+        <Text accessibilityLiveRegion="assertive" className="font-body text-[15px] text-danger">
+          {refusal}
+        </Text>
+      )}
+      {unwritable ? (
+        <Text accessibilityLiveRegion="assertive" className="font-body text-[15px] text-danger">
+          Couldn’t save on this phone.
+        </Text>
+      ) : null}
+      {kept && refusal === null ? (
+        <Text
+          accessibilityLiveRegion="assertive"
+          className="font-body text-[15px] leading-[22px] text-ink"
+        >
+          {KEPT_NOTE}
+        </Text>
+      ) : null}
+    </View>
   );
 }

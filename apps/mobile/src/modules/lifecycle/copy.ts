@@ -1,18 +1,13 @@
 /**
- * Every sentence the phone says about archive and restore.
+ * Every sentence the phone says about archive and restore, and the one sentence for any plain action
+ * that failed.
  *
- * One file, because the same fact is described on container screens, on the edit screen, in capture
- * and in search, and four separately-written sentences about "why is this archived" is how a product
- * ends up telling someone two different things about one note.
- *
- * Two rules every sentence obeys. **Wording follows the resulting state**, from a response or a
- * re-read, never the verb alone: a restore can leave something archived through a container above
- * it. And **nothing claims a refresh that did not happen**: "refreshed" and "showing" appear only when
- * a read after the request succeeded.
+ * One file, because the same fact is described on container screens, on the edit screen and in
+ * search. Wording follows the resulting state, never the verb alone: a restore can leave something
+ * archived through a container above it.
  */
 
 import type { ClientFailure } from '@raphael/client';
-import type { RecoveryDetails } from '@raphael/contracts';
 import {
   DIRECT_ARCHIVE_REASON,
   USER_ARCHIVE_OWNER,
@@ -20,7 +15,7 @@ import {
   type NodeType,
 } from '@raphael/contracts/nodes';
 
-import { lifecycleView, type LifecycleView } from './view.ts';
+import type { LifecycleView } from './view.ts';
 
 export type LifecycleVerb = 'archive' | 'restore';
 
@@ -193,124 +188,19 @@ export const statusSentence = (
 };
 
 /**
- * What an archive or restore that was sent came to, as the edit owner reports it.
- *
- * `reread` means a Get after the request succeeded, so the phone now shows what the server holds.
+ * One sentence for a plain action that failed - favorite, archive, restore, move - said in the
+ * snackbar or under the toggle: "Couldn’t archive. Can’t reach your server."
  */
-export type LifecycleResult =
-  | { readonly kind: 'done'; readonly archived: boolean; readonly causes: readonly ArchiveCause[] }
-  | { readonly kind: 'refused'; readonly failure: ClientFailure; readonly reread: boolean }
-  | { readonly kind: 'unconfirmed'; readonly reread: boolean };
+export const failedActionSentence = (action: string, failure: ClientFailure | null): string =>
+  `${action}. ${failureReason(failure)}`;
 
-/**
- * The edit screen's line after an action, or null when the resulting state says it on its own.
- *
- * A restore that leaves the entity archived is the one success worth a sentence: the toggle empties
- * and the screen stays read-only, and without this that would look like a failure.
- */
-export const outcomeSentence = (
-  verb: LifecycleVerb,
-  outcome: LifecycleResult,
-  nodeId: number,
-): string | null => {
-  switch (outcome.kind) {
-    case 'done': {
-      if (verb !== 'restore' || !outcome.archived) return null;
-
-      const after = lifecycleView(nodeId, outcome.causes);
-
-      if (after.nearestInherited !== null) {
-        return `Still archived with ${originName(after.nearestInherited)}.`;
-      }
-
-      const foreign = foreignOwnCause(after);
-
-      return foreign === null ? 'Still archived.' : `Still archived by ${foreign.owner}.`;
-    }
-    case 'refused': {
-      const { failure } = outcome;
-
-      if (failure.kind === 'api_error' && failure.error.code === 'revision_conflict') {
-        return outcome.reread
-          ? 'This changed since you looked. Refreshed; try again.'
-          : 'This changed since you looked, and Raphael could not read it again. Reopen it before trying again.';
-      }
-
-      return failure.message;
-    }
-    case 'unconfirmed':
-      return outcome.reread
-        ? 'Raphael could not confirm this. Showing what your server holds now.'
-        : 'Raphael could not confirm this, or read what your server holds now. What you see may be out of date.';
-  }
-};
-
-/**
- * A failed, uncertain or unsent action in a few words, for the one case where the status line has to
- * say two things: the record also keeps writing that is not on the server, and that is said after it.
- * Each result stays distinguishable; the full advice is `outcomeSentence`'s.
- */
-export const briefOutcome = (
-  verb: LifecycleVerb,
-  outcome: Exclude<LifecycleResult, { kind: 'done' }> | { readonly kind: 'not_sent' },
-): string => {
-  const action = verb === 'archive' ? 'Archive' : 'Restore';
-
-  switch (outcome.kind) {
-    case 'refused':
-      return outcome.failure.kind === 'api_error' &&
-        outcome.failure.error.code === 'revision_conflict'
-        ? `${action} refused: this changed since you looked`
-        : `${action} refused by your server`;
-    case 'unconfirmed':
-      return `${action} not confirmed`;
-    case 'not_sent':
-      return `${action} not sent`;
-  }
-};
-
-/**
- * A container screen's line under its toggles after a failed action. No claim about a refresh: the
- * screen's own query states report how the re-read went. `failed` says the failure's own message.
- */
-export const actionFailureSentence = (
-  failure: 'conflict' | 'unconfirmed' | 'failed',
-  message: string,
-): string => {
-  switch (failure) {
-    case 'conflict':
-      return 'This changed since you looked. Check it, then try again.';
-    case 'unconfirmed':
-      return 'Raphael could not confirm this. Check it before trying again.';
-    case 'failed':
-      return message;
-  }
-};
-
-/**
- * Creating an area or a project inside an area that was archived while the form was open. The form's
- * parent is fixed, so there is nowhere else to pick; the sentence is true whichever way it is archived.
- */
-export const ARCHIVED_PARENT_CREATION_SENTENCE =
-  'That area was archived, so nothing can be added to it.';
-
-/**
- * A `node_archived` refusal, from the field and reason the server named.
- *
- * The target is advised by reason, because the remedies differ: your own archive is undone by
- * restoring it, while one inherited from above is undone by moving out or restoring that container.
- * A place is simply somewhere else to pick, whichever way it is archived.
- */
-export const archivedRefusalSentence = (details: RecoveryDetails): string => {
-  if (details.field === 'target') {
-    if (details.reason === 'direct') return 'This is archived. Restore it first.';
-    if (details.reason === 'inherited') {
-      return 'This is archived with a container above it. Move it somewhere active, or restore that container.';
-    }
-  }
-  if (details.field === 'parent' || details.field === 'destination') {
-    return 'That place is archived. Pick another.';
+const failureReason = (failure: ClientFailure | null): string => {
+  if (failure === null) return 'Try again.';
+  if (failure.kind === 'network' || failure.kind === 'timeout') return 'Can’t reach your server.';
+  if (failure.code === 'revision_conflict') return 'It changed on your server, try again.';
+  if (failure.kind === 'http' && (failure.status ?? 0) >= 500) {
+    return 'Your server had a problem, try again.';
   }
 
-  return 'This is archived.';
+  return failure.message;
 };

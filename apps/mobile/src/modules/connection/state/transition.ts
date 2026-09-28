@@ -18,11 +18,8 @@ import type { ConnectionStorage } from './storage.ts';
  * So there are exactly two identities, and they do different jobs.
  *
  * `connectionId` is stable and names **the server at an address**. It survives a key rotation
- * against the same address, which is what lets session-only content stay attached across one, and
- * it is what a durable pending attempt will be filed under in phase 09. It is a local name, never
- * a guarantee about server identity: swapping the database behind an unchanged address produces a
- * different server this device has no way to notice, which is an operational limitation and is
- * documented as one.
+ * against the same address, which is what lets session-only content stay attached across one. It is
+ * a local name, never a guarantee about server identity.
  *
  * `activation` names **the current work**. It changes on every switch, including a rotation,
  * because the requests in flight at that moment were made with the old credential. It stamps every
@@ -42,7 +39,7 @@ export type StorageState =
   | { readonly kind: 'saved' }
   /** Secure storage exists and refused the write. This connection lasts for the session. */
   | { readonly kind: 'write_failed'; readonly message: string }
-  /** This platform has no secure storage. Nothing was attempted. */
+  /** This platform has no secure storage. Nothing was tried. */
   | { readonly kind: 'unsupported' };
 
 /** What a screen may know about the connection. Never the key. */
@@ -56,9 +53,7 @@ export interface Connection {
    * The protocol version established when this connection was verified.
    *
    * Historical, and read as such. It is what one exchange proved at one moment, not a promise that
-   * the server on the other end still speaks it now. Wide rather than narrow for the same reason: a
-   * connection hydrated from a record written by an older build carries the number that build stored,
-   * and that is a true account of what happened rather than something to repair.
+   * the server on the other end still speaks it now.
    */
   readonly protocolVersion: StoredProtocolVersion;
   /** When that verification happened. */
@@ -233,7 +228,7 @@ export const createConnectionStore = (ports: ConnectionPorts): ConnectionStore =
     };
 
     /**
-     * What to say once a deletion has been attempted.
+     * What to say once a deletion has been tried.
      *
      * A failed delete is recorded on the phase, not returned and forgotten: the screen that asked
      * for it is already gone by the time the answer arrives. "Superseded" needs no report at all -

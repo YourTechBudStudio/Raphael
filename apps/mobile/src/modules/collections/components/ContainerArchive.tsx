@@ -40,7 +40,7 @@ export function ArchiveToggle({ view, title, target, revision, action }: Archive
       label={ARCHIVE_LABEL}
       mark={ARCHIVE_MARK}
       onToggle={() => {
-        action.run({ ref: target, revision, verb: view.canRestore ? 'restore' : 'archive' });
+        void action.run({ id: target.id, revision, verb: view.canRestore ? 'restore' : 'archive' });
       }}
       selected={view.canRestore}
       testID="archive-toggle"
@@ -65,10 +65,7 @@ export function ArchiveLines({ view, action }: ArchiveLinesProps) {
       {failure === null ? null : (
         <Text
           accessibilityLiveRegion="polite"
-          className={[
-            'mt-2 font-body text-[15px] leading-[22px]',
-            action.failure === 'failed' ? 'text-danger' : 'text-ink-soft',
-          ].join(' ')}
+          className="mt-2 font-body text-[15px] leading-[22px] text-danger"
           testID="archive-failure"
         >
           {failure}

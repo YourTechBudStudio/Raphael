@@ -2,8 +2,14 @@ import { X } from 'lucide-react-native';
 import { Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { IconButton, PrimaryButton, PressableFeedback } from '../../../ui';
-import type { UnavailableReason } from '../edit-display.ts';
+import { IconButton, PrimaryButton } from '../../../ui';
+
+/**
+ * Why an entity could not be opened, in the distinctions that change what someone should do:
+ * `retryable` might work next time, `missing` is the server having looked and found nothing, and
+ * `unopenable` is settled.
+ */
+export type UnavailableReason = 'retryable' | 'missing' | 'unopenable';
 
 /**
  * One heading and one sentence per reason.
@@ -34,43 +40,19 @@ const COPY: Record<UnavailableReason, { heading: string; sentence: string }> = {
   },
 };
 
-/**
- * Why there is no editor, in the two shapes that differ in what can be done about it.
- *
- * `unreadable` is a read that did not produce something to edit, and there is nothing on this phone
- * to lose. `retained` is the opposite: changes are sitting here that this build cannot open, and the
- * only thing anyone may do with them is throw them away deliberately.
- */
-export type EntityUnavailableState =
-  | { readonly kind: 'unreadable'; readonly reason: UnavailableReason }
-  /** The sentence comes from `EDIT_PROBLEM_COPY`, so the card and this screen say the same thing. */
-  | { readonly kind: 'retained'; readonly sentence: string };
-
 export interface EntityUnavailableProps {
-  state: EntityUnavailableState;
+  reason: UnavailableReason;
   onClose: () => void;
-  /** Offered only for a retained record, and confirmed by whoever passes it. */
-  onDiscard?: (() => void) | undefined;
 }
 
 /**
- * An entity that could not be opened for editing.
- *
- * There is no editor here, deliberately, and on an editing screen that is a data rule rather than a
- * presentational one. An editor holding nothing looks exactly like an entity that is empty, and
- * autosave would then send that emptiness over a body the server still holds intact. So anything
- * that leaves the editor without a document is its own screen with no editor on it at all.
- *
- * One heading, one sentence and one way out - plus, for changes this build cannot read, a deliberate
- * way to throw them away. Nothing here is reached by accident: the retained row stays exactly as it
- * is until someone says otherwise.
+ * An entity that could not be opened for editing. There is deliberately no editor here: an editor
+ * holding nothing looks exactly like an empty entity, and autosave would send that emptiness over a
+ * body the server still holds.
  */
-export function EntityUnavailable({ state, onClose, onDiscard }: EntityUnavailableProps) {
+export function EntityUnavailable({ reason, onClose }: EntityUnavailableProps) {
   const insets = useSafeAreaInsets();
-  const copy =
-    state.kind === 'unreadable'
-      ? COPY[state.reason]
-      : { heading: 'These changes could not be opened', sentence: state.sentence };
+  const copy = COPY[reason];
 
   return (
     <View className="flex-1 bg-canvas" testID="entity-unavailable">
@@ -91,19 +73,6 @@ export function EntityUnavailable({ state, onClose, onDiscard }: EntityUnavailab
           {copy.sentence}
         </Text>
         <PrimaryButton className="mt-6" label="Back to Home" onPress={onClose} />
-        {onDiscard === undefined ? null : (
-          <PressableFeedback
-            accessibilityHint="Removes these changes from this phone. What is on your server stays as it is."
-            accessibilityLabel="Discard these changes"
-            accessibilityRole="button"
-            className="mt-2 h-11 items-center justify-center rounded-full"
-            onPress={onDiscard}
-            testID="entity-unavailable-discard"
-            treatment="button"
-          >
-            <Text className="font-body-semibold text-[15px] text-danger">Discard</Text>
-          </PressableFeedback>
-        )}
       </View>
     </View>
   );

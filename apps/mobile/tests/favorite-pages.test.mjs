@@ -1,11 +1,10 @@
 /**
  * The favorites list, paged against a real cache and a transport that answers on demand.
  *
- * Three properties carry it. **Completing never cancels a refresh:** the filter asks for every page,
+ * Two properties carry it. **Completing never cancels a refresh:** the filter asks for every page,
  * and a page request made while the list is being refreshed would cancel that refresh and leave the
  * list showing what it held before a favorite change. **A failed page stops automatic loading** until
- * the person asks again. **Every page carries its own request's stamp,** which is what the star on
- * each row is judged by.
+ * the person asks again.
  */
 
 import assert from 'node:assert/strict';
@@ -258,25 +257,6 @@ describe('reading the list', () => {
     assert.equal(list.pages().isComplete, true);
   });
 
-  it('re-stamps every held page when a refetch lands', async () => {
-    list.render(true);
-    await flush();
-    await answerPage([1], true);
-    await answerPage([2], false);
-    const [first, second] = list.pages().items.map((item) => item.read.requestedAt);
-    assert.ok(second > first, 'a later page is a later request');
-
-    await flush(() => {
-      void invalidateActivation(client, 1);
-    });
-    await answerPage([1], true);
-    await answerPage([2], false);
-
-    const [again, againSecond] = list.pages().items.map((item) => item.read.requestedAt);
-    assert.ok(again > second, 'page 1 is stamped by the refetch');
-    assert.ok(againSecond > again, 'and so is page 2');
-  });
-
   it('says a first page that failed is an error, not an empty list', async () => {
     list.render(false);
     await flush();
@@ -292,7 +272,6 @@ describe('reading the list', () => {
     list.render(false);
     await flush();
     await answerPage([1], false);
-    const stamp = list.pages().items[0].read.requestedAt;
 
     await flush(() => {
       void invalidateActivation(client, 1);
@@ -304,39 +283,33 @@ describe('reading the list', () => {
     assert.equal(list.pages().isStale, true);
     assert.equal(list.pages().isError, false);
     assert.deepEqual(list.ids(), [1]);
-    assert.equal(list.pages().items[0].read.requestedAt, stamp, 'the old stamp stays');
   });
 });
 
 describe('flattenFavoritePages', () => {
-  const pageOf = (ids, requestedAt, over = {}) => ({
+  const pageOf = (ids, over = {}) => ({
     page: {
       items: ids.map((id) => summary(id, over[id])),
       skip: 0,
       limit: PAGE,
       hasMore: false,
     },
-    requestedAt,
   });
 
   it('keeps page order when no node repeats', () => {
-    const items = flattenFavoritePages([pageOf([1, 2], 10), pageOf([3, 4], 11)]);
+    const items = flattenFavoritePages([pageOf([1, 2]), pageOf([3, 4])]);
 
     assert.deepEqual(
       items.map((item) => item.node.id),
       [1, 2, 3, 4],
     );
-    assert.deepEqual(
-      items.map((item) => item.read.requestedAt),
-      [10, 10, 11, 11],
-    );
   });
 
-  it('keeps only the newest copy of a node seen on two pages, where that page put it', () => {
+  it('keeps only the later copy of a node seen on two pages, where that page put it', () => {
     // B was renamed between the two requests, so it sorted after C on page 2.
     const items = flattenFavoritePages([
-      pageOf([1, 2], 10, { 2: { title: 'Bee' } }),
-      pageOf([3, 2], 11, { 2: { title: 'Zed' } }),
+      pageOf([1, 2], { 2: { title: 'Bee' } }),
+      pageOf([3, 2], { 2: { title: 'Zed' } }),
     ]);
 
     assert.deepEqual(
@@ -345,20 +318,17 @@ describe('flattenFavoritePages', () => {
     );
     const renamed = items.find((item) => item.node.id === 2);
     assert.equal(renamed.node.title, 'Zed');
-    assert.equal(renamed.read.requestedAt, 11);
     assert.equal(new Set(items.map((item) => item.node.id)).size, items.length, 'ids are unique');
   });
 
   it('carries each node favorite state into its read', () => {
-    const [item] = flattenFavoritePages([pageOf([1], 7, { 1: { isFavorite: false } })]);
+    const [item] = flattenFavoritePages([pageOf([1], { 1: { isFavorite: false } })]);
 
-    assert.deepEqual(item.read, { id: 1, isFavorite: false, requestedAt: 7 });
+    assert.deepEqual(item.read, { id: 1, isFavorite: false });
   });
 
   it('drops an item that is not a container rather than draw it', () => {
-    const items = flattenFavoritePages([
-      pageOf([1, 2], 10, { 2: { type: 'resource', kind: 'note' } }),
-    ]);
+    const items = flattenFavoritePages([pageOf([1, 2], { 2: { type: 'resource', kind: 'note' } })]);
 
     assert.deepEqual(
       items.map((item) => item.node.id),

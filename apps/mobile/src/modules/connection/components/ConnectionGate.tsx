@@ -32,11 +32,8 @@ export interface ConnectionGateProps {
  * empty keychain, so it gets a screen that says so rather than being swept into first-run setup
  * where it would look like the connection had simply never existed.
  *
- * **Nothing is shown underneath these screens.** Setup is a prerequisite for using the app, not a
- * cover over it: there is no unfinished-note list beneath the form and no route to one. Drafts and
- * attempts stay exactly where they are on disk, and become readable - and copyable, and
- * discardable - once a connection exists. Nothing is ever rebound to a new connection by matching
- * an endpoint, so making them reachable without one would only offer actions that cannot be honest.
+ * Nothing is shown underneath these screens: setup is a prerequisite for using the app, not a cover
+ * over it.
  */
 export function ConnectionGate({ children }: ConnectionGateProps) {
   const phase = useConnectionStore((state) => state.phase);

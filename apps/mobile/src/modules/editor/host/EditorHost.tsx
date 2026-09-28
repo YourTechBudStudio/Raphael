@@ -31,8 +31,6 @@ export interface EditorHostProps extends EditorCallbacks {
   readonly document: unknown;
   /** False is permanent for this host: read-only display, never unlocked into editing. */
   readonly editable: boolean;
-  /** Carried through crash recovery unchanged. The owner decides what it means. */
-  readonly unprotected?: boolean | undefined;
   readonly style?: StyleProp<ViewStyle> | undefined;
   readonly ref?: Ref<EditorPort> | undefined;
 }
@@ -41,7 +39,6 @@ export function EditorHost({
   documentId,
   document,
   editable,
-  unprotected,
   onSnapshot,
   onSelectionChange,
   onLockedChange,
@@ -67,7 +64,6 @@ export function EditorHost({
       documentId,
       document,
       editable,
-      unprotected,
       snapshotTimeoutMs: SNAPSHOT_TIMEOUT_MS,
     },
     {
@@ -86,11 +82,6 @@ export function EditorHost({
   useEffect(() => {
     controller.replaceDocument(documentId, document);
   }, [controller, documentId, document]);
-
-  useEffect(() => {
-    if (unprotected === undefined) return;
-    controller.setUnprotected(unprotected);
-  }, [controller, unprotected]);
 
   // Nothing outlives the mount: every waiter settles and every timer is cleared.
   useEffect(() => () => controller.dispose(), [controller]);

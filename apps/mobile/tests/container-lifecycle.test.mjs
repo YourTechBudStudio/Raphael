@@ -44,8 +44,6 @@ const { navigations, resetNavigations, setLocalSearchParams } =
 const { pullToRefresh } = await import('./support/stubs/react-native.mjs');
 const { default: ProjectRoute } = await import('../src/app/project/[id].tsx');
 const { default: AreaRoute } = await import('../src/app/area/[id].tsx');
-const { useCaptureOwner } = await import('../src/modules/capture/client/owner.ts');
-const { useEditOwner } = await import('../src/modules/capture/client/edit-owner.ts');
 const { useConnectionStore } = await import('../src/modules/connection/state/connection.ts');
 const { queryClient } = await import('../src/infrastructure/query/query-client.ts');
 const { MAX_CONTAINERS, PAGE_LIMIT } =
@@ -136,23 +134,12 @@ const page = (items, over = {}) =>
 
 const refusal = (code, message) => ({
   ok: false,
-  failure: {
-    kind: 'api_error',
-    status: 409,
-    mutationOutcome: 'rejected',
-    message,
-    error: { code, message },
-    details: {},
-  },
+  failure: { kind: 'http', status: 409, code, message },
 });
 
 const unreachable = () => ({
   ok: false,
-  failure: {
-    kind: 'transport',
-    mutationOutcome: 'not_applicable',
-    message: 'The server could not be reached.',
-  },
+  failure: { kind: 'network', message: 'The server could not be reached.' },
 });
 
 /** Which request an answer is for. List differs only by what it asks. */
@@ -288,18 +275,6 @@ beforeEach(() => {
       },
     },
   });
-  useCaptureOwner.setState({
-    status: 'ready',
-    problem: null,
-    drafts: [],
-    unusableDrafts: [],
-    attempts: [],
-    unsaved: {},
-    sending: [],
-    saving: [],
-    unreadableAttempts: 0,
-  });
-  useEditOwner.setState({ status: 'ready', problem: null, edits: [], unusableEdits: [] });
 });
 
 afterEach(async () => {
@@ -478,7 +453,7 @@ describe('the project header', () => {
     }
   });
 
-  it('says a failure under the row at once, without claiming a refresh', async () => {
+  it('says a failure under the row at once, without waiting for the refresh', async () => {
     server.hold('get');
     const screen = await openProject();
 
@@ -496,7 +471,7 @@ describe('the project header', () => {
       assert.ok(!busy(screen.archiveToggle()));
       assert.equal(
         screen.$('[data-testid="archive-failure"]')?.textContent,
-        'This changed since you looked. Check it, then try again.',
+        'Couldn’t archive. It changed on your server, try again.',
       );
 
       await flush(() => {

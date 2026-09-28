@@ -10,7 +10,6 @@ export {
   useLifecycleAction,
   type LifecycleAction,
   type LifecycleActionInput,
-  type LifecycleFailure,
 } from './client/actions';
 export { ArchiveIconToggle, type ArchiveIconToggleProps } from './components/ArchiveIconToggle';
 export { InheritedLine, type InheritedLineProps } from './components/InheritedLine';
@@ -18,25 +17,20 @@ export {
   ARCHIVE_LABEL,
   ARCHIVED_LABEL,
   ARCHIVED_LEFT_OUT_SENTENCE,
-  ARCHIVED_PARENT_CREATION_SENTENCE,
   INCLUDE_ARCHIVED_HINT,
   INCLUDE_ARCHIVED_LABEL,
   READ_ONLY_DETAILS_HINT,
   UNAVAILABLE_WHILE_ARCHIVED_HINT,
-  actionFailureSentence,
   archivedAlongside,
-  archivedRefusalSentence,
-  briefOutcome,
+  failedActionSentence,
   iconToggleSpokenLabel,
   inheritedLine,
   inheritedLineParts,
   inheritedLineHint,
-  outcomeSentence,
   readOnlyDetailsSubtitle,
   statusSentence,
   toggleHint,
   toggleSpokenLabel,
-  type LifecycleResult,
   type LifecycleVerb,
 } from './copy.ts';
 export { lifecycleView, type LifecycleView } from './view.ts';

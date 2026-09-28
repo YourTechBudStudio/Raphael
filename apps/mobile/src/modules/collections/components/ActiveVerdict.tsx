@@ -1,7 +1,5 @@
-import type { RecoveryDetails } from '@raphael/contracts';
 import { Text } from 'react-native';
 
-import { archivedRefusalSentence } from '../../lifecycle';
 import type { ActiveFailure } from '../client/active';
 
 const COPY = {
@@ -11,13 +9,13 @@ const COPY = {
 
 interface ActiveVerdictProps {
   failure: ActiveFailure;
-  /** The refusal's details, which an `archived` failure is worded from. */
-  details: RecoveryDetails | null;
+  /** The server's message, which an `archived` failure is said in. */
+  message: string | null;
   className?: string | undefined;
 }
 
 /**
- * What became of the last attempt to change a project's active status.
+ * What became of the last try to change a project's active status.
  *
  * One component for both places that say it - the Home card and the Project header - because they
  * are the same sentence about the same write, and two copies of product wording drift.
@@ -34,7 +32,7 @@ interface ActiveVerdictProps {
  * which says everything there is to say; a sentence beside it would be a second voice on one fact.
  * Callers pass `null` for that case rather than this file guessing at it.
  */
-export function ActiveVerdict({ failure, details, className }: ActiveVerdictProps) {
+export function ActiveVerdict({ failure, message, className }: ActiveVerdictProps) {
   if (failure === null) return null;
 
   return (
@@ -46,7 +44,7 @@ export function ActiveVerdict({ failure, details, className }: ActiveVerdictProp
         className ?? '',
       ].join(' ')}
     >
-      {failure === 'archived' ? archivedRefusalSentence(details ?? {}) : COPY[failure]}
+      {failure === 'archived' ? (message ?? '') : COPY[failure]}
     </Text>
   );
 }

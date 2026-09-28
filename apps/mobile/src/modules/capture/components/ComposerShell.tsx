@@ -20,7 +20,7 @@ import {
   type EditorSelectionState,
   type EditorSnapshot,
 } from '../../editor';
-import type { ComposerStatus as StatusLine } from '../composer.ts';
+import type { StatusLine } from '../copy.ts';
 import { singleLineTitle, titleMaxHeight } from '../title.ts';
 
 /**
@@ -55,7 +55,7 @@ export interface ComposerShellProps {
   documentId: string;
   document: unknown;
   status: StatusLine;
-  /** A barrier is settling: every field and the toolbar are disabled. */
+  /** A save is in flight: every field and the toolbar are disabled. */
   locked: boolean;
   /**
    * Nothing here can change: the entity is archived. The same layout, with the fields and the
@@ -63,9 +63,7 @@ export interface ComposerShellProps {
    * reads this once, when it is created, so a screen that flips it remounts the shell.
    */
   readOnly?: boolean | undefined;
-  /** The writing on screen is not safely on this phone, so the renderer is drawn unprotected. */
-  unprotected: boolean;
-  /** Close is unavailable, and visibly so. Separate from `locked`, which is about the writing. */
+  /** Close is unavailable, and visibly so. */
   closeDisabled: boolean;
   closeHint?: string | undefined;
   /** The first row of the bar stack, above the formatting row. The conflict band, or nothing. */
@@ -82,7 +80,7 @@ export interface ComposerShellProps {
   editorRef?: Ref<EditorPort> | undefined;
   /** Sends one formatting command to the renderer. The screen above holds the port. */
   onCommand: (command: EditorCommand) => void;
-  /** Which commands apply and which are available. Held above, because the repair sheet reads it. */
+  /** Which commands apply and which are available. */
   selection: EditorSelectionState;
   onSelectionChange: (state: EditorSelectionState) => void;
   onTitleChange: (value: string) => void;
@@ -95,21 +93,10 @@ export interface ComposerShellProps {
 }
 
 /**
- * Writing, whether or not the server already holds it: one shape, two policies.
+ * Writing, whether or not the server already holds it: one shape for the composer and the editor.
  *
- * Presentation and deliberately nothing else - no owner, no navigation, no decision about what may be
- * sent. Every sentence and every enabled control is a value passed in by something that asked an
- * owner, which is what makes this testable and what makes it honest.
- *
- * Creating a note and editing one are the same screen to a person, so they are one component here.
- * What differs is what the epic says must, and it arrives through the slots: a new note has a Save
- * pill and a destination that can still be chosen, an existing one autosaves and can carry a conflict
- * band. Neither policy lives in this file; `composerView` and `editComposerView` decide them, and a
- * reader looking for "why does it say that" goes to one of those two rather than here.
- *
- * **The eyebrow row is one height on both screens.** The pressable form needs a 44pt target and the
- * label form needs none, and letting them differ would put the title at a different height depending
- * on which screen you were on - which is precisely the drift this shell exists to remove.
+ * Presentation only. Every sentence and every enabled control is passed in. The eyebrow row is one
+ * height on both screens, so the title never sits at a different height depending on the screen.
  */
 export function ComposerShell({
   namespace,
@@ -122,7 +109,6 @@ export function ComposerShell({
   status,
   locked,
   readOnly = false,
-  unprotected,
   closeDisabled,
   closeHint,
   barAbove,
@@ -272,7 +258,6 @@ export function ComposerShell({
           onSnapshot={onSnapshot}
           ref={editorRef}
           style={{ flex: 1, marginTop: 8 }}
-          unprotected={unprotected}
         />
       </View>
     </ComposerFrame>

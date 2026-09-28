@@ -70,4 +70,5 @@ export const openNodeDatabase = async (location = ':memory:') => {
 /** A driver over `openNodeDatabase`, for code that takes a `SqlDriver`. */
 export const nodeDriver = (location = ':memory:') => ({
   open: () => openNodeDatabase(location),
+  remove: () => Promise.resolve(),
 });

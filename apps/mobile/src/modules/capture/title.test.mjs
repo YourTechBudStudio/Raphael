@@ -2,14 +2,14 @@
  * A title is one line, and two lines of it are visible at any text size.
  *
  * Both halves are here because both were defects rather than preferences: a pasted break made a
- * multi-line title submittable, and a fixed height made the second line visible only to people
+ * multi-line title savable, and a fixed height made the second line visible only to people
  * reading at the default scale.
  */
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { hasLineBreak, singleLineTitle, titleMaxHeight } from './title.ts';
+import { singleLineTitle, titleMaxHeight } from './title.ts';
 
 test('a break of any kind becomes one ordinary space', () => {
   assert.equal(singleLineTitle('Field\nnotes'), 'Field notes');
@@ -27,12 +27,6 @@ test('nothing else about the authored spacing is touched', () => {
   // the mock's title derivation is exactly what this phase was told not to port.
   assert.equal(singleLineTitle('  Field   notes\t'), '  Field   notes\t');
   assert.equal(singleLineTitle(''), '');
-});
-
-test('it recognizes a break wherever one is', () => {
-  assert.equal(hasLineBreak('one line'), false);
-  assert.equal(hasLineBreak('two\nlines'), true);
-  assert.equal(hasLineBreak('two lines'), true);
 });
 
 test('two lines stay two lines as the text scale grows', () => {

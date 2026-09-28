@@ -9,7 +9,7 @@ import {
   UNFINISHED_STATE,
   unfinishedDiscardPrompt,
   type UnfinishedStanding,
-} from '../sync-copy.ts';
+} from '../copy.ts';
 
 export interface UnfinishedItem {
   readonly key: string;
@@ -31,8 +31,6 @@ export interface UnfinishedListProps {
  * Everything that has not reached the server, as the same flat rows as Favorites and Search: the
  * mark, the title, and one plain line - the state, then where it lives. Opening a row resolves it;
  * the trash is a shortcut for rows nobody cares about, and waits while one is being sent.
- *
- * Not mounted yet: phase 03 of the online-only plan feeds it from the `unsent` table.
  */
 export function UnfinishedList({ items, onOpen, onDiscard }: UnfinishedListProps) {
   if (items.length === 0) return <StateLine>{UNFINISHED_EMPTY}</StateLine>;

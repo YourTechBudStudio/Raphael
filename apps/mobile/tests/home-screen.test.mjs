@@ -1,18 +1,9 @@
 /**
  * What Home says about work that is not on the server.
  *
- * It draws no cards for it, of either kind: one chip beside the Notes heading, counting everything
- * Recovery lists, and nothing at all when there is nothing to count. Three claims are worth a test
- * because each fails silently.
- *
- * **The count has to agree with the screen it opens.** The chip is now the only way into Recovery,
- * so anything Recovery reports and the chip omits becomes unreachable - which is why an unreadable
- * attempt record, reported there as a line rather than a card, is counted here too.
- *
- * **Absent at zero.** A chip reading "0 unfinished" is a permanent reminder about nothing.
- *
- * **No unfinished cards, in any state.** The feed's own states - loading, empty, failed - used to be
- * drawn around local cards, and the removal has to hold in all of them.
+ * It draws no cards for it: one chip beside the Notes heading, counting what Unfinished lists, and
+ * nothing at all when there is nothing to count. A chip reading "0 unfinished" is a permanent
+ * reminder about nothing.
  */
 
 import assert from 'node:assert/strict';
@@ -20,6 +11,7 @@ import { after, beforeEach, describe, it } from 'node:test';
 
 import { installDom } from './support/browser-dom.mjs';
 import { installNativeStubs } from './support/native-stub-loader.mjs';
+import { createRow, editRow } from './support/unsent-rows.mjs';
 
 const hooks = installNativeStubs();
 const dom = installDom();
@@ -30,8 +22,8 @@ const { createRoot } = await import('react-dom/client');
 const { QueryClientProvider } = await import('@tanstack/react-query');
 const { navigations, resetNavigations } = await import('./support/stubs/expo-router.mjs');
 const { HomeScreen } = await import('../src/modules/home/components/HomeScreen.tsx');
-const { useCaptureOwner } = await import('../src/modules/capture/client/owner.ts');
-const { useEditOwner } = await import('../src/modules/capture/client/edit-owner.ts');
+const { useUnsentState } = await import('../src/modules/unsent/client/unsent.ts');
+const { announce } = await import('../src/modules/unsent/state/notice.ts');
 const { useConnectionStore } = await import('../src/modules/connection/state/connection.ts');
 const { queryClient } = await import('../src/infrastructure/query/query-client.ts');
 const { scopeKey } = await import('../src/infrastructure/query/keys.ts');
@@ -73,46 +65,6 @@ const render = () => {
   };
 };
 
-const draft = (over = {}) => ({
-  draftId: 'd1',
-  connectionId: CONNECTION,
-  endpoint: 'https://raphael.example',
-  state: 'composing',
-  title: 'Still being written',
-  description: '',
-  document: { type: 'doc', content: [] },
-  contentSchemaVersion: 1,
-  destination: null,
-  draftVersion: 1,
-  submittedVersion: null,
-  serverNodeId: null,
-  serverRevision: null,
-  createdAt: 1,
-  updatedAt: 1,
-  ...over,
-});
-
-const edit = (nodeId, over = {}) => ({
-  key: { connectionId: CONNECTION, nodeId },
-  endpoint: 'https://raphael.example',
-  nodeType: 'resource',
-  kind: 'note',
-  base: { title: '', description: '', slug: '', tags: [], document: {} },
-  baseRevision: 1,
-  content: { title: `note ${String(nodeId)}`, description: '', slug: 's', tags: [], document: {} },
-  contentSchemaVersion: 1,
-  // Ahead of what has been answered for, which is what makes it unsent rather than synced.
-  draftVersion: 2,
-  acknowledgedVersion: 1,
-  inflightVersion: null,
-  inflight: null,
-  syncState: 'syncing',
-  lastRefusal: null,
-  createdAt: 0,
-  updatedAt: 100,
-  ...over,
-});
-
 beforeEach(() => {
   resetNavigations();
   queryClient.clear();
@@ -133,18 +85,7 @@ beforeEach(() => {
       },
     },
   });
-  useCaptureOwner.setState({
-    status: 'ready',
-    problem: null,
-    drafts: [],
-    unusableDrafts: [],
-    attempts: [],
-    unsaved: {},
-    sending: [],
-    saving: [],
-    unreadableAttempts: 0,
-  });
-  useEditOwner.setState({ status: 'ready', problem: null, edits: [], unusableEdits: [] });
+  useUnsentState.setState({ status: 'ready', rows: [] });
 });
 
 describe('Home’s one indicator for unfinished work', () => {
@@ -159,85 +100,32 @@ describe('Home’s one indicator for unfinished work', () => {
     }
   });
 
-  it('counts notes, edits and records it could not read, as one number', () => {
+  it('counts what needs the person or is stuck, and not what is syncing normally', () => {
     act(() => {
-      useCaptureOwner.setState({
-        drafts: [draft(), draft({ draftId: 'd2', connectionId: 'c-old' })],
-        // Reported on Recovery as a line rather than a card, and unreachable if left out of this.
-        unreadableAttempts: 1,
+      useUnsentState.setState({
+        rows: [
+          createRow(),
+          createRow({ id: 'd2', status: 'refused', error: '"idea" is already used here.' }),
+          editRow(7, { status: 'conflict' }),
+          editRow(8, { error: 'The server could not be reached.' }),
+          // Syncing normally: not the person's business.
+          editRow(9),
+        ],
       });
-      useEditOwner.setState({ edits: [edit(7)] });
     });
 
     const screen = render();
 
     try {
-      // Two drafts - the retired one included, because Recovery lists it - one edit, one record.
       assert.equal(screen.chip()?.textContent, '4 unfinished');
     } finally {
       screen.unmount();
     }
   });
 
-  it('still opens the door when a store could not be read, and claims no number', () => {
+  it('opens Unfinished', () => {
     act(() => {
-      // The capture store is fine and holds nothing; the edit store never answered. Zero is what
-      // this phone can count, not what it knows - and this chip is the only way into Recovery.
-      useEditOwner.setState({
-        status: 'unavailable',
-        problem: { kind: 'failed', reason: 'unopenable' },
-      });
-    });
-
-    const screen = render();
-
-    try {
-      assert.ok(screen.chip() !== null, 'a failure must not read as nothing unfinished');
-      assert.equal(screen.chip()?.textContent, 'Unfinished');
-      assert.ok(!/\d/.test(screen.chip()?.textContent ?? ''), 'no total it cannot support');
-    } finally {
-      screen.unmount();
-    }
-  });
-
-  it('drops the number rather than undercounting what it can see', () => {
-    act(() => {
-      useCaptureOwner.setState({ drafts: [draft()] });
-      useEditOwner.setState({
-        status: 'unavailable',
-        problem: { kind: 'failed', reason: 'unreadable' },
-      });
-    });
-
-    const screen = render();
-
-    try {
-      // One draft is readable, so "1 unfinished" would be a floor presented as a total.
-      assert.equal(screen.chip()?.textContent, 'Unfinished');
-    } finally {
-      screen.unmount();
-    }
-  });
-
-  it('says nothing while a store is merely still opening', () => {
-    act(() => {
-      useEditOwner.setState({ status: 'opening', problem: null });
-    });
-
-    const screen = render();
-
-    try {
-      // An open in flight settles on its own; a chip here would appear on every cold launch of a
-      // phone with nothing unfinished.
-      assert.equal(screen.chip(), null);
-    } finally {
-      screen.unmount();
-    }
-  });
-
-  it('opens the screen that shows them', () => {
-    act(() => {
-      useEditOwner.setState({ edits: [edit(7)] });
+      useUnsentState.setState({ rows: [createRow()] });
     });
 
     const screen = render();
@@ -246,27 +134,37 @@ describe('Home’s one indicator for unfinished work', () => {
       act(() => {
         screen.chip()?.click();
       });
-      assert.deepEqual(navigations, [{ method: 'push', target: '/recovery' }]);
+      assert.deepEqual(navigations, [{ method: 'push', target: '/unfinished' }]);
     } finally {
       screen.unmount();
     }
   });
 
-  it('draws no card for any of it, whatever the feed is doing', () => {
+  it('draws no card for any of it', () => {
     act(() => {
-      useCaptureOwner.setState({ drafts: [draft()] });
-      useEditOwner.setState({ edits: [edit(7)] });
+      useUnsentState.setState({ rows: [createRow(), editRow(7, { status: 'conflict' })] });
     });
 
     const screen = render();
 
     try {
-      // The feed has no server here, so this is Home with a failed read - the state the local cards
-      // were once drawn above.
       assert.ok(screen.chip() !== null);
-      assert.ok(!screen.text().includes('Still being written'), 'no unfinished note card');
-      assert.ok(!screen.text().includes('note 7'), 'no unfinished edit card');
-      assert.ok(!screen.text().includes('Draft · on this phone'));
+      assert.ok(!screen.text().includes('Still being written'), 'no draft card');
+      assert.ok(!screen.text().includes('note 7'), 'no edit card');
+    } finally {
+      screen.unmount();
+    }
+  });
+
+  it('says once what happened to someone’s writing', () => {
+    act(() => {
+      announce('Kept in Unfinished as a draft.');
+    });
+
+    const screen = render();
+
+    try {
+      assert.ok(screen.text().includes('Kept in Unfinished as a draft.'));
     } finally {
       screen.unmount();
     }

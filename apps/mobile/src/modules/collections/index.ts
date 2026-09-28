@@ -37,10 +37,11 @@ export {
   type HierarchyQuery,
 } from './hierarchy';
 export {
-  useContainerCreationSession,
-  type ContainerCreationInput,
-  type ContainerCreationOutcome,
-  type ContainerCreationSession,
+  useContainerDraft,
+  type ContainerDraft,
+  type ContainerDraftInput,
+  type ContainerSaveOutcome,
+  type Fields,
 } from './client/container-creation';
 export { ActiveVerdict } from './components/ActiveVerdict';
 export { AreaScreen } from './components/AreaScreen';

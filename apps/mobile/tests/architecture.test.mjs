@@ -282,21 +282,27 @@ test('nothing outside the editor reaches its browser source or its generated doc
 });
 
 /**
- * One capability opens a local operational database, and it is capture.
+ * One capability opens a local database, and it is `unsent`: the one table of writing the server does
+ * not have yet. A second store would be a second thing deciding what survives a process.
  *
- * Two databases used to be opened here: notes, and container creation attempts. The second is gone -
- * an area is a title and a parent, and losing one in flight costs a title - so the rule is now a
- * boundary rather than a count. A second capability with its own store would be a second thing
- * deciding what survives a process, and the whole reason the note owner exists is that exactly one
- * thing gets to decide that.
- *
- * `infrastructure/sqlite` is the port and may be reached only by the capability that owns a database.
+ * `infrastructure/sqlite` is the port and may be reached only by that capability. The retired capture
+ * database is named once, where startup deletes it, and nowhere else.
  */
-test('only capture opens a database through the sqlite infrastructure', () => {
-  const capture = path.join('modules', 'capture') + path.sep;
+test('only unsent opens a database through the sqlite infrastructure', () => {
+  const unsent = path.join('modules', 'unsent') + path.sep;
 
   for (const file of files) {
-    if (file.startsWith('infrastructure' + path.sep) || file.startsWith(capture)) continue;
+    const source = readFileSync(path.join(root, file), 'utf8');
+
+    assert.ok(
+      !/CAPTURE_DATABASE|openCaptureStore|raphael-creation\.db/.test(source),
+      `${file}: names a retired database`,
+    );
+    if (file !== path.join('modules', 'unsent', 'client', 'unsent.ts')) {
+      assert.ok(!source.includes('raphael-capture'), `${file}: names the retired capture database`);
+    }
+
+    if (file.startsWith('infrastructure' + path.sep) || file.startsWith(unsent)) continue;
 
     for (const specifier of imports(file)) {
       if (!specifier.startsWith('.')) continue;
@@ -304,60 +310,33 @@ test('only capture opens a database through the sqlite infrastructure', () => {
       if (resolved === undefined) continue;
       assert.ok(
         !path.relative(root, resolved).startsWith(path.join('infrastructure', 'sqlite')),
-        `${file}: opens a local database, which only capture may do`,
+        `${file}: opens a local database, which only unsent may do`,
       );
     }
-
-    const source = readFileSync(path.join(root, file), 'utf8');
-    assert.ok(
-      !/CAPTURE_DATABASE|openCaptureStore/.test(source),
-      `${file}: names the capture database outside the capability that owns it`,
-    );
   }
 
-  // Published from the capability's own interface, the database would be one import away from every
-  // other module. The composition lives inside capture and reaches `store.ts` and `schema.ts`.
-  const published = readFileSync(path.join(root, 'modules', 'capture', 'index.ts'), 'utf8');
+  // Published from the capability's interface, the table would be one import away from everything.
+  const published = readFileSync(path.join(root, 'modules', 'unsent', 'index.ts'), 'utf8');
   assert.ok(
-    !/CAPTURE_DATABASE|openCaptureStore/.test(published),
-    'capture publishes its database, which puts it one import away from everything',
+    !/openUnsentStore|DATABASE_NAME|MIGRATIONS|useUnsentState/.test(published),
+    'unsent publishes its store, which puts it one import away from everything',
   );
 });
 
 /**
- * Container creation is a plain request, and its durable subsystem is gone rather than disabled.
- *
- * The attempt records, their database, their recovery surfaces and their summary cards were deleted
- * in one sweep: a second dispatcher kept behind a flag is a second thing that can resend, and the
- * recovery screen is about notes only now. **The old database file on a device is never opened and
- * never deleted** - this codebase does not remove a local database on its own - so the rule is that
- * nothing names it, not that something removes it.
+ * `unsent` sits under the screens that write into it. It reaches the connection for the session and
+ * reachability, and nothing that draws: `capture` and `collections` build on it, never the reverse.
  */
-test('no container-attempt surface survives', () => {
-  assert.ok(
-    !existsSync(path.join(root, 'modules', 'collections', 'creation')),
-    'the container attempt subsystem is gone',
+test('unsent depends on no screen', () => {
+  const allowed = ['unsent', 'connection', 'navigation'].map(
+    (module) => path.join('modules', module) + path.sep,
+  );
+  const reached = [...reachable(path.join('modules', 'unsent', 'index.ts'))].filter(
+    (file) =>
+      file.startsWith('modules' + path.sep) && !allowed.some((prefix) => file.startsWith(prefix)),
   );
 
-  for (const file of files) {
-    const source = readFileSync(path.join(root, file), 'utf8');
-
-    for (const name of [
-      'ATTEMPTS_DATABASE',
-      'raphael-creation.db',
-      'useCreationOwner',
-      'useCreationStore',
-      'PendingAttempts',
-      'PendingSummary',
-      'AttemptCard',
-      'resumeContainer',
-    ]) {
-      assert.ok(
-        !source.includes(name),
-        `${file}: still reaches the retired container attempt ${name}`,
-      );
-    }
-  }
+  assert.deepEqual(reached, [], 'unsent reaches a capability that depends on it');
 });
 
 /**
@@ -373,7 +352,7 @@ test('no container-attempt surface survives', () => {
  * ordinary import in a screen nobody thinks of as shared.
  */
 test('the capabilities capture depends on do not depend on capture', () => {
-  for (const module of ['browse', 'collections', 'resources', 'editor', 'lifecycle']) {
+  for (const module of ['browse', 'collections', 'resources', 'editor', 'lifecycle', 'unsent']) {
     const entry = path.join('modules', module, 'index.ts');
     const reached = [...reachable(entry)].filter((file) =>
       file.startsWith(path.join('modules', 'capture') + path.sep),

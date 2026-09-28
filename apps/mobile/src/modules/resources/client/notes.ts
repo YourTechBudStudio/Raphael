@@ -5,9 +5,8 @@
  * container's own notes. They are the *same* traversal machinery with different descriptors, so
  * paging, transport capture, mapping, failure and refresh behave identically wherever notes appear.
  *
- * **There is no read of one note here.** Opening a note is editing it, and the editor reads through
- * the edit owner's own Get; a query for one entity beside that read would be a second authority on
- * what the note says, and it would refetch the note someone is typing into on every acknowledgement.
+ * **There is no read of one note here.** Opening a note is editing it, and the editor reads it
+ * through its own node query (`capture`), which is deliberately never refreshed behind it.
  *
  * Two rules this file exists to keep:
  *

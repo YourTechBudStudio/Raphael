@@ -15,10 +15,7 @@ import { invalidateSessionMedia } from '../../resources';
  * both lived in the same in-memory list; they are two now, and a recording has nothing to say about
  * what the server holds.
  *
- * Text capture used to live here too, as a session-only mock beside this one. It is gone: Phase 04
- * retired it rather than leave something that looks like saving a note but writes only to memory,
- * and the durable owner in `owner.ts` is what replaces it. Voice has no server operation yet and is
- * unchanged.
+ * Text notes are written through `unsent`. Voice has no server operation yet.
  */
 
 export interface CreateVoiceNoteInput {

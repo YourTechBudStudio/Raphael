@@ -4,16 +4,8 @@ import { openContainer, useSheetsStore } from '../../navigation';
 import { NewContainerSheet } from './NewContainerSheet';
 
 /**
- * The one mounted container sheet, at the root of the app.
- *
- * Mounted once rather than per screen so that opening it from Browse and from an area is the same
- * sheet with the same rules, and so the mutual exclusion the sheet store enforces is actually
- * enforceable.
- *
- * This host navigates on success, which is what the standalone entry points want. Capture's
- * create-here form does not come through here: it renders the same request session inside its own
- * destination sheet, because the person is choosing where a note goes and must not be carried off
- * to the new container instead.
+ * The one mounted container sheet, at the root of the app, so every entry point gets the same sheet
+ * and the sheet store's one-at-a-time rule holds. It opens what it created.
  */
 export function ContainerCreationHost() {
   const open = useSheetsStore((state) => state.open);
@@ -33,13 +25,13 @@ export function ContainerCreationHost() {
   return (
     <NewContainerSheet
       containerType={target?.containerType ?? 'area'}
-      // Each opening is its own form and its own key. Kept mounted while closed so the sheet can
-      // animate out, which is why the key matters: nothing from the last opening survives.
+      draftId={target?.draftId ?? null}
+      // Each opening is its own form and its own draft. Kept mounted while closed so the sheet can
+      // animate out.
       key={session}
       onClose={close}
       onCreated={onCreated}
       parentAreaId={target?.parentAreaId ?? null}
-      sessionId={session}
       visible={target !== null}
     />
   );

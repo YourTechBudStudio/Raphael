@@ -78,19 +78,13 @@ const many = (count) =>
     summary(100 + index, 'project', 1, `Auth ${String(100 + index)}`),
   );
 
-const transportFailure = {
-  kind: 'transport',
-  mutationOutcome: 'not_applicable',
-  message: 'The server could not be reached.',
-};
+const transportFailure = { kind: 'network', message: 'The server could not be reached.' };
 
 const scopeGoneFailure = {
-  kind: 'api_error',
+  kind: 'http',
   status: 404,
-  mutationOutcome: 'not_applicable',
-  message: 'Not found.',
-  error: { code: 'node_not_found', message: 'not found' },
-  details: { field: 'scopes' },
+  code: 'node_not_found',
+  message: 'Scope 1 does not exist.',
 };
 
 /**

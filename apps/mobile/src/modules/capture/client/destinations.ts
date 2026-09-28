@@ -13,13 +13,9 @@
 
 import { useCallback } from 'react';
 
+import type { ContainerRef } from '../../../infrastructure/api/contracts';
 import { ancestorsOf, useHierarchy } from '../../collections';
-import type { DestinationName } from '../composer.ts';
-import type { Destination } from '../types.ts';
-
-// The shape lives beside the words composed from it, in `composer.ts`, which no live query may reach
-// into. Re-exported here so the hook and its result still have one name between them.
-export type { DestinationName };
+import type { DestinationName } from '../copy.ts';
 
 // Chosen, and not nameable here and now. `spoken` is null because there is no path to speak; the
 // sentence for that is composed where the words are, and a caller that interpolates this into one of
@@ -28,7 +24,7 @@ const NOT_NAMEABLE: DestinationName = { chip: 'Chosen place', spoken: null, leaf
 
 const NOTHING_CHOSEN: DestinationName = { chip: null, spoken: null, leaf: null };
 
-export const useDestinationName = (): ((destination: Destination | null) => DestinationName) => {
+export const useDestinationName = (): ((destination: ContainerRef | null) => DestinationName) => {
   const tree = useHierarchy();
   const hierarchy = tree.hierarchy;
   const stale = tree.isStale;

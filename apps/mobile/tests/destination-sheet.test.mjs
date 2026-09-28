@@ -7,9 +7,9 @@
  * else. The hierarchy is seeded into the cache rather than fetched, because what is under test is
  * the sheet, not the traversal `collections` already has its own tests for.
  *
- * What is real: the sheet, the selectable tree, the creation session, the client and the cache. What
- * is substituted is `fetch`, so the request that goes out is the one the app would send and the key
- * is read back off the wire.
+ * What is real: the sheet, the selectable tree, the `unsent` row and its runner over Node SQLite, the
+ * client and the cache. What is substituted is `fetch`, so the request that goes out is the one the
+ * app would send.
  */
 
 import assert from 'node:assert/strict';
@@ -17,6 +17,7 @@ import { after, beforeEach, describe, it } from 'node:test';
 
 import { installDom } from './support/browser-dom.mjs';
 import { installNativeStubs } from './support/native-stub-loader.mjs';
+import { nodeDriver } from './support/node-sqlite.mjs';
 
 const hooks = installNativeStubs();
 after(() => hooks.deregister());
@@ -33,8 +34,13 @@ const { DestinationSheet } = await import('../src/modules/capture/components/Des
 const { useConnectionStore } = await import('../src/modules/connection/state/connection.ts');
 const { queryClient } = await import('../src/infrastructure/query/query-client.ts');
 const { scopeKey } = await import('../src/infrastructure/query/keys.ts');
+const { discardAllUnsent, resumeUnsent, startUnsent, stopUnsent } =
+  await import('../src/modules/unsent/client/unsent.ts');
+
+await startUnsent(nodeDriver());
 
 after(() => {
+  stopUnsent();
   queryClient.clear();
 });
 
@@ -223,8 +229,11 @@ const open = (options = {}) => {
   };
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   queryClient.clear();
+  await discardAllUnsent();
+  // The wipe seals writes for a server switch; a test's reset is not one.
+  resumeUnsent();
 });
 
 describe('what the sheet offers to create', () => {
@@ -343,14 +352,14 @@ describe('what an answer does to the sheet', () => {
     }
   });
 
-  it('keeps the title and the chosen parent when the server refuses', async () => {
+  it('keeps the title and the chosen parent when the server refuses, and says why', async () => {
     const sheet = open({
       selected: { type: 'area', id: 1 },
       answers: [
         {
           status: 409,
           body: {
-            error: { code: 'slug_conflict', message: 'that name is taken here', details: {} },
+            error: { code: 'node_archived', message: 'The parent is inside something archived.' },
           },
         },
         { status: 201, body: { entity: entity({ id: 7, parentId: 1 }) } },
@@ -363,22 +372,21 @@ describe('what an answer does to the sheet', () => {
       sheet.press('Create');
       await sheet.settle();
 
-      assert.ok(sheet.text().includes('that name is taken here'));
+      assert.ok(sheet.text().includes('Not saved: The parent is inside something archived.'));
       assert.equal(sheet.find('Area title').value, 'Reading', 'the title is kept for another go');
       assert.deepEqual(sheet.selected, [], 'and nothing was selected');
 
-      // The parent is still the one that was chosen, and the key is still the session's.
       sheet.press('Create');
       await sheet.settle();
 
       assert.deepEqual(sheet.sent[1].parent, { id: 1 });
-      assert.equal(sheet.sent[0].idempotencyKey, sheet.sent[1].idempotencyKey);
+      assert.equal(sheet.selected.length, 1);
     } finally {
       sheet.unmount();
     }
   });
 
-  it('reports a lost answer without selecting, closing, or trying again', async () => {
+  it('keeps a creation that could not reach the server, without selecting or closing', async () => {
     const sheet = open({ selected: { type: 'area', id: 1 }, answers: ['lost'] });
 
     try {
@@ -387,39 +395,10 @@ describe('what an answer does to the sheet', () => {
       sheet.press('Create');
       await sheet.settle();
 
-      assert.ok(sheet.text().includes('Look for it before creating it again'));
-      assert.equal(sheet.sent.length, 1, 'nothing is retried on its own');
+      assert.ok(sheet.text().includes('It’s kept in Unfinished and will keep trying'));
       assert.deepEqual(sheet.selected, []);
       assert.deepEqual(sheet.closed, []);
-      // The earlier selection and everything written are exactly where they were.
       assert.equal(sheet.find('Area title').value, 'Reading');
-    } finally {
-      sheet.unmount();
-    }
-  });
-
-  it('will not select a container made against a server the app has since left', async () => {
-    const sheet = open({
-      selected: { type: 'area', id: 1 },
-      answers: [{ status: 201, body: { entity: entity({ id: 8 }) } }],
-    });
-
-    try {
-      sheet.press('New area');
-      sheet.type('Area title', 'Reading');
-
-      // The switch lands while the request is in the air.
-      act(() => {
-        sheet.press('Create');
-      });
-      activate(useConnectionStore.getState().phase.session.transport, ACTIVATION + 1);
-      await sheet.settle();
-
-      // It exists, on the other server. Ids are not portable, so a match here would be a
-      // coincidence of numbers - and a note filed into it would be filed nowhere a person chose.
-      assert.deepEqual(sheet.selected, []);
-      assert.deepEqual(sheet.closed, []);
-      assert.ok(sheet.text().includes('Check the other server'));
     } finally {
       sheet.unmount();
     }
@@ -429,10 +408,7 @@ describe('what an answer does to the sheet', () => {
 describe('dismissing the sheet', () => {
   it('closes the session, so the next opening is a new question', async () => {
     const sheet = open({
-      answers: [
-        { status: 201, body: { entity: entity({ id: 11 }) } },
-        { status: 201, body: { entity: entity({ id: 12 }) } },
-      ],
+      answers: [{ status: 201, body: { entity: entity({ id: 11 }) } }],
     });
 
     try {

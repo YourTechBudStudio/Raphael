@@ -34,8 +34,6 @@ const { createRoot } = await import('react-dom/client');
 const { QueryClientProvider } = await import('@tanstack/react-query');
 const { navigations, resetNavigations } = await import('./support/stubs/expo-router.mjs');
 const { HomeScreen } = await import('../src/modules/home/components/HomeScreen.tsx');
-const { useCaptureOwner } = await import('../src/modules/capture/client/owner.ts');
-const { useEditOwner } = await import('../src/modules/capture/client/edit-owner.ts');
 const { useConnectionStore } = await import('../src/modules/connection/state/connection.ts');
 const { queryClient } = await import('../src/infrastructure/query/query-client.ts');
 const { invalidateActivation } = await import('../src/infrastructure/query/invalidate.ts');
@@ -147,8 +145,7 @@ const deferredTransport = () => {
 const refused = () => ({
   ok: false,
   failure: {
-    kind: 'transport',
-    mutationOutcome: 'unknown',
+    kind: 'network',
     message: 'The server could not be reached.',
   },
 });
@@ -225,18 +222,6 @@ beforeEach(() => {
   queryClient.clear();
   server = deferredTransport();
   connect(server.transport);
-  useCaptureOwner.setState({
-    status: 'ready',
-    problem: null,
-    drafts: [],
-    unusableDrafts: [],
-    attempts: [],
-    unsaved: {},
-    sending: [],
-    saving: [],
-    unreadableAttempts: 0,
-  });
-  useEditOwner.setState({ status: 'ready', problem: null, edits: [], unusableEdits: [] });
 });
 
 /** Render Home and let the traversal it issues on mount complete. */

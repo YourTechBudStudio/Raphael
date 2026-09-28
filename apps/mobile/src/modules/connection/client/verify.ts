@@ -11,7 +11,7 @@
  * and it depends on whether the record can be stored, which this function knows nothing about.
  */
 
-import { isTransportRejection, type ClientFailure } from '@raphael/client';
+import { isTransportRejection, type ClientFailure, type Transport } from '@raphael/client';
 import { verify } from '@raphael/client/connection';
 import type { DateProtocolVersion } from '@raphael/contracts/connection';
 
@@ -67,4 +67,12 @@ export const verifyConnection = async (
       protocolVersion: result.value.protocolVersion,
     },
   };
+};
+
+/**
+ * Asks the connected server whether it answers. The session's transport reports the result to
+ * reachability, so nothing needs to be read back here.
+ */
+export const checkServer = async (transport: Transport): Promise<void> => {
+  await verify(transport);
 };

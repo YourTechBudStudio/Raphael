@@ -1,6 +1,6 @@
 import { ChevronLeft, Search } from 'lucide-react-native';
 import { useMemo } from 'react';
-import { Text, View } from 'react-native';
+import { View } from 'react-native';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
 import { asClientFailure, isNotFound } from '../../../infrastructure/query/failure';
@@ -12,10 +12,11 @@ import {
   IconButton,
   Screen,
   SectionError,
+  Snackbar,
   ToggleLabel,
 } from '../../../ui';
 import { RejectionNotice } from '../../connection';
-import { favoriteFailureSentence, useFavoriteToggle, type FavoriteRead } from '../../favorites';
+import { useFavoriteToggle, type FavoriteRead } from '../../favorites';
 import {
   lifecycleView,
   UNAVAILABLE_WHILE_ARCHIVED_HINT,
@@ -53,11 +54,7 @@ import { ProjectHeaderSkeleton } from './ProjectSkeleton';
 import { ReadOnlyBody } from './ReadOnlyBody';
 
 /** Stands in when there is no client failure to inspect, so the not-found check stays total. */
-const NO_FAILURE = {
-  kind: 'transport',
-  mutationOutcome: 'not_applicable',
-  message: '',
-} as const;
+const NO_FAILURE = { kind: 'network', message: '' } as const;
 
 export interface ProjectScreenProps {
   /** Null when the route parameter did not name a container. */
@@ -195,14 +192,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
   // Disabled spans the write and the re-read that follows it. While it holds, the ring is the whole
   // message and no sentence is drawn beside it.
   const activeBusy = active.isDisabled(entity.id);
-  // Stamped with the Get that read it, so the star can tell whether this read has seen a confirmed
-  // favorite change.
-  const favoriteRead: FavoriteRead = {
-    id: entity.id,
-    isFavorite: entity.isFavorite,
-    requestedAt: read.requestedAt,
-  };
-  const favoriteFailure = favoriteFailureSentence(favorite.failure);
+  const favoriteRead: FavoriteRead = { id: entity.id, isFavorite: entity.isFavorite };
   const sessionMedia = (media.data ?? []).filter(
     (resource) => resource.parent.type === 'project' && resource.parent.id === projectId,
   );
@@ -271,17 +261,9 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
           />
           <ActiveVerdict
             className="mt-2"
-            details={active.failureDetails}
+            message={active.failureMessage}
             failure={activeBusy ? null : active.failure}
           />
-          {favoriteFailure === null ? null : (
-            <Text
-              accessibilityLiveRegion="polite"
-              className="mt-2 font-body text-[15px] leading-[22px] text-danger"
-            >
-              {favoriteFailure}
-            </Text>
-          )}
           <ArchiveLines action={lifecycle} view={view} />
         </View>
 
@@ -303,6 +285,7 @@ export function ProjectScreen({ projectId }: ProjectScreenProps) {
 
         <SessionMediaSection className="mt-7" items={sessionMedia} testID="project-session-media" />
       </Screen>
+      <Snackbar message={favorite.failureMessage} onHidden={favorite.dismiss} />
     </View>
   );
 }

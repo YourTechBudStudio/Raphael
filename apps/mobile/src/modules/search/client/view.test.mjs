@@ -118,41 +118,22 @@ describe('the request was refused before it left', () => {
   });
 });
 
-/**
- * The one place mobile depends on how the server spells this failure.
- *
- * If the field is ever reported differently, nothing else in the app would notice: the screen would
- * fall back from "That project is no longer here." to a retry button that cannot succeed, which is
- * the state the whole scope-gone branch exists to prevent.
- */
+/** The one place mobile depends on how the server spells this failure. */
 describe('reading a scope that is gone out of a failure', () => {
-  const apiFailure = (code, details) =>
-    new ClientFailureError({
-      kind: 'api_error',
-      message: 'refused',
-      status: 404,
-      error: { code, message: 'refused' },
-      details,
-    });
+  const apiFailure = (code) =>
+    new ClientFailureError({ kind: 'http', message: 'Scope 1 does not exist.', status: 404, code });
 
-  it('is the not-found code reported against the scopes field', () => {
-    assert.equal(isScopeGone(apiFailure('node_not_found', { field: 'scopes', index: 0 })), true);
+  it('is the not-found code', () => {
+    assert.equal(isScopeGone(apiFailure('node_not_found')), true);
   });
 
-  it('is not the same code about some other field', () => {
-    // A parent that does not exist is a different failure with a different answer, and widening
-    // this predicate would put "that project is no longer here" in front of it.
-    assert.equal(isScopeGone(apiFailure('node_not_found', { field: 'parent' })), false);
-    assert.equal(isScopeGone(apiFailure('node_not_found', {})), false);
+  it('is not another refusal', () => {
+    assert.equal(isScopeGone(apiFailure('invalid_input')), false);
   });
 
-  it('is not another failure that happens to be about the scopes field', () => {
-    assert.equal(isScopeGone(apiFailure('invalid_input', { field: 'scopes' })), false);
-  });
-
-  it('is not a transport failure, and not something that is not a client failure at all', () => {
+  it('is not a network failure, and not something that is not a client failure at all', () => {
     assert.equal(
-      isScopeGone(new ClientFailureError({ kind: 'transport', message: 'unreachable' })),
+      isScopeGone(new ClientFailureError({ kind: 'network', message: 'unreachable' })),
       false,
     );
     assert.equal(isScopeGone(new Error('No connection')), false);

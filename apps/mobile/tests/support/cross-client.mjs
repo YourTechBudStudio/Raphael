@@ -1,14 +1,14 @@
 /**
  * The two real clients, in one process boundary each.
  *
- * Phase 07 has to show that a note written by one client is the same note to the other, and that a
- * creation survives a lost answer, a restarted owner and a reset server. None of that is provable
- * against substitutes, so everything here is real: a backend listening on an ephemeral port over an
- * on-disk database, the CLI run as its own operating-system process, and the mobile capture owner
+ * A note written by one client has to be the same note to the other, and the phone's unsent writing
+ * has to reach the server exactly once through a lost answer. None of that is provable against
+ * substitutes, so everything here is real: a backend listening on an ephemeral port over an on-disk
+ * database, the CLI run as its own operating-system process, and the phone's `unsent` table and runner
  * over genuine SQLite through the same port the app uses.
  *
  * **What this is not.** There is no Expo runtime, no WebView and no `expo-sqlite`; the local store
- * runs on `node:sqlite` through the shared port. The device remains Phase 07's human-assisted block.
+ * runs on `node:sqlite` through the shared port. The device remains a human-assisted check.
  *
  * Every listener, child process and directory this creates is torn down before the test returns,
  * including when an assertion fails.
@@ -22,21 +22,18 @@ import { fileURLToPath } from 'node:url';
 import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
 import { createTransport } from '@raphael/client';
 import {
-  archive as archiveNode,
   create as createNode,
   get as getNode,
+  getPath,
   list as listNodes,
-  move as moveNode,
-  restore as restoreNode,
   update as updateNode,
 } from '@raphael/client/nodes';
 import { Effect, Exit, Scope } from 'effect';
 
-import { createEditOwner } from '../../src/modules/capture/edit-owner.ts';
-import { editKeyOf } from '../../src/modules/capture/edit-types.ts';
-import { createCaptureOwner } from '../../src/modules/capture/owner.ts';
-import { openCaptureStore } from '../../src/modules/capture/store.ts';
+import { migrate } from '../../src/infrastructure/sqlite/migrate.ts';
 import { fetchHierarchy } from '../../src/modules/collections/client/hierarchy.ts';
+import { createRunner } from '../../src/modules/unsent/runner.ts';
+import { MIGRATIONS, openUnsentStore } from '../../src/modules/unsent/store.ts';
 import { openNodeDatabase } from './node-sqlite.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -50,8 +47,8 @@ export const CLI_ENTRY = path.join(repositoryRoot, 'apps', 'cli', 'src', 'main.t
 /**
  * The directory runtime state is created beneath, and the one directory no worker ever removes.
  *
- * Scratch state lives under the repository's `data/`, which is git-ignored and is where Phase 07 is
- * authorized to create and destroy runtime state. Nothing is written to the operator's home
+ * Scratch state lives under the repository's `data/`, which is git-ignored and is where these tests
+ * create and destroy runtime state. Nothing is written to the operator's home
  * directory, and `HOME` is redirected into this process's own root so a stray credential file
  * cannot land in a real one.
  *
@@ -65,7 +62,7 @@ export const CLI_ENTRY = path.join(repositoryRoot, 'apps', 'cli', 'src', 'main.t
 export const RUNTIME_PARENT = path.join(repositoryRoot, 'data');
 
 /** Distinctive, so an owned root is recognisable beside whatever else lives in `data/`. */
-const ROOT_PREFIX = 'phase-07-runtime-';
+const ROOT_PREFIX = 'cross-client-runtime-';
 
 /** Long enough for the shared key policy, and obviously not a real credential. */
 export const KEY = `test-${'k'.repeat(40)}`;
@@ -132,10 +129,6 @@ export const withServer = async (body, options = {}) => {
           options: {
             server: { host: '127.0.0.1', port: options.port ?? 0 },
             database: { databasePath, busyTimeoutMs: CONFIG_DEFAULTS.busyTimeoutMs },
-            idempotency: {
-              gcIntervalMinutes: CONFIG_DEFAULTS.gcIntervalMinutes,
-              gcBatchSize: CONFIG_DEFAULTS.gcBatchSize,
-            },
           },
           credential: ApiCredential.fromKey(options.key ?? KEY),
           logger: silentLogger,
@@ -201,104 +194,95 @@ export const cliJson = async (args, options = {}) => {
   return JSON.parse(ran.stdout);
 };
 
+/** The phone's transport. `fetch` is the one seam a test replaces, to make an answer go missing. */
+export const phoneTransport = (endpoint, fetchImpl = fetch) =>
+  createTransport({ endpoint, apiKey: KEY, fetch: fetchImpl });
+
 /**
- * A capture owner over a real store, wired to a real transport.
- *
- * `fetchImpl` is the only seam a test replaces, and only to make a response actually go missing.
- * `sessionIsCurrent` is supplied by the caller so a test can retire an activation for real.
+ * A fetch that lets the server commit the next matching request and then loses its answer, as a
+ * dropped connection would. Every other request goes through untouched.
  */
-export const captureOver = async (endpoint, localDbFile, options = {}) => {
-  const transport = createTransport({
-    endpoint,
-    apiKey: options.key ?? KEY,
-    fetch: options.fetch ?? fetch,
-  });
-  let ids = 0;
+export const losingNextAnswer = (matches) => {
+  let armed = true;
 
-  const owner = createCaptureOwner({
-    openStore: async () => openCaptureStore(await openNodeDatabase(localDbFile), () => Date.now()),
-    create: (activeTransport, request) => createNode(activeTransport, request),
-    now: options.now ?? (() => Date.now()),
-    monotonic: () => performance.now(),
-    newId: () => {
-      ids += 1;
+  return async (url, init) => {
+    const response = await fetch(url, init);
 
-      return `note-${String(ids)}-${String(Math.random()).slice(2, 10)}`;
-    },
-    applyCreation: options.applyCreation ?? (async () => {}),
-    sessionIsCurrent: options.sessionIsCurrent ?? ((session) => session.activation === 1),
-  });
+    if (armed && matches(String(url))) {
+      armed = false;
+      await response.text();
+      throw new TypeError('Network request failed');
+    }
 
-  return {
-    owner,
-    transport,
-    session: {
-      activation: options.activation ?? 1,
-      connectionId: options.connectionId ?? 'c1',
-      endpoint,
-      transport,
-      usable: true,
-    },
+    return response;
   };
 };
 
 /**
- * An edit owner over a real store, wired to a real transport.
+ * The phone's `unsent` table and runner over real SQLite, sending to a real server.
  *
- * `captureOver`'s counterpart, and the reason both exist in one harness: editing is the first
- * operation where the two clients' interaction models genuinely diverge - `raphael update` names a
- * revision explicitly, the phone autosaves against a base it keeps itself - so the only place that
- * divergence can be checked is at a server both of them talk to.
- *
- * The debounce is set to zero and the timers are real, so a case reads as "edit, then wait for the
- * server to have it" rather than as a schedule being driven by hand. `fetchImpl` is the one seam a
- * case replaces, and only to make an answer actually go missing.
+ * The runner is driven by hand: `send()` kicks it and waits until nothing pending is left or it has
+ * backed off, so a case reads as "write, then let the phone send". Backoff timers are recorded, never
+ * run, so nothing outlives the case.
  */
-export const editOver = async (endpoint, localDbFile, options = {}) => {
-  const transport = createTransport({
-    endpoint,
-    apiKey: options.key ?? KEY,
-    fetch: options.fetch ?? fetch,
-  });
-  const applied = [];
-  const refreshed = [];
+export const unsentOver = async (endpoint, options = {}) => {
+  const transport = phoneTransport(endpoint, options.fetch ?? fetch);
+  const db = await openNodeDatabase();
 
-  const owner = createEditOwner({
-    openStore: async () => openCaptureStore(await openNodeDatabase(localDbFile), () => Date.now()),
-    get: (activeTransport, request) => getNode(activeTransport, request),
-    update: (activeTransport, request) => updateNode(activeTransport, request),
-    move: (activeTransport, request) => moveNode(activeTransport, request),
-    archive: (activeTransport, request) => archiveNode(activeTransport, request),
-    restore: (activeTransport, request) => restoreNode(activeTransport, request),
-    now: options.now ?? (() => Date.now()),
-    applyUpdate: async (ref, activation) => {
-      applied.push({ ref, activation });
+  if ((await migrate(db, MIGRATIONS)).kind !== 'ready') throw new Error('unsent did not migrate');
+
+  const store = await openUnsentStore(db);
+  const cached = new Map();
+  const backoffs = [];
+  const runner = createRunner({
+    store,
+    session: () => ({ activation: 1, transport }),
+    online: () => true,
+    create: (active, request) => createNode(active, request),
+    update: (active, request) => updateNode(active, request),
+    get: (active, target) => getNode(active, { target, format: 'tiptap' }),
+    pathOf: async (active, id) => {
+      const result = await getPath(active, { target: { id } });
+
+      return result.ok ? { ok: true, value: result.value.path } : result;
     },
-    applyLifecycle: async (activation) => {
-      refreshed.push(activation);
+    cache: (entity) => {
+      cached.set(entity.id, entity);
     },
-    sessionIsCurrent: options.sessionIsCurrent ?? ((session) => session.activation === 1),
-    autosaveDelayMs: options.autosaveDelayMs ?? 0,
-    autosaveRetryMs: options.autosaveRetryMs ?? 50,
+    refresh: () => {},
+    setTimer: (_run, ms) => {
+      backoffs.push(ms);
+
+      return () => {};
+    },
   });
 
-  const session = {
-    activation: options.activation ?? 1,
-    connectionId: options.connectionId ?? 'c1',
-    endpoint,
-    transport,
-    usable: true,
+  const send = async () => {
+    const before = backoffs.length;
+
+    runner.kick();
+    const deadline = Date.now() + 15_000;
+
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      if (backoffs.length > before) return 'backed_off';
+      if (!store.rows().some((row) => row.status === 'pending')) return 'settled';
+    }
+
+    throw new Error('the runner did not settle');
   };
 
   return {
-    owner,
     transport,
-    session,
-    applied,
-    refreshed,
-    keyFor: (nodeId) => editKeyOf({ connectionId: session.connectionId, nodeId }),
-    record: (nodeId) =>
-      owner.getState().edits.find((candidate) => candidate.key.nodeId === nodeId) ?? null,
+    store,
+    runner,
+    cached,
+    send,
+    row: (id) => store.rows().find((row) => row.id === id),
+    close: async () => {
+      runner.stop();
+      await db.close();
+    },
   };
 };
 

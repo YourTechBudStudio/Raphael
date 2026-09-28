@@ -10,12 +10,9 @@ export interface DetailsSheetProps {
   /**
    * Changes per opening, and it is what the drafts are seeded from.
    *
-   * The same device `DestinationSheet` uses, and here it is a correctness rule rather than a
-   * convenience. Seeding from `slug` and `tags` directly would re-seed whenever those props changed
-   * identity - and `publishRecord` re-reads the row on every acknowledgement, JSON-parsing a fresh
-   * `tags` array each time, so an ordinary autosave landing while someone typed would silently
-   * replace a half-typed ID with the stored one and disable Done. Nothing but a new opening may
-   * forget what was typed.
+   * Seeding from `slug` and `tags` directly would re-seed whenever those props changed identity -
+   * an autosave landing while someone typed would replace a half-typed ID with the stored one.
+   * Nothing but a new opening may forget what was typed.
    */
   sessionId: number;
   /** What the ID field is called on this entity: "note ID", "area ID", "project ID". Never "slug". */
@@ -34,7 +31,7 @@ export interface DetailsSheetProps {
    * `subtitle` says why and the way back, which only the screen's lifecycle can word.
    */
   readOnly?: { readonly subtitle: string } | null | undefined;
-  /** Committed once, on Done. Nothing here reaches the owner per keystroke. */
+  /** Committed once, on Done. Nothing here is written per keystroke. */
   onDone: (details: { slug: string | null; tags: readonly string[] }) => void;
   onClose: () => void;
 }
@@ -49,7 +46,7 @@ const sentenceCase = (value: string): string => value.charAt(0).toUpperCase() + 
  * The ID and the tags, edited together and committed once.
  *
  * **One commit, on Done.** Everything typed here lives in this component until then, because the ID
- * is autosaved the moment it reaches the owner and a half-typed one is a real request to a real
+ * is autosaved the moment it reaches the row and a half-typed one is a real request to a real
  * server - refused, and refused again on the next keystroke. Closing any other way forgets what was
  * typed, which is what makes Cancel mean something.
  *

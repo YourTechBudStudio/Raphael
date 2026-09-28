@@ -120,9 +120,6 @@ const SERVER = {
   protocolVersion: PROTOCOL_VERSION,
 };
 
-/** What an older build of this app wrote: a protocol identifier from before it became a date. */
-const LEGACY_PROTOCOL_VERSION = 1;
-
 const OTHER = { ...SERVER, base: 'https://other:4000', origin: 'https://other:4000' };
 
 const storedRecord = (overrides = {}) =>
@@ -132,7 +129,7 @@ const storedRecord = (overrides = {}) =>
     base: SERVER.base,
     origin: SERVER.origin,
     apiKey: 'stored-key',
-    protocolVersion: LEGACY_PROTOCOL_VERSION,
+    protocolVersion: PROTOCOL_VERSION,
     verifiedAt: '2026-01-01T00:00:00.000Z',
     ...overrides,
   });
@@ -163,25 +160,19 @@ describe('the stored record', () => {
   });
 
   /**
-   * One table, two implementations.
-   *
    * `record.ts` spells out its own calendar-date rule so that file keeps its standard-library-only
-   * dependency, which means the rule exists twice. Two hand-kept lists of edge cases would drift the
-   * first time either side changed, so both are driven from this one instead.
+   * dependency. It is held to the wire's date rule here. The wire also reads a bare integer, so an
+   * old server can be reported as incompatible; a stored record never holds one.
    */
   const IDENTIFIERS = [
     [PROTOCOL_VERSION, true],
     ['2026-09-10', true],
-    [1, true],
     ['2026-13-01', false],
     ['2026-02-30', false],
     ['2026-9-18', false],
     ['0026-01-01', false],
     ['latest', false],
     ['', false],
-    [0, false],
-    [-1, false],
-    [1.5, false],
   ];
 
   it('holds the stored rule and the wire rule to the same table', () => {
@@ -197,32 +188,9 @@ describe('the stored record', () => {
         `wire: ${JSON.stringify(protocolVersion)}`,
       );
     }
-  });
-
-  it('reads both protocol identifiers, and refuses anything that is neither', () => {
-    // The default fixture carries the number an older build wrote. It is a true account of a
-    // verification that happened, so it is read as one rather than repaired or thrown away.
-    const legacy = decodeRecord(storedRecord());
-    assert.equal(legacy.ok, true);
-    assert.equal(legacy.record.protocolVersion, LEGACY_PROTOCOL_VERSION);
-    assert.equal(
-      legacy.record.apiKey,
-      'stored-key',
-      'a historical version is not a bad credential',
-    );
-    assert.equal(legacy.record.connectionId, 'stored-id');
-
-    const dated = decodeRecord(storedRecord({ protocolVersion: PROTOCOL_VERSION }));
-    assert.equal(dated.ok, true);
-    assert.equal(dated.record.protocolVersion, PROTOCOL_VERSION);
-
-    // Widening what can be read is not softening the check, and a refusal is "unreadable" rather
-    // than anything softer - that is the phase which surfaces a diagnosis without discarding the
-    // credential. Which values are refused is the shared table's job; this is about the verdict.
-    assert.deepEqual(decodeRecord(storedRecord({ protocolVersion: '2026-13-01' })), {
-      ok: false,
-      problem: 'unreadable',
-    });
+    for (const protocolVersion of [1, 0, -1, 1.5]) {
+      assert.equal(decodeRecord(storedRecord({ protocolVersion })).ok, false);
+    }
   });
 
   it('mints a different local identity each time', () => {
@@ -390,25 +358,6 @@ describe('establishing a connection', () => {
 
     await store.getState().establish(OTHER);
     assert.notEqual(store.getState().phase.session.connection.connectionId, first);
-  });
-
-  it('replaces a historical numeric version with the date, without minting a new identity', async () => {
-    const fake = fakePort();
-    fake.state.value = storedRecord();
-    const store = createConnectionStore(ports(fake.port).value);
-    await store.getState().hydrate();
-
-    const hydrated = store.getState().phase.session.connection;
-    assert.equal(hydrated.protocolVersion, LEGACY_PROTOCOL_VERSION);
-
-    // Verifying the same address again is not a new server. The stored version moves forward because
-    // a fresh verification established it, and the local identity stays put because the address did.
-    await store.getState().establish(SERVER);
-
-    const session = store.getState().phase.session;
-    assert.equal(session.connection.protocolVersion, PROTOCOL_VERSION);
-    assert.equal(session.connection.connectionId, 'stored-id');
-    assert.equal(decodeRecord(fake.state.value).record.protocolVersion, PROTOCOL_VERSION);
   });
 
   it('every switch is a new activation, and every switch retires the caches', async () => {

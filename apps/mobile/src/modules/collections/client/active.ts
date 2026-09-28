@@ -1,5 +1,4 @@
 import { update } from '@raphael/client/nodes';
-import type { RecoveryDetails } from '@raphael/contracts';
 import { useMutation, useMutationState, useQueryClient } from '@tanstack/react-query';
 
 import { asClientFailure, unwrap } from '../../../infrastructure/query/failure';
@@ -27,8 +26,7 @@ import { invalidateContainer, invalidateHierarchy } from './queries';
  *
  * **Reconciliation is a re-read, never a local record.** A boolean carries nothing to preserve, so
  * one rule covers every outcome - success, a definite refusal, and a genuinely uncertain result
- * alike: read the entity back. That is why nothing here resembles `capture/edit-owner.ts`'s durable
- * store, and why the update's own response is never written into the cache.
+ * alike: read the entity back. That is why the update's own response is never written into the cache.
  *
  * Everything is scoped to one activation: the mutation key, the intent read from it, and both
  * invalidations. A write answered under a connection the app has since left cannot mark the current
@@ -53,7 +51,7 @@ export interface ActiveTarget {
 
 /**
  * `archived` is the server refusing because the project, or an area above it, was archived elsewhere
- * while this screen showed it active. `failureDetails` carries what it is worded from.
+ * while this screen showed it active. `failureMessage` is the server's own sentence for it.
  */
 export type ActiveFailure = 'conflict' | 'failed' | 'archived' | null;
 
@@ -80,8 +78,8 @@ export interface ProjectActive {
    * when the control came back.
    */
   readonly failure: ActiveFailure;
-  /** The server's details for that refusal, or null with no failure. */
-  readonly failureDetails: RecoveryDetails | null;
+  /** The server's message for that refusal, or null with no failure. */
+  readonly failureMessage: string | null;
 }
 
 /**
@@ -110,11 +108,8 @@ export function useProjectActive(): ProjectActive {
 
       return unwrap(await update(session.transport, { target: { id }, revision, active }));
     },
-    // Awaited, though `capture/update-cache.ts` says an invalidation never gates a verdict. That rule
-    // protects a save receipt shown separately from the lists it refreshes; holding it open would
-    // report an accepted write as still in progress. A toggle has no separate verdict: the control's
-    // own pending state is the only thing on screen, and it is exactly what should persist until the
-    // truth that replaces it has arrived. So the mutation stays pending until both re-reads land, the
+    // Awaited: the control's own pending state is the only thing on screen, and it is exactly what
+    // should persist until the truth that replaces it has arrived. So the mutation stays pending until both re-reads land, the
     // control stays disabled and busy showing the state the server already accepted, and a second tap
     // cannot be issued against the pre-toggle revision - which is what stops a person's own
     // successful write from becoming the conflicting party.
@@ -160,27 +155,18 @@ export function useProjectActive(): ProjectActive {
     // and clears it on success, which is precisely the lifecycle documented above. A separate
     // `useState` plus a clearing effect would be a second copy of the same fact.
     //
-    // The conflict test is the one `capture/edit-owner.ts` uses, so both places agree about what the
-    // server saying "the row moved" looks like. Mutations do not retry (`query-client.ts`), so a
-    // definite refusal is reported once.
+    // Mutations do not retry (`query-client.ts`), so a definite refusal is reported once.
     failure: failureOf(mutation.error),
-    failureDetails: detailsOf(mutation.error),
+    failureMessage: asClientFailure(mutation.error)?.message ?? null,
   };
 }
-
-const detailsOf = (error: unknown): RecoveryDetails | null => {
-  const failure = asClientFailure(error);
-
-  return failure?.kind === 'api_error' ? failure.details : null;
-};
 
 const failureOf = (error: unknown): ActiveFailure => {
   if (error === null || error === undefined) return null;
 
   const failure = asClientFailure(error);
 
-  if (failure?.kind !== 'api_error') return 'failed';
-  if (failure.error.code === 'revision_conflict') return 'conflict';
+  if (failure?.code === 'revision_conflict') return 'conflict';
 
-  return failure.error.code === 'node_archived' ? 'archived' : 'failed';
+  return failure?.code === 'node_archived' ? 'archived' : 'failed';
 };

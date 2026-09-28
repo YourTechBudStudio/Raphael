@@ -12,8 +12,10 @@
  * is that the *crossing* preserves title, description, canonical body, revision, numeric identity
  * and kind - and that the content fixtures survive real storage rather than only conversion.
  *
- * **What this is not.** No Expo runtime, no WebView, no `expo-sqlite`: the capture store runs on
- * `node:sqlite` through the shared port. The device run remains Phase 07's human-assisted block.
+ * The phone writing through `unsent` is proven against the server in `unsent-server.test.mjs`.
+ *
+ * **What this is not.** No Expo runtime, no WebView, no `expo-sqlite`. The device run remains a
+ * human-assisted check.
  *
  * Listeners, child processes and directories are torn down before the test returns, including when
  * an assertion fails.
@@ -30,7 +32,6 @@ import { get, removeFavorite, restore, update } from '@raphael/client/nodes';
 import { QueryClient } from '@tanstack/react-query';
 
 import { asClientFailure, unwrap } from '../src/infrastructure/query/failure.ts';
-import { unfinishedEdits } from '../src/modules/capture/edit-unfinished.ts';
 import { activeProjects } from '../src/modules/collections/client/hierarchy.ts';
 import {
   favoritePagesOptions,
@@ -39,14 +40,12 @@ import {
 import { notePagesOptions } from '../src/modules/resources/client/options.ts';
 import { containerDescriptor, feedDescriptor } from '../src/modules/resources/client/requests.ts';
 import { toNoteSummaryItem } from '../src/modules/resources/client/summary.ts';
-import { documentWith, fakeEditor } from './support/capture-harness.mjs';
 import {
-  captureOver,
   cleanupDirectories,
   cliJson,
-  editOver,
   hierarchyOver,
   KEY,
+  phoneTransport,
   runCli,
   temporaryDir,
   withServer,
@@ -54,6 +53,11 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtures = path.resolve(here, '..', '..', '..', 'packages', 'content', 'tests', 'fixtures');
+
+const documentWith = (text) => ({
+  type: 'doc',
+  content: [{ type: 'paragraph', content: [{ type: 'text', text }] }],
+});
 
 const fixture = async (name, file) => readFile(path.join(fixtures, name, file), 'utf8');
 
@@ -77,25 +81,6 @@ const allPages = async (client, options) => {
   } finally {
     unsubscribe();
   }
-};
-
-/**
- * Wait for a real dispatch to come back.
- *
- * `save` returns as soon as the request is on its way - the whole point of the design is that the
- * answer is a separate event - so a test about what the server did has to wait for the attempt to
- * settle. A wall-clock deadline rather than a fixed number of event-loop turns, because what is
- * being waited on here is an actual HTTP round trip.
- */
-const settled = async (owner, what = 'the attempt to settle') => {
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
-    const attempt = owner.getState().attempts[0];
-    if (attempt !== undefined && attempt.state !== 'dispatch_intent') return attempt;
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-
-  assert.fail(`timed out waiting for ${what}`);
 };
 
 /**
@@ -186,10 +171,8 @@ describe('a note the CLI wrote, read by the phone', () => {
     const dir = await temporaryDir('cli-writes-');
 
     await withServer(async ({ endpoint }) => {
-      // The phone's own read of one note is the edit owner's Get: opening a note is editing it, so
-      // there is no detail query left to ask, and this is the read a person actually makes.
-      const phone = await editOver(endpoint, path.join(dir, 'edits.db'));
-      await phone.owner.getState().initialize();
+      // The phone's own read of one note is the editor's Get, asking for the canonical format.
+      const phone = phoneTransport(endpoint);
 
       for (const row of cases) {
         const body = await row.body();
@@ -216,22 +199,16 @@ describe('a note the CLI wrote, read by the phone', () => {
         assert.equal(written.revision, 1, `${row.name}: revision`);
         assert.ok(Number.isInteger(written.id) && written.id > 0, `${row.name}: identity`);
 
-        // The phone's own read, through the owner that performs it, asking for the canonical format.
-        const opened = await phone.owner.getState().open(written.id, phone.session);
-        assert.equal(opened.kind, 'ready', `${row.name}: the phone could open it`);
-        assert.deepEqual(
-          opened.location,
-          { kind: 'known', parentId: WORK.id },
-          `${row.name}: same parent`,
-        );
-
-        const record = phone.record(written.id);
-        assert.equal(record.baseRevision, 1, `${row.name}: same revision`);
-        assert.equal(record.kind, 'note', `${row.name}: same kind`);
-        assert.equal(record.nodeType, 'resource', `${row.name}: same type`);
-        assert.equal(record.content.slug, row.slug, `${row.name}: same slug`);
-        assert.equal(record.content.title, row.title, `${row.name}: same title`);
-        assert.equal(record.content.description, row.description, `${row.name}: same description`);
+        const opened = unwrap(
+          await get(phone, { target: { id: written.id }, format: 'tiptap' }),
+        ).entity;
+        assert.equal(opened.parentId, WORK.id, `${row.name}: same parent`);
+        assert.equal(opened.revision, 1, `${row.name}: same revision`);
+        assert.equal(opened.kind, 'note', `${row.name}: same kind`);
+        assert.equal(opened.type, 'resource', `${row.name}: same type`);
+        assert.equal(opened.slug, row.slug, `${row.name}: same slug`);
+        assert.equal(opened.title, row.title, `${row.name}: same title`);
+        assert.equal(opened.description, row.description, `${row.name}: same description`);
 
         // And the same note, read back as Markdown through the client that wrote it: the fixture's
         // own expected export, which is what "the content survived storage" means here.
@@ -251,25 +228,21 @@ describe('a note the CLI wrote, read by the phone', () => {
           written.id,
           `${row.name}: id and path address the same note`,
         );
-        // A body the composer can open, and it is the server's canonical document rather than a
-        // projection of it. The owner refuses a Markdown body outright, so the request it sent must
-        // have named `format: 'tiptap'` for the record to exist at all.
+        // A body the editor can open: the server's canonical document, not a projection of it.
         assert.equal(byPath.entity.body.format, 'tiptap', `${row.name}: canonical body`);
         assert.deepEqual(
-          record.content.document,
+          opened.body.value,
           byPath.entity.body.value,
-          `${row.name}: the composer is given the body the server holds`,
+          `${row.name}: the editor is given the body the server holds`,
         );
       }
     });
   });
 
   it('puts them all in the phone feed and in their container, through real paging', async () => {
-    const dir = await temporaryDir('cli-feed-');
-
     await withServer(async ({ endpoint }) => {
       const client = freshClient();
-      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const transport = phoneTransport(endpoint);
       const titles = [];
 
       for (let index = 0; index < 3; index += 1) {
@@ -364,10 +337,8 @@ describe("a project's selection, across the two clients", () => {
   };
 
   it('is set by the terminal and read by the phone, in the order Home draws it', async () => {
-    const dir = await temporaryDir('active-cli-writes-');
-
     await withServer(async ({ endpoint }) => {
-      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const transport = phoneTransport(endpoint);
 
       // Two under one area and one under the other, so the ordering assertion below has something
       // to order. Created out of slug order deliberately.
@@ -414,10 +385,8 @@ describe("a project's selection, across the two clients", () => {
   });
 
   it('is cleared by the phone and read by the terminal', async () => {
-    const dir = await temporaryDir('active-phone-writes-');
-
     await withServer(async ({ endpoint }) => {
-      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const transport = phoneTransport(endpoint);
       const project = await projectAt(endpoint, 'phone-clears');
       const activated = await runCli(['update', project.at, '--active'], { endpoint });
       assert.equal(activated.code, 0, activated.stderr);
@@ -448,10 +417,8 @@ describe("a project's selection, across the two clients", () => {
   });
 
   it('refuses a phone write from a reading the terminal has already moved past', async () => {
-    const dir = await temporaryDir('active-stale-phone-');
-
     await withServer(async ({ endpoint }) => {
-      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const transport = phoneTransport(endpoint);
       const project = await projectAt(endpoint, 'stale-phone');
 
       // The reading the phone is holding, taken before the terminal writes.
@@ -484,116 +451,12 @@ describe("a project's selection, across the two clients", () => {
       // Checked before it is read: `asClientFailure` answers null for anything that is not one, and
       // this is the case whose whole value is *which* refusal came back.
       assert.ok(refusal !== null, 'expected a client failure');
-      assert.equal(refusal.kind, 'api_error');
-      assert.equal(refusal.error.code, 'revision_conflict');
+      assert.equal(refusal.kind, 'http');
+      assert.equal(refusal.code, 'revision_conflict');
 
       const atTerminal = await cliJson(['get', project.at], { endpoint });
       assert.equal(atTerminal.entity.active, true, 'nothing was undone');
       assert.equal(atTerminal.entity.revision, stale.revision + 1, 'and exactly one write landed');
-    });
-  });
-});
-
-describe('a note the phone wrote, read by the CLI', () => {
-  it('carries its title, description, tags, body, revision, identity and kind across', async () => {
-    const dir = await temporaryDir('phone-writes-');
-
-    await withServer(async ({ endpoint }) => {
-      const { owner, session } = await captureOver(endpoint, path.join(dir, 'capture.db'));
-      const editor = fakeEditor();
-      const document = documentWith('Written on the phone, read at a terminal');
-
-      try {
-        await owner.getState().initialize();
-        const draft = await owner.getState().createDraft(session);
-        assert.equal(draft.kind, 'created');
-
-        const { draftId } = draft;
-        await owner.getState().selectDestination(draftId, { type: 'area', id: WORK.id }, session);
-        owner.getState().editDraft(draftId, {
-          title: 'From the phone',
-          description: 'Typed into the composer',
-          // Entered before the note exists, which is what the creation draft now carries and what
-          // the frozen request has to take with it.
-          tags: ['sync', 'design'],
-        });
-        owner.getState().attachEditor(draftId, editor.port);
-        editor.captures(document);
-
-        const outcome = await owner.getState().save(draftId, session);
-        assert.equal(outcome.kind, 'dispatched', 'the save went out');
-
-        const attempt = await settled(owner, 'the server to answer the save');
-        assert.equal(attempt.state, 'acknowledged', 'the server accepted it');
-
-        const acknowledged = attempt.acknowledged;
-        assert.equal(acknowledged.kind, 'note');
-
-        // The CLI, by id and by path, in both formats.
-        const byId = await cliJson(['get', '--id', String(acknowledged.id), '--format', 'tiptap'], {
-          endpoint,
-        });
-        assert.equal(byId.entity.id, acknowledged.id);
-        assert.equal(byId.entity.revision, acknowledged.revision);
-        assert.equal(byId.entity.kind, 'note');
-        assert.equal(byId.entity.type, 'resource');
-        assert.equal(byId.entity.parentId, WORK.id);
-        assert.equal(byId.entity.title, 'From the phone');
-        assert.equal(byId.entity.description, 'Typed into the composer');
-        assert.deepEqual(byId.entity.tags, ['sync', 'design'], 'tagged before it existed');
-        assert.deepEqual(byId.entity.body.value, document, 'the canonical body crossed unchanged');
-
-        const byPath = await cliJson(
-          ['get', `${WORK.path}/${byId.entity.slug}`, '--format', 'tiptap'],
-          { endpoint },
-        );
-        assert.deepEqual(byPath.entity, byId.entity, 'id and path address the same note');
-
-        const asMarkdown = await cliJson(['get', '--id', String(acknowledged.id)], { endpoint });
-        assert.equal(asMarkdown.entity.body.value, 'Written on the phone, read at a terminal');
-
-        // And it is listed with its qualified type, which is how a terminal sees it at all.
-        const listed = await runCli(['list', WORK.path, '--filter', '{"type":"resource"}'], {
-          endpoint,
-        });
-        assert.equal(listed.code, 0);
-        assert.match(listed.stdout, new RegExp(`resource\\.note {2}${byId.entity.slug}`));
-      } finally {
-        await owner.getState().close();
-      }
-    });
-  });
-
-  it('lets the terminal read a note whose title the server derived from its body', async () => {
-    const dir = await temporaryDir('phone-derived-');
-
-    await withServer(async ({ endpoint }) => {
-      const { owner, session } = await captureOver(endpoint, path.join(dir, 'capture.db'));
-      const editor = fakeEditor();
-
-      try {
-        await owner.getState().initialize();
-        const draft = await owner.getState().createDraft(session);
-        const { draftId } = draft;
-        await owner.getState().selectDestination(draftId, { type: 'area', id: WORK.id }, session);
-        owner.getState().attachEditor(draftId, editor.port);
-        editor.captures(documentWith('A title nobody typed'));
-
-        const outcome = await owner.getState().save(draftId, session);
-        assert.equal(outcome.kind, 'dispatched');
-
-        const attempt = await settled(owner, 'the server to answer the save');
-        assert.equal(attempt.state, 'acknowledged');
-
-        const acknowledged = attempt.acknowledged;
-        assert.equal(acknowledged.title, 'A title nobody typed', 'core named it from the body');
-
-        const got = await cliJson(['get', '--id', String(acknowledged.id)], { endpoint });
-        assert.equal(got.entity.title, 'A title nobody typed');
-        assert.equal(got.entity.description, '');
-      } finally {
-        await owner.getState().close();
-      }
     });
   });
 });
@@ -610,286 +473,6 @@ describe('a note the phone wrote, read by the CLI', () => {
  * one client's idea could quietly overwrite the other's, plus one measurement of a window the design
  * knowingly left open.
  */
-describe('one entity, edited by both clients', () => {
-  /** A note to edit, created by the CLI so each case starts from a server-shaped entity. */
-  const noteOn = async (endpoint, over = {}) =>
-    (
-      await cliJson(
-        [
-          'create',
-          'resource.note',
-          `${WORK.path}/${over.slug ?? 'shared'}`,
-          '--title',
-          over.title ?? 'Shared note',
-          '--body-literal',
-          over.body ?? 'First line',
-        ],
-        { endpoint },
-      )
-    ).entity;
-
-  /** Wait for the owner to have nothing outstanding for this entity, or say what it is stuck on. */
-  const quiet = async (kit, nodeId, what) => {
-    const deadline = Date.now() + 15_000;
-
-    while (Date.now() < deadline) {
-      const record = kit.record(nodeId);
-
-      if (record !== null && record.inflightVersion === null) {
-        const state = kit.owner.getState();
-        const standing = state.standingFor(kit.keyFor(nodeId));
-
-        if (standing !== null && standing.kind !== 'pending' && standing.kind !== 'saving') {
-          return standing;
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-
-    assert.fail(`timed out waiting for ${what}`);
-  };
-
-  it('rebases the phone onto a title the terminal changed', async () => {
-    const dir = await temporaryDir('edit-rebase-');
-
-    await withServer(async ({ endpoint }) => {
-      const note = await noteOn(endpoint, { slug: 'rebase-me' });
-      const kit = await editOver(endpoint, path.join(dir, 'capture.db'));
-
-      try {
-        await kit.owner.getState().initialize();
-        assert.equal((await kit.owner.getState().open(note.id, kit.session)).kind, 'ready');
-        assert.equal(kit.record(note.id).baseRevision, note.revision);
-
-        await cliJson(['update', '--id', String(note.id), '--title', 'Renamed at a terminal'], {
-          endpoint,
-        });
-
-        // Nothing is unsent, so the next open adopts what the other client wrote.
-        assert.equal((await kit.owner.getState().open(note.id, kit.session)).kind, 'ready');
-
-        const record = kit.record(note.id);
-
-        assert.equal(record.base.title, 'Renamed at a terminal');
-        assert.equal(record.content.title, 'Renamed at a terminal');
-        assert.equal(record.baseRevision, note.revision + 1);
-      } finally {
-        await kit.owner.getState().close();
-      }
-    });
-  });
-
-  it('puts a body the phone autosaved on the server, canonically, one revision on', async () => {
-    const dir = await temporaryDir('edit-body-');
-
-    await withServer(async ({ endpoint }) => {
-      const note = await noteOn(endpoint, { slug: 'autosaved-body' });
-      const kit = await editOver(endpoint, path.join(dir, 'capture.db'));
-      const editor = fakeEditor();
-
-      try {
-        await kit.owner.getState().initialize();
-        const outcome = await kit.owner.getState().open(note.id, kit.session);
-        assert.equal(outcome.kind, 'ready');
-        kit.owner.getState().attachEditor(outcome.editKey, editor.port);
-
-        const document = documentWith('Typed into the phone');
-        editor.captures(document);
-        const flushed = await kit.owner.getState().flush(outcome.editKey, { lock: true });
-        assert.equal(flushed.kind, 'flushed');
-
-        await quiet(kit, note.id, 'the body to reach the server');
-
-        const got = await cliJson(['get', '--id', String(note.id), '--format', 'tiptap'], {
-          endpoint,
-        });
-
-        assert.deepEqual(got.entity.body.value, document, 'the canonical body crossed unchanged');
-        assert.equal(got.entity.revision, note.revision + 1, 'one write, one revision');
-        assert.equal(kit.record(note.id).baseRevision, got.entity.revision);
-      } finally {
-        await kit.owner.getState().close();
-      }
-    });
-  });
-
-  it('refuses the phone once and stops, when the terminal wrote while it was unsent', async () => {
-    const dir = await temporaryDir('edit-conflict-');
-
-    await withServer(async ({ endpoint }) => {
-      const note = await noteOn(endpoint, { slug: 'conflicted' });
-      const kit = await editOver(endpoint, path.join(dir, 'capture.db'), {
-        // Held off, so the phone genuinely has unsent writing when the terminal writes.
-        autosaveDelayMs: 5_000,
-      });
-
-      try {
-        await kit.owner.getState().initialize();
-        const outcome = await kit.owner.getState().open(note.id, kit.session);
-        assert.equal(outcome.kind, 'ready');
-
-        kit.owner.getState().editFields(outcome.editKey, { title: 'Typed on the phone' });
-        await cliJson(['update', '--id', String(note.id), '--title', 'Typed at a terminal'], {
-          endpoint,
-        });
-
-        // Leaving dispatches at once rather than waiting out the debounce, and waits for the answer.
-        assert.equal(await kit.owner.getState().leave(outcome.editKey), 'kept');
-
-        const standing = kit.owner.getState().standingFor(outcome.editKey);
-        assert.deepEqual(standing, { kind: 'conflicted' });
-
-        const record = kit.record(note.id);
-        assert.equal(record.content.title, 'Typed on the phone', 'the writing is kept');
-
-        const listed = unfinishedEdits({
-          edits: kit.owner.getState().edits,
-          unusableEdits: kit.owner.getState().unusableEdits,
-          standingFor: kit.owner.getState().standingFor,
-          connectionId: kit.session.connectionId,
-        });
-        assert.equal(listed.length, 1);
-        assert.equal(listed[0].standing, 'conflicted');
-
-        const got = await cliJson(['get', '--id', String(note.id)], { endpoint });
-        assert.equal(got.entity.title, 'Typed at a terminal', 'and nothing was overwritten');
-        assert.equal(got.entity.revision, note.revision + 1, 'exactly one write landed');
-
-        // Nothing further is attempted, however long it is left.
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        const left = await cliJson(['get', '--id', String(note.id)], { endpoint });
-        assert.equal(left.entity.revision, note.revision + 1);
-      } finally {
-        await kit.owner.getState().close();
-      }
-    });
-  });
-
-  it('refuses a stale --revision at the terminal, and changes nothing', async () => {
-    const dir = await temporaryDir('edit-stale-cli-');
-
-    await withServer(async ({ endpoint }) => {
-      const note = await noteOn(endpoint, { slug: 'stale-cli' });
-      const kit = await editOver(endpoint, path.join(dir, 'capture.db'), {
-        autosaveDelayMs: 5_000,
-      });
-
-      try {
-        await kit.owner.getState().initialize();
-        const outcome = await kit.owner.getState().open(note.id, kit.session);
-        assert.equal(outcome.kind, 'ready');
-        kit.owner.getState().editFields(outcome.editKey, { title: 'Unsent on the phone' });
-
-        // The phone's writing has not been sent, so the server is still at the note's own revision
-        // and this stale one names a version that never existed.
-        const ran = await runCli(
-          [
-            'update',
-            '--id',
-            String(note.id),
-            '--title',
-            'From a stale reading',
-            '--revision',
-            String(note.revision + 5),
-          ],
-          { endpoint },
-        );
-
-        assert.equal(ran.code, 1);
-
-        const got = await cliJson(['get', '--id', String(note.id)], { endpoint });
-        assert.equal(got.entity.title, 'Shared note', 'the entity is untouched');
-        assert.equal(got.entity.revision, note.revision, 'and so is its revision');
-      } finally {
-        await kit.owner.getState().close();
-      }
-    });
-  });
-
-  /**
-   * A measurement, not a guarantee.
-   *
-   * Phase 05 recorded that `matchesSubmitted` compares a **carried** body by exact serialized
-   * equality, so a lost answer to a body update the server canonicalized reconciles as a conflict
-   * rather than as applied - and handed the lever forward on the assumption something here would
-   * exercise it. The four cases above never would: none of them loses a body answer.
-   *
-   * A paragraph ending in a hard break is the cleanest case, because `hard-breaks.ts` drops exactly
-   * that break on the way into storage, so the server's stored document legitimately differs from
-   * what was sent. The rule is deliberately not changed here - calling the shared canonicalizer from
-   * the owner overturns an architecture decision this phase has no mandate for - so this records the
-   * observed outcome and nothing else.
-   */
-  it('measures what a lost answer to a body the server canonicalized concludes', async () => {
-    const dir = await temporaryDir('edit-lost-body-');
-    let dropNext = false;
-
-    await withServer(async ({ endpoint }) => {
-      const note = await noteOn(endpoint, { slug: 'lost-body' });
-      const kit = await editOver(endpoint, path.join(dir, 'capture.db'), {
-        // The answer is dropped *after* the server has finished writing, so the entity genuinely
-        // holds the change and the phone genuinely does not know it.
-        fetch: async (input, init) => {
-          const response = await fetch(input, init);
-
-          if (dropNext && String(input).includes('/api/nodes/update')) {
-            dropNext = false;
-            throw new TypeError('fetch failed');
-          }
-
-          return response;
-        },
-      });
-      const editor = fakeEditor();
-
-      try {
-        await kit.owner.getState().initialize();
-        const outcome = await kit.owner.getState().open(note.id, kit.session);
-        assert.equal(outcome.kind, 'ready');
-        kit.owner.getState().attachEditor(outcome.editKey, editor.port);
-
-        dropNext = true;
-        editor.captures({
-          type: 'doc',
-          content: [
-            {
-              type: 'paragraph',
-              content: [{ type: 'text', text: 'ends in a break' }, { type: 'hardBreak' }],
-            },
-          ],
-        });
-        assert.equal(
-          (await kit.owner.getState().flush(outcome.editKey, { lock: true })).kind,
-          'flushed',
-        );
-
-        const standing = await quiet(kit, note.id, 'the lost answer to be reconciled');
-
-        const got = await cliJson(['get', '--id', String(note.id), '--format', 'tiptap'], {
-          endpoint,
-        });
-
-        assert.equal(got.entity.revision, note.revision + 1, 'the write did land');
-        assert.deepEqual(
-          got.entity.body.value.content[0].content,
-          [{ type: 'text', text: 'ends in a break' }],
-          'and the server dropped the trailing break, as `hard-breaks.ts` says it does',
-        );
-
-        // The measurement. `conflicted` is the known residual window; `synced` would mean the
-        // comparison recognized the canonicalized form, which today it does not.
-        assert.equal(
-          standing.kind,
-          'conflicted',
-          'a lost answer to a canonicalized body still reconciles as a conflict',
-        );
-      } finally {
-        await kit.owner.getState().close();
-      }
-    });
-  });
-});
-
 describe('one entity, moved by either client', () => {
   /** Created at a terminal, so each case starts from server-shaped entities. */
   const created = async (endpoint, args) =>
@@ -909,62 +492,6 @@ describe('one entity, moved by either client', () => {
 
     return { parentId: node.parentId, slug: node.slug, revision: node.revision };
   };
-
-  it('moves a note from the phone, keeping its ID, and the terminal finds it at the new address', async () => {
-    const dir = await temporaryDir('move-phone-');
-
-    await withServer(async ({ endpoint }) => {
-      const note = await created(endpoint, [
-        'resource.note',
-        `${WORK.path}/moved-by-phone`,
-        '--title',
-        'Moved by the phone',
-        '--body-literal',
-        'Stays exactly as it is',
-      ]);
-      const kit = await editOver(endpoint, path.join(dir, 'capture.db'));
-      const key = kit.keyFor(note.id);
-
-      try {
-        await kit.owner.getState().initialize();
-        assert.equal((await kit.owner.getState().open(note.id, kit.session)).kind, 'ready');
-        // Attached as the edit screen attaches it, so the record outlives the acknowledgement.
-        kit.owner.getState().attachEditor(key, fakeEditor().port);
-        assert.deepEqual(kit.owner.getState().locations[key], { kind: 'known', parentId: WORK.id });
-
-        const outcome = await kit.owner.getState().move(key, { parentId: PERSONAL.id });
-
-        assert.deepEqual(outcome, { kind: 'moved', parentId: PERSONAL.id });
-        // The owner advanced its own location and revision on the server's word, and cleared the move.
-        assert.deepEqual(kit.owner.getState().locations[key], {
-          kind: 'known',
-          parentId: PERSONAL.id,
-        });
-        assert.equal(kit.record(note.id).baseRevision, note.revision + 1);
-        assert.equal(kit.record(note.id).inflight, null);
-        assert.equal(kit.record(note.id).content.slug, 'moved-by-phone');
-
-        // The terminal: same identity, same slug, same body, one revision on, at the new address.
-        assert.equal(await pathOf(endpoint, note.id), `${PERSONAL.path}/moved-by-phone`);
-
-        const moved = await entityOf(endpoint, note.id);
-
-        assert.equal(moved.id, note.id);
-        assert.equal(moved.parentId, PERSONAL.id);
-        assert.equal(moved.slug, note.slug);
-        assert.equal(moved.revision, note.revision + 1);
-        assert.deepEqual(moved.body, note.body);
-        assert.equal(moved.title, note.title);
-
-        const old = await runCli(['get', `${WORK.path}/moved-by-phone`], { endpoint });
-
-        assert.equal(old.code, 1);
-        assert.match(old.stderr, /node_not_found/);
-      } finally {
-        await kit.owner.getState().close();
-      }
-    });
-  });
 
   it('moves an area at the terminal, and the phone reads its whole subtree in the new place', async () => {
     await withServer(async ({ endpoint }) => {
@@ -1021,8 +548,6 @@ describe('one entity, moved by either client', () => {
   });
 
   it('refuses a collision, a cycle, a wrong parent and a stale revision from either client, changing nothing', async () => {
-    const dir = await temporaryDir('move-refused-');
-
     await withServer(async ({ endpoint }) => {
       const outer = await created(endpoint, ['area', `${WORK.path}/refuse-a`, '--title', 'A']);
       const inner = await created(endpoint, ['area', `${WORK.path}/refuse-a/b`, '--title', 'B']);
@@ -1066,33 +591,13 @@ describe('one entity, moved by either client', () => {
         'invalid_parent',
       );
 
-      assert.match(cycle.stderr, /reason: cycle/);
+      assert.match(cycle.stderr, /cannot be moved inside itself/);
       await refused([`${WORK.path}/refuse-a`, `${WORK.path}/refuse-p`], 'invalid_parent');
       await refused([`${WORK.path}/taken`, PERSONAL.path], 'slug_conflict');
       await refused(
         [`${WORK.path}/taken`, `${PERSONAL.path}/fresh`, '--revision', String(note.revision)],
         'revision_conflict',
       );
-
-      // The phone meets the same collision through its owner: refused, and nothing local moves.
-      const kit = await editOver(endpoint, path.join(dir, 'capture.db'));
-      const key = kit.keyFor(note.id);
-
-      try {
-        await kit.owner.getState().initialize();
-        assert.equal((await kit.owner.getState().open(note.id, kit.session)).kind, 'ready');
-
-        const revision = kit.record(note.id).baseRevision;
-        const outcome = await kit.owner.getState().move(key, { parentId: PERSONAL.id });
-
-        assert.equal(outcome.kind, 'refused');
-        assert.equal(outcome.failure.error.code, 'slug_conflict');
-        assert.deepEqual(kit.owner.getState().locations[key], { kind: 'known', parentId: WORK.id });
-        assert.equal(kit.record(note.id).baseRevision, revision);
-        assert.equal(kit.record(note.id).inflight, null);
-      } finally {
-        await kit.owner.getState().close();
-      }
 
       // No partial write anywhere: every entity and the phone's tree read exactly as before.
       const entitiesAfter = await Promise.all(
@@ -1119,10 +624,8 @@ describe('archive and restore, across the two clients', () => {
   };
 
   it('is archived by the terminal and leaves the phone’s hierarchy and Home, keeping its selection', async () => {
-    const dir = await temporaryDir('archive-cli-writes-');
-
     await withServer(async ({ endpoint }) => {
-      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const transport = phoneTransport(endpoint);
       const project = await containerAt(endpoint, 'project', '/work/shelved', 'Shelved');
       const selected = await runCli(['update', project.at, '--active'], { endpoint });
       assert.equal(selected.code, 0, selected.stderr);
@@ -1147,10 +650,8 @@ describe('archive and restore, across the two clients', () => {
   });
 
   it('is restored by the phone at the revision it read, and the terminal sees it active and selected', async () => {
-    const dir = await temporaryDir('archive-phone-restores-');
-
     await withServer(async ({ endpoint }) => {
-      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const transport = phoneTransport(endpoint);
       const project = await containerAt(endpoint, 'project', '/work/returning', 'Returning');
       assert.equal((await runCli(['update', project.at, '--active'], { endpoint })).code, 0);
       assert.equal((await runCli(['archive', project.at], { endpoint })).code, 0);
@@ -1182,10 +683,8 @@ describe('archive and restore, across the two clients', () => {
   });
 
   it('keeps an independent cause below a restored container (ADR 0003)', async () => {
-    const dir = await temporaryDir('archive-independent-');
-
     await withServer(async ({ endpoint }) => {
-      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const transport = phoneTransport(endpoint);
       const project = await containerAt(endpoint, 'project', '/work/ten', 'Ten');
       const plain = await cliJson(
         ['create', 'resource.note', '/work/ten/eleven', '--title', 'Eleven'],
@@ -1216,61 +715,6 @@ describe('archive and restore, across the two clients', () => {
       ]);
     });
   });
-
-  it('moves a note archived only through its project somewhere active, from the phone’s editor', async () => {
-    const dir = await temporaryDir('archive-move-out-');
-
-    await withServer(async ({ endpoint }) => {
-      const shelved = await containerAt(endpoint, 'project', '/work/shelf', 'Shelf');
-      const destination = await containerAt(endpoint, 'project', '/work/desk', 'Desk');
-      const { entity: note } = await cliJson(
-        ['create', 'resource.note', '/work/shelf/runbook', '--title', 'Runbook'],
-        { endpoint },
-      );
-
-      assert.equal((await runCli(['archive', shelved.at], { endpoint })).code, 0);
-
-      const kit = await editOver(endpoint, path.join(dir, 'capture.db'));
-
-      try {
-        await kit.owner.getState().initialize();
-
-        const outcome = await kit.owner.getState().open(note.id, kit.session);
-
-        assert.equal(outcome.kind, 'ready');
-        assert.deepEqual(outcome.lifecycle, {
-          kind: 'known',
-          archiveCauses: [
-            {
-              origin: { id: shelved.id, type: 'project', title: 'Shelf' },
-              owner: 'user',
-              reason: 'direct',
-            },
-          ],
-        });
-        kit.owner.getState().attachEditor(outcome.editKey, fakeEditor().port);
-
-        const moved = await kit.owner
-          .getState()
-          .move(outcome.editKey, { parentId: destination.id });
-
-        assert.deepEqual(moved, { kind: 'moved', parentId: destination.id });
-        assert.deepEqual(kit.owner.getState().lifecycles[outcome.editKey], {
-          kind: 'known',
-          archiveCauses: [],
-        });
-        assert.deepEqual(kit.refreshed, [kit.session.activation], 'every read is refreshed');
-
-        const atTerminal = await cliJson(['get', '--id', String(note.id)], { endpoint });
-
-        assert.equal(atTerminal.entity.archived, false, 'active at its new parent');
-        assert.deepEqual(atTerminal.entity.archiveCauses, []);
-        assert.equal(atTerminal.entity.parentId, destination.id);
-      } finally {
-        await kit.owner.getState().close();
-      }
-    });
-  });
 });
 
 /**
@@ -1291,10 +735,8 @@ describe('a favorite, across the two clients', () => {
   };
 
   it('is added by the terminal and listed by the phone, and a phone removal leaves the terminal', async () => {
-    const dir = await temporaryDir('favorite-crossing-');
-
     await withServer(async ({ endpoint }) => {
-      const { transport } = await captureOver(endpoint, path.join(dir, 'unused.db'));
+      const transport = phoneTransport(endpoint);
       const { entity: project } = await cliJson(
         ['create', 'project', `${WORK.path}/starred`, '--title', 'Starred'],
         { endpoint },

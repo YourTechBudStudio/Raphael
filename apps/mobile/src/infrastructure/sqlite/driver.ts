@@ -16,7 +16,7 @@
  * cheaper than a race that only appears on the other.
  */
 
-import { openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
+import { deleteDatabaseAsync, openDatabaseAsync, type SQLiteDatabase } from 'expo-sqlite';
 
 import {
   serializeTransactions,
@@ -70,4 +70,5 @@ export const sqlDriver: SqlDriver = {
       },
     };
   },
+  remove: (name: string): Promise<void> => deleteDatabaseAsync(name),
 };

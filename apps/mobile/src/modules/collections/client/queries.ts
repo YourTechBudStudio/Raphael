@@ -5,7 +5,6 @@ import { useQuery, type QueryClient, type UseQueryResult } from '@tanstack/react
 import type { ContainerRef, ContainerType } from '../../../infrastructure/api/contracts';
 import { unwrap } from '../../../infrastructure/query/failure';
 import { activationOf, scopeKey } from '../../../infrastructure/query/keys';
-import { nextReadStamp } from '../../../infrastructure/query/read-stamp';
 import { useConnectionSession, type ConnectionSession } from '../../connection';
 import {
   fetchChildren,
@@ -102,20 +101,6 @@ export function invalidatePaths(client: QueryClient, activation: number): Promis
     predicate: (query) =>
       activationOf(query.queryKey) === activation && query.queryKey[2] === 'path',
   });
-}
-
-/**
- * A creation landed: the hierarchy is stale.
- *
- * Nothing from the response is written into the entity cache. A Create answered from an idempotency
- * replay is the creation as it was recorded, days ago perhaps, and the container may have been
- * renamed, moved or archived since; seeding it would put a historical record on screen as current
- * state. The container's own Get is what shows it.
- *
- * Kept in this capability rather than at the call site, so nothing outside it has to know the key.
- */
-export async function recordCreation(client: QueryClient, activation: number): Promise<void> {
-  await invalidateHierarchy(client, activation);
 }
 
 /**
@@ -233,14 +218,9 @@ const runHierarchy = (
   return fetchHierarchy((request, pageSignal) => list(transport, request, pageSignal), signal);
 };
 
-/** One container as its own Get read it, and when that Get was asked for. */
+/** One container as its own Get read it. */
 export interface ContainerRead {
   readonly entity: GetResponse['entity'];
-  /**
-   * The `nextReadStamp()` taken just before this Get was sent. The header star compares it with a
-   * confirmed favorite change to tell whether this read can have seen that change.
-   */
-  readonly requestedAt: number;
 }
 
 /** One container, with its body. Null `ref` means there is nothing to ask about. */
@@ -265,10 +245,9 @@ const containerOptions = (session: ConnectionSession | null, ref: ContainerRef |
   queryFn: async ({ signal }: { signal: AbortSignal }): Promise<ContainerRead> => {
     if (session === null || ref === null) throw new Error('No connection');
 
-    const requestedAt = nextReadStamp();
     const { entity } = unwrap(await getNode(session.transport, { target: { id: ref.id } }, signal));
 
-    return { entity, requestedAt };
+    return { entity };
   },
   enabled: session !== null && ref !== null,
 });

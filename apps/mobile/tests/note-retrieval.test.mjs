@@ -61,10 +61,6 @@ const withServer = async (body) => {
               databasePath: path.join(dir, 'raphael.db'),
               busyTimeoutMs: CONFIG_DEFAULTS.busyTimeoutMs,
             },
-            idempotency: {
-              gcIntervalMinutes: CONFIG_DEFAULTS.gcIntervalMinutes,
-              gcBatchSize: CONFIG_DEFAULTS.gcBatchSize,
-            },
           },
           credential: ApiCredential.fromKey(KEY),
           logger: silentLogger,
@@ -91,12 +87,8 @@ const unwrap = (result) => {
   return result.value;
 };
 
-let keys = 0;
-const nextKey = () => {
-  keys += 1;
-
-  return `note-retrieval-${String(keys)}-${'k'.repeat(30)}`;
-};
+/** Clients name what they create; a title is enough to derive one here. */
+const slugOf = (title) => title.toLowerCase().replaceAll(' ', '-');
 
 const doc = (text) => ({
   type: 'doc',
@@ -109,7 +101,7 @@ const makeArea = async (transport, title) =>
       type: 'area',
       parent: { path: '/' },
       title,
-      idempotencyKey: nextKey(),
+      slug: slugOf(title),
     }),
   ).entity;
 
@@ -120,8 +112,8 @@ const makeNote = async (transport, parentId, title, text) =>
       kind: 'note',
       parent: { id: parentId },
       title,
+      slug: slugOf(title),
       body: { format: 'tiptap', value: doc(text) },
-      idempotencyKey: nextKey(),
     }),
   ).entity;
 
@@ -231,7 +223,7 @@ describe('notes on a real server, read back by the real queries', () => {
           type: 'area',
           parent: { id: kitchen.id },
           title: 'Splashback',
-          idempotencyKey: nextKey(),
+          slug: 'splashback',
         }),
       );
       const tiles = await makeNote(transport, kitchen.id, 'Tiles', 'the grey ones');

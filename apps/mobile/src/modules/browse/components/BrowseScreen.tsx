@@ -4,7 +4,7 @@ import { ActivityIndicator, Text, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
-import { EmptyState, PressableFeedback, Screen, SearchField, colors } from '../../../ui';
+import { EmptyState, PressableFeedback, Screen, SearchField, Snackbar, colors } from '../../../ui';
 import {
   AddInsideSheet,
   ancestorsOf,
@@ -15,6 +15,7 @@ import {
   type HierarchyQuery,
 } from '../../collections';
 import { RejectionNotice } from '../../connection';
+import { useFavoriteToggle } from '../../favorites';
 import { goBack, openContainer, TitleTopBar, useSheetsStore } from '../../navigation';
 import { useBrowseStore } from '../state/tree';
 import { BrowseTree } from './BrowseTree';
@@ -46,6 +47,7 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
 
   const [query, setQuery] = useState('');
   const [tab, setTab] = useState<Tab>('all');
+  const favorite = useFavoriteToggle();
   const [adding, setAdding] = useState<HierarchyNode | null>(null);
   const swipe = useMemo(
     () =>
@@ -120,7 +122,7 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
         >
           <RejectionNotice className="mb-3" />
           {tab === 'favorites' ? (
-            <FavoritesList onSelect={select} query={query} />
+            <FavoritesList favorite={favorite} onSelect={select} query={query} />
           ) : (
             <TreeBody
               current={current}
@@ -145,6 +147,7 @@ export function BrowseScreen({ current }: BrowseScreenProps) {
             setAdding(null);
           }}
         />
+        <Snackbar message={favorite.failureMessage} onHidden={favorite.dismiss} />
       </View>
     </GestureDetector>
   );

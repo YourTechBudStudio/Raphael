@@ -58,6 +58,7 @@ test('a creation carries the destination that was tapped, including the root', (
     kind: 'new-container',
     containerType: 'project',
     parentAreaId: 12,
+    draftId: null,
   });
 
   // The root is a real destination and is spelled out, not left to be inferred from an absent id.
@@ -66,5 +67,18 @@ test('a creation carries the destination that was tapped, including the root', (
     kind: 'new-container',
     containerType: 'area',
     parentAreaId: null,
+    draftId: null,
+  });
+});
+
+test('a kept container draft reopens by its row', () => {
+  reset();
+  useSheetsStore.getState().openContainerDraft('area', 'row-1');
+
+  assert.deepEqual(useSheetsStore.getState().open, {
+    kind: 'new-container',
+    containerType: 'area',
+    parentAreaId: null,
+    draftId: 'row-1',
   });
 });

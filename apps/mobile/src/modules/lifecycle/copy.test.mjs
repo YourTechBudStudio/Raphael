@@ -1,21 +1,17 @@
 /**
- * Every lifecycle sentence branch, and the two rules they share: wording follows the resulting
- * state, and nothing claims a refresh that did not happen.
+ * Every lifecycle sentence branch: wording follows the resulting state, and a failed plain action
+ * says why in one sentence.
  */
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  actionFailureSentence,
   archivedAlongside,
-  archivedRefusalSentence,
-  briefOutcome,
+  failedActionSentence,
   iconToggleSpokenLabel,
-  ARCHIVED_PARENT_CREATION_SENTENCE,
   inheritedLine,
   inheritedLineParts,
-  outcomeSentence,
   readOnlyDetailsSubtitle,
   statusSentence,
   toggleHint,
@@ -39,19 +35,6 @@ const direct = lifecycleView(NOTE, [own]);
 const inherited = lifecycleView(NOTE, [project, area]);
 const both = lifecycleView(NOTE, [own, project, area]);
 const other = lifecycleView(NOTE, [foreign]);
-
-const conflict = {
-  kind: 'api_error',
-  message: 'The revision is stale.',
-  error: { code: 'revision_conflict', message: 'stale' },
-  details: {},
-};
-const failed = {
-  kind: 'api_error',
-  message: 'Your server refused this.',
-  error: { code: 'invalid_input', message: 'nope' },
-  details: {},
-};
 
 test('spoken labels say what pressing does; the visible word is never the verb', () => {
   assert.equal(toggleSpokenLabel(active, 'Auth rework'), 'Archive Auth rework');
@@ -135,14 +118,6 @@ test('the inherited line splits at the name the screen draws as the part that op
   assert.deepEqual(inheritedLineParts(other), { lead: 'Archived by retention', origin: null });
 });
 
-test('a creation refused for an archived parent asks for nothing the form cannot do', () => {
-  assert.equal(
-    ARCHIVED_PARENT_CREATION_SENTENCE,
-    'That area was archived, so nothing can be added to it.',
-  );
-  assert.doesNotMatch(ARCHIVED_PARENT_CREATION_SENTENCE, /[Pp]ick/);
-});
-
 test('the status line says why the screen is read-only, the inherited reason first', () => {
   assert.equal(statusSentence(active, null), null);
   assert.equal(statusSentence(null, null), null);
@@ -163,101 +138,35 @@ test('a running request is said whatever the standing, even when the causes are 
   assert.equal(statusSentence(null, 'archive'), 'Archiving…');
 });
 
-test('a success is worded from the resulting state, not the verb', () => {
-  const done = (causes) => ({ kind: 'done', archived: causes.length > 0, causes });
-
-  assert.equal(outcomeSentence('archive', done([own]), NOTE), null);
-  assert.equal(outcomeSentence('restore', done([]), NOTE), null);
+test('a failed plain action says what failed and why, in one sentence', () => {
   assert.equal(
-    outcomeSentence('restore', done([project, area]), NOTE),
-    'Still archived with Project “Auth rework”.',
-  );
-  assert.equal(outcomeSentence('restore', done([foreign]), NOTE), 'Still archived by retention.');
-});
-
-test('a refresh is claimed only when the read-back succeeded', () => {
-  assert.equal(
-    outcomeSentence('archive', { kind: 'refused', failure: conflict, reread: true }, NOTE),
-    'This changed since you looked. Refreshed; try again.',
+    failedActionSentence('Couldn’t archive', { kind: 'network', message: 'x' }),
+    'Couldn’t archive. Can’t reach your server.',
   );
   assert.equal(
-    outcomeSentence('archive', { kind: 'refused', failure: conflict, reread: false }, NOTE),
-    'This changed since you looked, and Raphael could not read it again. Reopen it before trying again.',
+    failedActionSentence('Couldn’t move', { kind: 'timeout', message: 'x' }),
+    'Couldn’t move. Can’t reach your server.',
   );
   assert.equal(
-    outcomeSentence('restore', { kind: 'unconfirmed', reread: true }, NOTE),
-    'Raphael could not confirm this. Showing what your server holds now.',
+    failedActionSentence('Couldn’t add to favorites', { kind: 'http', status: 502, message: 'x' }),
+    'Couldn’t add to favorites. Your server had a problem, try again.',
   );
   assert.equal(
-    outcomeSentence('restore', { kind: 'unconfirmed', reread: false }, NOTE),
-    'Raphael could not confirm this, or read what your server holds now. What you see may be out of date.',
+    failedActionSentence('Couldn’t archive', {
+      kind: 'http',
+      status: 409,
+      code: 'revision_conflict',
+      message: 'This changed on the server. It is now at revision 7.',
+    }),
+    'Couldn’t archive. It changed on your server, try again.',
   );
   assert.equal(
-    outcomeSentence('archive', { kind: 'refused', failure: failed, reread: true }, NOTE),
-    'Your server refused this.',
+    failedActionSentence('Couldn’t move', {
+      kind: 'http',
+      status: 409,
+      code: 'slug_conflict',
+      message: '"idea" is already used here.',
+    }),
+    'Couldn’t move. "idea" is already used here.',
   );
-
-  for (const outcome of [
-    { kind: 'refused', failure: conflict, reread: false },
-    { kind: 'refused', failure: failed, reread: false },
-    { kind: 'unconfirmed', reread: false },
-  ]) {
-    assert.doesNotMatch(outcomeSentence('archive', outcome, NOTE) ?? '', /[Rr]efreshed|[Ss]howing/);
-  }
-});
-
-test('container failure lines make no claim about a refresh', () => {
-  assert.equal(
-    actionFailureSentence('conflict', ''),
-    'This changed since you looked. Check it, then try again.',
-  );
-  assert.equal(
-    actionFailureSentence('unconfirmed', ''),
-    'Raphael could not confirm this. Check it before trying again.',
-  );
-  assert.equal(
-    actionFailureSentence('failed', 'Your server refused this.'),
-    'Your server refused this.',
-  );
-
-  for (const failure of ['conflict', 'unconfirmed', 'failed']) {
-    assert.doesNotMatch(actionFailureSentence(failure, 'x'), /[Rr]efreshed|[Ss]howing/);
-  }
-});
-
-test('a node_archived refusal is advised by what is archived and how', () => {
-  assert.equal(
-    archivedRefusalSentence({ field: 'target', reason: 'direct' }),
-    'This is archived. Restore it first.',
-  );
-  assert.equal(
-    archivedRefusalSentence({ field: 'target', reason: 'inherited' }),
-    'This is archived with a container above it. Move it somewhere active, or restore that container.',
-  );
-  assert.equal(
-    archivedRefusalSentence({ field: 'parent', reason: 'inherited' }),
-    'That place is archived. Pick another.',
-  );
-  assert.equal(
-    archivedRefusalSentence({ field: 'destination', reason: 'direct' }),
-    'That place is archived. Pick another.',
-  );
-  assert.equal(archivedRefusalSentence({ field: 'target', reason: 'later' }), 'This is archived.');
-  assert.equal(archivedRefusalSentence({}), 'This is archived.');
-});
-
-test('a failed action is still distinguishable in a few words', () => {
-  assert.equal(
-    briefOutcome('archive', { kind: 'refused', failure: conflict, reread: true }),
-    'Archive refused: this changed since you looked',
-  );
-  assert.equal(
-    briefOutcome('restore', { kind: 'refused', failure: failed, reread: false }),
-    'Restore refused by your server',
-  );
-  assert.equal(
-    briefOutcome('archive', { kind: 'unconfirmed', reread: true }),
-    'Archive not confirmed',
-  );
-  assert.equal(briefOutcome('restore', { kind: 'not_sent' }), 'Restore not sent');
 });
