@@ -1,46 +1,51 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
 import { migrate as drizzleMigrate } from 'drizzle-orm/better-sqlite3/migrator';
 
-import { inspectMigrationHistory, readBundledMigrations, type MigrationState } from './guard.ts';
-
-/**
- * Migration assets ship with the package. Resolving them from this module's own URL rather than the
- * process working directory is what lets a compiled, installed backend find them: `dist/` sits one
- * level below the package root, and `drizzle/` is published alongside it.
- */
+/** Resolved from this module so an installed backend finds the assets published beside `dist/`. */
 export const migrationsFolder = fileURLToPath(new URL('../../../drizzle', import.meta.url));
 
-/**
- * Bring the database to the bundled schema version.
- *
- * Order: verify compatibility, apply whatever is pending through Drizzle's own migrator, then verify
- * the result. Drizzle applies every pending migration inside one transaction, so a failure part-way
- * leaves the database exactly as it was - there is no partially-migrated state to recover from.
- *
- * Migrations are only ever applied from committed assets. Nothing here generates SQL at runtime and
- * `push` is never used.
- */
-export const migrateToLatest = (
-  db: Database.Database,
-  folder = migrationsFolder,
-): MigrationState => {
-  const bundled = readBundledMigrations(folder);
+export const MIGRATIONS_TABLE = '__drizzle_migrations';
 
-  const before = inspectMigrationHistory(db, bundled);
-  if (before.state === 'current') return before;
-
-  drizzleMigrate(drizzle(db), { migrationsFolder: folder });
-
-  const after = inspectMigrationHistory(db, bundled);
-  if (after.state !== 'current') {
-    // Not a concurrency check - ownership is held throughout. This catches the migrator applying
-    // something other than what the journal described.
-    throw new Error(
-      `migration did not reach the bundled schema version: expected every migration applied, got "${after.state}".`,
-    );
+export class MigrationHistoryError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MigrationHistoryError';
   }
-  return after;
+}
+
+const bundledTimestamps = (folder: string): ReadonlySet<number> => {
+  const journal = JSON.parse(readFileSync(join(folder, 'meta', '_journal.json'), 'utf8')) as {
+    entries: { when: number }[];
+  };
+  return new Set(journal.entries.map((entry) => entry.when));
+};
+
+/**
+ * Applies pending migrations. Drizzle's migrator would happily run against a database migrated by a
+ * newer or different build, so any applied migration this build does not ship is refused first.
+ */
+export const migrateToLatest = (db: Database.Database, folder = migrationsFolder): void => {
+  const hasHistory =
+    db
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
+      .get(MIGRATIONS_TABLE) !== undefined;
+  if (hasHistory) {
+    const known = bundledTimestamps(folder);
+    const applied = db.prepare(`SELECT created_at AS "when" FROM ${MIGRATIONS_TABLE}`).all() as {
+      when: unknown;
+    }[];
+    const unknown = applied.find((row) => !known.has(Number(row.when)));
+    if (unknown !== undefined) {
+      throw new MigrationHistoryError(
+        `the database at "${db.name}" has migration ${String(unknown.when)}, which this backend does not ship. ` +
+          `It was migrated by a newer or different Raphael build. Upgrade the backend, or point the database path at a new file.`,
+      );
+    }
+  }
+  drizzleMigrate(drizzle(db), { migrationsFolder: folder });
 };

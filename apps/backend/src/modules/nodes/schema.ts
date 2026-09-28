@@ -10,12 +10,7 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/sqlite-core';
 
-/**
- * The largest integer JavaScript represents exactly. SQLite stores 64-bit integers, so a value above
- * this survives storage but is rounded on the way back into a JavaScript number - silently naming a
- * different row. Validation downstream cannot recover precision already lost in that conversion, so
- * the constraint belongs here, where the value is still exact.
- */
+/** Above this, a stored integer is rounded on its way into JavaScript and names a different row. */
 export const MAX_SAFE_DB_INTEGER = 9007199254740991;
 
 /** A column that must hold a positive, integral, exactly-representable value. */
@@ -31,33 +26,18 @@ const safeEpochMillis = (column: string) =>
   );
 
 /**
- * The common node table (ADR 0007): one identity space for every entity type, carrying hierarchy,
- * addressing, and the common authored fields.
+ * The common node table (ADR 0007). `parent_type` duplicates the parent's type so a CHECK can judge the
+ * pairing, and the composite foreign key keeps it honest.
  *
- * Every type in this table is a type the public operations accept and return. Identity is common, and
- * `kind` is what distinguishes one leaf from another without giving each its own table or its own
- * identity space.
- *
- * Parentage is enforced declaratively rather than by triggers. `parent_type` duplicates the parent's
- * type so that a plain CHECK can decide whether the pairing is legal, and the composite foreign key
- * to `(id, type)` is what keeps that duplicate honest: it cannot name a type the parent does not
- * actually have. The two constraints solve different problems and neither replaces the other. Neither
- * detects a multi-node cycle; `move.ts` refuses one before writing.
- *
- * The identity trigger and `nodes_fts`, the lexical search index, are declared only in
- * `drizzle/0001_triggers_and_seed.sql`, because Drizzle cannot express them. A generated table rebuild
- * of `nodes` would silently drop all four triggers, so a change here that `db:generate` answers with a
- * rebuild must be hand-authored instead. Read that migration's header before changing anything here.
+ * The identity trigger and `nodes_fts` live only in `drizzle/0001_triggers_and_seed.sql`. A generated
+ * rebuild of `nodes` would drop those triggers, so such a change must be hand-authored.
  */
 export const nodes = sqliteTable(
   'nodes',
   {
     id: integer('id').primaryKey({ autoIncrement: true }),
     type: text('type').notNull(),
-    /**
-     * What a resource is. Null for a container, and required for a resource - the pairing is a
-     * constraint, not a convention. See `nodes_kind_valid` below.
-     */
+    /** Required for a resource, null for a container (`nodes_kind_valid`). */
     kind: text('kind'),
     parentId: integer('parent_id'),
     parentType: text('parent_type'),
@@ -67,10 +47,7 @@ export const nodes = sqliteTable(
     description: text('description').notNull().default(''),
     body: text('body').notNull(),
     tags: text('tags').notNull().default('[]'),
-    /**
-     * Whether this project is currently being worked on. `0` or `1`, and only a project may hold `1`
-     * - the second type-conditional column on this table, following `kind`. See `nodes_active_valid`.
-     */
+    /** `0` or `1`; only a project may hold `1` (`nodes_active_valid`). */
     active: integer('active').notNull().default(0),
     metadata: text('metadata').notNull().default('{}'),
     createdAt: integer('created_at').notNull(),
@@ -79,8 +56,7 @@ export const nodes = sqliteTable(
     bodyText: text('body_text').notNull(),
   },
   (t) => [
-    // Required as the parent key of the composite foreign key below. `id` is already unique on its
-    // own; SQLite needs the pair to be collectively indexed before it will accept the reference.
+    // SQLite needs the pair indexed before the composite foreign key can reference it.
     unique('nodes_id_type').on(t.id, t.type),
     foreignKey({
       columns: [t.parentId, t.parentType],
@@ -105,12 +81,6 @@ export const nodes = sqliteTable(
       sql`(type = 'resource') = (kind IS NOT NULL) AND (kind IS NULL OR kind IN ('note'))`,
     ),
     // Only a project can be active.
-    //
-    // No `typeof(active) = 'integer'` guard, unlike the open-range integer columns below: those admit
-    // any integer and must exclude non-integers and unsafe magnitudes, while this is a closed
-    // enumeration and `IN (0, 1)` does that work itself. After INTEGER affinity a lossless `'1'` or
-    // `1.0` is stored as the integer it is, and anything else fails the `IN`. `NOT NULL` closes the
-    // hole the parentage comment below warns about, where a NULL result reads as satisfied.
     check('nodes_active_valid', sql`active IN (0, 1) AND (active = 0 OR type = 'project')`),
     check('nodes_title_present', sql`length(title) > 0`),
     check('nodes_slug_present', sql`length(slug) > 0`),
@@ -119,8 +89,7 @@ export const nodes = sqliteTable(
     check('nodes_created_at_safe', safeEpochMillis('created_at')),
     check('nodes_updated_at_safe', safeEpochMillis('updated_at')),
 
-    // Written so the expression can never evaluate to NULL: a NULL CHECK result is treated as
-    // satisfied by SQLite, which would let a half-populated parent pair through.
+    // Never NULL: SQLite treats a NULL CHECK result as satisfied.
     check('nodes_parent_pair', sql`(parent_id IS NULL) = (parent_type IS NULL)`),
     check('nodes_root_is_area', sql`parent_type IS NOT NULL OR type = 'area'`),
     check(
@@ -138,19 +107,8 @@ export const nodes = sqliteTable(
 );
 
 /**
- * Why a node is archived: one row per cause, stored only at its origin (ADR 0003).
- *
- * - **Origin rows only.** Archiving a container writes one row on that container and nothing on its
- *   descendants. Whether a node is archived is computed from the node and its current ancestors by
- *   `lifecycle.ts`, which is the only module that reads or writes this table. That is what makes a move
- *   out of an archived container need no cleanup, and a restore of an ancestor leave a descendant's own
- *   cause standing.
- * - **The primary key is the no-duplicate rule.** One owner cannot hold the same reason on one node
- *   twice, so archiving something already archived by the user writes nothing.
- * - **`owner` and `reason` are open strings**, bounded only by length. `('user', 'direct')` is the only
- *   pair written today; the columns do not preclude an extension owning its own cause (#13).
- * - **`RESTRICT`**, because no operation deletes a node. Should one arrive, it has to decide what
- *   happens to the node's causes rather than having them vanish silently.
+ * One row per archive cause, stored only at its origin (ADR 0003); `lifecycle.ts` is its only reader
+ * and writer. The primary key makes a repeated archive write nothing.
  */
 export const archiveCauses = sqliteTable(
   'archive_causes',
@@ -171,16 +129,8 @@ export const archiveCauses = sqliteTable(
 );
 
 /**
- * The owner's favorites: one row per favorited node (story #14).
- *
- * - **Identity only.** Titles and archive status are always read from `nodes` and `archive_causes`,
- *   never copied here, so a rename, move or archive can never leave a stale copy behind.
- * - **The primary key is the no-duplicate rule**, which makes add (`ON CONFLICT DO NOTHING`) and
- *   remove (a `DELETE` that may match nothing) idempotent.
- * - **Nothing here touches `nodes`**, so toggling a favorite never changes a revision.
- * - **`RESTRICT`**, for the reason `archive_causes` gives: no operation deletes a node.
- * - `favorites.ts` is the only module that writes this table; `projection.ts::favoriteExpression` is
- *   the only reader of membership.
+ * One row per favorited node, identity only. The primary key makes add and remove idempotent, and
+ * nothing here touches `nodes`, so a favorite never changes a revision.
  */
 export const favorites = sqliteTable('favorites', {
   nodeId: integer('node_id')

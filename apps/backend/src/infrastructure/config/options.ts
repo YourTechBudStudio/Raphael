@@ -68,7 +68,6 @@ const FileShape = Schema.Struct({
   database: Schema.optional(
     Schema.Struct({
       path: Schema.optional(DatabasePath),
-      busyTimeoutMs: Schema.optional(boundedInteger('busyTimeoutMs', 0, 60_000)),
     }),
   ),
 });
@@ -77,7 +76,6 @@ export const CONFIG_DEFAULTS = {
   host: '127.0.0.1',
   port: 3000,
   databasePath: './data/raphael.sqlite',
-  busyTimeoutMs: 5_000,
 } as const;
 
 export interface ServerOptions {
@@ -89,7 +87,6 @@ export interface ServerOptions {
 export interface DatabaseSettings {
   /** Already absolute. Resolved against the configuration file's directory, or the invocation directory. */
   readonly databasePath: string;
-  readonly busyTimeoutMs: number;
 }
 
 /** Validated, defaulted, non-secret options. Holds no credential and is safe to inspect. */
@@ -137,7 +134,6 @@ export const resolveOptions = (
       databasePath: isAbsolute(databasePath)
         ? resolve(databasePath)
         : resolve(context.baseDirectory, databasePath),
-      busyTimeoutMs: file.database?.busyTimeoutMs ?? CONFIG_DEFAULTS.busyTimeoutMs,
     },
   };
 };
@@ -167,13 +163,12 @@ export const validateOptions = (options: BackendOptions): BackendOptions => {
     host: options.server.host,
     port: options.server.port,
     databasePath: options.database.databasePath,
-    busyTimeoutMs: options.database.busyTimeoutMs,
   };
 
   const ephemeralPort = supplied.port === 0;
   const decoded = decodeFileShape({
     server: { host: supplied.host, ...(ephemeralPort ? {} : { port: supplied.port }) },
-    database: { path: supplied.databasePath, busyTimeoutMs: supplied.busyTimeoutMs },
+    database: { path: supplied.databasePath },
   });
   if (Either.isLeft(decoded)) {
     const described = ParseResult.ArrayFormatter.formatErrorSync(decoded.left)
@@ -209,7 +204,6 @@ export const validateOptions = (options: BackendOptions): BackendOptions => {
     },
     database: {
       databasePath: checked.database?.path ?? supplied.databasePath,
-      busyTimeoutMs: checked.database?.busyTimeoutMs ?? supplied.busyTimeoutMs,
     },
   };
 };

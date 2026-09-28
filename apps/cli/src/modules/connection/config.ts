@@ -7,10 +7,8 @@
  * something an operator configured is a change they did not ask for, made at the moment they were
  * least likely to notice it.
  *
- * The trust rules themselves live in `@raphael/fs-trust`, shared with the backend's database
- * protection. The policy differences stay here, and they are real: a database *directory* may be
- * traversable by others because the files inside it are owner-only, while this directory may not,
- * since its listing names a credential file.
+ * The trust rules themselves live in `@raphael/fs-trust`. This directory must not be traversable by
+ * others, since its listing names a credential file.
  *
  * Windows is not supported for persistent login. `chmod` bits do not exist there and a disclaimer is
  * not protection for a stored full-access key, so `login` refuses and remote commands use the

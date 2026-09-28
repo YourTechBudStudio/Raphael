@@ -495,21 +495,6 @@ test('search follows the moved subtree without re-indexing it', () => {
   });
 });
 
-test('a response that fails its own contract rolls the move back', () => {
-  withMigrated('move-response-rollback', (connection) => {
-    const target = project(connection, { path: '/work' }, 'Apollo');
-    // Valid JSON array, so storage accepts it; not an array of strings, so the response decoder refuses.
-    connection.db.prepare('UPDATE nodes SET tags = ? WHERE id = ?').run('[1]', target.id);
-
-    const failure = refusedUnchanged(connection, target.id, {
-      target: { id: target.id },
-      revision: target.revision,
-      destination: { path: '/personal' },
-    });
-    assert.equal(failure.code, 'internal_error');
-  });
-});
-
 test('corrupt stored ancestry above the destination is an integrity failure, not a move', () => {
   withMigrated('move-corrupt-ancestry', (connection) => {
     const target = project(connection, { path: '/work' }, 'Apollo');

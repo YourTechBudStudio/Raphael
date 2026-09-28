@@ -25,7 +25,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
-import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
+import { ApiCredential, serve, silentLogger } from '@raphael/backend';
 import { createTransport } from '@raphael/client';
 import { create as createNode } from '@raphael/client/nodes';
 import { InfiniteQueryObserver, QueryClient } from '@tanstack/react-query';
@@ -59,7 +59,6 @@ const withServer = async (body) => {
             server: { host: '127.0.0.1', port: 0 },
             database: {
               databasePath: path.join(dir, 'raphael.db'),
-              busyTimeoutMs: CONFIG_DEFAULTS.busyTimeoutMs,
             },
           },
           credential: ApiCredential.fromKey(KEY),

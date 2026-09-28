@@ -12,15 +12,8 @@ import { call, testKey, testOptions, withServer } from './server-support.ts';
 import { tempDatabase } from './support.ts';
 
 /**
- * Acquisition, release, and the deadlines.
- *
- * Ownership is observable from outside the process: the database is held exclusively, so "was it
- * released" is answered by trying to open it again rather than by inspecting our own state.
- *
- * The deadline tests inject short durations and assert generously. What they establish is that a
- * connection is actually destroyed rather than that it is destroyed at a precise moment - a
- * same-thread timer fires when the event loop reaches it, so the observed delay is the configured
- * duration plus scheduling, never less but not exactly equal either.
+ * Acquisition and release. Ownership is observable from outside: the database is held exclusively, so
+ * "was it released" is answered by trying to open it again.
  */
 
 const isReleased = (file: string): boolean => {
@@ -31,31 +24,6 @@ const isReleased = (file: string): boolean => {
     return false;
   }
 };
-
-/** Open a raw socket and keep it open. Used to test what happens to a connection that does nothing. */
-const rawSocket = (
-  host: string,
-  port: number,
-  payload?: string,
-): Promise<{ closedAfterMs: () => Promise<number> }> =>
-  new Promise((resolve, reject) => {
-    const socket = connect(port, host, () => {
-      const openedAt = Date.now();
-      if (payload !== undefined) socket.write(payload);
-      resolve({
-        closedAfterMs: () =>
-          new Promise<number>((settle) => {
-            if (socket.destroyed) {
-              settle(Date.now() - openedAt);
-              return;
-            }
-            socket.once('close', () => settle(Date.now() - openedAt));
-            socket.once('error', () => settle(Date.now() - openedAt));
-          }),
-      });
-    });
-    socket.once('error', reject);
-  });
 
 describe('acquisition', () => {
   test('port 0 binds and reports the port actually chosen', async () => {
@@ -164,7 +132,7 @@ describe('release', () => {
     }
   });
 
-  test('a connection mid-request is not reset at shutdown; it is answered honestly', async () => {
+  test('a request that arrives during shutdown is answered 503, and shutdown finishes', async () => {
     const temp = tempDatabase('lifecycle-drain');
     const key = testKey();
     const logger = recordingLogger();
@@ -176,16 +144,13 @@ describe('release', () => {
             options: testOptions(temp.file),
             credential: ApiCredential.fromKey(key),
             logger,
-            deadlines: { drainMs: 2_000 },
+            drainMs: 2_000,
           }),
           scope,
         ),
       );
 
-      // A raw socket, because this needs a request the server has genuinely begun receiving and has
-      // not finished. `fetch` cannot express that, and a request merely *written* before shutdown is
-      // still on the network - the server never received it, so a reset is the only honest answer and
-      // there is nothing here to test.
+      // A raw socket, so the request can be mid-body when shutdown begins.
       const body = JSON.stringify({
         type: 'area',
         parent: { path: '/' },
@@ -217,8 +182,6 @@ describe('release', () => {
       await finished;
       await closing;
 
-      // Not a reset: the connection survived the close of quiet connections because it was mid-
-      // request, and the caller got a real answer.
       assert.match(
         received,
         /^HTTP\/1\.1 503 /u,
@@ -275,8 +238,6 @@ describe('release', () => {
 
       await Effect.runPromise(Scope.close(scope, Exit.void));
 
-      // The write survives the shutdown, which is the part a caller depends on: a 201 is a fact about
-      // storage, not about a response that happened to be written.
       const reopened = openDatabase({ databasePath: temp.file });
       try {
         assert.equal(
@@ -289,89 +250,5 @@ describe('release', () => {
     } finally {
       temp.cleanup();
     }
-  });
-});
-
-describe('deadlines', () => {
-  test('a connection that never sends a byte is destroyed', async () => {
-    await withServer(
-      'deadline-silent',
-      async (server) => {
-        const socket = await rawSocket(server.host, server.port);
-        const closedAfter = await socket.closedAfterMs();
-        assert.ok(closedAfter >= 100, `closed after ${closedAfter}ms, before its deadline`);
-        assert.ok(closedAfter < 8_000, `closed after ${closedAfter}ms, which is not bounded`);
-      },
-      { deadlines: { headersMs: 150, requestMs: 300, checkIntervalMs: 50 } },
-    );
-  });
-
-  test('a request that stalls part-way through its headers is destroyed', async () => {
-    await withServer(
-      'deadline-partial-headers',
-      async (server) => {
-        const socket = await rawSocket(
-          server.host,
-          server.port,
-          'POST /api/nodes/get HTTP/1.1\r\nHost: x\r\n',
-        );
-        const closedAfter = await socket.closedAfterMs();
-        assert.ok(closedAfter < 8_000, `closed after ${closedAfter}ms, which is not bounded`);
-      },
-      { deadlines: { headersMs: 150, requestMs: 300, checkIntervalMs: 50 } },
-    );
-  });
-
-  test('an authenticated upload that stalls mid-body is destroyed', async () => {
-    await withServer(
-      'deadline-stalled-body',
-      async (server) => {
-        // Complete headers with a credential, a declared body, and then silence. This is the case
-        // Node's own `requestTimeout` did not bound on this version, which is why the server arms its
-        // own receive deadline.
-        const socket = await rawSocket(
-          server.host,
-          server.port,
-          `POST /api/nodes/create HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer ${server.key}\r\n` +
-            `Content-Type: application/json\r\nContent-Length: 200\r\n\r\n{"partial":`,
-        );
-        const closedAfter = await socket.closedAfterMs();
-        assert.ok(closedAfter < 8_000, `closed after ${closedAfter}ms, which is not bounded`);
-      },
-      { deadlines: { headersMs: 2_000, requestMs: 200, checkIntervalMs: 50 } },
-    );
-  });
-
-  test('a short receive deadline never cuts an ordinary request short', async () => {
-    await withServer(
-      'deadline-normal-request',
-      async (server) => {
-        // The receive deadline is cleared when the body has arrived, so it can never interrupt the
-        // handling that follows. A deadline that bounded handling would be a claim this server cannot
-        // make: the operation below is synchronous and not interruptible.
-        const created = await call(server, '/api/nodes/create', {
-          body: JSON.stringify({
-            type: 'area',
-            parent: { path: '/' },
-            title: 'Unhurried',
-            slug: 'unhurried',
-          }),
-        });
-        assert.equal(created.status, 201);
-      },
-      { deadlines: { headersMs: 300, requestMs: 300, checkIntervalMs: 50 } },
-    );
-  });
-
-  test('an idle keep-alive connection does not stop the server answering', async () => {
-    await withServer(
-      'deadline-keepalive',
-      async (server) => {
-        assert.equal((await call(server, '/api/connection/verify', { body: '{}' })).status, 200);
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        assert.equal((await call(server, '/api/connection/verify', { body: '{}' })).status, 200);
-      },
-      { deadlines: { keepAliveMs: 100, checkIntervalMs: 50 } },
-    );
   });
 });

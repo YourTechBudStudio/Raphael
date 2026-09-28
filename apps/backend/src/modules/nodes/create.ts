@@ -2,7 +2,6 @@ import { deriveText } from '@raphael/content/schema';
 import type { JsonObject } from '@raphael/contracts';
 import {
   decodeCreateRequest,
-  decodeCreateResponse,
   type CreateRequest,
   type CreateResponse,
 } from '@raphael/contracts/nodes';
@@ -14,7 +13,7 @@ import { convertBody, type PreparedBody } from './content.ts';
 import { invalidInputFrom } from './diagnostics.ts';
 import type { NodeError } from './errors.ts';
 import { requireActive } from './lifecycle.ts';
-import { bodyProjection, checkedResponse } from './projection.ts';
+import { bodyProjection } from './projection.ts';
 import { resolveScope, validateParentage } from './resolve.ts';
 import { nodes } from './schema.ts';
 import { raise, unwrapFailure } from './storage-failures.ts';
@@ -27,9 +26,7 @@ const OPERATION = 'nodes.create';
  * caller chose (ADR 0002). A sibling that already holds the slug is a `slug_conflict`, which is also
  * how a retry after a lost reply meets its own first attempt.
  *
- * Content conversion and the response body projection run before the write transaction, because they
- * are the slow part. The response is validated before the commit, so a projection bug cannot leave a
- * committed entity behind an error.
+ * Content conversion and the response body projection run before the write transaction.
  */
 export const createNode = (input: unknown): Effect.Effect<CreateResponse, NodeError, Db> =>
   Effect.clockWith((clock) =>
@@ -139,29 +136,25 @@ const commit = (
     .run();
 
   const id = safeRowId(inserted.lastInsertRowid, OPERATION);
-  return checkedResponse(
-    decodeCreateResponse,
-    {
-      entity: {
-        id,
-        type: prepared.type,
-        kind: prepared.kind ?? null,
-        parentId: parent === undefined ? null : parent.id,
-        slug: prepared.slug,
-        revision: 1,
-        title: prepared.title,
-        description: prepared.description,
-        tags: prepared.tags,
-        // A new project is inactive, active by construction (its parent is active and it has no
-        // cause), and not a favorite (a favorite references an existing id).
-        active: false,
-        archived: false,
-        isFavorite: false,
-        body,
-        metadata: prepared.metadata,
-        archiveCauses: [],
-      },
+  return {
+    entity: {
+      id,
+      type: prepared.type,
+      kind: prepared.kind ?? null,
+      parentId: parent === undefined ? null : parent.id,
+      slug: prepared.slug,
+      revision: 1,
+      title: prepared.title,
+      description: prepared.description,
+      tags: prepared.tags,
+      // A new project is inactive, active by construction (its parent is active and it has no
+      // cause), and not a favorite (a favorite references an existing id).
+      active: false,
+      archived: false,
+      isFavorite: false,
+      body,
+      metadata: prepared.metadata,
+      archiveCauses: [],
     },
-    OPERATION,
-  );
+  };
 };

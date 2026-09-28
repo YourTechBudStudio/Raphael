@@ -8,7 +8,6 @@ import type { ApiCredential } from '../config/index.ts';
 import type { Db } from '../database/index.ts';
 import { authenticate, authorizationFields } from './auth.ts';
 import { readJsonBody } from './body.ts';
-import type { Deadlines } from './deadlines.ts';
 import {
   envelopeOf,
   incompleteRequest,
@@ -51,7 +50,6 @@ interface RequestState {
   readonly id: string;
   readonly startedAt: number;
   route?: OperationRoute;
-  deliveryTimer?: NodeJS.Timeout;
 }
 
 export interface AppDependencies {
@@ -64,7 +62,6 @@ export interface AppDependencies {
    */
   readonly runOperation: <A>(effect: Effect.Effect<A, never, Db>) => Promise<Exit.Exit<A, never>>;
   readonly logger: Logger;
-  readonly deadlines: Deadlines;
   /** Called when an operation starts and finishes, so shutdown can wait for real work. */
   readonly track: <T>(work: Promise<T>) => Promise<T>;
   /** Whether new work is still being admitted. False once shutdown has begun. */
@@ -81,35 +78,13 @@ const stateOf = (req: Request): RequestState => {
   return created;
 };
 
-/**
- * Send one envelope, arming the delivery budget before the first byte leaves.
- *
- * The timer is cleared on `finish` and on `close`. `finish` means the response was handed to the
- * transport - not that the client received or decoded it - so a clean finish here is not evidence
- * that the caller knows the outcome.
- */
 const respond = (
   res: Response,
   status: number,
   payload: unknown,
-  deadlines: Deadlines,
   headers?: Readonly<Record<string, string>>,
 ): void => {
   if (res.writableEnded) return;
-
-  const state = STATE.get(res.req);
-  const timer = setTimeout(() => {
-    // Headers are already written, so there is no envelope left to send. A destroyed connection is
-    // the honest signal: the client sees a truncated response and must treat the outcome as unknown.
-    res.req.socket.destroy();
-  }, deadlines.responseMs);
-  // A delivery timer must never hold the process open on its own.
-  timer.unref();
-  if (state !== undefined) state.deliveryTimer = timer;
-  const clear = (): void => clearTimeout(timer);
-  res.once('finish', clear);
-  res.once('close', clear);
-
   if (headers !== undefined) res.set(headers);
   res.status(status).json(payload);
 };
@@ -117,14 +92,11 @@ const respond = (
 const rejectWith = (
   res: Response,
   error: TransportError,
-  deadlines: Deadlines,
   options?: { readonly closeConnection?: boolean },
 ): void => {
-  // A rejected caller must not be able to keep uploading into a connection we have already refused.
-  // The socket is closed after the envelope is written rather than left open to drain a body nobody
-  // is going to read.
+  // A refused caller must not keep uploading into this connection.
   if (options?.closeConnection === true) res.set('Connection', 'close');
-  respond(res, statusOf(error), envelopeOf(error), deadlines, error.headers);
+  respond(res, statusOf(error), envelopeOf(error), error.headers);
 };
 
 /**
@@ -137,7 +109,7 @@ const rejectWith = (
  * operator's own infrastructure and this server never infers it.
  */
 export const buildApp = (dependencies: AppDependencies): Express => {
-  const { routes, credential, logger, deadlines } = dependencies;
+  const { routes, credential, logger } = dependencies;
 
   const app = express();
   app.disable('x-powered-by');
@@ -160,21 +132,21 @@ export const buildApp = (dependencies: AppDependencies): Express => {
       next();
       return;
     }
-    rejectWith(res, unauthorized(), deadlines, { closeConnection: true });
+    rejectWith(res, unauthorized(), { closeConnection: true });
   });
 
   // 2. Match the address and the method. An authenticated caller learns which is wrong.
   app.use((req: Request, res: Response, next: NextFunction) => {
     const route = byPath.get(req.path);
     if (route === undefined) {
-      rejectWith(res, routeNotFound(), deadlines, { closeConnection: true });
+      rejectWith(res, routeNotFound(), { closeConnection: true });
       return;
     }
     if (req.method !== route.descriptor.method) {
       // HEAD reaches here like any other method and is answered like any other: 405 with `Allow`.
       // The response carries no body, which Node enforces for HEAD; there is no HEAD-shaped
       // exception in this server, only HEAD's own wire semantics.
-      rejectWith(res, methodNotAllowed(), deadlines, { closeConnection: true });
+      rejectWith(res, methodNotAllowed(), { closeConnection: true });
       return;
     }
     stateOf(req).route = route;
@@ -191,7 +163,7 @@ export const buildApp = (dependencies: AppDependencies): Express => {
       next();
       return;
     }
-    rejectWith(res, unsupportedMedia(outcome.reason), deadlines, { closeConnection: true });
+    rejectWith(res, unsupportedMedia(outcome.reason), { closeConnection: true });
   });
 
   // 4. Read a bounded body. `type` accepts everything because step 3 already decided; `inflate` is
@@ -210,13 +182,13 @@ export const buildApp = (dependencies: AppDependencies): Express => {
     if (!dependencies.admitting()) {
       // Shutdown began between matching and here. Refusing is more honest than starting work the
       // drain is about to wait for.
-      rejectWith(res, notAdmitting(), deadlines, { closeConnection: true });
+      rejectWith(res, notAdmitting(), { closeConnection: true });
       return;
     }
 
     const parsed = readJsonBody(req.body);
     if (!parsed.ok) {
-      rejectWith(res, parsed.error, deadlines);
+      rejectWith(res, parsed.error);
       return;
     }
 
@@ -232,7 +204,7 @@ export const buildApp = (dependencies: AppDependencies): Express => {
             route: route.label,
             elapsedMs: Date.now() - state.startedAt,
           });
-          rejectWith(res, internalError(), deadlines);
+          rejectWith(res, internalError());
           return;
         }
 
@@ -249,11 +221,11 @@ export const buildApp = (dependencies: AppDependencies): Express => {
               elapsedMs: Date.now() - state.startedAt,
             });
           }
-          rejectWith(res, failure.error, deadlines);
+          rejectWith(res, failure.error);
           return;
         }
 
-        respond(res, route.successStatus, result.right, deadlines);
+        respond(res, route.successStatus, result.right);
       })
       .catch(() => {
         logger.log('error', 'request.defect', {
@@ -261,7 +233,7 @@ export const buildApp = (dependencies: AppDependencies): Express => {
           route: route.label,
           elapsedMs: Date.now() - state.startedAt,
         });
-        rejectWith(res, internalError(), deadlines);
+        rejectWith(res, internalError());
       });
   });
 
@@ -274,13 +246,13 @@ export const buildApp = (dependencies: AppDependencies): Express => {
     const label = state.route?.label ?? UNMATCHED_ROUTE;
 
     if (type === 'entity.too.large') {
-      rejectWith(res, payloadTooLarge(REQUEST_MAX_BYTES), deadlines, { closeConnection: true });
+      rejectWith(res, payloadTooLarge(REQUEST_MAX_BYTES), { closeConnection: true });
       return;
     }
     if (type === 'request.aborted') {
       // The peer stopped sending. Nothing was decided about the content, because the content never
       // finished arriving - this is deliberately not reported as malformed JSON.
-      rejectWith(res, incompleteRequest(), deadlines, { closeConnection: true });
+      rejectWith(res, incompleteRequest(), { closeConnection: true });
       return;
     }
 
@@ -290,7 +262,7 @@ export const buildApp = (dependencies: AppDependencies): Express => {
       method: methodLabel(req.method),
       elapsedMs: Date.now() - state.startedAt,
     });
-    rejectWith(res, internalError(), deadlines, { closeConnection: true });
+    rejectWith(res, internalError(), { closeConnection: true });
   });
 
   return app;

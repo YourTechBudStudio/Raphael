@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { classifyFailure, findSqliteError, isBusyCode } from './storage-failures.ts';
+import { classifyFailure } from './storage-failures.ts';
 
 /** A driver error as better-sqlite3 actually shapes one. */
 const sqliteError = (code: string, message: string): Error => {
@@ -68,66 +68,14 @@ test('a foreign-key violation is never attributed to the caller', () => {
   assert.equal(failure._tag, 'InternalFailure');
 });
 
-test('the busy family is matched at a delimiter, and SQLITE_LOCKED is not in it', () => {
-  for (const code of [
-    'SQLITE_BUSY',
-    'SQLITE_BUSY_SNAPSHOT',
-    'SQLITE_BUSY_RECOVERY',
-    'SQLITE_BUSY_TIMEOUT',
-  ]) {
-    assert.equal(isBusyCode(code), true, code);
-    assert.equal(
-      classifyFailure(context, sqliteError(code, 'database is locked'))._tag,
-      'StorageBusy',
-    );
-  }
-
-  for (const code of [
-    'SQLITE_BUSYISH',
-    'SQLITE_BUSY2',
-    'SQLITE_LOCKED',
-    'SQLITE_LOCKED_SHAREDCACHE',
-  ]) {
-    assert.equal(isBusyCode(code), false, code);
-    assert.equal(
-      classifyFailure(context, sqliteError(code, 'locked'))._tag,
-      'InternalFailure',
-      `${code} is not evidence of recoverable contention`,
-    );
-  }
+test('busy is an internal failure: the exclusive lock leaves no one to wait for', () => {
+  const failure = classifyFailure(context, sqliteError('SQLITE_BUSY', 'database is locked'));
+  assert.equal(failure._tag, 'InternalFailure');
 });
 
-test('a wrapped driver error is still classified, and no wrapper message is parsed', () => {
-  const wrapped = new Error('Failed query: insert into "nodes" ... params: secret-title', {
-    cause: sqliteError('SQLITE_CONSTRAINT_UNIQUE', 'UNIQUE constraint failed: nodes.slug'),
-  });
-  const failure = classifyFailure(context, wrapped);
-  assert.equal(
-    failure._tag,
-    'SlugConflict',
-    'the code and message come from the cause, not the wrapper',
-  );
-
-  // The wrapper's own message names a unique violation but carries SQL and parameters. It must never be
-  // the thing that is matched.
+test('only the driver error itself is matched, never a wrapper message', () => {
   const misleading = new Error('UNIQUE constraint failed: nodes.slug -- params: secret');
   assert.equal(classifyFailure(context, misleading)._tag, 'InternalFailure');
-});
-
-test('cause traversal is bounded and survives a cycle', () => {
-  const first = new Error('one');
-  const second = new Error('two', { cause: first });
-  (first as Error & { cause?: unknown }).cause = second;
-  assert.equal(findSqliteError(first), undefined);
-  assert.equal(classifyFailure(context, first)._tag, 'InternalFailure');
-
-  let deep: unknown = sqliteError('SQLITE_BUSY', 'locked');
-  for (let depth = 0; depth < 20; depth += 1) deep = new Error(`layer ${depth}`, { cause: deep });
-  assert.equal(
-    findSqliteError(deep),
-    undefined,
-    'an unreasonably deep chain is abandoned, not chased',
-  );
 });
 
 test('a slug conflict needs a slug to name, and is internal without one', () => {

@@ -6,7 +6,6 @@ import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { Effect, Exit, Scope } from 'effect';
 
 import { ApiCredential } from '../src/infrastructure/config/credential.ts';
-import { CONFIG_DEFAULTS } from '../src/infrastructure/config/options.ts';
 import { openDatabase } from '../src/infrastructure/database/connection.ts';
 import { migrateToLatest } from '../src/infrastructure/database/migrate.ts';
 import { silentLogger } from '../src/infrastructure/http/log.ts';
@@ -18,7 +17,7 @@ import { serve } from '../src/server.ts';
  * It exists because of one property that no amount of transport engineering removes: content
  * conversion and every SQLite call are synchronous and run on the same thread as the event loop.
  * While one of them runs, nothing else does - no other request and no timer. The
- * transport deadlines bound stalled I/O; they cannot bound blocked computation, and this measures
+ * transport timeouts bound stalled I/O; they cannot bound blocked computation, and this measures
  * what that actually costs.
  *
  * It is *not* a test and is deliberately outside `pnpm check`. A latency threshold that passed on one
@@ -121,7 +120,7 @@ const main = async (): Promise<void> => {
         serve({
           options: {
             server: { host: '127.0.0.1', port: 0 },
-            database: { databasePath: file, busyTimeoutMs: CONFIG_DEFAULTS.busyTimeoutMs },
+            database: { databasePath: file },
           },
           credential: ApiCredential.fromKey(key),
           logger: silentLogger,

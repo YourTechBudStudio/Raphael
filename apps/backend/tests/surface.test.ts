@@ -40,13 +40,11 @@ const ERROR_CONTRACT = [
   'NodeNotFound',
   'RevisionConflict',
   'SlugConflict',
-  'StorageBusy',
   'UnsupportedContent',
   'toPublicError',
 ] as const;
 
 const COMPOSITION = [
-  'DatabaseLocationError',
   'DatabaseUnavailableError',
   'Db',
   'MigrationHistoryError',
@@ -60,7 +58,6 @@ const RUNTIME = [
   'ApiCredential',
   'CONFIG_DEFAULTS',
   'ConfigurationError',
-  'DEFAULT_DEADLINES',
   'consoleLogger',
   'loadConfiguration',
   'resolveOptions',

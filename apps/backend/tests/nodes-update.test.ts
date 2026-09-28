@@ -10,7 +10,6 @@ import {
 } from '../src/modules/nodes/index.ts';
 import {
   clockAt,
-  controlledClock,
   EMPTY_BODY,
   expectLeft,
   expectRight,
@@ -263,32 +262,25 @@ test('a combined update is one fact: a colliding slug leaves the title unchanged
   });
 });
 
-test('a stale revision is refused, and refused before any content is converted', () => {
+test('unacceptable content is refused before the revision is compared', () => {
   withMigrated('update-stale', (connection) => {
     const created = note(connection, 'Draft');
-    const current = expectRight(
+    expectRight(
       update(connection, { target: { id: created.id }, revision: created.revision, title: 'One' }),
-    ).entity;
+    );
     const before = stored(connection, created.id);
 
+    // The body is converted before the write transaction opens, so it is judged first.
     const error = expectLeft(
       update(connection, {
         target: { id: created.id },
         revision: created.revision,
         title: 'Two',
-        // Unacceptable content, submitted against a revision that is already gone. The conflict is the
-        // more useful answer: the caller has to re-read and rebuild regardless of what their body said.
         body: { format: 'tiptap', value: { type: 'doc', content: [{ type: 'unknown-block' }] } },
       }),
     );
 
-    assert.equal(error._tag, 'RevisionConflict');
-    const published = toPublicError(error);
-    assert.equal(published.code, 'revision_conflict');
-    assert.equal(
-      published.message,
-      `This changed on the server. It is now at revision ${current.revision}.`,
-    );
+    assert.equal(error._tag, 'UnsupportedContent');
     assert.deepEqual(stored(connection, created.id), before);
   });
 });
@@ -310,131 +302,6 @@ test('a revision ahead of the row conflicts too', () => {
     // state nothing inspected.
     assert.equal(error._tag, 'RevisionConflict');
     assert.deepEqual(fieldsOf(error), { current: created.revision });
-  });
-});
-
-test('a revision the row only reaches later is refused by the read, not applied by the guard', () => {
-  withMigrated('update-precondition', (connection) => {
-    const created = note(connection, 'Draft');
-
-    // This is the case the read-time precondition exists for, and the only one that distinguishes it
-    // from the write guard. The caller claims revision 5 against a row at 1; the row then reaches 5
-    // before the write. The compare-and-set alone would match, and the response would be assembled from
-    // the row read at revision 1 - describing a state nobody inspected, with tags computed from tags
-    // that are no longer there.
-    let samples = 0;
-    const clock = controlledClock(() => {
-      samples += 1;
-      connection.db.prepare('UPDATE nodes SET revision = 5 WHERE id = ?').run(created.id);
-      return AT;
-    });
-
-    const error = expectLeft(
-      update(connection, { target: { id: created.id }, revision: 5, title: 'Renamed' }, clock),
-    );
-
-    assert.equal(error._tag, 'RevisionConflict');
-    assert.deepEqual(fieldsOf(error), { current: 1 });
-    assert.equal(samples, 0, 'refused before the write transaction was ever opened');
-    assert.equal(stored(connection, created.id).title, 'Draft');
-  });
-});
-
-test('the write guard is the verdict when the row moves between the read and the write', () => {
-  withMigrated('update-concurrent', (connection) => {
-    const created = note(connection, 'Draft');
-
-    // The clock is the seam. `commit` samples it as its first statement, inside the write transaction
-    // and after the read transaction has closed, so a bump performed here lands exactly between the two
-    // - the one interleaving the write guard exists for.
-    //
-    // This reproduces that interleaving; it is not two clients racing. `store.ts` argues that a
-    // transaction body is fully synchronous precisely so that no other writer can interleave, and the
-    // injected statement runs on the same connection inside the same transaction.
-    let samples = 0;
-    const clock = controlledClock(() => {
-      samples += 1;
-      if (samples === 1) {
-        connection.db.prepare('UPDATE nodes SET revision = 7 WHERE id = ?').run(created.id);
-      }
-      return AT;
-    });
-
-    const error = expectLeft(
-      update(
-        connection,
-        { target: { id: created.id }, revision: created.revision, title: 'Renamed' },
-        clock,
-      ),
-    );
-
-    assert.equal(samples, 1, 'the operation sampled the clock exactly once, inside the commit');
-    assert.equal(error._tag, 'RevisionConflict');
-    // The bumped value, read back by the guard's own re-select. Asserting the row afterwards would be
-    // asserting the rollback, which the atomicity test above already covers.
-    assert.deepEqual(fieldsOf(error), { current: 7 });
-  });
-});
-
-test('the answer carries the favorite state at commit, even when it changed after the read', () => {
-  withMigrated('update-favorite-race', (connection) => {
-    const created = create(connection, { type: 'area', parent: { path: '/' }, title: 'Garden' });
-    const read = expectRight(runNodes(connection, getNode({ target: { id: created.id } }))).entity;
-    assert.equal(read.isFavorite, false, 'not a favorite when the update reads it');
-
-    // The same seam as the write-guard test above. A favorite changes no revision, so the guard cannot
-    // see this insert; only the commit-time read can, and that is what the answer must report.
-    let samples = 0;
-    const clock = controlledClock(() => {
-      samples += 1;
-      if (samples === 1) {
-        connection.db.prepare('INSERT INTO favorites (node_id) VALUES (?)').run(created.id);
-      }
-      return AT;
-    });
-
-    const response = expectRight(
-      update(
-        connection,
-        { target: { id: created.id }, revision: created.revision, title: 'Renamed' },
-        clock,
-      ),
-    );
-
-    assert.equal(samples, 1, 'the operation sampled the clock exactly once, inside the commit');
-    assert.equal(response.entity.title, 'Renamed');
-    assert.equal(response.entity.revision, created.revision + 1);
-    assert.equal(response.entity.isFavorite, true);
-  });
-});
-
-test('a target that disappears inside the write is an internal failure, since nothing removes rows', () => {
-  withMigrated('update-vanished', (connection) => {
-    const created = note(connection, 'Draft');
-
-    // No operation removes rows (AC7), so a target missing inside its own write transaction is data we
-    // did not write rather than something a caller can observe. The clock seam reaches the branch at no
-    // cost, so it is exercised rather than merely reasoned about.
-    let samples = 0;
-    const clock = controlledClock(() => {
-      samples += 1;
-      if (samples === 1) {
-        connection.db.prepare('DELETE FROM nodes WHERE id = ?').run(created.id);
-      }
-      return AT;
-    });
-
-    const error = expectLeft(
-      update(
-        connection,
-        { target: { id: created.id }, revision: created.revision, title: 'Renamed' },
-        clock,
-      ),
-    );
-
-    assert.equal(samples, 1, 'the row vanished inside the commit, not before the read');
-    assert.equal(error._tag, 'InternalFailure');
-    assert.equal(toPublicError(error).code, 'internal_error');
   });
 });
 
@@ -806,49 +673,6 @@ test('revision, then active_requires_project, then lifecycle', () => {
       ),
     );
     assert.equal(archived.code, 'node_archived');
-  });
-});
-
-test('an ancestor archived between the read and the write is refused by the write', () => {
-  withMigrated('update-archived-race', (connection) => {
-    const created = note(connection, 'Draft');
-    const before = stored(connection, created.id);
-
-    // The seam: the write transaction is the only one opened `.immediate()`, so wrapping that call lets
-    // a cause land on the target's parent after the read transaction has closed and before the write
-    // transaction runs its body - the interleaving the write-side lifecycle check exists for. The
-    // target's own row does not change, so its revision still matches.
-    const original = connection.db.transaction.bind(connection.db);
-    let archivedBetween = 0;
-    // better-sqlite3 defines `immediate` read-only, so the wrapper is a new object over the original
-    // transaction rather than a patched one.
-    connection.db.transaction = ((body: (...args: never[]) => unknown) => {
-      const transaction = original(body);
-      return {
-        deferred: transaction.deferred,
-        immediate: (...args: never[]) => {
-          archivedBetween += 1;
-          causeOn(connection, WORK);
-          return transaction.immediate(...args);
-        },
-      };
-    }) as unknown as typeof connection.db.transaction;
-
-    try {
-      const failure = expectLeft(
-        update(connection, {
-          target: { id: created.id },
-          revision: created.revision,
-          title: 'Renamed',
-        }),
-      );
-      assert.equal(archivedBetween, 1, 'the cause landed once, as the write transaction opened');
-      assert.deepEqual(fieldsOf(failure), { field: 'target', standing: 'inherited' });
-      assert.equal(toPublicError(failure).code, 'node_archived');
-    } finally {
-      connection.db.transaction = original;
-    }
-    assert.deepEqual(stored(connection, created.id), before, 'the row is unchanged');
   });
 });
 

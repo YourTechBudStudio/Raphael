@@ -217,9 +217,6 @@ importers:
       '@raphael/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
-      '@raphael/fs-trust':
-        specifier: workspace:*
-        version: link:../../packages/fs-trust
       better-sqlite3:
         specifier: 'catalog:'
         version: 13.0.3

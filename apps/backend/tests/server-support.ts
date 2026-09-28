@@ -3,8 +3,7 @@ import { connect } from 'node:net';
 import { Effect, Exit, Scope } from 'effect';
 
 import { ApiCredential } from '../src/infrastructure/config/credential.ts';
-import { CONFIG_DEFAULTS, type BackendOptions } from '../src/infrastructure/config/options.ts';
-import type { Deadlines } from '../src/infrastructure/http/deadlines.ts';
+import type { BackendOptions } from '../src/infrastructure/config/options.ts';
 import { recordingLogger } from '../src/infrastructure/http/log.ts';
 import { serve, type RunningServer } from '../src/server.ts';
 import { tempDatabase, type TempDatabase } from './support.ts';
@@ -36,13 +35,12 @@ export const testOptions = (
   },
 ): BackendOptions => ({
   server: { host: '127.0.0.1', port: overrides?.port ?? 0 },
-  database: { databasePath, busyTimeoutMs: CONFIG_DEFAULTS.busyTimeoutMs },
+  database: { databasePath },
 });
 
 export interface WithServerOptions {
   /** Use this key instead of the generated one. Only for tests about the key policy itself. */
   readonly key?: string;
-  readonly deadlines?: Partial<Deadlines>;
   /** Seed the database before the server opens it. Ownership is exclusive, so it cannot be done after. */
   readonly seed?: (databasePath: string) => void;
 }
@@ -67,7 +65,6 @@ export const withServer = async <T>(
           options: backendOptions,
           credential: ApiCredential.fromKey(key),
           logger,
-          ...(options.deadlines === undefined ? {} : { deadlines: options.deadlines }),
         }),
         scope,
       ),

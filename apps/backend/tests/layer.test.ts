@@ -58,10 +58,12 @@ describe('scoped database layer', () => {
   test('releases ownership when migration fails during acquisition', async () => {
     const temp = tempDatabase('layer-migrate-fail');
     try {
-      // A database that is not ours: the compatibility guard rejects it after the connection is open,
-      // which is exactly the window where a leaked lock would be easy to introduce.
+      // A history this build does not ship is refused after the connection is open.
       const seeded = openDatabase({ databasePath: temp.file });
-      seeded.db.exec('CREATE TABLE someone_elses_notes (id INTEGER PRIMARY KEY)');
+      seeded.db.exec(
+        'CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash text, created_at numeric)',
+      );
+      seeded.db.exec(`INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('x', 1)`);
       seeded.close();
 
       const outcome = await Effect.runPromiseExit(

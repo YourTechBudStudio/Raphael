@@ -92,12 +92,7 @@ export const incompleteRequest = (): TransportError => ({
   message: 'The request body did not finish arriving.',
 });
 
-/**
- * The server has begun shutting down and is no longer admitting work.
- *
- * `storage_busy` is the honest code: the request was not applied, and retrying is the right recovery.
- * It is a transport outcome rather than a capability one - no operation ran to produce it.
- */
+/** Shutdown has begun. Nothing was applied, and a retry is the right recovery. */
 export const notAdmitting = (): TransportError => ({
   code: 'storage_busy',
   message: 'The server is shutting down. Try again.',

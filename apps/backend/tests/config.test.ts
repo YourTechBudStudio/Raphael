@@ -78,7 +78,6 @@ describe('defaults and resolution', () => {
       const { options } = load({ dir, readEnvFile: false });
       assert.equal(options.server.host, CONFIG_DEFAULTS.host);
       assert.equal(options.server.port, CONFIG_DEFAULTS.port);
-      assert.equal(options.database.busyTimeoutMs, CONFIG_DEFAULTS.busyTimeoutMs);
       // With no file, a relative default resolves against the invocation directory.
       assert.equal(options.database.databasePath, resolve(dir, CONFIG_DEFAULTS.databasePath));
     });
@@ -110,14 +109,10 @@ describe('defaults and resolution', () => {
 
   test('stated values win over defaults', () => {
     withTempDir('config-values', (dir) => {
-      const path = writeConfig(
-        dir,
-        'server:\n  host: 0.0.0.0\n  port: 8080\ndatabase:\n  busyTimeoutMs: 250\n',
-      );
+      const path = writeConfig(dir, 'server:\n  host: 0.0.0.0\n  port: 8080\n');
       const { options } = load({ dir, configPath: path, readEnvFile: false });
       assert.equal(options.server.host, '0.0.0.0');
       assert.equal(options.server.port, 8080);
-      assert.equal(options.database.busyTimeoutMs, 250);
     });
   });
 });
@@ -225,8 +220,6 @@ describe('bounds', () => {
         'server:\n  port: 65536\n',
         'server:\n  port: -1\n',
         'server:\n  port: 3000.5\n',
-        'database:\n  busyTimeoutMs: -1\n',
-        'database:\n  busyTimeoutMs: 600000\n',
       ];
       for (const source of outOfRange) {
         const path = writeConfig(dir, source);
@@ -391,7 +384,7 @@ describe('the environment and the credential', () => {
 describe('programmatic options', () => {
   const valid = {
     server: { host: '127.0.0.1', port: 0 },
-    database: { databasePath: '/tmp/raphael-validate/raphael.sqlite', busyTimeoutMs: 5_000 },
+    database: { databasePath: '/tmp/raphael-validate/raphael.sqlite' },
   };
 
   test('an ephemeral port is allowed here, though a configuration file may not ask for one', () => {
@@ -402,8 +395,6 @@ describe('programmatic options', () => {
 
   test('every bound that applies to a file applies to a caller too', () => {
     const cases: [string, BackendOptions][] = [
-      ['huge busy timeout', { ...valid, database: { ...valid.database, busyTimeoutMs: 1e9 } }],
-      ['negative busy timeout', { ...valid, database: { ...valid.database, busyTimeoutMs: -1 } }],
       ['port above range', { ...valid, server: { ...valid.server, port: 70_000 } }],
       ['negative port', { ...valid, server: { ...valid.server, port: -1 } }],
       ['fractional port', { ...valid, server: { ...valid.server, port: 80.5 } }],
@@ -422,7 +413,7 @@ describe('programmatic options', () => {
   test("validation returns a snapshot, not the caller's object", () => {
     const options: BackendOptions = {
       server: { host: '127.0.0.1', port: 0 },
-      database: { databasePath: '/tmp/raphael-validate/raphael.sqlite', busyTimeoutMs: 5_000 },
+      database: { databasePath: '/tmp/raphael-validate/raphael.sqlite' },
     };
     const validated = validateOptions(options);
     assert.notEqual(
@@ -431,11 +422,9 @@ describe('programmatic options', () => {
       'the caller must not keep a handle on what the server uses',
     );
 
-    (options.database as { busyTimeoutMs: number }).busyTimeoutMs = -1;
     (options.database as { databasePath: string }).databasePath = '/etc/passwd';
     (options.server as { port: number }).port = 70_000;
 
-    assert.equal(validated.database.busyTimeoutMs, 5_000);
     assert.equal(validated.database.databasePath, '/tmp/raphael-validate/raphael.sqlite');
     assert.equal(validated.server.port, 0);
   });
@@ -445,19 +434,22 @@ describe('programmatic options', () => {
     const options: BackendOptions = {
       server: { host: '127.0.0.1', port: 0 },
       database: {
-        databasePath: '/tmp/raphael-validate/raphael.sqlite',
-        // Valid when inspected, out of range afterwards.
-        get busyTimeoutMs() {
+        // Valid when inspected, relative afterwards.
+        get databasePath() {
           reads += 1;
-          return reads === 1 ? 5_000 : -1;
+          return reads === 1 ? '/tmp/raphael-validate/raphael.sqlite' : './x.db';
         },
       },
     };
 
     const validated = validateOptions(options);
     assert.equal(reads, 1, "the caller's value must be read exactly once");
-    assert.equal(validated.database.busyTimeoutMs, 5_000);
-    assert.equal(validated.database.busyTimeoutMs, 5_000, 'the snapshot must be a plain value');
+    assert.equal(validated.database.databasePath, '/tmp/raphael-validate/raphael.sqlite');
+    assert.equal(
+      validated.database.databasePath,
+      '/tmp/raphael-validate/raphael.sqlite',
+      'the snapshot must be a plain value',
+    );
     assert.equal(reads, 1, "nothing may go back to the caller's object after validation");
   });
 
@@ -469,7 +461,7 @@ describe('programmatic options', () => {
           serve({
             options: {
               server: { host: '127.0.0.1', port: 0 },
-              database: { databasePath: temp.file, busyTimeoutMs: -1 },
+              database: { databasePath: 'relative.sqlite' },
             },
             credential: ApiCredential.fromKey(GOOD_KEY),
             logger: silentLogger,
@@ -487,7 +479,7 @@ describe('programmatic options', () => {
 
   test("serve reads the caller's options once and runs from the snapshot", async () => {
     const temp = tempDatabase('validate-serve-snapshot');
-    const reads = { busyTimeoutMs: 0, databasePath: 0, port: 0 };
+    const reads = { databasePath: 0, port: 0 };
     try {
       const options: BackendOptions = {
         server: {
@@ -500,11 +492,7 @@ describe('programmatic options', () => {
         database: {
           get databasePath() {
             reads.databasePath += 1;
-            return temp.file;
-          },
-          get busyTimeoutMs() {
-            reads.busyTimeoutMs += 1;
-            return reads.busyTimeoutMs === 1 ? 5_000 : -1;
+            return reads.databasePath === 1 ? temp.file : './elsewhere.sqlite';
           },
         },
       };
@@ -527,7 +515,7 @@ describe('programmatic options', () => {
 
       assert.deepEqual(
         reads,
-        { busyTimeoutMs: 1, databasePath: 1, port: 1 },
+        { databasePath: 1, port: 1 },
         'startup must read each supplied value exactly once and then use its own snapshot',
       );
     } finally {

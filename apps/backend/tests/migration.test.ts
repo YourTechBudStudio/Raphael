@@ -8,10 +8,9 @@ import { createEmptyDocument } from '@raphael/content';
 import { openDatabase } from '../src/infrastructure/database/connection.ts';
 import {
   MigrationHistoryError,
-  inspectMigrationHistory,
-  readBundledMigrations,
-} from '../src/infrastructure/database/guard.ts';
-import { migrateToLatest, migrationsFolder } from '../src/infrastructure/database/migrate.ts';
+  migrateToLatest,
+  migrationsFolder,
+} from '../src/infrastructure/database/migrate.ts';
 import {
   EMPTY_BODY,
   count,
@@ -44,25 +43,23 @@ describe('migration assets', () => {
     assert.ok(migrationsFolder.endsWith(join('apps', 'backend', 'drizzle')));
   });
 
-  test('the journal and its files agree', () => {
-    const bundled = readBundledMigrations(migrationsFolder);
+  test('every journal entry is applied, and nothing else', () => {
+    const journal = JSON.parse(
+      readFileSync(join(migrationsFolder, 'meta', '_journal.json'), 'utf8'),
+    ) as { entries: { tag: string; when: number }[] };
     assert.deepEqual(
-      bundled.map((m) => m.tag),
+      journal.entries.map((entry) => entry.tag),
       ['0000_init', '0001_triggers_and_seed'],
     );
-    for (const migration of bundled) assert.match(migration.hash, /^[0-9a-f]{64}$/);
-  });
-
-  test('hashes are sha256 over the raw migration file, as the migrator computes them', () => {
-    // Derived independently here. If this diverged from Drizzle's own derivation, every database
-    // would look incompatible on the next start.
-    const bundled = readBundledMigrations(migrationsFolder);
-    withMigrated('hash', ({ db }) => {
-      const applied = many<{ hash: string; created_at: number }>(
+    withMigrated('applied', ({ db }) => {
+      const applied = many<{ created_at: number }>(
         db,
-        'SELECT hash, created_at FROM __drizzle_migrations',
+        'SELECT created_at FROM __drizzle_migrations ORDER BY created_at',
       );
-      assert.deepEqual(applied.map((r) => r.hash).sort(), bundled.map((m) => m.hash).sort());
+      assert.deepEqual(
+        applied.map((row) => Number(row.created_at)),
+        journal.entries.map((entry) => entry.when),
+      );
     });
   });
 });
@@ -199,10 +196,7 @@ describe('initialization', () => {
           2,
         );
         assert.equal(count(second.db, `SELECT count(*) AS c FROM nodes WHERE slug = 'kept'`), 1);
-        assert.deepEqual(
-          inspectMigrationHistory(second.db, readBundledMigrations(migrationsFolder)),
-          { state: 'current', applied: 2 },
-        );
+        assert.equal(count(second.db, 'SELECT count(*) AS c FROM __drizzle_migrations'), 2);
       } finally {
         second.close();
       }
@@ -213,200 +207,43 @@ describe('initialization', () => {
 });
 
 describe('migration history guard', () => {
-  test('a nonempty database with no Raphael history is refused', () => {
-    const temp = tempDatabase('foreign');
-    const connection = openDatabase({ databasePath: temp.file });
+  const refused = (run: () => void): MigrationHistoryError => {
     try {
-      connection.db.exec('CREATE TABLE someone_elses_notes (id INTEGER PRIMARY KEY, body TEXT)');
-      rejects(() => migrateToLatest(connection.db), /not a Raphael database/);
-    } finally {
-      connection.close();
-      temp.cleanup();
+      run();
+    } catch (error) {
+      assert.ok(error instanceof MigrationHistoryError, `expected a refusal, got ${String(error)}`);
+      return error;
     }
-  });
+    throw new Error('expected the database to be refused');
+  };
 
-  test('an empty Drizzle receipt table does not make a foreign database ours', () => {
-    // `__drizzle_migrations` is the default name for every Drizzle project, so its presence proves
-    // only that some Drizzle application has been here. Treating the name as ownership would let
-    // Raphael write its tables into another application's database.
-    const temp = tempDatabase('foreign-receipts');
-    const connection = openDatabase({ databasePath: temp.file });
-    try {
-      connection.db.exec('CREATE TABLE someone_elses_notes (id INTEGER PRIMARY KEY, body TEXT)');
-      connection.db.exec(
-        `CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)`,
-      );
-      rejects(() => migrateToLatest(connection.db), /not a Raphael database/);
-      const tables = many<{ name: string }>(
-        connection.db,
-        `SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name`,
-      ).map((t) => t.name);
-      assert.deepEqual(
-        tables,
-        ['__drizzle_migrations', 'someone_elses_notes'],
-        'nothing was written',
-      );
-    } finally {
-      connection.close();
-      temp.cleanup();
-    }
-  });
-
-  describe('foreign receipt-table shapes', () => {
-    // The receipt table's *schema* is untrusted boundary data for the same reason its name is:
-    // `__drizzle_migrations` is shared across Drizzle applications and versions. Every variant must
-    // leave a typed, actionable failure rather than a raw SqliteError, and must change nothing.
-    const objectsIn = (db: import('better-sqlite3').Database): string[] =>
-      many<{ o: string }>(
-        db,
-        `SELECT type || ':' || name AS o FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY o`,
-      ).map((r) => r.o);
-
-    const refusesAndLeavesAlone = (tag: string, setup: string[], expectedReason: string): void => {
-      const temp = tempDatabase(tag);
-      const connection = openDatabase({ databasePath: temp.file });
-      try {
-        for (const statement of setup) connection.db.exec(statement);
-        const before = objectsIn(connection.db);
-
-        const error = (() => {
-          try {
-            migrateToLatest(connection.db);
-            return undefined;
-          } catch (caught) {
-            return caught as MigrationHistoryError;
-          }
-        })();
-
-        assert.ok(
-          error instanceof MigrationHistoryError,
-          `expected a typed migration failure, got ${error?.constructor.name ?? 'no error'}`,
-        );
-        assert.equal(error.reason, expectedReason);
-        assert.match(error.message, /point the configured database path at a new file/i);
-        assert.deepEqual(objectsIn(connection.db), before, 'nothing may be created or altered');
-      } finally {
-        connection.close();
-        temp.cleanup();
-      }
-    };
-
-    test('a version-skewed receipt schema beside foreign data is unrelated, not a raw SQL error', () => {
-      refusesAndLeavesAlone(
-        'skew-foreign',
-        [
-          'CREATE TABLE someone_elses_notes (id INTEGER PRIMARY KEY, body TEXT)',
-          `CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash text NOT NULL, applied_at numeric)`,
-        ],
-        'unrelated_database',
-      );
-    });
-
-    test('a version-skewed receipt schema alone is a malformed history', () => {
-      refusesAndLeavesAlone(
-        'skew-alone',
-        [
-          `CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash text NOT NULL, applied_at numeric)`,
-        ],
-        'receipt_malformed',
-      );
-    });
-
-    test('a view carrying the receipt name is refused', () => {
-      refusesAndLeavesAlone(
-        'receipt-view',
-        [`CREATE VIEW __drizzle_migrations AS SELECT 1 AS hash, 2 AS created_at`],
-        'receipt_malformed',
-      );
-    });
-
-    test('a receipt table missing only the hash column is refused', () => {
-      refusesAndLeavesAlone(
-        'no-hash',
-        [`CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, created_at numeric)`],
-        'receipt_malformed',
-      );
-    });
-  });
-
-  test('a foreign view is enough to refuse adoption', () => {
-    const temp = tempDatabase('foreign-view');
-    const connection = openDatabase({ databasePath: temp.file });
-    try {
-      connection.db.exec('CREATE TABLE t (id INTEGER PRIMARY KEY)');
-      connection.db.exec('CREATE VIEW their_view AS SELECT * FROM t');
-      connection.db.exec('DROP TABLE t');
-      rejects(() => migrateToLatest(connection.db), /not a Raphael database/);
-    } finally {
-      connection.close();
-      temp.cleanup();
-    }
-  });
-
-  test("another Drizzle application's applied history is refused", () => {
-    // A nonempty history that is not ours fails the prefix comparison rather than being adopted.
-    const temp = tempDatabase('foreign-history');
-    const connection = openDatabase({ databasePath: temp.file });
-    try {
-      connection.db.exec(
-        `CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)`,
-      );
-      connection.db
-        .prepare(`INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)`)
-        .run('b'.repeat(64), 1_600_000_000_000);
-      rejects(() => migrateToLatest(connection.db), /does not match this backend's migration/);
-    } finally {
-      connection.close();
-      temp.cleanup();
-    }
-  });
-
-  test('an empty receipt table on an otherwise empty database is adopted', () => {
-    // The complement of the case above: a receipt table with nothing else is not someone's data.
-    const temp = tempDatabase('empty-receipts');
-    const connection = openDatabase({ databasePath: temp.file });
-    try {
-      connection.db.exec(
-        `CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at numeric)`,
-      );
-      assert.deepEqual(
-        inspectMigrationHistory(connection.db, readBundledMigrations(migrationsFolder)),
-        {
-          state: 'fresh',
-        },
-      );
-      migrateToLatest(connection.db);
-      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM nodes'), 2);
-    } finally {
-      connection.close();
-      temp.cleanup();
-    }
-  });
-
-  test('a database migrated by a newer build is refused', () => {
+  test('a database migrated by a newer build is refused with a clear message', () => {
     withMigrated('newer', ({ db }) => {
       db.prepare(`INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)`).run(
         'f'.repeat(64),
         9_999_999_999_999,
       );
-      rejects(
-        () => inspectMigrationHistory(db, readBundledMigrations(migrationsFolder)),
-        /migrated by a newer Raphael build/,
-      );
+      const error = refused(() => migrateToLatest(db));
+      assert.match(error.message, /9999999999999/);
+      assert.match(error.message, /newer or different Raphael build/);
+      assert.match(error.message, /Upgrade the backend, or point the database path at a new file/);
     });
   });
 
-  test('changed SQL for an already applied migration is refused', () => {
-    const temp = tempDatabase('tamper');
-    const connection = openMigrated(temp.file);
+  test('a history this build does not know is refused, and nothing is written', () => {
+    const temp = tempDatabase('foreign-history');
+    const connection = openDatabase({ databasePath: temp.file });
     try {
-      const tampered = join(temp.dir, 'drizzle');
-      cpSync(migrationsFolder, tampered, { recursive: true });
-      const file = join(tampered, '0001_triggers_and_seed.sql');
-      writeFileSync(file, `${readFileSync(file, 'utf8')}\n-- changed after it was applied\n`);
-      rejects(
-        () => inspectMigrationHistory(connection.db, readBundledMigrations(tampered)),
-        /does not match this backend's migration/,
+      connection.db.exec(
+        `CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash text NOT NULL, created_at numeric)`,
+      );
+      connection.db
+        .prepare(`INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)`)
+        .run('b'.repeat(64), 1_600_000_000_000);
+      refused(() => migrateToLatest(connection.db));
+      assert.equal(
+        count(connection.db, `SELECT count(*) AS c FROM sqlite_master WHERE name = 'nodes'`),
+        0,
       );
     } finally {
       connection.close();
@@ -414,29 +251,21 @@ describe('migration history guard', () => {
     }
   });
 
-  test('an unsafe integer in the receipt table is refused before it is trusted', () => {
-    withMigrated('receipt', ({ db }) => {
-      db.prepare(`INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)`).run(
-        'a'.repeat(64),
-        1.5,
-      );
-      rejects(
-        () => inspectMigrationHistory(db, readBundledMigrations(migrationsFolder)),
-        /not a safely representable integer/,
-      );
-    });
-  });
-
-  test('a fresh empty database is recognised as fresh, not as unrelated', () => {
-    const temp = tempDatabase('fresh');
+  test('an older database from this build line is brought up to date', () => {
+    const temp = tempDatabase('pending');
     const connection = openDatabase({ databasePath: temp.file });
     try {
-      assert.deepEqual(
-        inspectMigrationHistory(connection.db, readBundledMigrations(migrationsFolder)),
-        {
-          state: 'fresh',
-        },
-      );
+      const first = join(temp.dir, 'drizzle');
+      cpSync(migrationsFolder, first, { recursive: true });
+      const journalPath = join(first, 'meta', '_journal.json');
+      const journal = JSON.parse(readFileSync(journalPath, 'utf8'));
+      journal.entries = journal.entries.slice(0, 1);
+      writeFileSync(journalPath, JSON.stringify(journal));
+
+      migrateToLatest(connection.db, first);
+      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM nodes'), 0);
+      migrateToLatest(connection.db);
+      assert.equal(count(connection.db, 'SELECT count(*) AS c FROM nodes'), 2);
     } finally {
       connection.close();
       temp.cleanup();

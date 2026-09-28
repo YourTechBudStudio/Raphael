@@ -1,6 +1,5 @@
 import {
   decodeSearchRequest,
-  decodeSearchResponse,
   parseSearchQuery,
   type SearchQuery,
   type SearchResponse,
@@ -11,7 +10,7 @@ import { Effect, Either } from 'effect';
 import { Db } from '../../infrastructure/database/index.ts';
 import { invalidInputFrom } from './diagnostics.ts';
 import { InternalFailure, type NodeError } from './errors.ts';
-import { SUMMARY_COLUMNS, checkedResponse, summaryProjection } from './projection.ts';
+import { SUMMARY_COLUMNS, summaryProjection } from './projection.ts';
 import { resolveScopes } from './resolve.ts';
 import {
   pageFragments,
@@ -28,28 +27,10 @@ import type { StoredPageSummary } from './types.ts';
 const OPERATION = 'nodes.search';
 
 /**
- * Finding areas, projects and notes by their text: the shared scope page with a match join and a
- * relevance order.
+ * Text search over the shared scope page, ordered by bm25 (lower is better) then id.
  *
- * Everything about *where* to look is `scope-page.ts`, exactly as it is for listing. What is here is
- * the join onto the index and the ordering, which is the whole difference between the two operations.
- *
- * Three things in the statement below are load-bearing and were verified against the pinned driver
- * rather than assumed. **The FTS table is named, never aliased** - SQLite refuses `bm25()` and `MATCH`
- * against an alias, reporting "no such column". **The score is aliased `score`, not `rank`** - FTS5
- * exposes a hidden `rank` column on the virtual table, so `ORDER BY rank` beside a join on it would be
- * a name that means two things. And **bm25 weights travel as bound parameters**, so `sql.raw` stays
- * unused here as it is everywhere else in the query path.
- *
- * bm25 is lower-is-better, so `ASC` is best-first. `n.id ASC` behind it is the stable tie-break, which
- * is what makes two requests for the same page agree about the row on the boundary.
- *
- * A search that matches nothing is a successful empty page. `hasMore: false` means the page sequence
- * ended; it never claims coverage.
- *
- * **Archived matches left out.** A default search excludes archived nodes, and answers
- * `archivedLeftOut` so a client can offer to include them only when doing so adds results. It is one
- * more statement in the same read transaction, so it describes the same snapshot as the page.
+ * Verified against the pinned driver: the FTS table must be named, not aliased, for `bm25()` and
+ * `MATCH`; the score is aliased `score` because FTS5 already has a hidden `rank` column.
  */
 export const searchNodes = (input: unknown): Effect.Effect<SearchResponse, NodeError, Db> =>
   Effect.gen(function* () {
@@ -63,10 +44,7 @@ export const searchNodes = (input: unknown): Effect.Effect<SearchResponse, NodeE
         }
         const { scopes, recursive, filter, queries, skip, limit, includeArchived } = request.right;
 
-        // The contract carries a query as a *string*, because the typed client puts the decoded
-        // request on the wire and a decoded request must re-decode to itself. So it is parsed a second
-        // time here. The decoder already accepted it, so a rejection now is a bug of ours rather than
-        // anything the caller did.
+        // The decoder already accepted each query, so a parse failure here is our bug.
         const parsed: SearchQuery[] = [];
         for (const query of queries) {
           const tree = parseSearchQuery(query);
@@ -106,32 +84,19 @@ export const searchNodes = (input: unknown): Effect.Effect<SearchResponse, NodeE
         });
 
         const visible = page.rows.slice(0, limit);
-        return checkedResponse(
-          decodeSearchResponse,
-          {
-            // `summaryProjection` names its fields, so the `score` column never reaches the wire.
-            items: visible.map((row) => ({
-              node: summaryProjection(row, row.archived === 1, OPERATION),
-            })),
-            skip,
-            limit,
-            hasMore: page.rows.length > limit,
-            archivedLeftOut: page.archivedLeftOut,
-          },
-          OPERATION,
-        );
+        return {
+          items: visible.map((row) => ({ node: summaryProjection(row, row.archived === 1) })),
+          skip,
+          limit,
+          hasMore: page.rows.length > limit,
+          archivedLeftOut: page.archivedLeftOut,
+        };
       },
       catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'page read' }, cause),
     });
   });
 
-/**
- * Whether an archived node matches what a default page asked for: the same `WITH`, join, query, scope
- * membership, and filter, with the page's archive exclusion replaced by the archive predicate itself.
- *
- * `EXISTS` stops at the first archived match. There is no ordering and no window, because the answer is
- * about the whole match set rather than the returned page.
- */
+/** Whether an archived node matches the same query, scopes and filter anywhere in the match set. */
 const archivedMatchExists = (
   handle: Orm,
   fragments: PageFragments,

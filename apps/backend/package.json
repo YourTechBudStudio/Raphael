@@ -27,7 +27,6 @@
   "dependencies": {
     "@raphael/content": "workspace:*",
     "@raphael/contracts": "workspace:*",
-    "@raphael/fs-trust": "workspace:*",
     "better-sqlite3": "catalog:",
     "drizzle-orm": "catalog:",
     "effect": "catalog:",

@@ -9,55 +9,18 @@ import type { Orm } from './store.ts';
 import { isNodeType, type EffectiveCause, type StoredNode } from './types.ts';
 
 /**
- * The lifecycle rule: when is a node archived, and what may happen to it then (ADR 0003).
+ * The lifecycle rule (ADR 0003), and the only reader and writer of `archive_causes`. A cause is stored
+ * on the node that was archived; a node is archived when it or any current ancestor carries one, so
+ * every mutation re-checks inside its own write transaction.
  *
- * Three rules explain everything, and this module is the one owner of all three:
- *
- * 1. **A cause is a sticker on one node.** Archiving stores `(node, owner, reason)` on the node that
- *    was archived - its origin - and nothing on its descendants. The user's own cause is
- *    `('user', 'direct')`.
- * 2. **Archived is computed, never stored.** A node is archived when it or any current ancestor
- *    carries a cause. Moving a node out from under an archived container makes it active with no
- *    cleanup; restoring an ancestor leaves a descendant with its own cause archived.
- * 3. **Every mutation re-checks archived state inside its own write transaction.** A revision proves
- *    only that the node itself did not change. It says nothing about its ancestors, whose causes can
- *    change without touching this node's row.
- *
- * This is the only module that reads or writes `archive_causes`. No other module computes effective
- * status; operations call `requireActive` or `requireMovable` at one named point in their order.
- *
- * ## Two evaluators of one rule
- *
- * One node is answered by walking its ancestor chain in TypeScript (`effectiveCauses`), which also
- * says *which* causes apply and in what order. A page is answered in SQL (`ARCHIVED_CONTAINERS` and
- * `IS_ARCHIVED`), because a page cannot afford a walk per row. They state the same rule, and
- * `tests/nodes-lifecycle-parity.test.ts` pins them to each other in both directions.
- *
- * The SQL form uses an equivalent statement of the rule: a node is archived when it has a cause of its
- * own, or when its parent is an *archived container*. By induction on depth, a container is archived
- * exactly when it has a cause or its parent is an archived container - so the recursive set of
- * archived containers, seeded by every container with a cause and extended to their container
- * children, is the set of archived containers, and one parent test per row finishes the rule. Only
- * containers need to be in the set, because a resource holds nothing.
- *
- * **`IS_ARCHIVED` must be two-valued.** A root area has `parent_id` NULL, and in SQL `NULL IN
- * (non-empty set)` is NULL, not false. Without the `n.parent_id IS NOT NULL` guard, as soon as any
- * container anywhere has a cause, an active root area evaluates to NULL, `NOT NULL` is NULL too, and a
- * default page silently drops every active root area. The guard keeps the uncorrelated `IN`, so the
- * archived set is computed once per statement; a correlated `EXISTS` would also be two-valued but
- * probes an unindexed CTE per row. Do not drop the guard.
+ * One node is answered by walking its chain (`effectiveCauses`); a page is answered in SQL
+ * (`ARCHIVED_CONTAINERS`, `IS_ARCHIVED`). `tests/nodes-lifecycle-parity.test.ts` pins the two together.
  */
 
 export type ArchivedField = 'target' | 'parent' | 'destination';
 export type Standing = 'active' | 'inherited' | 'direct';
 
-/**
- * The causes that apply to `node`, nearest origin first.
- *
- * The walk is `ancestorChain`, with its cycle and missing-ancestor detection as integrity failures. One
- * query then reads every cause on the chain. Order is chain position (the node itself first), then
- * owner, then reason, each by plain code-unit comparison, so both clients print causes the same way.
- */
+/** The causes that apply to `node`: nearest origin first, then owner, then reason. */
 export const effectiveCauses = (
   orm: Orm,
   node: StoredNode,
@@ -133,21 +96,14 @@ export const requireActive = (
   if (standing !== 'active') raise(new NodeArchived({ field, standing }));
 };
 
-/**
- * Refuses a move of something archived by a cause of its own; that is restored first. Something
- * archived only through a container above it may move, which is how it leaves the archived subtree
- * (AC5). Where it may move to is `requireActive` on the destination.
- */
+/** Something archived by its own cause is restored before it moves; an inherited-only one may move out. */
 export const requireMovable = (orm: Orm, target: StoredNode, operation: string): void => {
   if (standingOf(target, effectiveCauses(orm, target, operation)) === 'direct') {
     raise(new NodeArchived({ field: 'target', standing: 'direct' }));
   }
 };
 
-/**
- * Adds the user's direct cause. `true` when a row was written; `false` when it was already there,
- * which the primary key decides.
- */
+/** `true` when a row was written; the primary key decides "already there". */
 export const addDirectUserCause = (orm: Orm, nodeId: number, now: number): boolean =>
   orm
     .insert(archiveCauses)
@@ -155,10 +111,7 @@ export const addDirectUserCause = (orm: Orm, nodeId: number, now: number): boole
     .onConflictDoNothing()
     .run().changes === 1;
 
-/**
- * Removes the user's direct cause and no other: never another owner's, and never an ancestor's or a
- * descendant's. `true` when a row was removed.
- */
+/** Removes only the user's direct cause. `true` when a row was removed. */
 export const removeDirectUserCause = (orm: Orm, nodeId: number): boolean =>
   orm
     .delete(archiveCauses)
@@ -171,10 +124,7 @@ export const removeDirectUserCause = (orm: Orm, nodeId: number): boolean =>
     )
     .run().changes === 1;
 
-/**
- * The archived containers, as one recursive CTE entry for a page's `WITH RECURSIVE`. Fixed text: no
- * caller input reaches it. `UNION` rather than `UNION ALL`, so corrupt cyclic parentage terminates.
- */
+/** The archived containers, for a page's `WITH RECURSIVE`. `UNION` terminates on corrupt cycles. */
 export const ARCHIVED_CONTAINERS: SQL = sql`archived_containers(id) AS (
     SELECT c.node_id FROM archive_causes c JOIN nodes x ON x.id = c.node_id WHERE x.type <> 'resource'
     UNION
@@ -183,9 +133,8 @@ export const ARCHIVED_CONTAINERS: SQL = sql`archived_containers(id) AS (
   )`;
 
 /**
- * Over the page alias `n`: true when `n` has a cause of its own or sits under an archived container.
- * Requires `ARCHIVED_CONTAINERS` in the statement. The `IS NOT NULL` guard keeps it two-valued; see
- * the module doc.
+ * Over the page alias `n`. The `IS NOT NULL` guard is required: `NULL IN (...)` is NULL, which would
+ * silently drop every active root area from a default page.
  */
 export const IS_ARCHIVED: SQL = sql`(EXISTS (SELECT 1 FROM archive_causes c WHERE c.node_id = n.id)
     OR (n.parent_id IS NOT NULL AND n.parent_id IN (SELECT id FROM archived_containers)))`;

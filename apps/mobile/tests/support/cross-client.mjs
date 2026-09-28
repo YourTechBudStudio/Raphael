@@ -19,7 +19,7 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
+import { ApiCredential, serve, silentLogger } from '@raphael/backend';
 import { createTransport } from '@raphael/client';
 import {
   create as createNode,
@@ -128,7 +128,7 @@ export const withServer = async (body, options = {}) => {
         serve({
           options: {
             server: { host: '127.0.0.1', port: options.port ?? 0 },
-            database: { databasePath, busyTimeoutMs: CONFIG_DEFAULTS.busyTimeoutMs },
+            database: { databasePath },
           },
           credential: ApiCredential.fromKey(options.key ?? KEY),
           logger: silentLogger,

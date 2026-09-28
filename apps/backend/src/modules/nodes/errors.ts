@@ -111,17 +111,9 @@ export class UnsupportedContent extends Data.TaggedError('UnsupportedContent')<{
   readonly failure: ContentFailure;
 }> {}
 
-export class StorageBusy extends Data.TaggedError('StorageBusy')<{
-  readonly operation: string;
-}> {}
-
 /**
- * Anything we did not expect, and every integrity violation in data we wrote ourselves.
- *
- * `detail` is our own sanitized words and is safe to surface in an operator-facing log. `cause` is
- * retained only for genuinely unexpected failures, because a driver error is often the only thing
- * that explains the bug - and it can carry SQL text and bound parameters, which is exactly why it is
- * excluded from the public projection and why no routine log may print it.
+ * Anything unexpected. `detail` is our own words and may be logged; `cause` can carry SQL and bound
+ * parameters, so it is never published or routinely logged.
  */
 export class InternalFailure extends Data.TaggedError('InternalFailure')<{
   readonly operation: string;
@@ -137,7 +129,6 @@ export type NodeError =
   | RevisionConflict
   | NodeArchived
   | UnsupportedContent
-  | StorageBusy
   | InternalFailure;
 
 export interface PublicApiError {
@@ -228,8 +219,6 @@ export const toPublicError = (error: NodeError): PublicApiError => {
         code: 'unsupported_content',
         message: `The body is not supported: ${describeContentFailure(error.failure)}.`,
       };
-    case 'StorageBusy':
-      return { code: 'storage_busy', message: 'The server is busy. Try again.' };
     case 'InternalFailure':
       // Neither `detail` nor `cause` is published; the operator reads those in the log.
       return { code: 'internal_error', message: 'The server could not complete the request.' };

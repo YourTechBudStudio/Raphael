@@ -15,28 +15,8 @@ import { searchNodes } from './search.ts';
 import { updateNode } from './update.ts';
 
 /**
- * Where the hierarchy capability publishes itself.
- *
- * The capability owns this, not the host. The addresses come from the shared descriptors, the labels
- * are this capability's own words, the statuses are its decision, and the translation from a tagged
- * failure to a public error is `toPublicError` - the capability's single projection, used here and
- * nowhere reimplemented.
- *
- * `toPublicError` is used for node errors only. Transport conditions - an absent credential, an
- * unknown address, an oversized body - are built by the host from its own fields; passing one through
- * this function to reuse it would make the node error family able to produce transport codes and put
- * transport vocabulary inside this capability's contract.
- */
-
-/**
- * Which failures an operator needs to see.
- *
- * Only `InternalFailure`. Everything else is an expected outcome that the caller is already told
- * about truthfully - a slug collision or a missing parent is not a server problem, and logging it
- * would be an access log assembled one failure at a time.
- *
- * `detail` is the capability's own sanitized words. The retained `cause` is never read here: it can
- * carry SQL text and bound parameters, and no routine log may print it.
+ * The capability publishes its own routes and projects its own failures with `toPublicError`. Only
+ * `InternalFailure` is logged, with its sanitized `detail` and never its `cause`.
  */
 const failureOf = (error: NodeError): OperationFailure => {
   const projected = toPublicError(error);
@@ -53,16 +33,7 @@ const adapt =
   (body: unknown): Effect.Effect<A, OperationFailure, Db> =>
     Effect.mapError(operation(body), failureOf);
 
-/**
- * The request reaches the operation exactly as it was parsed. The host does not decode it, and there
- * is no second validation here: the operation below is the one validation boundary, so a rule cannot
- * be enforced in one place and forgotten in the other.
- *
- * Creation answers 201. Reads answer 200, and so do an update, a
- * move, an archive and a restore: each changed an entity that already existed rather than bringing one
- * into being. Adding and removing a favorite answer 200 too: each changes a collection that already
- * exists.
- */
+/** Creation answers 201; everything else answers 200. */
 export const nodeRoutes: readonly OperationRoute[] = [
   {
     descriptor: NODE_ROUTES.create,

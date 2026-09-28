@@ -41,7 +41,7 @@ const attemptAccess = (databasePath: string): AccessAttempt => {
 };
 
 describe('pragmas', () => {
-  test('durability and integrity settings are verified by readback, not assumed', () => {
+  test('durability and integrity settings are applied', () => {
     const temp = tempDatabase('pragma');
     const connection = openDatabase({ databasePath: temp.file });
     try {
@@ -52,27 +52,7 @@ describe('pragmas', () => {
       assert.equal(read('synchronous'), 2, 'FULL');
       assert.equal(read('foreign_keys'), 1);
       assert.equal(read('wal_autocheckpoint'), 1000);
-      assert.equal(read('busy_timeout'), 5000, 'raised after acquisition');
-      // The release path runs PRAGMA optimize while exclusive ownership is still held. This caps the
-      // rows it examines per index, so shutdown cost follows the schema rather than how much the
-      // owner has stored. It bounds work, not interruptibility - the call cannot be cancelled.
       assert.equal(read('analysis_limit'), 400, 'release-path optimize is bounded');
-    } finally {
-      connection.close();
-      temp.cleanup();
-    }
-  });
-
-  test('startup fails if the optimize bound did not take effect', () => {
-    // Guards the claim above: a silently ignored analysis_limit would leave shutdown unbounded while
-    // the code still asserted it was bounded.
-    const temp = tempDatabase('bound');
-    const connection = openDatabase({ databasePath: temp.file });
-    try {
-      assert.equal(
-        Object.values(one<Record<string, unknown>>(connection.db, 'PRAGMA analysis_limit'))[0],
-        400,
-      );
     } finally {
       connection.close();
       temp.cleanup();
@@ -119,7 +99,7 @@ describe('exclusive ownership', () => {
         () => openDatabase({ databasePath: temp.file, acquisitionTimeoutMs: 200 }),
         /already in use/,
       );
-      assert.match(error, /One backend process owns a database for as long as it runs/);
+      assert.match(error, /Stop the other one first/);
     } finally {
       connection.close();
       temp.cleanup();
@@ -291,11 +271,14 @@ describe('failed startup', () => {
   test('a database that fails its compatibility guard does not stay owned', () => {
     const temp = tempDatabase('failed-start');
     const first = openDatabase({ databasePath: temp.file });
-    first.db.exec('CREATE TABLE someone_elses_notes (id INTEGER PRIMARY KEY)');
+    first.db.exec(
+      'CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash text, created_at numeric)',
+    );
+    first.db.exec(`INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('x', 1)`);
     first.close();
 
     // openMigrated closes the connection when migration throws, so the next attempt can proceed.
-    rejects(() => openMigrated(temp.file), /not a Raphael database/);
+    rejects(() => openMigrated(temp.file), /does not ship/);
     const connection = openDatabase({ databasePath: temp.file });
     try {
       assert.ok(connection.db.prepare('SELECT 1 AS ok').get());
@@ -305,7 +288,7 @@ describe('failed startup', () => {
     }
   });
 
-  test('the error names the reason so a caller can act on it', () => {
+  test('a refusal is typed and carries no credential material', () => {
     const temp = tempDatabase('reason');
     const connection = openMigrated(temp.file);
     try {
@@ -318,7 +301,6 @@ describe('failed startup', () => {
         }
       })();
       assert.ok(error instanceof DatabaseUnavailableError);
-      assert.equal(error.reason, 'already_in_use');
       assert.ok(
         !/\bpassword\b|\bkey\b/i.test(error.message),
         'no credential material in diagnostics',

@@ -37,7 +37,6 @@ export {
   type ServerOptions,
 } from './infrastructure/config/index.ts';
 export {
-  DatabaseLocationError,
   DatabaseUnavailableError,
   Db,
   MigrationHistoryError,
@@ -48,9 +47,7 @@ export {
   type DatabaseLayerOptions,
   type DatabaseOptions,
   type DatabaseService,
-  type MigrationState,
 } from './infrastructure/database/index.ts';
-export { DEFAULT_DEADLINES, type Deadlines } from './infrastructure/http/deadlines.ts';
 export {
   consoleLogger,
   silentLogger,
@@ -66,7 +63,6 @@ export {
   NodeNotFound,
   RevisionConflict,
   SlugConflict,
-  StorageBusy,
   UnsupportedContent,
   addFavorite,
   archiveNode,

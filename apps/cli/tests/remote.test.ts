@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { ApiCredential, CONFIG_DEFAULTS, serve, silentLogger } from '@raphael/backend';
+import { ApiCredential, serve, silentLogger } from '@raphael/backend';
 import { createTransport, type FetchLike, type Transport } from '@raphael/client';
 import { update as updateDirect } from '@raphael/client/nodes';
 import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
@@ -71,7 +71,6 @@ before(async () => {
           server: { host: '127.0.0.1', port: 0 },
           database: {
             databasePath: join(data, 'raphael.sqlite'),
-            busyTimeoutMs: CONFIG_DEFAULTS.busyTimeoutMs,
           },
         },
         credential: ApiCredential.fromKey(KEY),

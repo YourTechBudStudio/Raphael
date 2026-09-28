@@ -293,20 +293,3 @@ test('the root path is refused at the decoder, and an unknown id is not found', 
     assert.equal(count(connection.db, 'SELECT count(*) AS c FROM archive_causes'), 0);
   });
 });
-
-test('a response that fails its own contract rolls the cause change back', () => {
-  withMigrated('archive-response-rollback', (connection) => {
-    const target = project(connection, { path: '/work' }, 'Apollo');
-    // Valid JSON array, so storage accepts it; not an array of strings, so the response decoder refuses.
-    connection.db.prepare('UPDATE nodes SET tags = ? WHERE id = ?').run('[1]', target.id);
-    const before = row(connection, target.id);
-
-    const failure = toPublicError(
-      expectLeft(archive(connection, { target: { id: target.id }, revision: target.revision })),
-    );
-
-    assert.equal(failure.code, 'internal_error');
-    assert.deepEqual(causeRows(connection), [], 'the cause insert was rolled back');
-    assert.deepEqual(row(connection, target.id), before, 'the revision bump was rolled back');
-  });
-});

@@ -7,14 +7,8 @@ import { MAX_SAFE_DB_INTEGER } from './schema.ts';
 import { raise } from './storage-failures.ts';
 
 /**
- * The connection-facing helpers: one query handle per database, the two transaction shapes, and the
- * clock sample.
- *
- * Every database interaction in this capability happens inside one of the two transaction helpers, and
- * the function they run is entirely synchronous. That is the whole consistency argument: a multi-
- * statement read cannot observe a write part-way through, not because today's connection happens to be
- * exclusive and single-threaded, but because there is no point between its statements at which anything
- * else could run. Nothing awaits or executes a nested Effect inside these functions.
+ * Every database interaction runs inside one of the two transaction helpers, and their bodies are
+ * fully synchronous, so nothing else can run between their statements.
  */
 
 /** One Drizzle handle per connection. Rebuilding it per query would discard its statement cache. */
@@ -30,32 +24,15 @@ export const orm = (db: Database.Database): Orm => {
   return created;
 };
 
-/**
- * A consistent multi-statement read.
- *
- * Deferred is correct here: the transaction takes no write lock, and it exists to state the snapshot
- * the reads rely on rather than to exclude anyone.
- */
+/** A consistent multi-statement read; deferred, so it takes no write lock. */
 export const readTransaction = <T>(db: Database.Database, body: () => T): T =>
   db.transaction(body).deferred();
 
-/**
- * A short write.
- *
- * Immediate, so the write lock is taken when the transaction opens rather than part-way through. A
- * failure inside the body rolls the whole thing back.
- */
+/** Immediate, so the write lock is taken when the transaction opens. */
 export const writeTransaction = <T>(db: Database.Database, body: () => T): T =>
   db.transaction(body).immediate();
 
-/**
- * Samples the clock for a value about to be stored.
- *
- * Storage constrains its timestamp columns to integral, exactly-representable values, and core is the
- * only source of those values because the columns have no SQL default. An unusable reading is
- * therefore an internal failure rather than something to clamp: a clamped timestamp would be a
- * fabricated fact about when something happened.
- */
+/** A timestamp about to be stored; an unusable reading is an internal failure, never clamped. */
 export const sampleNow = (clock: Clock.Clock, operation: string): number => {
   const now = clock.unsafeCurrentTimeMillis();
   if (!Number.isSafeInteger(now) || now < 0 || now > MAX_SAFE_DB_INTEGER) {
@@ -66,12 +43,7 @@ export const sampleNow = (clock: Clock.Clock, operation: string): number => {
   return now;
 };
 
-/**
- * Converts a generated row id, which better-sqlite3 reports as a number or a bigint depending on how
- * the connection is configured. A value outside the safe range is refused rather than converted: past
- * that point the conversion *rounds*, and a rounded id names a different row while still looking like
- * a valid one.
- */
+/** A generated row id, refused outside the safe integer range rather than rounded. */
 export const safeRowId = (value: number | bigint, operation: string): number => {
   if (typeof value === 'bigint') {
     if (value <= 0n || value > BigInt(MAX_SAFE_DB_INTEGER)) {
