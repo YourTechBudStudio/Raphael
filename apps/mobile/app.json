@@ -21,6 +21,7 @@
     },
     "plugins": [
       "expo-router",
+      "./plugins/dev-variant.ts",
       [
         "expo-splash-screen",
         {

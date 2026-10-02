@@ -5,7 +5,7 @@
   "type": "module",
   "main": "expo-router/entry",
   "scripts": {
-    "android": "pnpm editor:prepare && expo run:android",
+    "android": "pnpm editor:prepare && expo run:android --app-id studio.yourtechbud.raphael.dev",
     "build": "pnpm editor:prepare && expo export --platform all",
     "check": "pnpm lint && pnpm build && pnpm typecheck && pnpm test && pnpm format:check",
     "editor:prepare": "pnpm --filter \"@raphael/content...\" build && node scripts/build-editor.mjs",
