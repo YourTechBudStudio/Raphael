@@ -137,8 +137,8 @@ describe('what happens when preparation succeeds', () => {
 
   it('passes each platform its own arguments', () => {
     const expected = new Map([
-      ['android', 'expo start --android'],
-      ['ios', 'expo start --ios'],
+      ['android', 'expo run:android'],
+      ['ios', 'expo run:ios'],
       ['web', 'expo start --web'],
       ['prebuild', 'expo prebuild'],
       ['release:android', 'expo run:android --variant release'],
