@@ -32,7 +32,7 @@ export interface ServeConfiguration {
   readonly logger?: Logger;
   /** How long shutdown waits for open connections before closing them. Tests shorten it. */
   readonly drainMs?: number;
-  /** Override the bundled migration assets. Tests use this; a server does not. */
+  /** Override the migration assets beside this module. Tests and the packaged CLI use this. */
   readonly migrationsFolder?: string;
 }
 

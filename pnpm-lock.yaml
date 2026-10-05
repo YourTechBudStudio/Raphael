@@ -176,6 +176,9 @@ catalogs:
     effect:
       specifier: 3.22.2
       version: 3.22.2
+    esbuild:
+      specifier: 0.28.2
+      version: 0.28.2
     markdown-it:
       specifier: 15.0.1
       version: 15.0.1
@@ -285,6 +288,9 @@ importers:
       '@yourtechbudstudio/raphael-typescript-config':
         specifier: workspace:*
         version: link:../../packages/typescript-config
+      esbuild:
+        specifier: 'catalog:'
+        version: 0.28.2
       oxfmt:
         specifier: 'catalog:'
         version: 0.66.0
@@ -434,7 +440,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/typescript-config
       esbuild:
-        specifier: 0.28.2
+        specifier: 'catalog:'
         version: 0.28.2
       jsdom:
         specifier: 30.0.1

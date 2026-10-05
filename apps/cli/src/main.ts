@@ -16,7 +16,8 @@
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-import { ROOT_HELP, SERVER_HELP, version } from './help.ts';
+import { version } from './distribution.ts';
+import { ROOT_HELP, SERVER_HELP } from './help.ts';
 import { ConfigError } from './modules/connection/config.ts';
 import { LOGIN_HELP, runLogin, terminalPrompter } from './modules/connection/login.ts';
 import { ConnectionError, resolveConnection, transportFor } from './modules/connection/remote.ts';

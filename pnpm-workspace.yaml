@@ -25,6 +25,7 @@ catalog:
   'better-sqlite3': 13.0.3
   'drizzle-kit': 0.31.10
   'drizzle-orm': 0.45.2
+  esbuild: 0.28.2
   effect: 3.22.2
   'markdown-it': 15.0.1
   oxfmt: 0.66.0

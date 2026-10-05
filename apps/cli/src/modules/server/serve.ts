@@ -3,11 +3,12 @@
  *
  * Two things make this different from every other command here.
  *
- * **The backend is loaded lazily, and only here.** `import('@raphael/backend')` initializes a native
- * SQLite driver. Help, version, and every remote command must work without that, on a machine where
- * the native binary may not even load, so the import sits inside this function rather than at the top
- * of any module the dispatcher touches. Note what this does and does not buy: it keeps the driver out
- * of the *process*, not out of the *installation*.
+ * **The backend is loaded lazily, and only here.** `import('@raphael/backend')` brings in the HTTP
+ * stack, Drizzle, and the SQLite driver's JavaScript; the driver's native binary itself is loaded later
+ * still, when the first database is opened. Help, version, and every remote command must work without
+ * any of that, on a machine where the native binary may not even load, so the import sits inside this
+ * function rather than at the top of any module the dispatcher touches. Note what this does and does
+ * not buy: it keeps the driver out of the *process*, not out of the *installation*.
  *
  * **This owns the process lifecycle.** The backend publishes a scoped resource and deliberately
  * registers no signal handler and never calls `process.exit` - it is a library, and a library that
@@ -21,6 +22,7 @@
 
 import { Deferred, Effect, Exit, Scope } from 'effect';
 
+import { migrationsFolder } from '../../distribution.ts';
 import { UsageError, parseArgs, stringOption } from '../../shared/args.ts';
 import {
   EXIT_FAILURE,
@@ -93,6 +95,8 @@ export const runServe = async (
     throw error;
   }
 
+  // A packaged copy ships the migrations beside its bundle rather than beside the backend's sources.
+  const migrations = migrationsFolder();
   const scope = Effect.runSync(Scope.make());
   let forced = false;
   const removers: Array<() => void> = [];
@@ -127,7 +131,11 @@ export const runServe = async (
 
     const running = await Effect.runPromise(
       Scope.extend(
-        backend.serve({ options: configuration.options, credential: configuration.credential }),
+        backend.serve({
+          options: configuration.options,
+          credential: configuration.credential,
+          ...(migrations === undefined ? {} : { migrationsFolder: migrations }),
+        }),
         scope,
       ).pipe(Effect.exit),
     );

@@ -10,9 +10,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
  * Help and version must work on a machine that is not set up.
  *
  * No network, no configuration, no credential, and - the one that needs real evidence - no backend
- * and no native SQLite driver. `import('@raphael/backend')` initializes better-sqlite3, which on a
- * machine with an incompatible prebuilt binary throws at load. If that import were reachable from the
- * dispatcher, `raphael --help` would fail on exactly the machine where someone most needs to read it.
+ * and no native SQLite driver. `import('@raphael/backend')` brings in the HTTP stack, Drizzle, and the
+ * driver, whose native binary fails to load on a machine with an incompatible build. If that import
+ * were reachable from the dispatcher, `raphael --help` would at best pay for all of it and at worst
+ * depend on it, on exactly the machine where someone most needs to read the help.
  *
  * The check is a module hook that refuses to resolve the forbidden modules. A hook that silently did
  * not intercept would make every test here pass while establishing nothing, so there is a positive
@@ -182,10 +183,13 @@ console.log('aliases passed');
     assert.equal(ran.stdout.trim(), 'aliases passed');
   });
 
-  it('reports the version in its own manifest, not a literal beside it', async () => {
-    // The point of reading the manifest is that an installed copy reports what it actually is. If
-    // this ever drifts back to a hand-maintained constant, the two answers disagree here first.
-    const manifest: unknown = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'));
+  it('reports the root manifest version, not a literal beside it', async () => {
+    // The repository root is the only release-version authority; a checkout reports it, and the
+    // packaged copy reports the manifest generated from it. If this ever drifts back to a
+    // hand-maintained constant, or to the CLI's own source manifest, the two answers disagree here.
+    const manifest: unknown = JSON.parse(
+      readFileSync(resolve(packageRoot, '..', '..', 'package.json'), 'utf8'),
+    );
     const { version } = manifest as { readonly version: string };
     const ran = await runGuarded(['--version']);
     assert.equal(ran.code, 0);

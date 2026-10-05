@@ -69,7 +69,7 @@
     "@react-native/metro-config": "0.86.3",
     "@types/react": "~19.2.2",
     "@yourtechbudstudio/raphael-typescript-config": "workspace:*",
-    "esbuild": "0.28.2",
+    "esbuild": "catalog:",
     "jsdom": "30.0.1",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",

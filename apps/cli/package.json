@@ -1,5 +1,5 @@
 {
-  "name": "@raphael/cli",
+  "name": "@yourtechbudstudio/raphael",
   "version": "0.0.0",
   "private": true,
   "bin": {
@@ -21,6 +21,7 @@
     "fix": "oxlint . --fix && oxfmt --write .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint . --deny-warnings",
+    "package": "node packaging/package.ts",
     "test": "node --test \"src/**/*.test.ts\" \"tests/*.test.ts\"",
     "typecheck": "tsc --project tsconfig.json"
   },
@@ -35,6 +36,7 @@
   "devDependencies": {
     "@types/node": "catalog:",
     "@yourtechbudstudio/raphael-typescript-config": "workspace:*",
+    "esbuild": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "typescript": "catalog:"
