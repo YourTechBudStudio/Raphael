@@ -12,7 +12,7 @@
  */
 
 import { isBuiltin } from 'node:module';
-import { join } from 'node:path';
+import { join, relative, sep } from 'node:path';
 
 import { build, type Metafile, type Plugin } from 'esbuild';
 
@@ -85,8 +85,9 @@ export const bundle = async (repoRoot: string, outdir: string): Promise<Metafile
   return result.metafile;
 };
 
+/** An output's key in the metafile: relative to the bundler's working directory, `/`-separated. */
 const outputPath = (repoRoot: string, outdir: string, file: string): string =>
-  join(outdir, file).slice(repoRoot.length + 1);
+  relative(repoRoot, join(outdir, file)).split(sep).join('/');
 
 /**
  * What the output metadata must show: one entry chunk at `dist/main.js`, the distribution module

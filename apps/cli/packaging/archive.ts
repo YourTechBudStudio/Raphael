@@ -8,6 +8,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
 
@@ -72,10 +73,9 @@ const field = (header: Buffer, start: number, length: number): string =>
 const octal = (header: Buffer, start: number, length: number): number =>
   Number.parseInt(field(header, start, length).trim() || '0', 8);
 
-/** The entries of a gzipped ustar archive. Only regular files are accepted. */
-export const readArchive = (tarball: string): ArchiveEntry[] => {
+/** Walks a gzipped ustar archive, handing each regular file to `visit`. Anything else is refused. */
+const walkArchive = (tarball: string, visit: (entry: ArchiveEntry, body: Buffer) => void): void => {
   const data = gunzipSync(readFileSync(tarball));
-  const entries: ArchiveEntry[] = [];
   let longPath: string | undefined;
   let offset = 0;
   while (offset + 512 <= data.length) {
@@ -99,10 +99,34 @@ export const readArchive = (tarball: string): ArchiveEntry[] => {
     if (type !== '0' && type !== '') {
       throw new PackagingError(`the archive entry "${path}" is not a regular file.`);
     }
-    entries.push({ path, mode: octal(header, 100, 8), size });
+    visit({ path, mode: octal(header, 100, 8), size }, data.subarray(body, body + size));
   }
+};
+
+/** The entries of a gzipped ustar archive. Only regular files are accepted. */
+export const readArchive = (tarball: string): ArchiveEntry[] => {
+  const entries: ArchiveEntry[] = [];
+  walkArchive(tarball, (entry) => entries.push(entry));
   return entries;
 };
+
+/** The contents of one archive member, which must appear exactly once. */
+export const readArchiveFile = (tarball: string, path: string): Buffer => {
+  const found: Buffer[] = [];
+  walkArchive(tarball, (entry, body) => {
+    if (entry.path === path) found.push(Buffer.from(body));
+  });
+  if (found.length !== 1) {
+    throw new PackagingError(
+      `the archive holds ${String(found.length)} copies of "${path}", not exactly one.`,
+    );
+  }
+  return found[0] as Buffer;
+};
+
+/** npm's integrity string for a file: `sha512-` and the base64 digest. */
+export const integrityOf = (file: string): string =>
+  `sha512-${createHash('sha512').update(readFileSync(file)).digest('base64')}`;
 
 /** The archive must hold exactly the staged files, under npm's `package/` root, with `bin` executable. */
 export const checkArchive = (

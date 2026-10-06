@@ -14,17 +14,24 @@ import {
 } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { after, describe, it } from 'node:test';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import type { Metafile } from 'esbuild';
 
-import { checkArchive, readArchive } from '../packaging/archive.ts';
+import { checkArchive, readArchive, readArchiveFile } from '../packaging/archive.ts';
 import { checkBundle, ENTRY } from '../packaging/bundle.ts';
 import { PackagingError } from '../packaging/errors.ts';
 import { listFiles } from '../packaging/files.ts';
-import { BIN_PATH, NOTICES_FILE, releaseManifest, releaseVersion } from '../packaging/manifest.ts';
+import {
+  BIN_PATH,
+  checkReleaseManifest,
+  NOTICES_FILE,
+  releaseManifest,
+  releaseVersion,
+} from '../packaging/manifest.ts';
 import { stageMigrations } from '../packaging/migrations.ts';
 import { distributedPackages, renderNotices } from '../packaging/notices.ts';
 import {
@@ -34,6 +41,7 @@ import {
   SQLITE_SPECIFIER,
   stageSqlite,
 } from '../packaging/sqlite.ts';
+import { Processes, type Server } from '../packaging/verify.ts';
 
 /**
  * The packager's refusals, one at a time.
@@ -134,10 +142,115 @@ describe('the release manifest', () => {
     refuses(() => releaseVersion(unversioned), /version/);
   });
 
-  it('refuses a source manifest that has lost its private guard or its bin', () => {
+  it('refuses a source manifest that has lost its private guard, its bin, or its identity', () => {
     refuses(() => releaseManifest(ROOT, { ...CLI, private: false }), /private/);
+    refuses(() => releaseManifest(ROOT, { ...CLI, name: '@raphael/cli' }), /"name"/);
     refuses(() => releaseManifest(ROOT, { ...CLI, bin: { other: './x.js' } }), /raphael/);
     refuses(() => releaseManifest({ ...ROOT, engines: {} }, CLI), /engines\.node/);
+  });
+});
+
+describe('the packaged manifest contract', () => {
+  const generated = releaseManifest(ROOT, CLI);
+  const expected = { version: '1.2.3', engines: '>=26 <27' };
+
+  it('accepts exactly what packaging generates', () => {
+    assert.deepEqual(
+      checkReleaseManifest(JSON.parse(JSON.stringify(generated)), expected),
+      generated,
+    );
+    // A standalone verification may know nothing but the artifact.
+    checkReleaseManifest(generated);
+  });
+
+  it('refuses dependency declarations and lifecycle scripts by name', () => {
+    for (const field of [
+      'dependencies',
+      'optionalDependencies',
+      'peerDependencies',
+      'bundleDependencies',
+      'bundledDependencies',
+      'scripts',
+    ]) {
+      refuses(
+        () => checkReleaseManifest({ ...generated, [field]: {} }, expected),
+        new RegExp(`declares "${field}"`),
+      );
+    }
+    refuses(
+      () => checkReleaseManifest({ ...generated, exports: './x.js' }),
+      /unexpected fields: exports/,
+    );
+  });
+
+  it('refuses a different identity, version, bin, access, or engine', () => {
+    refuses(() => checkReleaseManifest({ ...generated, name: 'raphael' }), /packaged name/);
+    refuses(
+      () => checkReleaseManifest(generated, { ...expected, version: '1.2.4' }),
+      /not the expected/,
+    );
+    refuses(() => checkReleaseManifest({ ...generated, version: 'next' }), /packaged "version"/);
+    refuses(() => checkReleaseManifest({ ...generated, private: true }), /"private"/);
+    refuses(() => checkReleaseManifest({ ...generated, type: 'commonjs' }), /"type"/);
+    refuses(
+      () => checkReleaseManifest({ ...generated, bin: { raphael: 'dist/other.js' } }),
+      /"bin"/,
+    );
+    refuses(
+      () => checkReleaseManifest({ ...generated, bin: { ...generated.bin, extra: BIN_PATH } }),
+      /"bin"/,
+    );
+    refuses(
+      () => checkReleaseManifest({ ...generated, publishConfig: { access: 'restricted' } }),
+      /"publishConfig"/,
+    );
+    refuses(() => checkReleaseManifest({ ...generated, files: ['dist'] }), /"files"/);
+    refuses(() => checkReleaseManifest(generated, { ...expected, engines: '>=24' }), /"engines"/);
+    refuses(() => checkReleaseManifest({ ...generated, engines: {} }), /engines\.node/);
+  });
+});
+
+describe('the portable release tooling', () => {
+  /** Every specifier reachable from `entry` through relative imports, read from the source text. */
+  const importClosure = (entry: string): { files: string[]; external: string[] } => {
+    const files = new Set<string>();
+    const external = new Set<string>();
+    const visit = (file: string): void => {
+      if (files.has(file)) return;
+      files.add(file);
+      const source = readFileSync(file, 'utf8');
+      for (const match of source.matchAll(
+        /^\s*(?:import|export)[^'"]*?from\s+['"]([^'"]+)['"]/gm,
+      )) {
+        const specifier = match[1] as string;
+        if (specifier.startsWith('.')) visit(resolve(dirname(file), specifier));
+        else external.add(specifier);
+      }
+    };
+    visit(entry);
+    return { files: [...files], external: [...external] };
+  };
+
+  it('imports nothing but Node built-ins and sibling packaging modules', () => {
+    // So `apps/cli/packaging` can be copied to another machine and the verifier run with plain Node,
+    // and so the publishing helper never needs the bundler.
+    const packaging = join(repoRoot, 'apps', 'cli', 'packaging');
+    for (const entry of ['verify.ts', 'receipt.ts', 'release.ts']) {
+      const closure = importClosure(join(packaging, entry));
+      assert.deepEqual(
+        closure.external.filter((specifier) => !specifier.startsWith('node:')),
+        [],
+        entry,
+      );
+      assert.ok(
+        closure.files.every((file) => dirname(file) === packaging),
+        entry,
+      );
+      assert.equal(
+        closure.files.some((file) => /bundle\.ts$|package\.ts$/.test(file)),
+        false,
+      );
+    }
   });
 });
 
@@ -398,6 +511,25 @@ describe('the bundle graph', () => {
     );
   });
 
+  it('names outputs relative to the repository even when they are written outside it', () => {
+    const outside = join(tmpdir(), 'raphael release', 'package', 'dist');
+    const away = (file: string): string =>
+      relative(repoRoot, join(outside, file)).split(sep).join('/');
+    assert.ok(away('main.js').startsWith('../'));
+    checkBundle(
+      metafile({
+        [away('main.js')]: output(
+          [ENTRY],
+          [{ path: away('dist-1.js'), kind: 'dynamic-import' }],
+          ENTRY,
+        ),
+        [away('dist-1.js')]: backend,
+      }),
+      repoRoot,
+      outside,
+    );
+  });
+
   it('refuses a server-side chunk that the entry imports statically', () => {
     refuses(
       () =>
@@ -485,6 +617,17 @@ describe('the archive', () => {
     );
   });
 
+  it('reads one member, and refuses a member that is absent', () => {
+    const file = tarball(
+      (root) => {
+        write(join(root, 'package.json'), '{"name":"x"}');
+      },
+      ['package.json'],
+    );
+    assert.equal(readArchiveFile(file, 'package/package.json').toString('utf8'), '{"name":"x"}');
+    refuses(() => readArchiveFile(file, 'package/absent.json'), /0 copies/);
+  });
+
   it('refuses a symbolic link in the archive', () => {
     const file = tarball(
       (root) => {
@@ -510,5 +653,57 @@ describe('the staged tree', () => {
     write(join(root, 'dist', 'main.js'), '');
     symlinkSync(join(root, 'dist', 'main.js'), join(root, 'dist', 'link.js'));
     refuses(() => listFiles(root), /not a regular file or directory/);
+  });
+});
+
+describe("the verifier's process owner", () => {
+  /**
+   * Shuts down slowly, like a server draining, and - like Raphael's - treats a second SIGTERM as an
+   * instruction to stop at once, abandoning its cleanup. Each signal it receives is printed.
+   */
+  const SLOW_TO_STOP = `
+    let received = 0;
+    process.on('SIGTERM', () => {
+      received += 1;
+      console.log('TERM ' + received);
+      if (received > 1) process.exit(9);
+      setTimeout(() => process.exit(0), 1000);
+    });
+    console.log('ready');
+    setInterval(() => {}, 1000);
+  `;
+
+  const startSlow = async (processes: Processes): Promise<Server> => {
+    const server = processes.start(process.execPath, ['-e', SLOW_TO_STOP], scratch(), {
+      PATH: process.env.PATH ?? '',
+    });
+    for (let waited = 0; !server.stdout().includes('ready'); waited += 20) {
+      assert.ok(waited < 10_000, 'the child never became ready');
+      await delay(20);
+    }
+    return server;
+  };
+
+  it('signals once when an interruption and the final cleanup overlap', async () => {
+    const controller = new AbortController();
+    const processes = new Processes(controller.signal);
+    const server = await startSlow(processes);
+    controller.abort();
+    await processes.close();
+    const ran = await server.exited;
+    assert.deepEqual(ran.stdout.match(/TERM \d/g), ['TERM 1']);
+    assert.equal(ran.code, 0, 'the graceful shutdown was cut short');
+  });
+
+  it('joins a graceful stop already under way instead of signalling again', async () => {
+    const controller = new AbortController();
+    const processes = new Processes(controller.signal);
+    const server = await startSlow(processes);
+    const stopping = processes.stop(server);
+    controller.abort();
+    const [stopped] = await Promise.all([stopping, processes.stop(server), processes.close()]);
+    assert.equal(stopped.forced, false);
+    assert.equal(stopped.ran.code, 0);
+    assert.deepEqual(stopped.ran.stdout.match(/TERM \d/g), ['TERM 1']);
   });
 });

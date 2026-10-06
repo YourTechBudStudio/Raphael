@@ -1,14 +1,17 @@
 /**
- * `pnpm package`: the one release artifact, built from the locked installation.
+ * `pnpm package`: the one release artifact, built from the locked installation and verified.
  *
- * Everything this writes lives under the repository's `release/`, which packaging owns and recreates:
+ * Everything this writes lives under a release directory - the repository's `release/` for
+ * `pnpm package` - which packaging owns and recreates:
  *
- *   release/package/       the staged package, exactly what the tarball holds
- *   release/<npm name>.tgz the tarball npm made from it
- *   release/release.json   what was made: identity, tarball path, checksums, and file listing
+ *   package/       the staged package, exactly what the tarball holds
+ *   <npm name>.tgz the tarball npm made from it
+ *   release.json   the receipt: identity, the tarball's filename beside it, checksums, file listing,
+ *                  and the record of the behavioural verification that tarball passed
  *
- * Source manifests and the lockfile are read, never written. Any failed check stops packaging with
- * nothing left that looks like a finished artifact: `release.json` is written last.
+ * Source manifests and the lockfile are read, never written. Any failed check, including the
+ * verification of the installed tarball, stops packaging with nothing left that looks like a finished
+ * artifact: `release.json` is written last.
  */
 
 import { spawnSync } from 'node:child_process';
@@ -32,9 +35,9 @@ import { listFiles } from './files.ts';
 import { BIN_NAME, BIN_PATH, NOTICES_FILE, releaseManifest } from './manifest.ts';
 import { stageMigrations } from './migrations.ts';
 import { distributedPackages, describePackage, renderNotices } from './notices.ts';
+import { RELEASE_METADATA } from './receipt.ts';
 import { checkDatabaseConstruction, SQLITE_VENDOR_PATH, stageSqlite } from './sqlite.ts';
-
-export const RELEASE_METADATA = 'release.json';
+import { interruptOnSignals, verifyArtifact } from './verify.ts';
 
 const readJson = (path: string): unknown => JSON.parse(readFileSync(path, 'utf8'));
 
@@ -80,10 +83,28 @@ const checkStaged = (files: readonly string[]): void => {
   }
 };
 
-export const packageRelease = async (repoRoot: string): Promise<string> => {
+export interface PackageOptions {
+  /**
+   * Whether to build the CLI's workspace dependencies first. Always true for `pnpm package`. Only the
+   * artifact tests turn it off: they run beside other test files that import those same outputs, and
+   * `pnpm test` has already built them. Nothing else about packaging changes.
+   */
+  readonly buildDependencies?: boolean;
+  readonly log?: (line: string) => void;
+  /** Stops packaging between steps, and verification (with its cleanup) at once. */
+  readonly signal?: AbortSignal;
+}
+
+export const packageRelease = async (
+  repoRoot: string,
+  releaseDir: string,
+  { buildDependencies = true, log = () => {}, signal }: PackageOptions = {},
+): Promise<string> => {
+  const checkpoint = (): void => {
+    if (signal?.aborted === true) throw new PackagingError('packaging was interrupted.');
+  };
   const cliRoot = join(repoRoot, 'apps', 'cli');
   const backendRoot = join(repoRoot, 'apps', 'backend');
-  const releaseDir = join(repoRoot, 'release');
   const stageDir = join(releaseDir, 'package');
   const distDir = join(stageDir, 'dist');
 
@@ -92,9 +113,18 @@ export const packageRelease = async (repoRoot: string): Promise<string> => {
   const manifest = releaseManifest(readJson(join(repoRoot, 'package.json')), cliManifest);
 
   resetReleaseDir(releaseDir);
-  buildWorkspaceDependencies(repoRoot, manifest.name);
+  if (buildDependencies) buildWorkspaceDependencies(repoRoot, manifest.name);
+  checkpoint();
 
-  const metafile = await bundle(repoRoot, distDir);
+  let metafile;
+  try {
+    metafile = await bundle(repoRoot, distDir);
+  } catch (error) {
+    if (buildDependencies || error instanceof PackagingError) throw error;
+    throw new PackagingError(
+      `bundling failed without building workspace dependencies; run "pnpm build:libs" first.\n${String(error)}`,
+    );
+  }
   checkBundle(metafile, repoRoot, distDir);
   checkBin(join(stageDir, BIN_PATH));
 
@@ -120,10 +150,23 @@ export const packageRelease = async (repoRoot: string): Promise<string> => {
   const staged = listFiles(stageDir);
   checkStaged(staged);
 
+  checkpoint();
   const packed = pack(stageDir, releaseDir);
   const tarball = join(releaseDir, packed.filename);
   const entries = readArchive(tarball);
   checkArchive(entries, staged, BIN_PATH);
+
+  log(`verifying ${packed.filename}`);
+  const verification = await verifyArtifact(tarball, {
+    version: manifest.version,
+    engines: manifest.engines.node,
+    log,
+    ...(signal === undefined ? {} : { signal }),
+  });
+  checkpoint();
+  if (verification.integrity !== packed.integrity) {
+    throw new PackagingError('the verified tarball is not the one npm packed.');
+  }
 
   const metadataPath = join(releaseDir, RELEASE_METADATA);
   writeFileSync(
@@ -133,7 +176,7 @@ export const packageRelease = async (repoRoot: string): Promise<string> => {
         name: manifest.name,
         version: manifest.version,
         bin: BIN_NAME,
-        tarball: relative(repoRoot, tarball),
+        tarball: packed.filename,
         integrity: packed.integrity,
         shasum: packed.shasum,
         size: packed.size,
@@ -142,6 +185,7 @@ export const packageRelease = async (repoRoot: string): Promise<string> => {
           mode: entry.mode.toString(8),
           size: entry.size,
         })),
+        verification,
       },
       null,
       2,
@@ -152,15 +196,23 @@ export const packageRelease = async (repoRoot: string): Promise<string> => {
 
 if (import.meta.main) {
   const repoRoot = fileURLToPath(new URL('../../../', import.meta.url)).replace(/\/$/, '');
+  const interruption = interruptOnSignals();
   try {
-    const metadata = await packageRelease(repoRoot);
+    const metadata = await packageRelease(repoRoot, join(repoRoot, 'release'), {
+      log: (line) => process.stdout.write(`${line}\n`),
+      signal: interruption.signal,
+    });
     const { tarball, version } = readJson(metadata) as { tarball: string; version: string };
     process.stdout.write(
-      `Packaged ${version}: ${tarball}\nMetadata: ${relative(repoRoot, metadata)}\n`,
+      `Packaged and verified ${version}: ${relative(repoRoot, join(dirname(metadata), tarball))}\n` +
+        `Metadata: ${relative(repoRoot, metadata)}\n`,
     );
   } catch (error) {
     if (!(error instanceof PackagingError)) throw error;
     process.stderr.write(`Packaging failed: ${error.message}\n`);
     process.exitCode = 1;
+  } finally {
+    interruption.dispose();
   }
+  process.exitCode = interruption.exitCode() ?? process.exitCode;
 }

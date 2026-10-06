@@ -10,6 +10,7 @@
 
 import { PackagingError } from './errors.ts';
 
+export const RELEASE_NAME = '@yourtechbudstudio/raphael';
 export const BIN_NAME = 'raphael';
 export const BIN_PATH = 'dist/main.js';
 export const NOTICES_FILE = 'THIRD_PARTY_NOTICES.txt';
@@ -45,12 +46,12 @@ const text = (value: unknown, label: string): string => {
   return value;
 };
 
-/** The root version, refused unless it is exactly a semantic version. It is never adjusted. */
-export const releaseVersion = (rootManifest: unknown): string => {
-  const version = text(record(rootManifest, 'the root manifest').version, 'the root "version"');
+/** A manifest's version - the root's, unless said otherwise - refused unless it is exactly a semantic version. It is never adjusted. */
+export const releaseVersion = (manifest: unknown, owner = 'the root'): string => {
+  const version = text(record(manifest, `${owner} manifest`).version, `${owner} "version"`);
   if (!SEMVER.test(version)) {
     throw new PackagingError(
-      `the root "version" ${JSON.stringify(version)} is not a semantic version.`,
+      `${owner} "version" ${JSON.stringify(version)} is not a semantic version.`,
     );
   }
   return version;
@@ -68,8 +69,12 @@ export const releaseManifest = (rootManifest: unknown, cliManifest: unknown): Re
   if (!(BIN_NAME in sourceBin)) {
     throw new PackagingError(`the CLI "bin" does not declare "${BIN_NAME}".`);
   }
+  const name = text(cli.name, 'the CLI "name"');
+  if (name !== RELEASE_NAME) {
+    throw new PackagingError(`the CLI "name" must be ${JSON.stringify(RELEASE_NAME)}.`);
+  }
   return {
-    name: text(cli.name, 'the CLI "name"'),
+    name,
     version: releaseVersion(root),
     private: false,
     description: text(root.description, 'the root "description"'),
@@ -77,9 +82,94 @@ export const releaseManifest = (rootManifest: unknown, cliManifest: unknown): Re
     type: 'module',
     bin: { [BIN_NAME]: BIN_PATH },
     files: ['dist', NOTICES_FILE],
-    engines: {
-      node: text(record(root.engines, 'the root "engines"').node, 'the root "engines.node"'),
-    },
+    engines: { node: releaseEngines(root) },
     publishConfig: { access: 'public' },
   };
+};
+
+/** The root's Node requirement, which the release manifest must carry unchanged. */
+export const releaseEngines = (rootManifest: unknown): string =>
+  text(
+    record(record(rootManifest, 'the root manifest').engines, 'the root "engines"').node,
+    'the root "engines.node"',
+  );
+
+const MANIFEST_FIELDS: readonly (keyof ReleaseManifest)[] = [
+  'name',
+  'version',
+  'private',
+  'description',
+  'author',
+  'type',
+  'bin',
+  'files',
+  'engines',
+  'publishConfig',
+];
+
+/**
+ * A manifest read back out of a tarball, checked against the contract `releaseManifest` produces.
+ *
+ * This is what makes "the artifact" a checkable claim for anything that only has the tarball: the
+ * verifier on another machine, and the publishing helper. Any field beyond the generated ones is
+ * refused, which is what keeps dependency declarations and lifecycle scripts out; they are also named
+ * explicitly so that the refusal says why. `expected` pins what the caller already knows: the
+ * repository supplies its root version and engines, a standalone verification may supply a version.
+ */
+export const checkReleaseManifest = (
+  value: unknown,
+  expected: { readonly version?: string; readonly engines?: string } = {},
+): ReleaseManifest => {
+  const manifest = record(value, 'the packaged manifest');
+  for (const forbidden of [
+    'dependencies',
+    'optionalDependencies',
+    'peerDependencies',
+    'bundleDependencies',
+    'bundledDependencies',
+    'scripts',
+  ]) {
+    if (forbidden in manifest) {
+      throw new PackagingError(`the packaged manifest declares "${forbidden}".`);
+    }
+  }
+  const unexpected = Object.keys(manifest).filter(
+    (key) => !(MANIFEST_FIELDS as readonly string[]).includes(key),
+  );
+  if (unexpected.length > 0) {
+    throw new PackagingError(
+      `the packaged manifest has unexpected fields: ${unexpected.join(', ')}.`,
+    );
+  }
+  if (manifest.name !== RELEASE_NAME) {
+    throw new PackagingError(
+      `the packaged name is ${JSON.stringify(manifest.name)}, not ${JSON.stringify(RELEASE_NAME)}.`,
+    );
+  }
+  const version = releaseVersion(manifest, 'the packaged');
+  if (expected.version !== undefined && version !== expected.version) {
+    throw new PackagingError(
+      `the packaged version ${JSON.stringify(version)} is not the expected ${JSON.stringify(expected.version)}.`,
+    );
+  }
+  const exact = (field: keyof ReleaseManifest, wanted: unknown): void => {
+    if (JSON.stringify(manifest[field]) !== JSON.stringify(wanted)) {
+      throw new PackagingError(
+        `the packaged "${field}" is ${JSON.stringify(manifest[field])}, not ${JSON.stringify(wanted)}.`,
+      );
+    }
+  };
+  exact('private', false);
+  exact('type', 'module');
+  exact('bin', { [BIN_NAME]: BIN_PATH });
+  exact('files', ['dist', NOTICES_FILE]);
+  exact('publishConfig', { access: 'public' });
+  const engines = text(
+    record(manifest.engines, 'the packaged "engines"').node,
+    'the packaged "engines.node"',
+  );
+  exact('engines', { node: expected.engines ?? engines });
+  text(manifest.description, 'the packaged "description"');
+  text(manifest.author, 'the packaged "author"');
+  return manifest as unknown as ReleaseManifest;
 };
