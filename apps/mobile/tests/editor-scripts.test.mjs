@@ -27,6 +27,7 @@ const manifest = JSON.parse(readFileSync(path.join(mobile, 'package.json'), 'utf
 const rootManifest = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
 
 const PREPARE = 'pnpm editor:prepare';
+const ICONS_PREPARE = 'pnpm icons:prepare';
 
 /** Every script that hands work to Metro or to native packaging. */
 const BUNDLING_SCRIPTS = Object.entries(manifest.scripts).filter(([, command]) =>
@@ -48,20 +49,35 @@ after(() => {
  * Runs one recorded script with `expo` replaced by a recorder, and the preparation step replaced by
  * `prepare` — a shell command the test controls, so both success and failure are exact.
  */
-const runScript = (command, prepare) => {
+const runScript = (command, prepare, { prebuildExit = 0, iconsExit = 0 } = {}) => {
   const dir = mkdtempSync(path.join(tmpdir(), 'raphael-scripts-'));
   workspaces.push(dir);
   const log = path.join(dir, 'invocations');
   const stub = path.join(dir, 'expo');
-  writeFileSync(stub, `#!/bin/sh\nprintf 'expo %s\\n' "$*" >> "$RAPHAEL_SCRIPT_LOG"\n`, 'utf8');
+  writeFileSync(
+    stub,
+    `#!/bin/sh\nprintf 'expo %s\\n' "$*" >> "$RAPHAEL_SCRIPT_LOG"\nif [ "$1" = prebuild ]; then exit "$RAPHAEL_PREBUILD_EXIT"; fi\n`,
+    'utf8',
+  );
   chmodSync(stub, 0o755);
 
-  const substituted = command.replace(PREPARE, prepare.replaceAll('%log%', log));
+  const substituted = command
+    .replace(PREPARE, prepare.replaceAll('%log%', log))
+    .replace(
+      ICONS_PREPARE,
+      'sh -c \'printf "icons\\n" >> "$RAPHAEL_SCRIPT_LOG"; exit "$RAPHAEL_ICONS_EXIT"\'',
+    );
   assert.notEqual(substituted, command, `the script does not contain "${PREPARE}"`);
 
   const result = spawnSync('sh', ['-c', substituted], {
     cwd: mobile,
-    env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, RAPHAEL_SCRIPT_LOG: log },
+    env: {
+      ...process.env,
+      PATH: `${dir}:${process.env.PATH}`,
+      RAPHAEL_SCRIPT_LOG: log,
+      RAPHAEL_PREBUILD_EXIT: String(prebuildExit),
+      RAPHAEL_ICONS_EXIT: String(iconsExit),
+    },
     encoding: 'utf8',
   });
 
@@ -128,17 +144,40 @@ describe('what happens when preparation fails', () => {
 });
 
 describe('what happens when preparation succeeds', () => {
+  for (const platform of ['android', 'ios']) {
+    it(`stops ${platform} before native sync when icon generation fails`, () => {
+      const run = runScript(manifest.scripts[platform], 'true', { iconsExit: 5 });
+      assert.equal(run.status, 5);
+      assert.deepEqual(run.invocations, ['icons']);
+    });
+
+    it(`stops ${platform} before building when native configuration cannot be synced`, () => {
+      const run = runScript(manifest.scripts[platform], 'true', { prebuildExit: 7 });
+      assert.equal(run.status, 7);
+      assert.deepEqual(run.invocations, [
+        'icons',
+        `expo prebuild --platform ${platform} --no-install`,
+      ]);
+    });
+  }
+
   it('runs expo afterwards, with the arguments the script records', () => {
     const run = runScript(manifest.scripts.start, 'sh -c \'printf "prepare\\n" >> "%log%"\'');
     assert.equal(run.status, 0);
     // Order is the point: preparation completed, and only then did bundling begin.
-    assert.deepEqual(run.invocations, ['prepare', 'expo start']);
+    assert.deepEqual(run.invocations, ['prepare', 'icons', 'expo start']);
   });
 
   it('passes each platform its own arguments', () => {
     const expected = new Map([
-      ['android', 'expo run:android --app-id studio.yourtechbud.raphael.dev'],
-      ['ios', 'expo run:ios'],
+      [
+        'android',
+        [
+          'expo prebuild --platform android --no-install',
+          'expo run:android --app-id studio.yourtechbud.raphael.dev',
+        ],
+      ],
+      ['ios', ['expo prebuild --platform ios --no-install', 'expo run:ios']],
       ['web', 'expo start --web'],
       ['prebuild', 'expo prebuild'],
       ['release:android', 'expo run:android --variant release'],
@@ -149,7 +188,11 @@ describe('what happens when preparation succeeds', () => {
     for (const [name, invocation] of expected) {
       const run = runScript(manifest.scripts[name], 'true');
       assert.equal(run.status, 0, `${name} failed`);
-      assert.deepEqual(run.invocations, [invocation], `${name} invoked the wrong command`);
+      assert.deepEqual(
+        run.invocations,
+        ['icons', ...(Array.isArray(invocation) ? invocation : [invocation])],
+        `${name} invoked the wrong command`,
+      );
     }
   });
 });

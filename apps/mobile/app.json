@@ -3,21 +3,21 @@
     "name": "Raphael",
     "slug": "raphael",
     "version": "0.0.0",
-    "icon": "./assets/images/icon.png",
+    "icon": "../../assets/brand/generated/app-icon-light.png",
     "scheme": "raphael",
     "userInterfaceStyle": "light",
     "backgroundColor": "#f8f6fc",
     "android": {
       "adaptiveIcon": {
         "backgroundColor": "#f8f6fc",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "foregroundImage": "../../assets/brand/generated/android-foreground.png",
+        "monochromeImage": "../../assets/brand/generated/android-monochrome.png"
       },
       "package": "studio.yourtechbud.raphael"
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/icon.png"
+      "favicon": "../../assets/brand/generated/web/icon-48.png"
     },
     "plugins": [
       "expo-router",
@@ -26,8 +26,12 @@
         "expo-splash-screen",
         {
           "backgroundColor": "#f8f6fc",
-          "image": "./assets/images/android-icon-foreground.png",
-          "imageWidth": 200
+          "image": "../../assets/brand/generated/splash-light.png",
+          "imageWidth": 200,
+          "dark": {
+            "backgroundColor": "#1b1230",
+            "image": "../../assets/brand/generated/splash-dark.png"
+          }
         }
       ]
     ],
@@ -35,7 +39,12 @@
       "typedRoutes": true
     },
     "ios": {
-      "bundleIdentifier": "studio.yourtechbud.raphael"
+      "bundleIdentifier": "studio.yourtechbud.raphael",
+      "icon": {
+        "light": "../../assets/brand/generated/app-icon-light.png",
+        "dark": "../../assets/brand/generated/app-icon-dark.png",
+        "tinted": "../../assets/brand/generated/app-icon-tinted.png"
+      }
     }
   }
 }

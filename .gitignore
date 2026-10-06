@@ -9,6 +9,8 @@ release/
 .next/
 .turbo/
 coverage/
+output/
+assets/brand/generated/
 *.tsbuildinfo
 
 .DS_Store

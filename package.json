@@ -13,6 +13,7 @@
     "fix": "pnpm lint:fix && pnpm format",
     "format": "oxfmt --write .",
     "format:check": "oxfmt --check .",
+    "icons:app": "uv run scripts/generate-brand.py",
     "lint": "oxlint . --threads=8 --deny-warnings --no-error-on-unmatched-pattern",
     "lint:fix": "oxlint . --threads=8 --fix --no-error-on-unmatched-pattern",
     "mobile:start": "pnpm --filter @raphael/mobile start",
