@@ -4,11 +4,11 @@ Raphael distinguishes the structure of work from the material that helps people 
 
 ## Three entity types
 
-| Entity   | Meaning                                                                    | Organization                                           |
-| -------- | -------------------------------------------------------------------------- | ------------------------------------------------------ |
-| Area     | An ongoing responsibility, generally without a due date                    | Can contain subareas, projects, and resources          |
-| Project  | A bounded outcome spanning days, weeks, or months, usually with a due date | Belongs to one area and can contain resources          |
-| Resource | A piece of content or an external reference, with an extensible kind       | Has exactly one immediate parent: an area or a project |
+| Entity   | Meaning                                                                    | Organization                                                                           |
+| -------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Area     | An ongoing responsibility, generally without a due date                    | Can contain subareas, projects, and resources                                          |
+| Project  | A bounded outcome spanning days, weeks, or months, usually with a due date | Belongs to one area and can contain resources                                          |
+| Resource | A piece of content or an external reference, with an extensible kind       | Has exactly one immediate parent: an area or a project; a file can also live in a note |
 
 Areas and projects are not resource kinds. A note is the default resource kind, supplied by a built-in extension; integrations can introduce others, such as GitHub issues or repositories. Resource kinds can influence presentation without changing where the resource belongs.
 

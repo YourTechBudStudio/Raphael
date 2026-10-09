@@ -4,7 +4,7 @@ Areas, projects, and resources are distinct entity types. Their product meanings
 
 ## Core hierarchy
 
-Areas can contain subareas, projects, and resources. Every project belongs to one area. Every resource has exactly one immediate parent, either an area or a project. Core protects valid parentage and prevents area cycles.
+Areas can contain subareas, projects, and resources. Every project belongs to one area. Every resource has exactly one immediate parent, either an area or a project, except that a file can also live in a note; notes contain only files, and other resources contain nothing ([ADR 0008](../adrs/0008-file-resources-and-stored-bytes.md)). Core protects valid parentage and prevents area cycles.
 
 An entity's identity is independent of its title and location. Moving or renaming it does not create a different entity. Including descendant resources in an area's view does not change their immediate parents. [ADR 0004](../adrs/0004-canonical-data-and-addressing.md) defines stable parent references, sibling-unique slugs, computed paths, and the virtual root.
 

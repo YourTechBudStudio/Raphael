@@ -18,6 +18,6 @@ AI provider authentication is separate from client access and delegates to Pi, a
 
 ## Runtime direction
 
-Use Express, embedded SQLite with FTS5, and Drizzle. SQLite avoids a separate database service and supports recursive hierarchy queries. Search weights title above description above body text. Writes are serialized; keep transactions short and external processing outside them.
+Use Express, embedded SQLite with FTS5, and Drizzle. SQLite avoids a separate database service and supports recursive hierarchy queries. Search weights title above description above body text. Writes are serialized; keep transactions short and external processing outside them. Stored file bytes live outside SQLite, on local disk by default or in a configured S3-compatible bucket.
 
 Mobile hosts bundled TipTap through `react-native-webview` and uses Expo SQLite for unsent writing. Prototype validation does not replace production device and accessibility testing.
