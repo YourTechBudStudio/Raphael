@@ -1,6 +1,6 @@
 {
   "name": "raphael",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "An actionable second brain for agents, organized with PARA and CODE.",
   "author": "YourTechBud",
@@ -19,7 +19,8 @@
     "mobile:start": "pnpm --filter @raphael/mobile start",
     "package": "pnpm --filter @yourtechbudstudio/raphael package",
     "test": "pnpm build:libs && pnpm -r --workspace-concurrency=1 --if-present test",
-    "typecheck": "pnpm build:libs && pnpm -r --workspace-concurrency=1 --if-present typecheck"
+    "typecheck": "pnpm build:libs && pnpm -r --workspace-concurrency=1 --if-present typecheck",
+    "versions:sync": "node scripts/sync-versions.ts"
   },
   "devDependencies": {
     "@types/node": "catalog:",
