@@ -180,8 +180,8 @@ describe('what happens when preparation succeeds', () => {
       ['ios', ['expo prebuild --platform ios --no-install', 'expo run:ios']],
       ['web', 'expo start --web'],
       ['prebuild', 'expo prebuild'],
-      ['release:android', 'expo run:android --variant release'],
-      ['release:ios', 'expo run:ios --configuration Release'],
+      ['release:android', 'expo run:android --variant release --no-bundler'],
+      ['release:ios', 'expo run:ios --configuration Release --no-bundler'],
       ['build', 'expo export --platform all'],
     ]);
 
