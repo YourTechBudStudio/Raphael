@@ -1,0 +1,20 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael archive <path> [--revision <n>] [options]
+       raphael archive --id <id> [--revision <n>] [options]
+
+Hide an area, a project, or a note from lists and search. Nothing is deleted: everything inside
+an archived area or project is hidden with it, keeps its address, and comes back on restore.
+A project's selection is kept too.
+
+Archiving something that is already archived because a container above it is, keeps it
+archived when that container is restored.
+
+Options:
+      --id <id>        Address by identifier instead of by path.
+      --revision <n>   The revision you read. Without it, the current revision is read for you
+                       just before the archive is sent.
+      --json           Print the result as JSON.
+  -h, --help           Show this help.
+==== stderr ====

@@ -1,0 +1,6 @@
+==== exit ====
+1
+==== stdout ====
+==== stderr ====
+The server's sentence for node_not_found.
+  code: node_not_found (404)

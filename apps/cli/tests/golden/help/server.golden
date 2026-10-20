@@ -1,0 +1,10 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael server <subcommand>
+
+Subcommands:
+  serve     Run a Raphael server on this machine.
+
+Run "raphael server serve --help" for details.
+==== stderr ====

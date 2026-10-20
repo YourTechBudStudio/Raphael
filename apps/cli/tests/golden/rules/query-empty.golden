@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+-q: a query must contain something to search for
+Run "raphael search --help" for usage.

@@ -1,0 +1,38 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael search <path>... -q <query> [options]
+       raphael search --id <id> -q <query> [options]
+
+Find areas, projects and notes by their text. Title, description and body are all searched, and
+results come back with the closest match first.
+
+Words match any of them.
+Quote a phrase to match it exactly.
+Uppercase AND narrows; OR is the default.
+
+Several paths search all of them at once, as one page. Repeat --id to address a scope by its
+durable identifier instead, and mix the two forms freely. At most 10 scopes.
+Repeat -q to ask more than one question of the same scopes.
+
+Examples:
+  raphael search /work -q 'auth tokens'
+  raphael search /work -r -q '"login flow" AND retry'
+  raphael search / -r -q auth --filter '{"type":"resource","kind":"note"}'
+  raphael search /work /personal -r -q auth --limit 20
+
+Options:
+      --id <id>       Address a scope by identifier. Repeatable.
+  -q, --query <text>  What to look for. Repeatable. At least one is required.
+  -r, --recursive     Search everything underneath, not just direct children.
+      --filter <json> A JSON object, or @file containing one. Keys: type, kind, tags.
+                      A value is either the value itself or {"$in": [...]}.
+      --skip <n>      How many to skip. Default 0.
+      --limit <n>     How many to return, 1 to 500.
+      --include-archived  Also show archived things, marked "archived".
+      --json          Print the result as JSON.
+  -h, --help          Show this help.
+
+There is no --order-by. A search answers in relevance order; ask "raphael list" for an
+authored one.
+==== stderr ====

@@ -1,0 +1,5 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Expected metadata: "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk" is longer than 100 characters

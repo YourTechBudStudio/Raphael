@@ -1,0 +1,35 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael create <type> <path> [--title <title>] [options]
+       raphael create <type> --parent-id <id> --slug <slug> [--title <title>] [options]
+
+Create an area, a project, or a note. The path form splits a complete absolute path into the
+parent it goes under and the slug it will occupy, so "/work/raphael/backend" creates "backend"
+under "/work/raphael". The id form addresses the parent by its durable identifier instead.
+
+Types: area, project, resource.note
+
+A note may omit --title, in which case it is named from the first line of its body, or from its
+description. A note with no usable text in either needs --title.
+
+Examples:
+  raphael create resource.note /work/api-design --title "API design" --body '# API design'
+  raphael create resource.note /work/api-design --body @./note.md
+  raphael create resource.note /work/api-design --body @-
+  raphael get /work/api-design
+
+Options:
+      --title <text>         The human name. Required for an area or a project.
+      --parent-id <id>       Parent by identifier. Use instead of a path.
+      --slug <slug>          Address within the parent. Required with --parent-id.
+      --description <text>   Plain description.
+      --tag <tag>            Repeatable.
+      --metadata <json>      A JSON object, or @file containing one.
+      --body <text|@file|@-> Body content. @file reads a file, @- reads standard input.
+      --body-literal <text>  Body text that starts with "@" and is not a path.
+      --body-format <fmt>    Format of the submitted body: markdown or tiptap. Default markdown.
+      --format <fmt>         Format of the returned body: markdown or tiptap. Default markdown.
+      --json                 Print the result as JSON.
+  -h, --help                 Show this help.
+==== stderr ====

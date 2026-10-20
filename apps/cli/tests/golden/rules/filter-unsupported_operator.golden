@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--filter: only the $in operator is supported for type
+Run "raphael list --help" for usage.

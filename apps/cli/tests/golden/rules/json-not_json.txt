@@ -1,0 +1,1 @@
+"settings.colors" is not representable in JSON

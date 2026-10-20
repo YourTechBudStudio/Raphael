@@ -1,0 +1,26 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael move <path> <destination> [--revision <n>] [options]
+       raphael move --id <id> <destination> [--revision <n>] [options]
+
+Move an area, a project, or a note somewhere else, keeping its identifier and everything inside it.
+
+  raphael move /work/backend /engineering            into the area /engineering, keeping "backend"
+  raphael move /work/backend /engineering/platform   under /engineering, as "platform"
+  raphael move /work/inbox /                         an area to the top level
+
+If <destination> is an existing area or project, it is where this goes. Otherwise its last
+segment becomes the new address and the rest must already exist. Nothing is ever overwritten:
+an address that is taken, including one held by a note, is refused.
+
+Something archived directly must be restored before it moves. Something archived only because a
+container above it is archived can move somewhere active.
+
+Options:
+      --id <id>        Address the thing to move by identifier instead of by path.
+      --revision <n>   The revision you read. Without it, the current revision is read for you
+                       just before the move is sent.
+      --json           Print the result as JSON.
+  -h, --help           Show this help.
+==== stderr ====

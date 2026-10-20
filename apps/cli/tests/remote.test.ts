@@ -21,14 +21,8 @@ import { Effect, Either, Exit, Scope } from 'effect';
 
 import { run as runCli } from '../src/main.ts';
 import { runLogin } from '../src/modules/connection/login.ts';
-import {
-  ARCHIVE_HELP,
-  FAVORITES_HELP,
-  FAVORITE_HELP,
-  MOVE_HELP,
-  RESTORE_HELP,
-  UNFAVORITE_HELP,
-} from '../src/modules/nodes/commands.ts';
+import { connectFrom } from '../src/modules/connection/remote.ts';
+import { assertRefusal } from './support/golden.ts';
 
 /**
  * The CLI against a real server.
@@ -43,7 +37,9 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(here, '..');
-const binary = join(packageRoot, 'dist', 'main.js');
+// The sources, not `dist`: `pnpm test` does not build first, and a copy assertion checked against a
+// stale build would pass or fail for reasons that have nothing to do with the change under test.
+const binary = join(packageRoot, 'src', 'main.ts');
 
 /** Long enough to satisfy the shared key policy, and obviously not a real credential. */
 const KEY = 'test-key-0123456789abcdef0123456789';
@@ -131,6 +127,7 @@ const run = async (
   if (options.stdin !== undefined) return runProcess(args, options);
   let stdout = '';
   let stderr = '';
+  const environment = { RAPHAEL_ENDPOINT: endpoint, RAPHAEL_API_KEY: KEY, ...options.env };
   const code = await runCli(args, {
     streams: {
       out: (text) => {
@@ -140,7 +137,7 @@ const run = async (
         stderr += text;
       },
     },
-    environment: { RAPHAEL_ENDPOINT: endpoint, RAPHAEL_API_KEY: KEY, ...options.env },
+    environment,
     platform: process.platform,
     cwd: packageRoot,
     onSignal: () => {
@@ -149,6 +146,7 @@ const run = async (
     exit: () => {
       throw new Error('Remote commands must return their exit code');
     },
+    connect: () => connectFrom(environment, process.platform),
   });
   return { code, stdout, stderr };
 };
@@ -725,10 +723,15 @@ describe('notes', () => {
     assert.equal(jsonOf(ran).entity.body.value, '');
   });
 
-  it('prints the server sentence when no title can be derived', async () => {
-    const ran = await run(['create', 'resource.note', '/work/nameless']);
-    assert.notEqual(ran.code, 0);
-    assert.match(ran.stderr, /title is required/i);
+  it('refuses a nameless note locally, before any request is made', async () => {
+    // The CLI decides this itself; the server's own "Title is required." is never reached.
+    assertRefusal(await run(['create', 'resource.note', '/work/nameless']), {
+      exit: 2,
+      lines: [
+        '--title is required: nothing in the body or description can name this note.',
+        'Run "raphael create --help" for usage.',
+      ],
+    });
   });
 
   it('refuses an unknown type token before any request is made', async () => {
@@ -2004,17 +2007,6 @@ describe('moving', () => {
     assert.match(ran.stderr, /The change was not sent\./);
     assert.equal(ran.stderr.includes('Could not confirm'), false);
   });
-
-  it('is listed in the root help and documents itself', async () => {
-    const root = await run(['help']);
-    assert.match(
-      root.stdout,
-      /\n {2}move {14}Move an area, a project, or a note somewhere else\.\n/,
-    );
-    const own = await run(['move', '--help']);
-    assert.equal(own.code, 0);
-    assert.equal(own.stdout.trim(), MOVE_HELP);
-  });
 });
 
 describe('archiving and restoring', () => {
@@ -2186,18 +2178,6 @@ describe('archiving and restoring', () => {
     assert.equal(extra.code, 2);
     assert.match(extra.stderr, /Unexpected argument/);
   });
-
-  it('is listed in the root help and documents itself', async () => {
-    const root = await run(['help']);
-    assert.match(
-      root.stdout,
-      /\n {2}archive {11}Hide an area, a project, or a note from lists and search\.\n/,
-    );
-    assert.match(root.stdout, /\n {2}restore {11}Bring back something you archived\.\n/);
-    assert.equal((await run(['archive', '--help'])).stdout.trim(), ARCHIVE_HELP);
-    assert.equal((await run(['restore', '--help'])).stdout.trim(), RESTORE_HELP);
-    assert.match(MOVE_HELP, /archived directly must be restored before it moves/);
-  });
 });
 
 describe('favorites', () => {
@@ -2295,15 +2275,5 @@ describe('favorites', () => {
     const extra = await run(['unfavorite', '/work/a', '/work/b']);
     assert.equal(extra.code, 2);
     assert.match(extra.stderr, /Unexpected argument/);
-  });
-
-  it('is listed in the root help and documents itself', async () => {
-    const root = await run(['help']);
-    assert.match(root.stdout, /\n {2}favorite {10}Add an area or a project to your favorites\.\n/);
-    assert.match(root.stdout, /\n {2}unfavorite {8}Remove something from your favorites\.\n/);
-    assert.match(root.stdout, /\n {2}favorites {9}List your favorites\.\n/);
-    assert.equal((await run(['favorite', '--help'])).stdout.trim(), FAVORITE_HELP);
-    assert.equal((await run(['unfavorite', '--help'])).stdout.trim(), UNFAVORITE_HELP);
-    assert.equal((await run(['favorites', '--help'])).stdout.trim(), FAVORITES_HELP);
   });
 });

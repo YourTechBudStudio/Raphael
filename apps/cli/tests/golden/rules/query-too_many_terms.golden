@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+-q: a query may have at most 32 words or phrases
+Run "raphael search --help" for usage.

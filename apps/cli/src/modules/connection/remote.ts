@@ -20,6 +20,7 @@ import {
   isTransportRejection,
   type FetchLike,
   type Transport,
+  type TransportRejection,
 } from '@raphael/client';
 
 import { ConfigError, configLocation, loadConfig, type StoredConfig } from './config.ts';
@@ -34,9 +35,12 @@ export interface RemoteConnection {
   readonly source: ConnectionSource;
 }
 
+/** Why a connection could not be set up: a partial environment pair, or a transport that refused. */
+export type ConnectionReason = 'incomplete_environment' | TransportRejection['reason'];
+
 export class ConnectionError extends Error {
-  readonly reason: string;
-  constructor(reason: string, message: string) {
+  readonly reason: ConnectionReason;
+  constructor(reason: ConnectionReason, message: string) {
     super(message);
     this.name = 'ConnectionError';
     this.reason = reason;
@@ -98,5 +102,16 @@ export const transportFor = (config: StoredConfig, timeoutMs?: number): Transpor
   }
   return built;
 };
+
+/**
+ * The transport a remote command uses: resolve where to connect, then build the transport for it.
+ *
+ * Exported so the entry point and the tests that run the CLI against a real server compose these two
+ * steps once rather than each restating them.
+ */
+export const connectFrom = (
+  environment: Readonly<Record<string, string | undefined>>,
+  platform: string,
+): Transport => transportFor(resolveConnection(environment, platform).config);
 
 export { ConfigError };

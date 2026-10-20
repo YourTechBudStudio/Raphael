@@ -1,0 +1,35 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael update <path> [changes] [--revision <n>] [options]
+       raphael update --id <id> [changes] [--revision <n>] [options]
+
+Change an area, a project, or a note. An update names the revision it was written against, so a
+newer version on the server is refused rather than overwritten. Raphael does not retry a change
+on its own.
+
+Examples:
+  raphael update /work/contracts --body @./contracts.md --revision 8
+  raphael update /work/contracts --tag reviewed --tag contracts
+  raphael update --id 42 --title "Contract review" --description ""
+
+Changes (at least one):
+      --title <text>          Replace the name. The address does not follow it.
+      --description <text>    Replace the description. "" clears it.
+      --slug <slug>           Replace the address within the parent.
+      --body <text|@file|@->  Replace the body. "" clears it. Requires --revision.
+      --body-literal <text>   Body text that starts with "@" and is not a path. Requires --revision.
+      --body-format <fmt>     Format of the submitted body: markdown or tiptap. Default markdown.
+      --tag <tag>             Repeatable. Replaces the whole tag list with the tags given.
+      --no-tags               Remove every tag.
+      --active                Mark the project as currently being worked on.
+      --inactive              Mark it as not being worked on. Only a project can be either.
+
+Options:
+      --id <id>               Address by identifier instead of by path.
+      --revision <n>          The revision you read. Without it, and without a body change, the
+                              current revision is read for you just before the update is sent.
+      --format <fmt>          Format of the returned body: markdown or tiptap. Default markdown.
+      --json                  Print the result as JSON.
+  -h, --help                  Show this help.
+==== stderr ====

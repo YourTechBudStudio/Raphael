@@ -1,0 +1,8 @@
+==== exit ====
+1
+==== stdout ====
+==== stderr ====
+The server's sentence for revision_conflict.
+  code: revision_conflict (409)
+
+Re-read it, apply your change to the current version, and send it again.

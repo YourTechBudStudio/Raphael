@@ -258,6 +258,14 @@ const decodeUtf8 = (bytes: Uint8Array, label: string, command: string): string =
   }
 };
 
+/**
+ * Read a body from standard input, refusing an empty one.
+ *
+ * Zero bytes is almost never a body someone meant to send. It is what `gen | raphael update ... --body
+ * @-` receives when `gen` failed, and what a closed or `/dev/null` standard input supplies, and sending
+ * it would replace a note's body with nothing under a successful exit. Clearing a body on purpose has
+ * its own explicit spelling, so the empty case can be refused without losing anything.
+ */
 const readStdin = async (command: string): Promise<string> => {
   const chunks: Buffer[] = [];
   let total = 0;
@@ -273,6 +281,16 @@ const readStdin = async (command: string): Promise<string> => {
       );
     }
     chunks.push(buffer);
+  }
+  if (total === 0) {
+    throw new UsageError(
+      `--body @- read nothing: standard input was empty, so nothing was sent. ${
+        command === 'update'
+          ? "To clear the body on purpose, give --body '' --revision <n>."
+          : 'To create it without a body, leave out --body.'
+      }`,
+      command,
+    );
   }
   return decodeUtf8(Buffer.concat(chunks), 'The body on standard input', command);
 };

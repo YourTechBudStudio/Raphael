@@ -1,0 +1,1 @@
+"settings.colors" is longer than 100 characters

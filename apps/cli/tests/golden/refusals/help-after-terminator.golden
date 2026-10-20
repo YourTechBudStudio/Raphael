@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+scope "-h": a path must start with "/"
+Run "raphael list --help" for usage.

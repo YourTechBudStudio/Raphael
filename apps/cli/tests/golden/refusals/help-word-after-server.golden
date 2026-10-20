@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+"server help" is not a command.
+Run "raphael server --help" for usage.

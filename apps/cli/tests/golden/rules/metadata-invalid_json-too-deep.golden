@@ -1,0 +1,5 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Expected metadata: "a.a.a.a.a" nests deeper than 5 levels

@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Cannot create "<tmp>/read-only/raphael": EACCES: permission denied, mkdir '<tmp>/read-only/raphael'
+  reason: directory_uncreatable

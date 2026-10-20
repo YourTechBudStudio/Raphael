@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--revision can be given only once.
+Run "raphael move --help" for usage.

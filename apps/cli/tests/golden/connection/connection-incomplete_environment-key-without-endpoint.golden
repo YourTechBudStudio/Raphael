@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+RAPHAEL_API_KEY is set but RAPHAEL_ENDPOINT is not. Set both, or unset both to use your saved login. Raphael will not combine a key from the environment with a saved address.
+  reason: incomplete_environment

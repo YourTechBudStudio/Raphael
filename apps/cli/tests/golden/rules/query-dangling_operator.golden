@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+-q: AND and OR must sit between two words
+Run "raphael search --help" for usage.

@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--body @- read nothing: standard input was empty, so nothing was sent. To clear the body on purpose, give --body '' --revision <n>.
+Run "raphael update --help" for usage.

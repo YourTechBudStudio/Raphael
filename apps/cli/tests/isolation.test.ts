@@ -138,7 +138,7 @@ describe('help and version need nothing', () => {
     ['--help', ['--help']],
     ['-h', ['-h']],
     ['--version', ['--version']],
-    ['-v', ['-v']],
+    ['version', ['version']],
     ['create --help', ['create', '--help']],
     ['get --help', ['get', '--help']],
     ['list --help', ['list', '--help']],
@@ -168,6 +168,7 @@ for (const [label, args] of ${JSON.stringify(cases)}) {
     cwd: process.cwd(),
     onSignal: () => { throw new Error('Unexpected signal registration'); },
     exit: () => { throw new Error('Unexpected process exit'); },
+    connect: () => { throw new Error('Help and version must not connect'); },
   });
   assert.equal(code, 0, label + ': ' + stderr);
   assert.equal(stderr, '', label);

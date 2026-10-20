@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Saved logins are not supported on Windows yet: Raphael cannot protect a stored API key with file permissions there. Set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY in the environment instead.
+  reason: unsupported_platform

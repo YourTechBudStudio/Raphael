@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--json can be given only once.
+Run "raphael get --help" for usage.

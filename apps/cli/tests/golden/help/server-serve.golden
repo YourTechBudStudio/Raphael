@@ -1,0 +1,17 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael server serve [--config <path>]
+
+Run a Raphael server on this machine.
+
+Configuration comes from a YAML file and the API key comes from the environment, or from a
+.env file beside the command you run. Relative database paths resolve against the configuration
+file's directory, or the current directory when no file is given.
+
+This command never reads your saved login: it runs a server, it does not connect to one.
+
+Options:
+      --config <path>  YAML configuration file.
+  -h, --help           Show this help.
+==== stderr ====

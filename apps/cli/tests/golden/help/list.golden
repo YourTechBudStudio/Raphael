@@ -1,0 +1,33 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael list <path>... [options]
+       raphael list --id <id> [options]
+
+List what is inside an area or project. Use "/" for the root. A note holds nothing, so listing
+one is an empty page rather than an error.
+
+Several paths list all of them at once, as one page. Repeat --id to address a scope by its
+durable identifier instead, and mix the two forms freely. At most 10 scopes.
+
+Ordering applies to everything in scope before the page is cut, so paging through a sorted
+listing is paging through one order rather than sorting each page on its own.
+
+Examples:
+  raphael list / -r --filter '{"type":"resource"}' --order-by updatedAt:desc --limit 4
+  raphael list /work -r --filter '{"type":"resource"}' --order-by updatedAt:desc --order-by slug:asc
+  raphael list /work /personal --filter '{"tags":{"$in":["urgent"]}}'
+
+Options:
+      --id <id>       Address a scope by identifier. Repeatable.
+  -r, --recursive     Include everything underneath, not just direct children.
+      --filter <json> A JSON object, or @file containing one. Keys: type, kind, tags.
+                      A value is either the value itself or {"$in": [...]}.
+      --order-by <f:d>  Repeatable, in priority order. Fields: slug, updatedAt, id.
+                      Directions: asc, desc. Default slug:asc then id:asc.
+      --skip <n>      How many to skip. Default 0.
+      --limit <n>     How many to return, 1 to 500.
+      --include-archived  Also show archived things, marked "archived".
+      --json          Print the result as JSON.
+  -h, --help          Show this help.
+==== stderr ====

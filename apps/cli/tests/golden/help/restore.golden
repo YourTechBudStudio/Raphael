@@ -1,0 +1,16 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael restore <path> [--revision <n>] [options]
+       raphael restore --id <id> [--revision <n>] [options]
+
+Bring back something you archived. Only your own archive of this item is removed: if a container
+above it is archived too, it stays archived, and the answer says which container to restore.
+
+Options:
+      --id <id>        Address by identifier instead of by path.
+      --revision <n>   The revision you read. Without it, the current revision is read for you
+                       just before the restore is sent.
+      --json           Print the result as JSON.
+  -h, --help           Show this help.
+==== stderr ====

@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--title can be given only once.
+Run "raphael create --help" for usage.

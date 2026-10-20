@@ -1,0 +1,14 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael get <path> [options]
+       raphael get --id <id> [options]
+
+Read one area, project, or note.
+
+Options:
+      --id <id>       Address by identifier instead of by path.
+      --format <fmt>  Format of the returned body: markdown or tiptap. Default markdown.
+      --json          Print the result as JSON.
+  -h, --help          Show this help.
+==== stderr ====

@@ -42,38 +42,50 @@ export interface ParsedArgs {
  * `strict` is on, so an unknown flag is an error rather than a positional. That matters more than it
  * looks: a mistyped `--titel` silently becoming a positional would turn a creation with no title into
  * a creation at a nonsense address.
+ *
+ * A flag that is not declared `multiple` may be given once. `node:util` keeps the last of several
+ * values, so `archive --id 7 --id 6` would archive 6 and `update --title A --title B` would write B:
+ * whichever value the caller meant, one of them was silently dropped. Repeats are counted from the
+ * parser's own tokens, so `-r -r`, `-rr`, and `--json --json` are refused the same way.
  */
 export const parseArgs = (
   argv: readonly string[],
   options: OptionConfig,
   command: string,
 ): ParsedArgs => {
+  let parsed;
   try {
-    const parsed = nodeParseArgs({
+    parsed = nodeParseArgs({
       args: [...argv],
       options,
       strict: true,
       allowPositionals: true,
+      tokens: true,
     });
-    return { values: parsed.values, positionals: parsed.positionals };
   } catch (error) {
     throw new UsageError((error as Error).message, command);
   }
+
+  const seen = new Set<string>();
+  for (const token of parsed.tokens) {
+    if (token.kind !== 'option' || options[token.name]?.multiple === true) continue;
+    if (seen.has(token.name)) {
+      throw new UsageError(`--${token.name} can be given only once.`, command);
+    }
+    seen.add(token.name);
+  }
+
+  return { values: parsed.values, positionals: parsed.positionals };
 };
 
-/** A flag that must be a single string, if present at all. */
-export const stringOption = (
-  parsed: ParsedArgs,
-  name: string,
-  command: string,
-): string | undefined => {
-  const value = parsed.values[name];
-  if (value === undefined) return undefined;
-  if (typeof value !== 'string') {
-    throw new UsageError(`--${name} takes one value.`, command);
-  }
-  return value;
-};
+/**
+ * A single-value string flag, if present at all.
+ *
+ * Only for flags declared `type: 'string'` without `multiple`. `parseArgs` has already refused a
+ * repeat, so such a flag holds exactly one string or nothing.
+ */
+export const stringOption = (parsed: ParsedArgs, name: string): string | undefined =>
+  parsed.values[name] as string | undefined;
 
 export const booleanOption = (parsed: ParsedArgs, name: string): boolean =>
   parsed.values[name] === true;
@@ -99,7 +111,7 @@ export const integerOption = (
   command: string,
   bounds: { readonly min: number; readonly max: number },
 ): number | undefined => {
-  const raw = stringOption(parsed, name, command);
+  const raw = stringOption(parsed, name);
   if (raw === undefined) return undefined;
   if (!/^\d+$/.test(raw)) {
     throw new UsageError(`--${name} must be a whole number. Got "${raw}".`, command);
@@ -121,7 +133,7 @@ export const choiceOption = <T extends string>(
   command: string,
   choices: readonly T[],
 ): T | undefined => {
-  const raw = stringOption(parsed, name, command);
+  const raw = stringOption(parsed, name);
   if (raw === undefined) return undefined;
   if (!(choices as readonly string[]).includes(raw)) {
     throw new UsageError(`--${name} must be one of ${choices.join(', ')}. Got "${raw}".`, command);
@@ -129,6 +141,21 @@ export const choiceOption = <T extends string>(
   return raw as T;
 };
 
-/** Whether the caller asked for help rather than for the command to run. */
-export const wantsHelp = (argv: readonly string[]): boolean =>
-  argv.includes('--help') || argv.includes('-h') || argv.includes('help');
+/**
+ * Whether the caller asked for help rather than for the command to run.
+ *
+ * Decided from the option tokens the parser finds with this command's own options, so a value is
+ * never mistaken for a request: in `search / -q help` and `search / -q -h` the word belongs to `-q`,
+ * and after `--` nothing is an option. A cluster such as `-rh` counts, because the parser expands it.
+ *
+ * Not strict, so an unknown flag beside `--help` still shows help rather than an error about the flag
+ * the person was about to look up.
+ */
+export const wantsHelp = (argv: readonly string[], options: OptionConfig): boolean =>
+  nodeParseArgs({
+    args: [...argv],
+    options,
+    strict: false,
+    allowPositionals: true,
+    tokens: true,
+  }).tokens.some((token) => token.kind === 'option' && token.name === 'help');

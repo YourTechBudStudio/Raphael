@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+An API key is required to talk to a server.
+  reason: api_key_missing

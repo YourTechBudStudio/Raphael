@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The server address must not carry a fragment.
+  reason: fragment_not_allowed

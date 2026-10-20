@@ -18,7 +18,7 @@ import { isEndpointRejection, parseEndpoint } from '@raphael/client';
 import { verify } from '@raphael/client/connection';
 import { hasApiKey } from '@raphael/contracts/connection';
 
-import { UsageError, parseArgs } from '../../shared/args.ts';
+import { UsageError, parseArgs, type OptionConfig } from '../../shared/args.ts';
 import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE, type ExitCode } from '../../shared/exit.ts';
 import { forTerminal, writeJson, writeLine, type Streams } from '../../shared/output.ts';
 import { reportFailure } from '../../shared/report.ts';
@@ -55,6 +55,11 @@ export interface Prompter {
  *
  * Terminal state is restored on every path - success, failure, and Ctrl-C - because a shell left with
  * echo disabled is a broken terminal that the person then has to work out how to fix.
+ *
+ * Each visible question gets its own readline interface, closed as soon as it is answered. A terminal
+ * readline left attached while the key is read keeps handling keypresses and writes each one back to
+ * the output, so pausing it is not enough: the key would appear on screen, and in stdout when stdout
+ * is redirected.
  */
 export const terminalPrompter = (): Prompter => {
   if (!process.stdin.isTTY) {
@@ -65,10 +70,21 @@ export const terminalPrompter = (): Prompter => {
     );
   }
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
-
+  // Ctrl-C or Ctrl-D closes the interface without answering the question. Without the close handler
+  // the promise would never settle and Node would exit 13 with a warning about its own internals.
+  // After an answer the promise has already resolved, so the rejection on close is ignored.
+  //
+  // An address and a key pasted together arrive as one chunk, and the key's bytes go with the
+  // interface that is closed here. Nothing is shown; the key prompt then waits for it to be typed.
   const ask = (question: string): Promise<string> =>
-    new Promise((resolve) => rl.question(question, resolve));
+    new Promise((resolve, reject) => {
+      const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+      rl.once('close', () => reject(new UsageError('Cancelled. Nothing was saved.', 'login')));
+      rl.question(question, (answer) => {
+        resolve(answer);
+        rl.close();
+      });
+    });
 
   const askHidden = (question: string): Promise<string> => {
     const { stdin } = process;
@@ -81,8 +97,6 @@ export const terminalPrompter = (): Prompter => {
     }
 
     return new Promise<string>((resolve, reject) => {
-      // readline is paused for the duration so the two do not both consume the stream.
-      rl.pause();
       const wasRaw = stdin.isRaw === true;
       stdin.setRawMode(true);
       stdin.resume();
@@ -133,7 +147,8 @@ export const terminalPrompter = (): Prompter => {
     });
   };
 
-  return { ask, close: () => rl.close(), askHidden };
+  // Nothing outlives a question, so there is nothing left to close.
+  return { ask, close: () => {}, askHidden };
 };
 
 export interface LoginDependencies {
@@ -143,15 +158,16 @@ export interface LoginDependencies {
   readonly platform: string;
 }
 
+export const LOGIN_OPTIONS = {
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
 export const runLogin = async (
   argv: readonly string[],
   dependencies: LoginDependencies,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    { json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } },
-    'login',
-  );
+  const parsed = parseArgs(argv, LOGIN_OPTIONS, 'login');
   const asJson = parsed.values.json === true;
   const { streams } = dependencies;
 

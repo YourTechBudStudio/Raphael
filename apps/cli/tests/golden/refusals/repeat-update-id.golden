@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--id can be given only once.
+Run "raphael update --help" for usage.

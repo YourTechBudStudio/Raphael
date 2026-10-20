@@ -1,0 +1,14 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael favorites [options]
+
+List your favorites by title. Archived ones are left out and stay favorites.
+Open one with "raphael get --id <id>".
+
+Options:
+      --skip <n>      How many to skip. Default 0.
+      --limit <n>     How many to return, 1 to 500.
+      --json          Print the result as JSON.
+  -h, --help          Show this help.
+==== stderr ====

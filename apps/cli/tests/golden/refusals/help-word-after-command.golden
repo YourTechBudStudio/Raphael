@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Unexpected argument "help".
+Run "raphael get --help" for usage.

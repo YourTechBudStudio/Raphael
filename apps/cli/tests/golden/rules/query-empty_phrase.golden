@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+-q: a quoted phrase must contain a letter or a digit
+Run "raphael search --help" for usage.

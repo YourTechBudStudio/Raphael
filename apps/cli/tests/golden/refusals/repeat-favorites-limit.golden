@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--limit can be given only once.
+Run "raphael favorites --help" for usage.

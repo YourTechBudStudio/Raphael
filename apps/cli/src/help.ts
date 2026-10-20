@@ -47,7 +47,7 @@ Connecting:
 
 Options:
   -h, --help        Show help.
-  -v, --version     Show the version.
+      --version     Show the version.
 
 Exit codes:
   0  success

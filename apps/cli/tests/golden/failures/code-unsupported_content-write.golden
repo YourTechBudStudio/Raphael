@@ -1,0 +1,6 @@
+==== exit ====
+1
+==== stdout ====
+==== stderr ====
+The server's sentence for unsupported_content.
+  code: unsupported_content (422)

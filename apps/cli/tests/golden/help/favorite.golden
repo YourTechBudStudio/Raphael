@@ -1,0 +1,13 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael favorite <path> [options]
+       raphael favorite --id <id> [options]
+
+Add an area or a project to your favorites. Already a favorite is fine.
+
+Options:
+      --id <id>   Address by identifier instead of by path.
+      --json      Print the result as JSON.
+  -h, --help      Show this help.
+==== stderr ====

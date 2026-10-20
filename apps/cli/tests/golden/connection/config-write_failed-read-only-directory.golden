@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Could not write the new configuration: EACCES: permission denied, open '<tmp>/raphael/.config.json.<pid>.tmp'. Your existing configuration is unchanged.
+  reason: write_failed

@@ -1,0 +1,6 @@
+==== exit ====
+1
+==== stdout ====
+==== stderr ====
+The server's sentence for unauthorized.
+  code: unauthorized (401)

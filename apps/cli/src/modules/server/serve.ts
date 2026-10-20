@@ -23,7 +23,7 @@
 import { Deferred, Effect, Exit, Scope } from 'effect';
 
 import { migrationsFolder } from '../../distribution.ts';
-import { UsageError, parseArgs, stringOption } from '../../shared/args.ts';
+import { UsageError, parseArgs, stringOption, type OptionConfig } from '../../shared/args.ts';
 import {
   EXIT_FAILURE,
   EXIT_OK,
@@ -61,19 +61,20 @@ export interface ServeDependencies {
 const loadBackend = async (): Promise<typeof import('@raphael/backend')> =>
   import('@raphael/backend');
 
+export const SERVE_OPTIONS = {
+  config: { type: 'string' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
 export const runServe = async (
   argv: readonly string[],
   dependencies: ServeDependencies,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    { config: { type: 'string' }, help: { type: 'boolean', short: 'h' } },
-    'server serve',
-  );
+  const parsed = parseArgs(argv, SERVE_OPTIONS, 'server serve');
   if (parsed.positionals.length > 0) {
     throw new UsageError(`Unexpected argument "${parsed.positionals[0]}".`, 'server serve');
   }
-  const configPath = stringOption(parsed, 'config', 'server serve');
+  const configPath = stringOption(parsed, 'config');
   const { streams } = dependencies;
 
   const backend = await loadBackend();

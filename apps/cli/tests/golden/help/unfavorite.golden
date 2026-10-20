@@ -1,0 +1,13 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael unfavorite <path> [options]
+       raphael unfavorite --id <id> [options]
+
+Remove something from your favorites. Not a favorite is fine.
+
+Options:
+      --id <id>   Address by identifier instead of by path.
+      --json      Print the result as JSON.
+  -h, --help      Show this help.
+==== stderr ====

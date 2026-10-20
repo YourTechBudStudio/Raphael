@@ -1,0 +1,1 @@
+"settings.colors" has symbol keys, which JSON cannot represent

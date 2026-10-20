@@ -183,7 +183,7 @@ const scopePageFrom = (
   // second place to look rather than a mistake.
   const scopes = scopesFrom(parsed.positionals, stringListOption(parsed, 'id'), command);
   const recursive = booleanOption(parsed, 'recursive');
-  const filter = resolveFilter(stringOption(parsed, 'filter', command), command);
+  const filter = resolveFilter(stringOption(parsed, 'filter'), command);
   const skip = integerOption(parsed, 'skip', command, { min: 0, max: Number.MAX_SAFE_INTEGER });
   const limit = integerOption(parsed, 'limit', command, {
     min: LIST_LIMIT_MIN,
@@ -238,28 +238,26 @@ Options:
       --json                 Print the result as JSON.
   -h, --help                 Show this help.`;
 
+export const CREATE_OPTIONS = {
+  title: { type: 'string' },
+  'parent-id': { type: 'string' },
+  slug: { type: 'string' },
+  description: { type: 'string' },
+  tag: { type: 'string', multiple: true },
+  metadata: { type: 'string' },
+  body: { type: 'string' },
+  'body-literal': { type: 'string' },
+  'body-format': { type: 'string' },
+  format: { type: 'string' },
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
 export const runCreate = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    {
-      title: { type: 'string' },
-      'parent-id': { type: 'string' },
-      slug: { type: 'string' },
-      description: { type: 'string' },
-      tag: { type: 'string', multiple: true },
-      metadata: { type: 'string' },
-      body: { type: 'string' },
-      'body-literal': { type: 'string' },
-      'body-format': { type: 'string' },
-      format: { type: 'string' },
-      json: { type: 'boolean' },
-      help: { type: 'boolean', short: 'h' },
-    },
-    'create',
-  );
+  const parsed = parseArgs(argv, CREATE_OPTIONS, 'create');
 
   const [typeToken, path, ...extra] = parsed.positionals;
   if (typeToken === undefined) {
@@ -270,10 +268,10 @@ export const runCreate = async (
     throw new UsageError(`Unexpected argument "${extra[0]}".`, 'create');
   }
 
-  const titleFlag = stringOption(parsed, 'title', 'create');
+  const titleFlag = stringOption(parsed, 'title');
 
-  const parentId = stringOption(parsed, 'parent-id', 'create');
-  const slugFlag = stringOption(parsed, 'slug', 'create');
+  const parentId = stringOption(parsed, 'parent-id');
+  const slugFlag = stringOption(parsed, 'slug');
 
   // The two addressing forms are mutually exclusive. Mixing them would leave two answers to "where
   // does this go", and choosing between them silently is how something lands in the wrong place.
@@ -298,14 +296,14 @@ export const runCreate = async (
   }
 
   const body = await resolveBody(
-    stringOption(parsed, 'body', 'create'),
-    stringOption(parsed, 'body-literal', 'create'),
+    stringOption(parsed, 'body'),
+    stringOption(parsed, 'body-literal'),
     choiceOption(parsed, 'body-format', 'create', BODY_FORMATS),
     'create',
   );
-  const metadata = resolveMetadata(stringOption(parsed, 'metadata', 'create'), 'create');
+  const metadata = resolveMetadata(stringOption(parsed, 'metadata'), 'create');
   const tags = stringListOption(parsed, 'tag');
-  const description = stringOption(parsed, 'description', 'create');
+  const description = stringOption(parsed, 'description');
   const format = choiceOption(parsed, 'format', 'create', BODY_FORMATS);
 
   // Every creation is named by the caller. A container must be named here; a note may be named from
@@ -440,36 +438,34 @@ const pinTarget = async (
     : { failure: result.failure };
 };
 
+export const UPDATE_OPTIONS = {
+  id: { type: 'string' },
+  title: { type: 'string' },
+  description: { type: 'string' },
+  slug: { type: 'string' },
+  body: { type: 'string' },
+  'body-literal': { type: 'string' },
+  'body-format': { type: 'string' },
+  tag: { type: 'string', multiple: true },
+  'no-tags': { type: 'boolean' },
+  active: { type: 'boolean' },
+  inactive: { type: 'boolean' },
+  revision: { type: 'string' },
+  format: { type: 'string' },
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
 export const runUpdate = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    {
-      id: { type: 'string' },
-      title: { type: 'string' },
-      description: { type: 'string' },
-      slug: { type: 'string' },
-      body: { type: 'string' },
-      'body-literal': { type: 'string' },
-      'body-format': { type: 'string' },
-      tag: { type: 'string', multiple: true },
-      'no-tags': { type: 'boolean' },
-      active: { type: 'boolean' },
-      inactive: { type: 'boolean' },
-      revision: { type: 'string' },
-      format: { type: 'string' },
-      json: { type: 'boolean' },
-      help: { type: 'boolean', short: 'h' },
-    },
-    'update',
-  );
+  const parsed = parseArgs(argv, UPDATE_OPTIONS, 'update');
 
   const [path, ...extra] = parsed.positionals;
   if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'update');
 
-  const target = selectorFrom(path, stringOption(parsed, 'id', 'update'), 'update');
+  const target = selectorFrom(path, stringOption(parsed, 'id'), 'update');
   const revisionFlag = integerOption(parsed, 'revision', 'update', {
     min: 1,
     max: Number.MAX_SAFE_INTEGER,
@@ -506,14 +502,14 @@ export const runUpdate = async (
   }
 
   const body = await resolveBody(
-    stringOption(parsed, 'body', 'update'),
-    stringOption(parsed, 'body-literal', 'update'),
+    stringOption(parsed, 'body'),
+    stringOption(parsed, 'body-literal'),
     choiceOption(parsed, 'body-format', 'update', BODY_FORMATS),
     'update',
   );
-  const title = stringOption(parsed, 'title', 'update');
-  const description = stringOption(parsed, 'description', 'update');
-  const slug = stringOption(parsed, 'slug', 'update');
+  const title = stringOption(parsed, 'title');
+  const description = stringOption(parsed, 'description');
+  const slug = stringOption(parsed, 'slug');
   // The full resulting list: given tags replace the stored ones, and --no-tags clears them.
   const tags = wasGiven(parsed, 'no-tags')
     ? []
@@ -601,24 +597,22 @@ Options:
       --json           Print the result as JSON.
   -h, --help           Show this help.`;
 
+export const MOVE_OPTIONS = {
+  id: { type: 'string' },
+  revision: { type: 'string' },
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
 export const runMove = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    {
-      id: { type: 'string' },
-      revision: { type: 'string' },
-      json: { type: 'boolean' },
-      help: { type: 'boolean', short: 'h' },
-    },
-    'move',
-  );
+  const parsed = parseArgs(argv, MOVE_OPTIONS, 'move');
 
   // With --id the only positional is the destination; without it, the source path comes first. A
   // positional beyond those is extra, not a second source, so it is reported as what it is.
-  const id = stringOption(parsed, 'id', 'move');
+  const id = stringOption(parsed, 'id');
   const positionals = [...parsed.positionals];
   const source = id === undefined ? positionals.shift() : undefined;
   const [destination, ...extra] = positionals;
@@ -709,6 +703,14 @@ Options:
       --json           Print the result as JSON.
   -h, --help           Show this help.`;
 
+/** Archive and restore take the same options. */
+export const LIFECYCLE_OPTIONS = {
+  id: { type: 'string' },
+  revision: { type: 'string' },
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
 export const runArchive = (argv: readonly string[], context: CommandContext): Promise<ExitCode> =>
   runLifecycle('archive', argv, context);
 
@@ -727,20 +729,11 @@ const runLifecycle = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    {
-      id: { type: 'string' },
-      revision: { type: 'string' },
-      json: { type: 'boolean' },
-      help: { type: 'boolean', short: 'h' },
-    },
-    verb,
-  );
+  const parsed = parseArgs(argv, LIFECYCLE_OPTIONS, verb);
   const [path, ...extra] = parsed.positionals;
   if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, verb);
 
-  const target = selectorFrom(path, stringOption(parsed, 'id', verb), verb);
+  const target = selectorFrom(path, stringOption(parsed, 'id'), verb);
   const revisionFlag = integerOption(parsed, 'revision', verb, {
     min: 1,
     max: Number.MAX_SAFE_INTEGER,
@@ -808,6 +801,13 @@ Options:
       --json      Print the result as JSON.
   -h, --help      Show this help.`;
 
+/** Favorite and unfavorite take the same options. */
+export const FAVORITE_OPTIONS = {
+  id: { type: 'string' },
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
 export const runFavorite = (argv: readonly string[], context: CommandContext): Promise<ExitCode> =>
   runFavoriteChange(true, argv, context);
 
@@ -829,15 +829,11 @@ const runFavoriteChange = async (
   context: CommandContext,
 ): Promise<ExitCode> => {
   const verb = wanted ? 'favorite' : 'unfavorite';
-  const parsed = parseArgs(
-    argv,
-    { id: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } },
-    verb,
-  );
+  const parsed = parseArgs(argv, FAVORITE_OPTIONS, verb);
   const [path, ...extra] = parsed.positionals;
   if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, verb);
 
-  const target = selectorFrom(path, stringOption(parsed, 'id', verb), verb);
+  const target = selectorFrom(path, stringOption(parsed, 'id'), verb);
   const result = wanted
     ? await addFavorite(context.transport(), { target })
     : await removeFavorite(context.transport(), { target });
@@ -866,20 +862,18 @@ Options:
       --json          Print the result as JSON.
   -h, --help          Show this help.`;
 
+export const FAVORITES_OPTIONS = {
+  skip: { type: 'string' },
+  limit: { type: 'string' },
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
 export const runFavorites = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    {
-      skip: { type: 'string' },
-      limit: { type: 'string' },
-      json: { type: 'boolean' },
-      help: { type: 'boolean', short: 'h' },
-    },
-    'favorites',
-  );
+  const parsed = parseArgs(argv, FAVORITES_OPTIONS, 'favorites');
   if (parsed.positionals.length > 0) {
     throw new UsageError(`Unexpected argument "${parsed.positionals[0]}".`, 'favorites');
   }
@@ -929,24 +923,22 @@ Options:
       --json          Print the result as JSON.
   -h, --help          Show this help.`;
 
+export const GET_OPTIONS = {
+  id: { type: 'string' },
+  format: { type: 'string' },
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
 export const runGet = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    {
-      id: { type: 'string' },
-      format: { type: 'string' },
-      json: { type: 'boolean' },
-      help: { type: 'boolean', short: 'h' },
-    },
-    'get',
-  );
+  const parsed = parseArgs(argv, GET_OPTIONS, 'get');
   const [path, ...extra] = parsed.positionals;
   if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'get');
 
-  const target = selectorFrom(path, stringOption(parsed, 'id', 'get'), 'get');
+  const target = selectorFrom(path, stringOption(parsed, 'id'), 'get');
   const format = choiceOption(parsed, 'format', 'get', BODY_FORMATS);
 
   const result = await get(context.transport(), {
@@ -996,19 +988,21 @@ Options:
       --json      Print the result as JSON.
   -h, --help      Show this help.`;
 
+export const PATH_OPTIONS = {
+  id: { type: 'string' },
+  json: { type: 'boolean' },
+  help: { type: 'boolean', short: 'h' },
+} as const satisfies OptionConfig;
+
 export const runPath = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    { id: { type: 'string' }, json: { type: 'boolean' }, help: { type: 'boolean', short: 'h' } },
-    'path',
-  );
+  const parsed = parseArgs(argv, PATH_OPTIONS, 'path');
   const [path, ...extra] = parsed.positionals;
   if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'path');
 
-  const target = selectorFrom(path, stringOption(parsed, 'id', 'path'), 'path');
+  const target = selectorFrom(path, stringOption(parsed, 'id'), 'path');
   const result = await getPath(context.transport(), { target });
   if (!result.ok) return reportFailure(context.streams, result.failure);
 
@@ -1047,15 +1041,16 @@ Options:
       --json          Print the result as JSON.
   -h, --help          Show this help.`;
 
+export const LIST_OPTIONS = {
+  ...SCOPE_PAGE_OPTIONS,
+  'order-by': { type: 'string', multiple: true },
+} as const satisfies OptionConfig;
+
 export const runList = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    { ...SCOPE_PAGE_OPTIONS, 'order-by': { type: 'string', multiple: true } },
-    'list',
-  );
+  const parsed = parseArgs(argv, LIST_OPTIONS, 'list');
 
   const scopePage = scopePageFrom(parsed, 'list');
   const orderBy = parseOrderBy(stringListOption(parsed, 'order-by'), 'list');
@@ -1120,15 +1115,16 @@ Options:
 There is no --order-by. A search answers in relevance order; ask "raphael list" for an
 authored one.`;
 
+export const SEARCH_OPTIONS = {
+  ...SCOPE_PAGE_OPTIONS,
+  query: { type: 'string', multiple: true, short: 'q' },
+} as const satisfies OptionConfig;
+
 export const runSearch = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(
-    argv,
-    { ...SCOPE_PAGE_OPTIONS, query: { type: 'string', multiple: true, short: 'q' } },
-    'search',
-  );
+  const parsed = parseArgs(argv, SEARCH_OPTIONS, 'search');
 
   const scopePage = scopePageFrom(parsed, 'search');
   const queries = parseQueries(stringListOption(parsed, 'query'), 'search');

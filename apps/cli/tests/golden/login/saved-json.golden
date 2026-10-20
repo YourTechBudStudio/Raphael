@@ -1,0 +1,10 @@
+==== exit ====
+0
+==== stdout ====
+{
+  "endpoint": "<endpoint>",
+  "protocolVersion": "2026-09-24",
+  "configFile": "<tmp>/raphael/config.json",
+  "durabilityUnconfirmed": false
+}
+==== stderr ====

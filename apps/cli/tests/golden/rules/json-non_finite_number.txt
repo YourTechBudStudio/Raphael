@@ -1,0 +1,1 @@
+"settings.colors" is not a finite number
