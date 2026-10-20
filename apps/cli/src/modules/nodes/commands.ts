@@ -1,7 +1,8 @@
 /**
  * The twelve hierarchy commands.
  *
- * Each one assembles a request, sends it, and renders the answer. No hierarchy rule is implemented
+ * Each one assembles a request, sends it, and hands the answer to the shared renderers: one for a
+ * success, one for a failure. No command writes output of its own. No hierarchy rule is implemented
  * here and none may be: slug derivation, parentage, conflict detection, and content conversion all
  * belong to the server, and a CLI that reimplemented any of them would be a second authority that
  * could disagree with the first.
@@ -49,15 +50,11 @@ import {
   type OptionConfig,
   type ParsedArgs,
 } from '../../shared/args.ts';
-import { EXIT_OK, type ExitCode } from '../../shared/exit.ts';
-import {
-  forTerminal,
-  forTerminalBlock,
-  writeJson,
-  writeLine,
-  type Streams,
-} from '../../shared/output.ts';
-import { reportFailure } from '../../shared/report.ts';
+import type { CommandContext } from '../../shared/command.ts';
+import type { ExitCode } from '../../shared/exit.ts';
+import { reportClientFailure, type RequestContext, type Subject } from '../../shared/failure.ts';
+import { forTerminal, forTerminalBlock } from '../../shared/output.ts';
+import { renderSuccess, type Success } from '../../shared/success.ts';
 import {
   CREATE_TARGETS,
   destinationFrom,
@@ -75,6 +72,15 @@ import {
   type Selector,
 } from './input.ts';
 
+const failed = (
+  context: CommandContext,
+  failure: ClientFailure,
+  request: RequestContext = {},
+): ExitCode => reportClientFailure(context.streams, context.session, failure, request);
+
+const succeeded = (context: CommandContext, success: Success): ExitCode =>
+  renderSuccess(context.streams, context.session, success);
+
 /**
  * How a node's type reads in output: `area`, `project`, or `resource.note`.
  *
@@ -85,63 +91,112 @@ import {
 const qualifiedType = (entity: Pick<NodeEntity | NodeSummary, 'type' | 'kind'>): string =>
   entity.kind === null ? entity.type : `${entity.type}.${entity.kind}`;
 
+/** The command that shows an item, as the caller addressed it. */
+const getCommand = (subject: Subject): string =>
+  'path' in subject ? `raphael get ${subject.path}` : `raphael get --id ${subject.id}`;
+
 /**
- * Why something is archived: `archived: yes` and one line per cause, nearest first. Nothing at all when
- * it is active - the caller decides whether "archived: no" is worth saying.
+ * Labelled fields under a headline, labels padded to one width so the values line up.
+ *
+ * A value is escaped by the caller when it is server text; a missing or empty one prints `-`, so every
+ * field is always present and a reader never has to infer a value from an absent line.
+ */
+const fields = (entries: ReadonlyArray<readonly [string, string]>, indent = '  '): string[] => {
+  const width = Math.max(...entries.map(([name]) => name.length)) + 2;
+  return entries.map(
+    ([name, value]) => `${indent}${`${name}:`.padEnd(width)}${value === '' ? '-' : value}`,
+  );
+};
+
+const parentLabel = (parentId: number | null): string =>
+  parentId === null ? 'top level' : String(parentId);
+
+/**
+ * A tag as it can be read back: quoted when it would otherwise be ambiguous, so `a, b` and the two
+ * tags `a` and `b` never print the same.
+ */
+const tagLabel = (tag: string): string =>
+  /^[^\s,"][^,"]*$/u.test(tag) && tag.trim() === tag
+    ? forTerminal(tag)
+    : forTerminal(JSON.stringify(tag));
+
+/**
+ * Why something is archived: one line per cause, nearest first.
  *
  * One helper for `get` and for archive and restore, so the two cannot describe causes differently. A
- * cause on the node itself reads "directly"; one on a container above it names that container, because
+ * cause on the item itself reads "directly"; one on a container above it names that container, because
  * that is where it is restored. The reason is printed only when it is not the ordinary direct one, and
  * an owner or reason this build does not recognize is printed as it came rather than interpreted.
  */
-const writeLifecycle = (
-  out: Streams['out'],
-  nodeId: number,
-  causes: readonly ArchiveCause[],
-  indent = '',
-): void => {
-  if (causes.length === 0) return;
-  writeLine(out, `${indent}archived: yes`);
-  for (const cause of causes) {
+const causeLines = (nodeId: number, causes: readonly ArchiveCause[], indent: string): string[] =>
+  causes.map((cause) => {
     const where =
       cause.origin.id === nodeId
         ? 'directly'
         : `through ${cause.origin.type} ${cause.origin.id} "${forTerminal(cause.origin.title)}"`;
     const who =
-      cause.reason === DIRECT_ARCHIVE_REASON ? cause.owner : `${cause.owner}, ${cause.reason}`;
-    writeLine(out, `${indent}  ${where} (${who})`);
-  }
-};
+      cause.reason === DIRECT_ARCHIVE_REASON
+        ? forTerminal(cause.owner)
+        : `${forTerminal(cause.owner)}, ${forTerminal(cause.reason)}`;
+    return `${indent}${where} (${who})`;
+  });
+
+/** The state column: fixed words, printed before any free text so a title cannot imitate them. */
+const stateLabel = (item: Pick<NodeSummary, 'active' | 'archived'>): string =>
+  item.active && item.archived
+    ? 'active,archived'
+    : item.active
+      ? 'active'
+      : item.archived
+        ? 'archived'
+        : '-';
 
 /**
- * The page footer both `list` and `search` print.
+ * Rows of a page, columns padded to the widest value on this page. The last column is free text and
+ * is never padded, so it can hold anything without shifting the others.
+ */
+const table = (rows: ReadonlyArray<readonly string[]>): string[] => {
+  const widths: number[] = [];
+  for (const row of rows) {
+    row.forEach((cell, index) => {
+      widths[index] = Math.max(widths[index] ?? 0, cell.length);
+    });
+  }
+  return rows.map((row) =>
+    row
+      .map((cell, index) => (index === row.length - 1 ? cell : cell.padEnd(widths[index] ?? 0)))
+      .join('  '),
+  );
+};
+
+interface Page {
+  readonly items: readonly unknown[];
+  readonly skip: number;
+  readonly limit: number;
+  readonly hasMore: boolean;
+}
+
+/** The page window as the JSON envelope carries it. */
+const pageData = (page: Page): Record<string, unknown> => ({
+  skip: page.skip,
+  limit: page.limit,
+  hasMore: page.hasMore,
+  nextSkip: page.hasMore ? page.skip + page.limit : null,
+});
+
+/**
+ * The note under a page, for a person. It goes to stderr: it describes the page, it is not one of
+ * its rows, and `raphael list / | wc -l` must count rows.
  *
  * Never implies completeness. A page that ends is not the same as a hierarchy that ends, and the
  * difference is what tells someone whether to ask for more.
- *
- * One helper rather than a copy per command, because the two footers are byte-identical and the next
- * change to this wording must land once. The summary *lines* above it are deliberately not shared: a
- * search hit prints the title that matched and a listing does not, and collapsing two honest formats
- * behind one flag would be worse than two clear literals.
  */
-const writePageFooter = (
-  streams: Streams,
-  page: {
-    readonly items: readonly unknown[];
-    readonly skip: number;
-    readonly limit: number;
-    readonly hasMore: boolean;
-  },
-): void => {
-  writeLine(
-    streams.out,
-    page.items.length === 0
-      ? `Nothing here (skip ${page.skip}, limit ${page.limit}).`
-      : `${page.items.length} shown, skip ${page.skip}, limit ${page.limit}${
-          page.hasMore ? `. More available: --skip ${page.skip + page.limit}` : '. No more.'
-        }`,
-  );
-};
+const pageNote = (page: Page): string =>
+  page.items.length === 0
+    ? `Nothing here (skip ${page.skip}, limit ${page.limit}).`
+    : `${page.items.length} shown, skip ${page.skip}, limit ${page.limit}${
+        page.hasMore ? `. More available: --skip ${page.skip + page.limit}` : '. No more.'
+      }`;
 
 /**
  * The options every scope page accepts, declared once.
@@ -201,10 +256,16 @@ const scopePageFrom = (
   };
 };
 
-export interface CommandContext {
-  readonly streams: Streams;
-  readonly transport: () => Transport;
-}
+/** How a selector was typed: `<path>` or `--id`. Request fields name it as `target`. */
+const selectorFlags = (subject: Subject): Partial<Record<string, string>> => ({
+  target: 'path' in subject ? '<path>' : '--id',
+});
+
+/** A page request's scopes, in the order they were sent, so a failing one is named as typed. */
+const scopeRequest = (scopes: readonly ScopeSelector[]): RequestContext => ({
+  scopes: scopes.map((scope): Subject => ('id' in scope ? { id: scope.id } : { path: scope.path })),
+  flags: { scopes: '<path>' },
+});
 
 export const CREATE_HELP = `Usage: raphael create <type> <path> [--title <title>] [options]
        raphael create <type> --parent-id <id> --slug <slug> [--title <title>] [options]
@@ -300,6 +361,7 @@ export const runCreate = async (
     stringOption(parsed, 'body-literal'),
     choiceOption(parsed, 'body-format', 'create', BODY_FORMATS),
     'create',
+    context.signal,
   );
   const metadata = resolveMetadata(stringOption(parsed, 'metadata'), 'create');
   const tags = stringListOption(parsed, 'tag');
@@ -339,20 +401,36 @@ export const runCreate = async (
       ? { ...common, type: target.type, kind: target.kind }
       : { ...common, type: target.type };
 
-  const result = await create(context.transport(), request);
-  if (!result.ok) return reportFailure(context.streams, result.failure);
-
-  if (booleanOption(parsed, 'json')) {
-    writeJson(context.streams.out, result.value);
-  } else {
-    const { entity } = result.value;
-    writeLine(
-      context.streams.out,
-      `Created ${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
-    );
-    writeLine(context.streams.out, `  slug: ${forTerminal(entity.slug)}`);
+  const result = await create(context.transport(), request, context.signal);
+  if (!result.ok) {
+    const byPath = path !== undefined;
+    return failed(context, result.failure, {
+      ...(byPath ? { subject: { path } } : {}),
+      parent,
+      slug,
+      flags: {
+        parent: byPath ? '<path>' : '--parent-id',
+        slug: byPath ? '<path>' : '--slug',
+      },
+      check:
+        'path' in parent
+          ? `raphael get ${path}`
+          : `raphael list --id ${parent.id} --include-archived`,
+    });
   }
-  return EXIT_OK;
+
+  const { entity } = result.value;
+  return succeeded(context, {
+    data: { entity },
+    lines: () => [
+      `Created ${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
+      ...fields([
+        ['revision', String(entity.revision)],
+        ['slug', forTerminal(entity.slug)],
+        ['parent', parentLabel(entity.parentId)],
+      ]),
+    ],
+  });
 };
 
 export const UPDATE_HELP = `Usage: raphael update <path> [changes] [--revision <n>] [options]
@@ -403,39 +481,46 @@ const CHANGE_FLAGS = [
 /** Whether a flag was given at all, whatever it was given as. */
 const wasGiven = (parsed: ParsedArgs, name: string): boolean => parsed.values[name] !== undefined;
 
-/** What the convenience read establishes: which entity, at which version. */
-interface PinnedTarget {
-  /** By identifier, whatever the caller typed. See `pinTarget`. */
-  readonly target: { readonly id: number };
+/** What the change is sent against: which entity, at which version. */
+interface Pinned {
+  /** By identifier when the convenience read made it; otherwise as the caller typed it. */
+  readonly sendTo: Selector;
   readonly revision: number;
 }
 
 /**
- * Read the current revision for an update, a move, an archive or a restore that did not name one, and
- * pin the entity it belongs to.
+ * The revision a change is sent against: the caller's `--revision`, or the current one, read for an
+ * update, a move, an archive or a restore that did not name one.
  *
- * The identifier is carried forward deliberately, and it is the whole reason this returns a target
- * rather than a number. The server's guard answers "is this the version of entity 7 that I read?" -
- * it cannot answer "is /work/contracts still entity 7?". Sending the caller's path again would
- * resolve that name a second time, so a slug freed and reoccupied between the two calls could land
- * the change on an entity nobody looked at, with a revision that happens to match and therefore no
- * conflict. Resolving once and comparing-and-setting on that exact row removes the second question.
+ * The read pins the entity it belongs to, and that is the whole reason it returns a target rather
+ * than a number. The server's guard answers "is this the version of entity 7 that I read?" - it
+ * cannot answer "is /work/contracts still entity 7?". Sending the caller's path again would resolve
+ * that name a second time, so a slug freed and reoccupied between the two calls could land the change
+ * on an entity nobody looked at, with a revision that happens to match and therefore no conflict.
+ * Resolving once and comparing-and-setting on that exact row removes the second question.
  *
- * Returns the failure rather than reporting it, so the caller reports it through the one path every
- * other failure takes.
+ * A failed read is reported here, as a read made before the change: the change itself was not sent.
  *
  * The projected body is discarded. There is no revision-only read in the contract, so this pays for a
  * full body projection to learn one integer; see the decision log. It is affordable because a person
  * updates one entity at a time.
  */
-const pinTarget = async (
+const pinRevision = async (
+  context: CommandContext,
   transport: Transport,
   target: Selector,
-): Promise<PinnedTarget | { readonly failure: ClientFailure }> => {
-  const result = await get(transport, { target });
-  return result.ok
-    ? { target: { id: result.value.entity.id }, revision: result.value.entity.revision }
-    : { failure: result.failure };
+  revision: number | undefined,
+  request: RequestContext,
+): Promise<Pinned | { readonly exit: ExitCode }> => {
+  if (revision !== undefined) return { sendTo: target, revision };
+  const result = await get(transport, { target }, context.signal);
+  if (!result.ok) {
+    return { exit: failed(context, result.failure, { ...request, beforeChange: true }) };
+  }
+  return {
+    sendTo: { id: result.value.entity.id },
+    revision: result.value.entity.revision,
+  };
 };
 
 export const UPDATE_OPTIONS = {
@@ -491,10 +576,8 @@ export const runUpdate = async (
   if (wasGiven(parsed, 'tag') && wasGiven(parsed, 'no-tags')) {
     throw new UsageError('Give --tag or --no-tags, not both.', 'update');
   }
-  if (
-    (wasGiven(parsed, 'body') || wasGiven(parsed, 'body-literal')) &&
-    revisionFlag === undefined
-  ) {
+  const changesBody = wasGiven(parsed, 'body') || wasGiven(parsed, 'body-literal');
+  if (changesBody && revisionFlag === undefined) {
     throw new UsageError(
       'A body change needs --revision: pass the revision you read the body at, so a newer version on the server is not overwritten.',
       'update',
@@ -506,6 +589,7 @@ export const runUpdate = async (
     stringOption(parsed, 'body-literal'),
     choiceOption(parsed, 'body-format', 'update', BODY_FORMATS),
     'update',
+    context.signal,
   );
   const title = stringOption(parsed, 'title');
   const description = stringOption(parsed, 'description');
@@ -527,51 +611,55 @@ export const runUpdate = async (
   const format = choiceOption(parsed, 'format', 'update', BODY_FORMATS);
 
   const transport = context.transport();
+  const request: RequestContext = {
+    subject: target,
+    ...(slug === undefined ? {} : { slug }),
+    flags: { ...selectorFlags(target), active: active === false ? '--inactive' : '--active' },
+  };
 
   // One Get, immediately before the update, and only when no body is being replaced. It is a
   // convenience, not a blessing: a change that lands between this read and the update is caught by
   // the server's guard and reported as a conflict, exactly as a stale explicit --revision would be.
   // What it reads is then addressed by identifier, so the guard is comparing versions of one entity
   // rather than of whatever the path names by the time the update arrives.
-  let sendTo: Selector = target;
-  let revision: number;
-  if (revisionFlag !== undefined) {
-    revision = revisionFlag;
-  } else {
-    const pinned = await pinTarget(transport, target);
-    if ('failure' in pinned) {
-      return reportFailure(context.streams, pinned.failure, { beforeDispatch: true });
-    }
-    sendTo = pinned.target;
-    revision = pinned.revision;
+  const pinned = await pinRevision(context, transport, target, revisionFlag, request);
+  if ('exit' in pinned) return pinned.exit;
+
+  const result = await update(
+    transport,
+    {
+      target: pinned.sendTo,
+      revision: pinned.revision,
+      ...(title === undefined ? {} : { title }),
+      ...(description === undefined ? {} : { description }),
+      ...(slug === undefined ? {} : { slug }),
+      ...(body === undefined ? {} : { body }),
+      ...(tags === undefined ? {} : { tags }),
+      ...(active === undefined ? {} : { active }),
+      ...(format === undefined ? {} : { format }),
+    },
+    context.signal,
+  );
+
+  if (!result.ok) {
+    return failed(context, result.failure, {
+      ...request,
+      revision: { sent: pinned.revision, given: revisionFlag !== undefined, required: changesBody },
+      check: getCommand(pinned.sendTo),
+    });
   }
 
-  const result = await update(transport, {
-    target: sendTo,
-    revision,
-    ...(title === undefined ? {} : { title }),
-    ...(description === undefined ? {} : { description }),
-    ...(slug === undefined ? {} : { slug }),
-    ...(body === undefined ? {} : { body }),
-    ...(tags === undefined ? {} : { tags }),
-    ...(active === undefined ? {} : { active }),
-    ...(format === undefined ? {} : { format }),
-  });
-
-  if (!result.ok) return reportFailure(context.streams, result.failure);
-
-  if (booleanOption(parsed, 'json')) {
-    writeJson(context.streams.out, result.value);
-  } else {
-    const { entity } = result.value;
-    writeLine(
-      context.streams.out,
+  const { entity } = result.value;
+  return succeeded(context, {
+    data: { entity },
+    lines: () => [
       `Updated ${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
-    );
-    writeLine(context.streams.out, `  revision: ${entity.revision}`);
-    writeLine(context.streams.out, `  slug: ${forTerminal(entity.slug)}`);
-  }
-  return EXIT_OK;
+      ...fields([
+        ['revision', String(entity.revision)],
+        ['slug', forTerminal(entity.slug)],
+      ]),
+    ],
+  });
 };
 
 export const MOVE_HELP = `Usage: raphael move <path> <destination> [--revision <n>] [options]
@@ -626,51 +714,47 @@ export const runMove = async (
   });
 
   const transport = context.transport();
+  const request: RequestContext = {
+    subject: target,
+    destination: destinationPath,
+    flags: { ...selectorFlags(target), destination: '<destination>' },
+  };
 
   // The same convenience `update` takes for a change without a body, and for the same reason it pins
   // by identifier. A move carries no content, so there is no older read for a newer revision to bless.
-  let sendTo: Selector = target;
-  let revision: number;
-  if (revisionFlag !== undefined) {
-    revision = revisionFlag;
-  } else {
-    const pinned = await pinTarget(transport, target);
-    if ('failure' in pinned) {
-      return reportFailure(context.streams, pinned.failure, { beforeDispatch: true });
-    }
-    sendTo = pinned.target;
-    revision = pinned.revision;
-  }
+  const pinned = await pinRevision(context, transport, target, revisionFlag, request);
+  if ('exit' in pinned) return pinned.exit;
 
-  const result = await move(transport, {
-    target: sendTo,
-    revision,
-    destination: { path: destinationPath },
-  });
+  const result = await move(
+    transport,
+    { target: pinned.sendTo, revision: pinned.revision, destination: { path: destinationPath } },
+    context.signal,
+  );
 
   if (!result.ok) {
-    return reportFailure(context.streams, result.failure);
+    return failed(context, result.failure, {
+      ...request,
+      revision: { sent: pinned.revision, given: revisionFlag !== undefined, required: false },
+      // After a move the old path may name nothing, so the check goes by id whenever there is one.
+      check: getCommand(pinned.sendTo),
+    });
   }
 
-  if (booleanOption(parsed, 'json')) {
-    writeJson(context.streams.out, result.value);
-  } else {
-    // A move to where it already is reads the same, with the revision unchanged: the server reported
-    // a success, not a separate outcome. The new full path is one `raphael path` away, not a second
-    // request made here.
-    const { node } = result.value;
-    writeLine(
-      context.streams.out,
+  // A move to where it already is reads the same, with the revision unchanged: the server reported
+  // a success, not a separate outcome. The new full path is one `raphael path` away, not a second
+  // request made here.
+  const { node } = result.value;
+  return succeeded(context, {
+    data: { node },
+    lines: () => [
       `Moved ${qualifiedType(node)} ${node.id}: ${forTerminal(node.title)}`,
-    );
-    writeLine(context.streams.out, `  revision: ${node.revision}`);
-    writeLine(context.streams.out, `  slug: ${forTerminal(node.slug)}`);
-    writeLine(
-      context.streams.out,
-      `  parent: ${node.parentId === null ? 'top level' : node.parentId}`,
-    );
-  }
-  return EXIT_OK;
+      ...fields([
+        ['revision', String(node.revision)],
+        ['slug', forTerminal(node.slug)],
+        ['parent', parentLabel(node.parentId)],
+      ]),
+    ],
+  });
 };
 
 export const ARCHIVE_HELP = `Usage: raphael archive <path> [--revision <n>] [options]
@@ -740,45 +824,54 @@ const runLifecycle = async (
   });
 
   const transport = context.transport();
+  const request: RequestContext = { subject: target, flags: selectorFlags(target) };
 
   // The convenience read `update` and `move` take, pinning by identifier for the same reason.
-  let sendTo: Selector = target;
-  let revision: number;
-  if (revisionFlag !== undefined) {
-    revision = revisionFlag;
-  } else {
-    const pinned = await pinTarget(transport, target);
-    if ('failure' in pinned) {
-      return reportFailure(context.streams, pinned.failure, { beforeDispatch: true });
-    }
-    sendTo = pinned.target;
-    revision = pinned.revision;
-  }
+  const pinned = await pinRevision(context, transport, target, revisionFlag, request);
+  if ('exit' in pinned) return pinned.exit;
 
   const send = verb === 'archive' ? archive : restore;
-  const result = await send(transport, { target: sendTo, revision });
+  const result = await send(
+    transport,
+    { target: pinned.sendTo, revision: pinned.revision },
+    context.signal,
+  );
   if (!result.ok) {
-    return reportFailure(context.streams, result.failure);
-  }
-
-  if (booleanOption(parsed, 'json')) {
-    writeJson(context.streams.out, result.value);
-    return EXIT_OK;
+    return failed(context, result.failure, {
+      ...request,
+      revision: { sent: pinned.revision, given: revisionFlag !== undefined, required: false },
+      check: getCommand(pinned.sendTo),
+    });
   }
 
   const { node, archiveCauses } = result.value;
-  const { out } = context.streams;
   // Archive always ends archived; restore ends either active or still archived by something else.
   const headline = node.archived
     ? verb === 'archive'
       ? 'Archived'
       : 'Still archived'
     : 'Restored';
-  writeLine(out, `${headline} ${qualifiedType(node)} ${node.id}: ${forTerminal(node.title)}`);
-  writeLine(out, `  revision: ${node.revision}`);
-  if (node.archived) writeLifecycle(out, node.id, archiveCauses, '  ');
-  else writeLine(out, '  archived: no');
-  return EXIT_OK;
+  // A restore that leaves it archived names the next step: restoring the container it is archived
+  // through, which is the nearest cause that is not its own.
+  const through = archiveCauses.find((cause) => cause.origin.id !== node.id);
+  const notes =
+    verb === 'restore' && node.archived && through !== undefined
+      ? [
+          `hint: Run "raphael restore --id ${through.origin.id}" to restore ${through.origin.type} ${through.origin.id} too.`,
+        ]
+      : [];
+  return succeeded(context, {
+    data: { node, archiveCauses },
+    lines: () => [
+      `${headline} ${qualifiedType(node)} ${node.id}: ${forTerminal(node.title)}`,
+      ...fields([
+        ['revision', String(node.revision)],
+        ['archived', node.archived ? 'yes' : 'no'],
+      ]),
+      ...causeLines(node.id, archiveCauses, '    '),
+    ],
+    notes,
+  });
 };
 
 export const FAVORITE_HELP = `Usage: raphael favorite <path> [options]
@@ -834,21 +927,21 @@ const runFavoriteChange = async (
   if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, verb);
 
   const target = selectorFrom(path, stringOption(parsed, 'id'), verb);
-  const result = wanted
-    ? await addFavorite(context.transport(), { target })
-    : await removeFavorite(context.transport(), { target });
+  const send = wanted ? addFavorite : removeFavorite;
+  const result = await send(context.transport(), { target }, context.signal);
   if (!result.ok) {
-    return reportFailure(context.streams, result.failure);
+    return failed(context, result.failure, {
+      subject: target,
+      flags: selectorFlags(target),
+      check: getCommand(target),
+    });
   }
 
-  if (booleanOption(parsed, 'json')) writeJson(context.streams.out, result.value);
-  else {
-    writeLine(
-      context.streams.out,
-      `Node ${result.value.nodeId} is ${result.value.isFavorite ? 'a favorite' : 'not a favorite'}.`,
-    );
-  }
-  return EXIT_OK;
+  const { nodeId, isFavorite } = result.value;
+  return succeeded(context, {
+    data: { nodeId, isFavorite },
+    lines: () => [`Item ${nodeId} is ${isFavorite ? 'a favorite' : 'not a favorite'}.`],
+  });
 };
 
 export const FAVORITES_HELP = `Usage: raphael favorites [options]
@@ -887,29 +980,30 @@ export const runFavorites = async (
     max: LIST_LIMIT_MAX,
   });
 
-  const result = await listFavorites(context.transport(), {
-    ...(skip === undefined ? {} : { skip }),
-    ...(limit === undefined ? {} : { limit }),
-  });
-  if (!result.ok) return reportFailure(context.streams, result.failure);
+  const result = await listFavorites(
+    context.transport(),
+    {
+      ...(skip === undefined ? {} : { skip }),
+      ...(limit === undefined ? {} : { limit }),
+    },
+    context.signal,
+  );
+  if (!result.ok) return failed(context, result.failure);
 
-  if (booleanOption(parsed, 'json')) {
-    writeJson(context.streams.out, result.value);
-    return EXIT_OK;
-  }
-
-  const { out } = context.streams;
   const page = result.value;
-  for (const item of page.items) {
-    writeLine(
-      out,
-      `${String(item.id).padStart(6)}  ${qualifiedType(item).padEnd(13)}  ${forTerminal(item.title)}${
-        item.active ? '  active' : ''
-      }`,
-    );
-  }
-  writePageFooter(context.streams, page);
-  return EXIT_OK;
+  return succeeded(context, {
+    data: { items: page.items, page: pageData(page) },
+    lines: () =>
+      table(
+        page.items.map((item) => [
+          String(item.id),
+          qualifiedType(item),
+          stateLabel(item),
+          forTerminal(item.title),
+        ]),
+      ),
+    notes: [pageNote(page)],
+  });
 };
 
 export const GET_HELP = `Usage: raphael get <path> [options]
@@ -941,40 +1035,50 @@ export const runGet = async (
   const target = selectorFrom(path, stringOption(parsed, 'id'), 'get');
   const format = choiceOption(parsed, 'format', 'get', BODY_FORMATS);
 
-  const result = await get(context.transport(), {
-    target,
-    ...(format === undefined ? {} : { format }),
-  });
-  if (!result.ok) return reportFailure(context.streams, result.failure);
-
-  if (booleanOption(parsed, 'json')) {
-    writeJson(context.streams.out, result.value);
-    return EXIT_OK;
+  const result = await get(
+    context.transport(),
+    { target, ...(format === undefined ? {} : { format }) },
+    context.signal,
+  );
+  if (!result.ok) {
+    return failed(context, result.failure, { subject: target, flags: selectorFlags(target) });
   }
 
   const { entity } = result.value;
-  const { out } = context.streams;
-  writeLine(out, `${qualifiedType(entity)} ${entity.id}  (revision ${entity.revision})`);
-  writeLine(out, `title: ${forTerminal(entity.title)}`);
-  writeLine(out, `slug:  ${forTerminal(entity.slug)}`);
-  // Only for a project. An area is never active, so printing `active: no` on one would answer a
-  // question nobody can ask of it - `type` is what says the field does not apply.
-  if (entity.type === 'project') writeLine(out, `active: ${entity.active ? 'yes' : 'no'}`);
-  writeLifecycle(out, entity.id, entity.archiveCauses);
-  // For every type: a note is never a favorite, and `no` is the truthful answer for it.
-  writeLine(out, `favorite: ${entity.isFavorite ? 'yes' : 'no'}`);
-  if (entity.description !== '') writeLine(out, `description: ${forTerminal(entity.description)}`);
-  if (entity.tags.length > 0) {
-    writeLine(out, `tags: ${entity.tags.map((tag) => forTerminal(tag)).join(', ')}`);
-  }
-  writeLine(out);
-  writeLine(
-    out,
-    entity.body.format === 'markdown'
-      ? forTerminalBlock(entity.body.value)
-      : JSON.stringify(entity.body.value, undefined, 2),
-  );
-  return EXIT_OK;
+  return succeeded(context, {
+    data: { entity },
+    lines: () => {
+      const body =
+        entity.body.format === 'markdown'
+          ? forTerminalBlock(entity.body.value)
+          : JSON.stringify(entity.body.value, undefined, 2);
+      // Every field, in one order, whatever the type: a field that does not apply reads `-` rather
+      // than being left out, so a reader never infers a value from a missing line. `active` applies
+      // only to a project.
+      const labelled = fields([
+        ['slug', forTerminal(entity.slug)],
+        ['parent', parentLabel(entity.parentId)],
+        ['revision', String(entity.revision)],
+        ['active', entity.type === 'project' ? (entity.active ? 'yes' : 'no') : '-'],
+        ['archived', entity.archived ? 'yes' : 'no'],
+        // A note is never a favorite, and `no` is the truthful answer for it.
+        ['favorite', entity.isFavorite ? 'yes' : 'no'],
+        ['tags', entity.tags.map(tagLabel).join(', ')],
+        ['description', forTerminal(entity.description)],
+        ['metadata', forTerminal(JSON.stringify(entity.metadata))],
+      ]);
+      // The causes sit under `archived`, the fifth field.
+      const lines = [
+        `${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
+        ...labelled.slice(0, 5),
+        ...causeLines(entity.id, entity.archiveCauses, '    '),
+        ...labelled.slice(5),
+      ];
+      // An empty body prints nothing, not a blank region that reads like a body of blank lines.
+      const empty = entity.body.format === 'markdown' && entity.body.value === '';
+      return empty ? lines : [...lines, '', body];
+    },
+  });
 };
 
 export const PATH_HELP = `Usage: raphael path <path> [options]
@@ -1003,12 +1107,15 @@ export const runPath = async (
   if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'path');
 
   const target = selectorFrom(path, stringOption(parsed, 'id'), 'path');
-  const result = await getPath(context.transport(), { target });
-  if (!result.ok) return reportFailure(context.streams, result.failure);
+  const result = await getPath(context.transport(), { target }, context.signal);
+  if (!result.ok) {
+    return failed(context, result.failure, { subject: target, flags: selectorFlags(target) });
+  }
 
-  if (booleanOption(parsed, 'json')) writeJson(context.streams.out, result.value);
-  else writeLine(context.streams.out, forTerminal(result.value.path));
-  return EXIT_OK;
+  return succeeded(context, {
+    data: { id: result.value.id, path: result.value.path },
+    lines: () => [forTerminal(result.value.path)],
+  });
 };
 
 export const LIST_HELP = `Usage: raphael list <path>... [options]
@@ -1055,29 +1162,27 @@ export const runList = async (
   const scopePage = scopePageFrom(parsed, 'list');
   const orderBy = parseOrderBy(stringListOption(parsed, 'order-by'), 'list');
 
-  const result = await list(context.transport(), {
-    ...scopePage,
-    ...(orderBy === undefined ? {} : { orderBy }),
-  });
-  if (!result.ok) return reportFailure(context.streams, result.failure);
+  const result = await list(
+    context.transport(),
+    { ...scopePage, ...(orderBy === undefined ? {} : { orderBy }) },
+    context.signal,
+  );
+  if (!result.ok) return failed(context, result.failure, scopeRequest(scopePage.scopes));
 
-  if (booleanOption(parsed, 'json')) {
-    writeJson(context.streams.out, result.value);
-    return EXIT_OK;
-  }
-
-  const { out } = context.streams;
   const page = result.value;
-  for (const item of page.items) {
-    writeLine(
-      out,
-      `${String(item.id).padStart(6)}  ${qualifiedType(item).padEnd(13)}  ${forTerminal(item.slug)}${
-        item.active ? '  active' : ''
-      }${item.archived ? '  archived' : ''}`,
-    );
-  }
-  writePageFooter(context.streams, page);
-  return EXIT_OK;
+  return succeeded(context, {
+    data: { items: page.items, page: pageData(page) },
+    lines: () =>
+      table(
+        page.items.map((item) => [
+          String(item.id),
+          qualifiedType(item),
+          stateLabel(item),
+          forTerminal(item.slug),
+        ]),
+      ),
+    notes: [pageNote(page)],
+  });
 };
 
 export const SEARCH_HELP = `Usage: raphael search <path>... -q <query> [options]
@@ -1129,30 +1234,28 @@ export const runSearch = async (
   const scopePage = scopePageFrom(parsed, 'search');
   const queries = parseQueries(stringListOption(parsed, 'query'), 'search');
 
-  const result = await search(context.transport(), { ...scopePage, queries });
-  if (!result.ok) return reportFailure(context.streams, result.failure);
+  const result = await search(context.transport(), { ...scopePage, queries }, context.signal);
+  if (!result.ok) return failed(context, result.failure, scopeRequest(scopePage.scopes));
 
-  if (booleanOption(parsed, 'json')) {
-    writeJson(context.streams.out, result.value);
-    return EXIT_OK;
-  }
-
-  const { out } = context.streams;
   const page = result.value;
-  for (const { node } of page.items) {
+  return succeeded(context, {
+    // A hit stays wrapped as `{ node }`: the wrapper is where a hit will later say what matched.
+    data: {
+      items: page.items,
+      page: { ...pageData(page), archivedLeftOut: page.archivedLeftOut },
+    },
     // The title comes after the slug, because a hit's title is usually the thing that matched, and a
-    // slug alone does not tell someone which of two similarly addressed notes they found. The active
-    // marker stays, for the same reason `list` prints it: wherever a node summary is printed, an
-    // active project says so rather than reading as one that is not.
-    writeLine(
-      out,
-      `${String(node.id).padStart(6)}  ${qualifiedType(node).padEnd(13)}  ${forTerminal(
-        node.slug,
-      )}  ${forTerminal(node.title)}${node.active ? '  active' : ''}${
-        node.archived ? '  archived' : ''
-      }`,
-    );
-  }
-  writePageFooter(context.streams, page);
-  return EXIT_OK;
+    // slug alone does not tell someone which of two similarly addressed notes they found.
+    lines: () =>
+      table(
+        page.items.map(({ node }) => [
+          String(node.id),
+          qualifiedType(node),
+          stateLabel(node),
+          forTerminal(node.slug),
+          forTerminal(node.title),
+        ]),
+      ),
+    notes: [pageNote(page)],
+  });
 };

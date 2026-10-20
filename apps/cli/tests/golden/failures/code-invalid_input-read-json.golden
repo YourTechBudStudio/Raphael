@@ -1,0 +1,5 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"get","error":{"code":"invalid_input","category":"usage","message":"/work is not valid.","hint":"Run \"raphael get --help\" for usage.","exitCode":2,"status":400,"field":"<path>","target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for invalid_input.","details":{"field":"target","reason":"invalid"}}}

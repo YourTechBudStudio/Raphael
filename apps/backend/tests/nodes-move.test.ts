@@ -132,7 +132,7 @@ test('a new slug is held to the submission bound, while an existing long slug st
       reason: 'slug_too_long',
       limit: SLUG_MAX_CODE_POINTS,
     });
-    assert.equal(tooLong.message, 'The address is longer than 100 characters.');
+    assert.equal(tooLong.message, 'The slug is longer than 100 characters.');
 
     // A container whose stored slug predates today's bound is still a destination by path.
     const legacy = area(connection, { path: '/personal' }, 'Legacy');
@@ -203,7 +203,13 @@ test('a destination path naming a resource is a taken address, even when it is t
       destination: { path: '/personal/theirs' },
     });
     assert.equal(onOther.code, 'slug_conflict');
-    assert.deepEqual(onOther.fields, { field: 'destination', slug: 'theirs', scope: 'sibling' });
+    // The occupant is already in hand, so it is named without a second read.
+    assert.deepEqual(onOther.fields, {
+      field: 'destination',
+      slug: 'theirs',
+      scope: 'sibling',
+      holder: { id: other.id, type: 'resource' },
+    });
     assert.equal(stored(connection, other.id).revision, other.revision);
 
     // A row does not conflict with its own index entry, which is why core refuses this itself.
@@ -213,7 +219,28 @@ test('a destination path naming a resource is a taken address, even when it is t
       destination: { path: '/work/mine' },
     });
     assert.equal(onSelf.code, 'slug_conflict');
-    assert.deepEqual(onSelf.fields, { field: 'destination', slug: 'mine', scope: 'sibling' });
+    assert.deepEqual(onSelf.fields, {
+      field: 'destination',
+      slug: 'mine',
+      scope: 'sibling',
+      holder: { id: target.id, type: 'resource' },
+    });
+  });
+});
+
+test('a note inside the target named as the destination is a cycle before it is a taken address', () => {
+  withMigrated('move-into-own-note', (connection) => {
+    const target = project(connection, { path: '/work' }, 'Apollo');
+    note(connection, { id: target.id }, 'Inside');
+
+    const failure = refusedUnchanged(connection, target.id, {
+      target: { id: target.id },
+      revision: target.revision,
+      destination: { path: '/work/apollo/inside' },
+    });
+    assert.equal(failure.code, 'invalid_parent');
+    assert.equal(failure.details?.reason, 'cycle');
+    assert.equal(failure.message, 'Something cannot be moved inside itself.');
   });
 });
 
@@ -306,8 +333,8 @@ test('an address already taken in the destination is a slug conflict on the writ
   withMigrated('move-collision', (connection) => {
     const target = project(connection, { path: '/work' }, 'Shared');
     const beta = area(connection, { path: '/personal' }, 'Beta');
-    area(connection, { id: beta.id }, 'Shared');
-    note(connection, { id: beta.id }, 'Taken');
+    const shared = area(connection, { id: beta.id }, 'Shared');
+    const taken = note(connection, { id: beta.id }, 'Taken');
 
     // The retained slug collides with a container, which the path form treats as the parent - so the
     // collision is reached through the explicit form or through a path to the container above it.
@@ -317,14 +344,27 @@ test('an address already taken in the destination is a slug conflict on the writ
       destination: { path: '/personal/beta' },
     });
     assert.equal(retained.code, 'slug_conflict');
-    assert.deepEqual(retained.fields, { field: 'slug', slug: 'shared', scope: 'sibling' });
+    // Where it clashed travels with the failure, and the holder is read after the rollback.
+    assert.deepEqual(retained.fields, {
+      field: 'slug',
+      slug: 'shared',
+      scope: 'sibling',
+      parentId: beta.id,
+      holder: { id: shared.id, type: 'area' },
+    });
 
     const renamed = refusedUnchanged(connection, target.id, {
       target: { id: target.id },
       revision: target.revision,
       destination: { parent: { id: beta.id }, slug: 'taken' },
     });
-    assert.deepEqual(renamed.fields, { field: 'slug', slug: 'taken', scope: 'sibling' });
+    assert.deepEqual(renamed.fields, {
+      field: 'slug',
+      slug: 'taken',
+      scope: 'sibling',
+      parentId: beta.id,
+      holder: { id: taken.id, type: 'resource' },
+    });
 
     // The root has its own namespace.
     const nested = area(connection, { path: '/personal' }, 'Work');
@@ -333,7 +373,9 @@ test('an address already taken in the destination is a slug conflict on the writ
       revision: nested.revision,
       destination: { path: '/' },
     });
-    assert.deepEqual(atRoot.fields, { field: 'slug', slug: 'work', scope: 'root' });
+    const { holder, ...rest } = atRoot.fields as { holder?: { type: string } };
+    assert.deepEqual(rest, { field: 'slug', slug: 'work', scope: 'root', parentId: null });
+    assert.equal(holder?.type, 'area', 'the top-level /work holds it');
   });
 });
 
@@ -545,7 +587,11 @@ test('something archived by a cause of its own is restored before it moves', () 
       destination: { path: '/personal' },
     });
     assert.equal(failure.code, 'node_archived');
-    assert.deepEqual(failure.fields, { field: 'target', standing: 'direct' });
+    assert.deepEqual(failure.fields, {
+      field: 'target',
+      standing: 'direct',
+      blocking: { id: apollo.id, type: 'project' },
+    });
   });
 });
 
@@ -607,7 +653,11 @@ test('an archived destination is refused, directly or through a container above 
         destination,
       });
       assert.equal(failure.code, 'node_archived', JSON.stringify(destination));
-      assert.deepEqual(failure.fields, { field: 'destination', standing: reason });
+      assert.deepEqual(failure.fields, {
+        field: 'destination',
+        standing: reason,
+        blocking: { id: shelf.id, type: 'area' },
+      });
     }
     assert.equal(inner.archived, false);
   });
@@ -625,7 +675,11 @@ test('an inherited-only target "moved" to its current archived parent is refused
       destination: { parent: { id: shelf.id } },
     });
     assert.equal(failure.code, 'node_archived');
-    assert.deepEqual(failure.fields, { field: 'destination', standing: 'direct' });
+    assert.deepEqual(failure.fields, {
+      field: 'destination',
+      standing: 'direct',
+      blocking: { id: shelf.id, type: 'area' },
+    });
   });
 });
 
@@ -657,6 +711,7 @@ test('lifecycle is decided after revision, destination, cycle and parentage, tar
     assert.deepEqual(at({ parent: { id: shelf.id } }).fields, {
       field: 'target',
       standing: 'direct',
+      blocking: { id: apollo.id, type: 'project' },
     });
   });
 });

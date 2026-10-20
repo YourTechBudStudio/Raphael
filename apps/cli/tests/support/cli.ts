@@ -86,6 +86,8 @@ export interface RunOptions {
   readonly connect?: () => Transport;
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly platform?: string;
+  /** Receives the handlers a command registers, so a case can deliver a signal to it. */
+  readonly onSignal?: (signal: 'SIGINT' | 'SIGTERM', handler: () => void) => () => void;
 }
 
 /** Run the CLI's entry function with captured streams. */
@@ -104,9 +106,8 @@ export const runCli = async (argv: readonly string[], options: RunOptions = {}):
     environment: options.environment ?? {},
     platform: options.platform ?? process.platform,
     cwd: process.cwd(),
-    onSignal: () => {
-      throw new Error('Remote commands must not register signal handlers');
-    },
+    // Remote commands watch for signals; none arrives unless a case delivers one.
+    onSignal: options.onSignal ?? (() => () => {}),
     exit: () => {
       throw new Error('Remote commands must return their exit code');
     },

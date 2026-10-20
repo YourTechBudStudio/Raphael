@@ -1,0 +1,8 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The body has an attribute value Raphael does not accept on orderedList (block 3).
+Nothing was changed.
+hint: Run "raphael update --help" for the body formats Raphael accepts.
+code: unsupported_content (422)

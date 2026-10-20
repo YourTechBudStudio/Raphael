@@ -1,0 +1,5 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"search","error":{"code":"invalid_input","category":"usage","message":"-q is longer than 1000 characters.","hint":"Run \"raphael search --help\" for usage.","exitCode":2,"status":400,"field":"-q","applied":false,"retryable":false,"serverMessage":"The server's sentence for invalid_input.","details":{"field":"queries","reason":"query_too_long","limit":1000}}}

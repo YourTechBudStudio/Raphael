@@ -59,6 +59,7 @@ export const createEmptyDocument = (): CanonicalDocument =>
   ({ type: 'doc', content: [{ type: 'paragraph' }] }) as unknown as CanonicalDocument;
 
 export {
+  CHECKED_ATTRIBUTES,
   CONTENT_FAILURE_REASONS,
   FAILURE_PATH_MAX_SEGMENTS,
   contentFailure,

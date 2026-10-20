@@ -1,4 +1,4 @@
-import { parsePath } from '@raphael/contracts/nodes';
+import { canContain, parsePath } from '@raphael/contracts/nodes';
 import { and, eq, isNull } from 'drizzle-orm';
 import { Either } from 'effect';
 
@@ -7,6 +7,8 @@ import {
   InvalidInput,
   InvalidParent,
   NodeNotFound,
+  SlugConflict,
+  type NodeError,
   type SelectorField,
 } from './errors.ts';
 import { favoriteExpression } from './projection.ts';
@@ -248,27 +250,45 @@ export const ancestorChain = (
 
 /**
  * Checked before the write, because SQLite's foreign-key errors cannot say which parent was wrong.
- *
- * ```text
- * root     -> area only
- * area     -> area, project, resource
- * project  -> resource
- * resource -> nothing
- * ```
+ * The rule is the contract's `PARENTAGE` table, the same one clients describe it from.
  */
 export const validateParentage = (
   scope: ResolvedScope,
   childType: NodeType,
   field: 'parent' | 'destination',
 ): void => {
-  const refuse = (parentType: NodeType | 'root'): never =>
-    raise(new InvalidParent({ field, reason: 'parentage', parentType, childType }));
-  if (scope.kind === 'root') {
-    if (childType !== 'area') refuse('root');
-    return;
+  const parentType = scope.kind === 'root' ? 'root' : scope.node.type;
+  if (canContain(parentType, childType)) return;
+  raise(new InvalidParent({ field, reason: 'parentage', parentType, childType }));
+};
+
+/**
+ * Name the holder of a clashing slug, after the write that clashed has rolled back.
+ *
+ * One indexed read outside the write transaction, made only for a `SlugConflict` that knows where it
+ * happened and does not already name its holder. It never changes the failure: if the read finds
+ * nothing (the holder moved away in between) or fails for any reason, the conflict is returned as it
+ * was, without a holder. A lookup that could turn a clash into an internal error would be worse than
+ * no lookup.
+ */
+export const withSlugHolder = (orm: Orm, error: NodeError): NodeError => {
+  if (error._tag !== 'SlugConflict' || error.holder !== undefined) return error;
+  const { parentId } = error;
+  if (parentId === undefined) return error;
+  try {
+    const row = orm
+      .select({ id: nodes.id, type: nodes.type })
+      .from(nodes)
+      .where(
+        and(
+          parentId === null ? isNull(nodes.parentId) : eq(nodes.parentId, parentId),
+          eq(nodes.slug, error.slug),
+        ),
+      )
+      .get();
+    if (row === undefined || !isNodeType(row.type)) return error;
+    return new SlugConflict({ ...error, holder: { id: row.id, type: row.type } });
+  } catch {
+    return error;
   }
-  const parentType = scope.node.type;
-  if (parentType === 'area') return;
-  if (parentType === 'project' && childType === 'resource') return;
-  refuse(parentType);
 };

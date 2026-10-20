@@ -1,6 +1,7 @@
 ==== exit ====
-1
+4
 ==== stdout ====
 ==== stderr ====
-The server's sentence for invalid_parent.
-  code: invalid_parent (422)
+/work cannot move there, which is inside it.
+hint: Run "raphael list /" to choose a destination outside it.
+code: invalid_parent (422)

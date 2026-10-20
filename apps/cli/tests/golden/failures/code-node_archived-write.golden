@@ -1,6 +1,8 @@
 ==== exit ====
-1
+4
 ==== stdout ====
 ==== stderr ====
-The server's sentence for node_archived.
-  code: node_archived (409)
+/work is archived, so it cannot be changed.
+Nothing was changed.
+hint: Run "raphael restore --id 7" first to bring it back.
+code: node_archived (409)

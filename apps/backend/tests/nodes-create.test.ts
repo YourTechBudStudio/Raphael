@@ -214,7 +214,10 @@ test('sibling slugs collide across types, and the root has its own namespace', (
       expectLeft(create(connection, { type: 'area', parent: work, title: 'Shared name' })),
     );
     assert.equal(sibling.code, 'slug_conflict');
-    assert.equal(sibling.message, '"shared-name" is already used here.');
+    // The slug is not echoed; the holder is named so a client can say what is in the way.
+    assert.equal(sibling.message, 'That slug is already used here.');
+    assert.equal(sibling.details?.reason, 'sibling');
+    assert.equal(sibling.details?.blocking?.type, 'project');
 
     // The same slug is free under a different parent.
     expectRight(
@@ -225,7 +228,12 @@ test('sibling slugs collide across types, and the root has its own namespace', (
       expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title: 'Work' })),
     );
     assert.equal(root.code, 'slug_conflict');
-    assert.equal(root.message, '"work" is already used here.');
+    assert.equal(root.message, 'That slug is already used here.');
+    assert.deepEqual(root.details, {
+      field: 'slug',
+      reason: 'root',
+      blocking: { id: rootId(connection, 'work'), type: 'area' },
+    });
   });
 });
 
@@ -591,7 +599,12 @@ test('nothing is created under something archived, directly or through a contain
         ),
       );
       assert.equal(failure.code, 'node_archived');
-      assert.deepEqual(failure.fields, { field: 'parent', standing });
+      // The nearest archived item either way: the shelf itself, or the shelf above the project.
+      assert.deepEqual(failure.fields, {
+        field: 'parent',
+        standing,
+        blocking: { id: shelf.id, type: 'area' },
+      });
       assert.equal(
         failure.message,
         standing === 'direct'

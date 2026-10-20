@@ -19,11 +19,13 @@ import { verify } from '@raphael/client/connection';
 import { hasApiKey } from '@raphael/contracts/connection';
 
 import { UsageError, parseArgs, type OptionConfig } from '../../shared/args.ts';
-import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE, type ExitCode } from '../../shared/exit.ts';
-import { forTerminal, writeJson, writeLine, type Streams } from '../../shared/output.ts';
-import { reportFailure } from '../../shared/report.ts';
+import { observedTransport, type Session } from '../../shared/command.ts';
+import { EXIT_USAGE, type ExitCode } from '../../shared/exit.ts';
+import { describeClientFailure, renderFailure } from '../../shared/failure.ts';
+import { forTerminal, type Streams } from '../../shared/output.ts';
+import { renderSuccess, type Warning } from '../../shared/success.ts';
 import { configLocation, saveConfig } from './config.ts';
-import { API_KEY_VARIABLE, ENDPOINT_VARIABLE, transportFor } from './remote.ts';
+import { API_KEY_VARIABLE, ENDPOINT_VARIABLE, timeoutFrom, transportFor } from './remote.ts';
 
 export const LOGIN_HELP = `Usage: raphael login [--json]
 
@@ -34,7 +36,7 @@ The key is never taken as an argument, so it stays out of shell history and the 
 For scripts, set ${ENDPOINT_VARIABLE} and ${API_KEY_VARIABLE} instead of logging in.
 
 Options:
-  --json        Report the outcome as JSON on stdout.
+  --json        Report the outcome as JSON on stdout. Prompts go to standard error.
   -h, --help    Show this help.`;
 
 export interface Prompter {
@@ -58,8 +60,10 @@ export interface Prompter {
  *
  * Each visible question gets its own readline interface, closed as soon as it is answered. A terminal
  * readline left attached while the key is read keeps handling keypresses and writes each one back to
- * the output, so pausing it is not enough: the key would appear on screen, and in stdout when stdout
- * is redirected.
+ * the output, so pausing it is not enough: the key would appear on screen.
+ *
+ * Questions are written to stderr, never stdout: stdout carries only the result, so
+ * `raphael login --json > result.json` holds exactly one JSON document.
  */
 export const terminalPrompter = (): Prompter => {
   if (!process.stdin.isTTY) {
@@ -78,7 +82,7 @@ export const terminalPrompter = (): Prompter => {
   // interface that is closed here. Nothing is shown; the key prompt then waits for it to be typed.
   const ask = (question: string): Promise<string> =>
     new Promise((resolve, reject) => {
-      const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: true });
+      const rl = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
       rl.once('close', () => reject(new UsageError('Cancelled. Nothing was saved.', 'login')));
       rl.question(question, (answer) => {
         resolve(answer);
@@ -100,7 +104,7 @@ export const terminalPrompter = (): Prompter => {
       const wasRaw = stdin.isRaw === true;
       stdin.setRawMode(true);
       stdin.resume();
-      process.stdout.write(question);
+      process.stderr.write(question);
 
       let entered = '';
       const restore = (): void => {
@@ -114,13 +118,13 @@ export const terminalPrompter = (): Prompter => {
           switch (byte) {
             case 0x03: // Ctrl-C: restore the terminal before leaving, not after.
               restore();
-              process.stdout.write('\n');
+              process.stderr.write('\n');
               reject(new UsageError('Cancelled. Nothing was saved.', 'login'));
               return;
             case 0x04: // Ctrl-D at an empty prompt ends input.
               if (entered === '') {
                 restore();
-                process.stdout.write('\n');
+                process.stderr.write('\n');
                 reject(new UsageError('No key was entered. Nothing was saved.', 'login'));
                 return;
               }
@@ -128,7 +132,7 @@ export const terminalPrompter = (): Prompter => {
             case 0x0d:
             case 0x0a:
               restore();
-              process.stdout.write('\n');
+              process.stderr.write('\n');
               resolve(entered);
               return;
             case 0x7f:
@@ -153,6 +157,9 @@ export const terminalPrompter = (): Prompter => {
 
 export interface LoginDependencies {
   readonly streams: Streams;
+  readonly session: Session;
+  /** Writes the verified credential. The real one unless a test needs an outcome a disk cannot give. */
+  readonly save?: typeof saveConfig;
   readonly prompter: () => Prompter;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly platform: string;
@@ -168,16 +175,16 @@ export const runLogin = async (
   dependencies: LoginDependencies,
 ): Promise<ExitCode> => {
   const parsed = parseArgs(argv, LOGIN_OPTIONS, 'login');
-  const asJson = parsed.values.json === true;
   const { streams } = dependencies;
 
   if (parsed.positionals.length > 0) {
     throw new UsageError(`"login" takes no arguments. Got "${parsed.positionals[0]}".`, 'login');
   }
 
-  // Resolve the destination before prompting, so a platform that cannot protect a credential says so
-  // before asking someone to type one.
+  // Resolve the destination and the timeout before prompting, so a platform that cannot protect a
+  // credential, or a timeout that cannot be used, is reported before asking someone to type a key.
   const location = configLocation(dependencies.environment, dependencies.platform);
+  const timeoutMs = timeoutFrom(dependencies.environment);
 
   const prompter = dependencies.prompter();
   let endpointInput: string;
@@ -191,44 +198,62 @@ export const runLogin = async (
 
   const endpoint = parseEndpoint(endpointInput);
   if (isEndpointRejection(endpoint)) {
-    writeLine(streams.err, forTerminal(endpoint.message));
-    return EXIT_USAGE;
+    return renderFailure(streams, dependencies.session, {
+      code: endpoint.reason,
+      exitCode: EXIT_USAGE,
+      message: `${forTerminal(endpoint.message)} Nothing was saved.`,
+      hint: 'Run "raphael login" again and give the full address, such as https://raphael.example.com.',
+      state: 'not_sent',
+      fromServer: false,
+    });
   }
 
   if (!hasApiKey(key)) {
-    writeLine(streams.err, 'No key was entered. Nothing was saved.');
-    return EXIT_USAGE;
+    return renderFailure(streams, dependencies.session, {
+      code: 'api_key_missing',
+      exitCode: EXIT_USAGE,
+      message: 'No key was entered. Nothing was saved.',
+      hint: 'Run "raphael login" again and enter the key the server was started with.',
+      state: 'not_sent',
+      fromServer: false,
+    });
   }
 
   const config = { endpoint: endpoint.base, apiKey: key };
-  const result = await verify(transportFor(config));
+  const result = await verify(
+    observedTransport(dependencies.session, transportFor(config, timeoutMs)),
+  );
   if (!result.ok) {
-    writeLine(streams.err, 'Could not verify that connection, so nothing was saved.');
-    return reportFailure(streams, result.failure);
+    const failure = describeClientFailure(dependencies.session, result.failure);
+    return renderFailure(streams, dependencies.session, {
+      ...failure,
+      message: `${failure.message} Nothing was saved.`,
+    });
   }
 
-  const outcome = saveConfig(location, config);
+  const outcome = (dependencies.save ?? saveConfig)(location, config);
 
-  if (asJson) {
-    writeJson(streams.out, {
+  // The credential on disk is the new one even when its durability could not be confirmed. Saying
+  // "login failed" would be false, and rolling back would discard a verified connection to protect
+  // against a power cut that may not come; so it succeeds, with a warning.
+  const warnings: Warning[] = outcome.durabilityUnconfirmed
+    ? [
+        {
+          code: 'durability_unconfirmed',
+          message:
+            `Saved to ${outcome.file}, but the filesystem did not confirm the write is durable. ` +
+            'If this machine loses power soon, run "raphael login" again.',
+        },
+      ]
+    : [];
+
+  return renderSuccess(streams, dependencies.session, {
+    data: {
       endpoint: endpoint.base,
       protocolVersion: result.value.protocolVersion,
       configFile: outcome.file,
-      durabilityUnconfirmed: outcome.durabilityUnconfirmed,
-    });
-  } else if (outcome.durabilityUnconfirmed) {
-    // The credential on disk is the new one. Saying "login failed" here would be false, and rolling
-    // back would discard a verified connection to protect against a power cut that may not come.
-    writeLine(
-      streams.err,
-      `Configuration replaced at ${outcome.file}, but crash durability could not be confirmed. ` +
-        'The new credential is in place and usable; if this machine loses power before the filesystem ' +
-        'flushes, the change may not survive. Run "raphael login" again if that happens.',
-    );
-  } else {
-    writeLine(streams.out, `Connected to ${forTerminal(endpoint.base)}.`);
-    writeLine(streams.out, `Saved to ${outcome.file}.`);
-  }
-
-  return outcome.durabilityUnconfirmed ? EXIT_FAILURE : EXIT_OK;
+    },
+    lines: () => [`Connected to ${forTerminal(endpoint.base)}.`, `Saved to ${outcome.file}.`],
+    warnings,
+  });
 };

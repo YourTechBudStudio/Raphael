@@ -1,6 +1,8 @@
 ==== exit ====
-1
+2
 ==== stdout ====
 ==== stderr ====
-The server's sentence for unsupported_media_type.
-  code: unsupported_media_type (415)
+The server refused how the request was encoded.
+Nothing was changed.
+hint: Check that this CLI and the server are the same version with "raphael version".
+code: unsupported_media_type (415)

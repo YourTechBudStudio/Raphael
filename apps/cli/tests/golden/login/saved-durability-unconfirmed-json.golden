@@ -1,0 +1,5 @@
+==== exit ====
+0
+==== stdout ====
+{"ok":true,"command":"login","endpoint":"<endpoint>","protocolVersion":"2026-09-24","configFile":"<tmp>/raphael/config.json","warnings":[{"code":"durability_unconfirmed","message":"Saved to <tmp>/raphael/config.json, but the filesystem did not confirm the write is durable. If this machine loses power soon, run \"raphael login\" again."}]}
+==== stderr ====

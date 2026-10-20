@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+/work/raphael is archived, so it cannot be changed.
+Nothing was changed.
+hint: Run "raphael restore --id 7" first to bring it back.
+code: node_archived (409)

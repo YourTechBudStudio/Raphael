@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 -q: a query may be at most 1000 characters
-Run "raphael search --help" for usage.
+hint: Run "raphael search --help" for usage.

@@ -16,6 +16,7 @@
  */
 
 import {
+  DEFAULT_TIMEOUT_MS,
   createTransport,
   isTransportRejection,
   type FetchLike,
@@ -27,6 +28,11 @@ import { ConfigError, configLocation, loadConfig, type StoredConfig } from './co
 
 export const ENDPOINT_VARIABLE = 'RAPHAEL_ENDPOINT';
 export const API_KEY_VARIABLE = 'RAPHAEL_API_KEY';
+export const TIMEOUT_VARIABLE = 'RAPHAEL_TIMEOUT';
+
+/** The bounds `RAPHAEL_TIMEOUT` accepts, in seconds: the transport's own, in the unit people type. */
+export const TIMEOUT_MIN_SECONDS = 1;
+export const TIMEOUT_MAX_SECONDS = 120;
 
 export type ConnectionSource = 'environment' | 'configuration';
 
@@ -40,10 +46,13 @@ export type ConnectionReason = 'incomplete_environment' | TransportRejection['re
 
 export class ConnectionError extends Error {
   readonly reason: ConnectionReason;
-  constructor(reason: ConnectionReason, message: string) {
+  /** The one next step, when this failure has a more specific one than its reason's. */
+  readonly hint: string | undefined;
+  constructor(reason: ConnectionReason, message: string, hint?: string) {
     super(message);
     this.name = 'ConnectionError';
     this.reason = reason;
+    this.hint = hint;
   }
 }
 
@@ -66,15 +75,16 @@ export const resolveConnection = (
     if (endpoint === undefined || endpoint === '') {
       throw new ConnectionError(
         'incomplete_environment',
-        `${API_KEY_VARIABLE} is set but ${ENDPOINT_VARIABLE} is not. Set both, or unset both to use your ` +
-          'saved login. Raphael will not combine a key from the environment with a saved address.',
+        `${API_KEY_VARIABLE} is set but ${ENDPOINT_VARIABLE} is not. Raphael will not combine a key ` +
+          'from the environment with a saved address.',
+        `Set ${ENDPOINT_VARIABLE} too, or unset ${API_KEY_VARIABLE} to use your saved login.`,
       );
     }
     if (apiKey === undefined || apiKey === '') {
       throw new ConnectionError(
         'incomplete_environment',
-        `${ENDPOINT_VARIABLE} is set but ${API_KEY_VARIABLE} is not. Set both, or unset both to use your ` +
-          'saved login.',
+        `${ENDPOINT_VARIABLE} is set but ${API_KEY_VARIABLE} is not.`,
+        `Set ${API_KEY_VARIABLE} too, or unset ${ENDPOINT_VARIABLE} to use your saved login.`,
       );
     }
     return { config: { endpoint, apiKey }, source: 'environment' };
@@ -112,6 +122,32 @@ export const transportFor = (config: StoredConfig, timeoutMs?: number): Transpor
 export const connectFrom = (
   environment: Readonly<Record<string, string | undefined>>,
   platform: string,
-): Transport => transportFor(resolveConnection(environment, platform).config);
+): Transport => {
+  const timeoutMs = timeoutFrom(environment);
+  return transportFor(resolveConnection(environment, platform).config, timeoutMs);
+};
+
+/**
+ * `RAPHAEL_TIMEOUT`, in whole seconds, bounds the whole exchange of one request. Unset or empty means
+ * the client's default. Anything else that is not a whole number in range is refused rather than
+ * clamped: a timeout that quietly became a different one is a wait nobody asked for.
+ */
+export const timeoutFrom = (
+  environment: Readonly<Record<string, string | undefined>>,
+): number | undefined => {
+  const raw = environment[TIMEOUT_VARIABLE];
+  if (raw === undefined || raw === '') return undefined;
+  const seconds = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!(seconds >= TIMEOUT_MIN_SECONDS && seconds <= TIMEOUT_MAX_SECONDS)) {
+    throw new ConnectionError(
+      'timeout_out_of_range',
+      `${TIMEOUT_VARIABLE} must be a whole number of seconds from ${TIMEOUT_MIN_SECONDS} to ` +
+        `${TIMEOUT_MAX_SECONDS}. Got "${raw}".`,
+      `Set ${TIMEOUT_VARIABLE} to a value in that range, or unset it to wait the default ` +
+        `${DEFAULT_TIMEOUT_MS / 1000} seconds.`,
+    );
+  }
+  return seconds * 1000;
+};
 
 export { ConfigError };

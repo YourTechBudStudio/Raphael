@@ -1,6 +1,6 @@
 ==== exit ====
-2
+5
 ==== stdout ====
 ==== stderr ====
 No saved login was found.
-  reason: not_configured
+hint: Run "raphael login", or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY in the environment.

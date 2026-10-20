@@ -1,0 +1,8 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--title is longer than 200 characters.
+Nothing was changed.
+hint: Run "raphael update --help" for usage.
+code: invalid_input (400)

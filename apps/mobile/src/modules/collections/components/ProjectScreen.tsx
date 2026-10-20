@@ -54,7 +54,7 @@ import { ProjectHeaderSkeleton } from './ProjectSkeleton';
 import { ReadOnlyBody } from './ReadOnlyBody';
 
 /** Stands in when there is no client failure to inspect, so the not-found check stays total. */
-const NO_FAILURE = { kind: 'network', message: '' } as const;
+const NO_FAILURE = { kind: 'network', effect: 'read', delivery: 'not_sent', message: '' } as const;
 
 export interface ProjectScreenProps {
   /** Null when the route parameter did not name a container. */

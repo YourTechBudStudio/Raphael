@@ -41,7 +41,9 @@ describe('what a caller is told', () => {
       const response = await call(server, '/api/nodes/get', { body: '{"target":{"id":999999}}' });
       assert.deepEqual(Object.keys(response.json as object), ['error']);
       const error = (response.json as { error: Record<string, unknown> }).error;
-      assert.deepEqual(Object.keys(error).sort(), ['code', 'message']);
+      assert.deepEqual(Object.keys(error).sort(), ['code', 'details', 'message']);
+      // Details are our own vocabulary: which request field, never what was in it.
+      assert.deepEqual(error['details'], { field: 'target' });
     });
   });
 

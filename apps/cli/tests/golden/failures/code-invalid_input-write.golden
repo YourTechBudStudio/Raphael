@@ -1,6 +1,8 @@
 ==== exit ====
-1
+2
 ==== stdout ====
 ==== stderr ====
-The server's sentence for invalid_input.
-  code: invalid_input (400)
+/work is not valid.
+Nothing was changed.
+hint: Run "raphael archive --help" for usage.
+code: invalid_input (400)

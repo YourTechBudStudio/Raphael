@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+Revision 99 of /work/raphael does not exist yet: it is now at revision 4.
+Nothing was changed.
+hint: Pass --revision 4, or leave out --revision to use the current one.
+code: revision_conflict (409)

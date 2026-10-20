@@ -1,0 +1,7 @@
+==== exit ====
+3
+==== stdout ====
+==== stderr ====
+Nothing has id 9999.
+hint: Run "raphael list / -r" to find the right id.
+code: node_not_found (404)

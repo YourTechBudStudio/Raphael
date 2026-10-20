@@ -14,9 +14,9 @@ import { invalidInputFrom } from './diagnostics.ts';
 import type { NodeError } from './errors.ts';
 import { requireActive } from './lifecycle.ts';
 import { bodyProjection } from './projection.ts';
-import { resolveScope, validateParentage } from './resolve.ts';
+import { resolveScope, validateParentage, withSlugHolder } from './resolve.ts';
 import { nodes } from './schema.ts';
-import { raise, unwrapFailure } from './storage-failures.ts';
+import { classifyFailure, raise, unwrapFailure } from './storage-failures.ts';
 import { orm, safeRowId, sampleNow, writeTransaction } from './store.ts';
 
 const OPERATION = 'nodes.create';
@@ -59,9 +59,9 @@ export const createNode = (input: unknown): Effect.Effect<CreateResponse, NodeEr
           writeTransaction(db, () =>
             commit(db, { prepared, storedBody, body, derivedText, clock }),
           ),
-        catch: (cause) =>
-          unwrapFailure({ operation: OPERATION, stage: 'write', slug: prepared.slug }, cause),
-      });
+        // The slug clash is classified inside `commit`, around the one statement that can raise it.
+        catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'write' }, cause),
+      }).pipe(Effect.mapError((error) => withSlugHolder(orm(db), error)));
     }),
   );
 
@@ -114,26 +114,39 @@ const commit = (
   const parent = scope.kind === 'root' ? undefined : scope.node;
   requireActive(handle, parent ?? null, 'parent', OPERATION);
 
-  const inserted = handle
-    .insert(nodes)
-    .values({
-      type: prepared.type,
-      kind: prepared.kind ?? null,
-      parentId: parent === undefined ? null : parent.id,
-      parentType: parent === undefined ? null : parent.type,
-      slug: prepared.slug,
-      revision: 1,
-      title: prepared.title,
-      description: prepared.description,
-      body: storedBody,
-      bodyText: derivedText,
-      tags: JSON.stringify(prepared.tags),
-      active: 0,
-      metadata: JSON.stringify(prepared.metadata),
-      createdAt: now,
-      updatedAt: now,
-    })
-    .run();
+  const parentId = parent === undefined ? null : parent.id;
+  let inserted;
+  try {
+    inserted = handle
+      .insert(nodes)
+      .values({
+        type: prepared.type,
+        kind: prepared.kind ?? null,
+        parentId,
+        parentType: parent === undefined ? null : parent.type,
+        slug: prepared.slug,
+        revision: 1,
+        title: prepared.title,
+        description: prepared.description,
+        body: storedBody,
+        bodyText: derivedText,
+        tags: JSON.stringify(prepared.tags),
+        active: 0,
+        metadata: JSON.stringify(prepared.metadata),
+        createdAt: now,
+        updatedAt: now,
+      })
+      .run();
+  } catch (cause) {
+    // A sibling (or a top-level item) already holds the slug. Where it clashed travels with the
+    // failure so the holder can be named once this transaction has rolled back.
+    return raise(
+      classifyFailure(
+        { operation: OPERATION, stage: 'write', slug: prepared.slug, parentId },
+        cause,
+      ),
+    );
+  }
 
   const id = safeRowId(inserted.lastInsertRowid, OPERATION);
   return {
@@ -141,7 +154,7 @@ const commit = (
       id,
       type: prepared.type,
       kind: prepared.kind ?? null,
-      parentId: parent === undefined ? null : parent.id,
+      parentId,
       slug: prepared.slug,
       revision: 1,
       title: prepared.title,

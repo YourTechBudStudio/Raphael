@@ -1,6 +1,6 @@
 import { DOCUMENT_MAX_NODES } from '@raphael/contracts/nodes';
 
-import { contentFailure, type ContentFailure } from '../failures.ts';
+import { CHECKED_ATTRIBUTES, contentFailure, type ContentFailure } from '../failures.ts';
 import { SUPPORTED_HEADING_LEVELS, SUPPORTED_MARKS, SUPPORTED_NODES } from '../index.ts';
 import { isAllowedHref } from './url.ts';
 
@@ -55,30 +55,40 @@ const attrFailure = (
   if (type === 'heading') {
     const level = attrs['level'];
     if (typeof level !== 'number' || !HEADING_LEVEL_SET.has(level)) {
-      return contentFailure('invalid_attribute_value', path, { element: 'heading.level' });
+      return contentFailure('invalid_attribute_value', path, {
+        element: CHECKED_ATTRIBUTES.headingLevel,
+      });
     }
   }
   if (type === 'codeBlock') {
     const language = attrs['language'];
     if (language !== undefined && language !== null && typeof language !== 'string') {
-      return contentFailure('invalid_attribute_value', path, { element: 'codeBlock.language' });
+      return contentFailure('invalid_attribute_value', path, {
+        element: CHECKED_ATTRIBUTES.codeBlockLanguage,
+      });
     }
     if (typeof language === 'string' && !CODE_LANGUAGE.test(language)) {
-      return contentFailure('invalid_attribute_value', path, { element: 'codeBlock.language' });
+      return contentFailure('invalid_attribute_value', path, {
+        element: CHECKED_ATTRIBUTES.codeBlockLanguage,
+      });
     }
   }
   if (type === 'orderedList') {
     const start = attrs['start'];
     if (start !== undefined && start !== null) {
       if (typeof start !== 'number' || !Number.isSafeInteger(start) || start < 0) {
-        return contentFailure('invalid_attribute_value', path, { element: 'orderedList.start' });
+        return contentFailure('invalid_attribute_value', path, {
+          element: CHECKED_ATTRIBUTES.orderedListStart,
+        });
       }
     }
     // `type` exists upstream as an HTML list-marker style. Markdown has no equivalent and our
     // serializer never emits one, so only the schema default is accepted rather than stored.
     const listType = attrs['type'];
     if (listType !== undefined && listType !== null) {
-      return contentFailure('invalid_attribute_value', path, { element: 'orderedList.type' });
+      return contentFailure('invalid_attribute_value', path, {
+        element: CHECKED_ATTRIBUTES.orderedListType,
+      });
     }
   }
   return undefined;

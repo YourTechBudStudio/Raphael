@@ -1,6 +1,8 @@
 ==== exit ====
-1
+7
 ==== stdout ====
 ==== stderr ====
-The server's sentence for internal_error.
-  code: internal_error (500)
+The server at http://raphael.invalid could not complete the request.
+The change may or may not have been applied.
+hint: Run "raphael get /work" to check whether it was applied before sending it again.
+code: internal_error (500)

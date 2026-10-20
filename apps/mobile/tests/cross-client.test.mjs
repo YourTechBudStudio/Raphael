@@ -412,7 +412,7 @@ describe("a project's selection, across the two clients", () => {
 
       // And the human-readable form a person actually looks at.
       const shown = await runCli(['get', project.at], { endpoint });
-      assert.match(shown.stdout, /^active: no$/m);
+      assert.match(shown.stdout, /^ {2}active: +no$/m);
     });
   });
 
@@ -572,8 +572,9 @@ describe('one entity, moved by either client', () => {
       const refused = async (args, code) => {
         const ran = await runCli(['move', ...args], { endpoint });
 
-        assert.equal(ran.code, 1, `${args.join(' ')} should be refused`);
-        assert.match(ran.stderr, new RegExp(`code: ${code}`));
+        // Exit 4: refused for conflicting with stored state, with nothing applied.
+        assert.equal(ran.code, 4, `${args.join(' ')} should be refused`);
+        assert.match(ran.stderr, new RegExp(`^code: ${code} `, 'm'));
 
         return ran;
       };
@@ -591,7 +592,7 @@ describe('one entity, moved by either client', () => {
         'invalid_parent',
       );
 
-      assert.match(cycle.stderr, /cannot be moved inside itself/);
+      assert.match(cycle.stderr, /cannot move into .*, which is inside it\./);
       await refused([`${WORK.path}/refuse-a`, `${WORK.path}/refuse-p`], 'invalid_parent');
       await refused([`${WORK.path}/taken`, PERSONAL.path], 'slug_conflict');
       await refused(
@@ -644,8 +645,8 @@ describe('archive and restore, across the two clients', () => {
 
       // The selection itself was kept: archive hides, it does not deselect.
       const shown = await runCli(['get', project.at], { endpoint });
-      assert.match(shown.stdout, /^active: yes$/m);
-      assert.match(shown.stdout, /^archived: yes$/m);
+      assert.match(shown.stdout, /^ {2}active: +yes$/m);
+      assert.match(shown.stdout, /^ {2}archived: +yes$/m);
     });
   });
 

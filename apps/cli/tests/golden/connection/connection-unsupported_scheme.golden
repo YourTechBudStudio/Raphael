@@ -1,6 +1,6 @@
 ==== exit ====
-2
+5
 ==== stdout ====
 ==== stderr ====
 Raphael speaks HTTP and HTTPS. "ftp" is not supported.
-  reason: unsupported_scheme
+hint: Give an address that starts with http:// or https://.

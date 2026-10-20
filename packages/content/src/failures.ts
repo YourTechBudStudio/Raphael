@@ -26,6 +26,17 @@ export const CONTENT_FAILURE_REASONS = [
 
 export type ContentFailureReason = (typeof CONTENT_FAILURE_REASONS)[number];
 
+/**
+ * The attributes whose values are checked, as an `invalid_attribute_value` failure names them in
+ * `element`. Our own vocabulary, so naming one discloses nothing submitted.
+ */
+export const CHECKED_ATTRIBUTES = {
+  headingLevel: 'heading.level',
+  codeBlockLanguage: 'codeBlock.language',
+  orderedListStart: 'orderedList.start',
+  orderedListType: 'orderedList.type',
+} as const;
+
 /** How deep a reported location may be before it is truncated; locations are diagnostics, not paths. */
 export const FAILURE_PATH_MAX_SEGMENTS = 16;
 

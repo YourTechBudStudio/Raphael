@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -8,10 +10,17 @@ import { fileURLToPath } from 'node:url';
 
 import { ApiCredential, serve, silentLogger } from '@raphael/backend';
 import type { EndpointRejectionReason } from '@raphael/client';
+import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
 import { Effect, Exit, Scope } from 'effect';
 
-import { toExitCode } from '../src/main.ts';
-import { runLogin, type Prompter } from '../src/modules/connection/login.ts';
+import { invocationOf, toExitCode } from '../src/main.ts';
+import { saveConfig } from '../src/modules/connection/config.ts';
+import {
+  runLogin,
+  type LoginDependencies,
+  type Prompter,
+} from '../src/modules/connection/login.ts';
+import { newSession } from '../src/shared/command.ts';
 import type { Ran } from './support/cli.ts';
 import { caseName, goldenSurface } from './support/golden.ts';
 
@@ -84,7 +93,12 @@ const scripted = (address: string, key: string) => (): Prompter => ({
  * `toExitCode` gives it. Saved under a fresh XDG_CONFIG_HOME, whose path is then replaced with
  * `<tmp>` so the files do not depend on the machine.
  */
-const loginWith = async (argv: readonly string[], address: string, key: string): Promise<Ran> => {
+const loginWith = async (
+  argv: readonly string[],
+  address: string,
+  key: string,
+  save?: LoginDependencies['save'],
+): Promise<Ran> => {
   const root = temporary();
   let stdout = '';
   let stderr = '';
@@ -97,15 +111,18 @@ const loginWith = async (argv: readonly string[], address: string, key: string):
     },
   };
   let code: number;
+  const session = newSession(invocationOf(['login', ...argv]));
   try {
     code = await runLogin(argv, {
       streams,
+      session,
       prompter: scripted(address, key),
       environment: { XDG_CONFIG_HOME: root },
       platform: process.platform,
+      ...(save === undefined ? {} : { save }),
     });
   } catch (error) {
-    code = toExitCode(error, streams);
+    code = toExitCode(error, streams, session);
   }
   const scrub = (text: string): string =>
     text.replaceAll(root, '<tmp>').replaceAll(endpoint, '<endpoint>');
@@ -150,6 +167,65 @@ describe('login with a scripted prompt', () => {
 
   it('reports a saved login as JSON', async () => {
     login.expectRun('saved-json', await loginWith(['--json'], endpoint, KEY));
+  });
+
+  // The credential really is saved; only the directory flush could not be confirmed, which a test
+  // cannot make a filesystem do, so the save reports it. The login worked: exit 0, and say so.
+  const unconfirmed: LoginDependencies['save'] = (location, config) => ({
+    ...saveConfig(location, config),
+    durabilityUnconfirmed: true,
+  });
+
+  it('succeeds with a warning when the save could not be confirmed durable', async () => {
+    const ran = await loginWith([], endpoint, KEY, unconfirmed);
+    assert.equal(ran.code, 0);
+    login.expectRun('saved-durability-unconfirmed', ran);
+  });
+
+  it('carries the durability warning in the JSON envelope', async () => {
+    const ran = await loginWith(['--json'], endpoint, KEY, unconfirmed);
+    assert.equal(ran.code, 0);
+    assert.equal(ran.stderr, '', 'with --json, the warning is in the document');
+    const document = JSON.parse(ran.stdout) as { warnings: { code: string }[] };
+    assert.deepEqual(
+      document.warnings.map((warning) => warning.code),
+      ['durability_unconfirmed'],
+    );
+    login.expectRun('saved-durability-unconfirmed-json', ran);
+  });
+});
+
+describe('login and RAPHAEL_TIMEOUT', () => {
+  it('bounds the verification by the timeout it is given', async () => {
+    // A server that answers after 1.5 seconds: within the default, beyond RAPHAEL_TIMEOUT=1.
+    const slow = createServer((_request, response) => {
+      setTimeout(() => {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(JSON.stringify({ protocolVersion: PROTOCOL_VERSION }));
+      }, 1_500);
+    });
+    await new Promise<void>((resolveListen) => slow.listen(0, '127.0.0.1', resolveListen));
+    const address = `http://127.0.0.1:${(slow.address() as AddressInfo).port}`;
+    try {
+      let stderr = '';
+      const code = await runLogin([], {
+        session: newSession(invocationOf(['login'])),
+        streams: {
+          out: () => {},
+          err: (text) => {
+            stderr += text;
+          },
+        },
+        prompter: scripted(address, KEY),
+        environment: { XDG_CONFIG_HOME: temporary(), RAPHAEL_TIMEOUT: '1' },
+        platform: process.platform,
+      });
+      assert.equal(code, 6, stderr);
+      assert.match(stderr, /did not answer in time\. Nothing was saved\./);
+    } finally {
+      slow.closeAllConnections();
+      await new Promise<void>((resolveClose) => slow.close(() => resolveClose()));
+    }
   });
 });
 
@@ -202,8 +278,8 @@ describe(
       ]);
       // The prompt was answered and the login went on to try the connection, so the key was read.
       assert.match(ran.screen, /API key: /);
-      assert.match(ran.screen, /Could not verify that connection, so nothing was saved\./);
-      assert.equal(ran.code, 1);
+      assert.match(ran.screen, /Could not connect to the server at \S+\. Nothing was saved\./);
+      assert.equal(ran.code, 6, 'nothing was sent, and trying again may work');
       assert.equal(ran.screen.includes(KEY), false, `the key appeared on screen:\n${ran.screen}`);
       // Not even a prefix of it: one echoed keypress is already a leak.
       assert.equal(ran.screen.includes(KEY.slice(0, 4)), false);

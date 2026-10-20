@@ -76,7 +76,14 @@ export function useLifecycleAction(): LifecycleAction {
 
         return null;
       } catch (error) {
-        return asClientFailure(error) ?? { kind: 'network', message: String(error) };
+        return (
+          asClientFailure(error) ?? {
+            kind: 'network',
+            effect: 'write',
+            delivery: 'unknown',
+            message: String(error),
+          }
+        );
       }
     },
     pending: mutation.isPending,

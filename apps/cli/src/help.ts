@@ -10,6 +10,12 @@
  */
 
 import { CREATE_TARGETS } from './modules/nodes/input.ts';
+import { EXIT_CODES } from './shared/exit.ts';
+
+/** The exit-code summary, rendered from the one table, so help cannot drift from behavior. */
+const exitCodeLines = EXIT_CODES.map(
+  ({ code, meaning }) => `  ${String(code).padEnd(4)} ${meaning}`,
+).join('\n');
 
 export const ROOT_HELP = `raphael - an actionable second brain for agents
 
@@ -50,9 +56,7 @@ Options:
       --version     Show the version.
 
 Exit codes:
-  0  success
-  1  the command was right and the work did not succeed
-  2  the command was wrong; nothing was sent`;
+${exitCodeLines}`;
 
 export const SERVER_HELP = `Usage: raphael server <subcommand>
 

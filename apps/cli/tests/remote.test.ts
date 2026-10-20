@@ -19,10 +19,11 @@ import {
 } from '@raphael/contracts/nodes';
 import { Effect, Either, Exit, Scope } from 'effect';
 
-import { run as runCli } from '../src/main.ts';
+import { invocationOf, run as runCli } from '../src/main.ts';
 import { runLogin } from '../src/modules/connection/login.ts';
 import { connectFrom } from '../src/modules/connection/remote.ts';
-import { assertRefusal } from './support/golden.ts';
+import { newSession } from '../src/shared/command.ts';
+import { assertErrorDocument, assertRefusal } from './support/golden.ts';
 
 /**
  * The CLI against a real server.
@@ -140,9 +141,8 @@ const run = async (
     environment,
     platform: process.platform,
     cwd: packageRoot,
-    onSignal: () => {
-      throw new Error('Remote commands must not register signal handlers');
-    },
+    // Remote commands watch for signals; none arrives here.
+    onSignal: () => () => {},
     exit: () => {
       throw new Error('Remote commands must return their exit code');
     },
@@ -176,11 +176,14 @@ describe('reading the seeded hierarchy', () => {
     assert.equal(ran.stdout.trim(), '/work');
   });
 
-  it('reports a missing entity as an operation failure, not a usage error', async () => {
+  it('reports a missing entity as not found, naming what was looked up', async () => {
     const ran = await run(['get', '/nope']);
-    assert.equal(ran.code, 1);
+    assert.equal(ran.code, 3);
     assert.equal(ran.stdout, '', 'nothing belongs on stdout when there is no result');
-    assert.match(ran.stderr, /node_not_found/);
+    assert.equal(
+      ran.stderr,
+      'Nothing exists at /nope.\nhint: Run "raphael list /" to see what is there.\ncode: node_not_found (404)\n',
+    );
   });
 });
 
@@ -477,16 +480,23 @@ describe('creating', () => {
   it('reports a slug conflict with what conflicted and where', async () => {
     await run(['create', 'project', '/work/duplicate', '--title', 'First']);
     const ran = await run(['create', 'project', '/work/duplicate', '--title', 'Second']);
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /slug_conflict/);
-    assert.match(ran.stderr, /^"duplicate" is already used here\.$/m);
+    assert.equal(ran.code, 4);
+    assert.match(ran.stderr, /^code: slug_conflict \(409\)$/m);
+    // The full path the caller typed, and what holds it, by an id that can be fetched.
+    assert.match(ran.stderr, /^\/work\/duplicate is already taken by project \d+\.$/m);
+    assert.match(ran.stderr, /^Nothing was changed\.$/m);
+    assert.match(ran.stderr, /^hint: Run "raphael get --id \d+" to see what holds it/m);
   });
 
   it('refuses an area under a project, and says so as a parentage problem', async () => {
     await run(['create', 'project', '/work/host', '--title', 'Host']);
     const ran = await run(['create', 'area', '/work/host/nested', '--title', 'Nested']);
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /invalid_parent/);
+    assert.equal(ran.code, 4);
+    assert.match(ran.stderr, /^code: invalid_parent \(422\)$/m);
+    assert.match(
+      ran.stderr,
+      /^\/work\/host\/nested cannot be created: a project cannot contain an area\. An area can go at the top level or inside an area\.$/m,
+    );
   });
 });
 
@@ -497,8 +507,10 @@ describe('pagination', () => {
     }
     const ran = await run(['list', '/work', '--limit', '2']);
     assert.equal(ran.code, 0, ran.stderr);
-    assert.match(ran.stdout, /skip 0, limit 2/);
-    assert.match(ran.stdout, /More available: --skip 2/);
+    // The page note describes the page; it is not one of its rows, so it is on stderr.
+    assert.equal(ran.stdout.trimEnd().split('\n').length, 2, 'stdout holds exactly the rows');
+    assert.match(ran.stderr, /skip 0, limit 2/);
+    assert.match(ran.stderr, /More available: --skip 2/);
   });
 
   it('refuses a limit outside the contract rather than clamping it', async () => {
@@ -525,6 +537,96 @@ describe('pagination', () => {
   });
 });
 
+/**
+ * Run the CLI as a process whose stdout reader goes away at once, as `| head -1` or `| true` does.
+ * Its standard input carries `stdin` when given.
+ */
+const runClosedReader = (args: readonly string[], stdin?: string): Promise<Ran> =>
+  new Promise((resolveRun, rejectRun) => {
+    const child = spawn(process.execPath, [binary, ...args], {
+      env: { PATH: process.env.PATH ?? '', RAPHAEL_ENDPOINT: endpoint, RAPHAEL_API_KEY: KEY },
+      cwd: packageRoot,
+      timeout: 15_000,
+      killSignal: 'SIGKILL',
+    });
+    child.stdout.destroy();
+    let stderr = '';
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
+    child.on('error', rejectRun);
+    child.on('close', (code) => resolveRun({ code, stdout: '', stderr }));
+    child.stdin.end(stdin ?? '');
+  });
+
+describe('content refusals, as a real server words them', () => {
+  it('states the supported heading levels for a heading the server refuses', async () => {
+    const body = JSON.stringify({
+      type: 'doc',
+      content: [
+        { type: 'heading', attrs: { level: 7 }, content: [{ type: 'text', text: 'Deep' }] },
+      ],
+    });
+    const ran = await run([
+      'create',
+      'resource.note',
+      '/work/deep-heading',
+      '--title',
+      'Deep',
+      '--body-format',
+      'tiptap',
+      '--body',
+      body,
+    ]);
+    assert.equal(ran.code, 2);
+    assert.match(
+      ran.stderr,
+      /^The body has a heading level Raphael does not support \(block 1\)\. Use 1 to 3\.$/m,
+    );
+  });
+});
+
+describe('a reader that goes away', () => {
+  it('is not an error: a large read exits 0 with nothing on stderr', async () => {
+    // Larger than any pipe buffer, so the write after the reader left really does fail.
+    const big = `# Big\n\n${'words in one long paragraph '.repeat(20_000)}\n`;
+    const made = await run(
+      ['create', 'resource.note', '/work/epipe-big', '--title', 'Big', '--body', '@-'],
+      {
+        stdin: big,
+      },
+    );
+    assert.equal(made.code, 0, made.stderr);
+    for (const args of [
+      ['get', '/work/epipe-big'],
+      ['get', '/work/epipe-big', '--json'],
+    ]) {
+      const ran = await runClosedReader(args);
+      assert.equal(ran.code, 0, `${args.join(' ')}: ${ran.stderr}`);
+      assert.equal(ran.stderr, '', 'no stack trace, no complaint');
+    }
+  });
+
+  it('does not turn a successful write into a failure', async () => {
+    const ran = await runClosedReader([
+      'create',
+      'project',
+      '/work/epipe-write',
+      '--title',
+      'Written',
+      '--json',
+    ]);
+    assert.equal(ran.code, 0, ran.stderr);
+    assert.equal(ran.stderr, '');
+    // It happened, so a retry would only meet its own first attempt.
+    assert.equal((await run(['get', '/work/epipe-write'])).code, 0);
+  });
+
+  it('is not an error for help either', async () => {
+    const ran = await runClosedReader(['--help']);
+    assert.equal(ran.code, 0);
+    assert.equal(ran.stderr, '');
+  });
+});
+
 describe('stream and exit discipline', () => {
   it('puts results on stdout and diagnostics on stderr', async () => {
     const ok = await runProcess(['get', '/work', '--json']);
@@ -533,9 +635,8 @@ describe('stream and exit discipline', () => {
     assert.ok(ok.stdout.length > 0);
 
     const bad = await runProcess(['get', '/nope', '--json']);
-    assert.equal(bad.code, 1, bad.stderr);
-    assert.equal(bad.stdout, '');
-    assert.ok(bad.stderr.length > 0);
+    assert.equal(bad.code, 3, bad.stderr);
+    assertErrorDocument(bad, { exit: 3, code: 'node_not_found', command: 'get' });
   });
 
   it('never prints the API key, whatever happens', async () => {
@@ -555,14 +656,14 @@ describe('stream and exit discipline', () => {
 describe('connecting', () => {
   it('refuses a half-set environment pair instead of mixing sources', async () => {
     const ran = await run(['get', '/work'], { env: { RAPHAEL_ENDPOINT: '' } });
-    assert.equal(ran.code, 2);
-    assert.match(ran.stderr, /Set both, or unset both/);
+    assert.equal(ran.code, 5);
+    assert.match(ran.stderr, /^hint: Set RAPHAEL_ENDPOINT too, or unset RAPHAEL_API_KEY/m);
   });
 
   it('refuses a wrong key as an operation failure', async () => {
     const ran = await run(['get', '/work'], { env: { RAPHAEL_API_KEY: 'b'.repeat(32) } });
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /unauthorized/);
+    assert.equal(ran.code, 5, 'not authorized: fix the setup, do not retry');
+    assert.match(ran.stderr, /^code: unauthorized \(401\)$/m);
   });
 
   it('still refuses an endpoint that cannot carry a credential', async () => {
@@ -571,7 +672,7 @@ describe('connecting', () => {
     const ran = await run(['get', '/work'], {
       env: { RAPHAEL_ENDPOINT: 'http://user:secret@raphael.example.com' },
     });
-    assert.equal(ran.code, 2);
+    assert.equal(ran.code, 5);
     assert.match(ran.stderr, /username and password/);
     assert.equal(ran.stderr.includes('secret'), false);
   });
@@ -580,10 +681,13 @@ describe('connecting', () => {
     const ran = await run(['create', 'project', '/work/unreachable', '--title', 'U'], {
       env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
     });
-    assert.equal(ran.code, 1);
+    // Nothing was ever sent, so this is "not applied, and retrying may work" - not "unknown".
+    assert.equal(ran.code, 6);
     assert.equal(
       ran.stderr,
-      'The server could not be reached.\n\nCheck the server address and that the server is running.\n',
+      'Could not connect to the server at http://127.0.0.1:1.\n' +
+        'The change was not sent.\n' +
+        'hint: Check that the server is running and the address is right, then run the command again.\n',
     );
   });
 
@@ -594,6 +698,7 @@ describe('connecting', () => {
     let stdout = '';
 
     const code = await runLogin(['--json'], {
+      session: newSession(invocationOf(['login', '--json'])),
       streams: {
         out: (text) => {
           stdout += text;
@@ -638,13 +743,14 @@ describe('notes', () => {
 
     const got = await run(['get', '/work/api-design']);
     assert.equal(got.code, 0);
-    assert.match(got.stdout, /^resource\.note \d+ {2}\(revision 1\)/m);
-    assert.match(got.stdout, /title: API design/);
-    assert.match(got.stdout, /# API design/);
+    assert.match(got.stdout, /^resource\.note \d+: API design$/m);
+    assert.match(got.stdout, /^ {2}revision: {4}1$/m);
+    assert.match(got.stdout, /^ {2}description: Request contracts$/m);
+    assert.match(got.stdout, /\n\n# API design\n$/);
 
     const listed = await run(['list', '/work', '--filter', '{"type":"resource"}']);
     assert.equal(listed.code, 0);
-    assert.match(listed.stdout, /resource\.note {2}api-design/);
+    assert.match(listed.stdout, /resource\.note {2}- {2}api-design$/m);
   });
 
   it('accepts a body from a file, standard input, and TipTap', async () => {
@@ -707,7 +813,7 @@ describe('notes', () => {
       unnamed.stderr,
       /--title is required: nothing in the body or description can name this note\./,
     );
-    assert.equal((await run(['get', '/work/note-unnamed'])).code, 1, 'nothing was sent');
+    assert.equal((await run(['get', '/work/note-unnamed'])).code, 3, 'nothing was sent');
   });
 
   it('creates a note with no body at all when it is given a title', async () => {
@@ -725,13 +831,19 @@ describe('notes', () => {
 
   it('refuses a nameless note locally, before any request is made', async () => {
     // The CLI decides this itself; the server's own "Title is required." is never reached.
-    assertRefusal(await run(['create', 'resource.note', '/work/nameless']), {
-      exit: 2,
-      lines: [
-        '--title is required: nothing in the body or description can name this note.',
-        'Run "raphael create --help" for usage.',
-      ],
-    });
+    assertRefusal(
+      await run(['create', 'resource.note', '/work/nameless']),
+      {
+        exit: 2,
+        code: 'usage',
+        lines: [
+          '--title is required: nothing in the body or description can name this note.',
+          'The change was not sent.',
+          'hint: Run "raphael create --help" for usage.',
+        ],
+      },
+      await run(['create', 'resource.note', '/work/nameless', '--json']),
+    );
   });
 
   it('refuses an unknown type token before any request is made', async () => {
@@ -896,9 +1008,10 @@ describe('ordering', () => {
       (body.items as { slug: string }[]).map((i) => i.slug),
       all.slice(2, 5).map((i) => i.slug),
     );
-    assert.equal(body.skip, 2);
-    assert.equal(body.limit, 3);
-    assert.equal(body.hasMore, all.length > 5);
+    assert.equal(body.page.skip, 2);
+    assert.equal(body.page.limit, 3);
+    assert.equal(body.page.hasMore, all.length > 5);
+    assert.equal(body.page.nextSkip, all.length > 5 ? 5 : null);
 
     // The reverse direction is the same sequence read backwards, which a mis-forwarded direction
     // would not produce.
@@ -1105,7 +1218,7 @@ describe('updating', () => {
     assert.equal(ran.code, 0, ran.stderr);
     assert.match(ran.stdout, /^Updated resource\.note \d+: Original$/m);
     assert.match(ran.stdout, /revision: 2/);
-    assert.match(ran.stdout, /slug: update-by-id/);
+    assert.match(ran.stdout, /slug: +update-by-id/);
     assert.equal((await entityAt('/work/update-by-id')).description, 'Now described');
   });
 
@@ -1202,11 +1315,18 @@ describe('updating', () => {
       '--revision',
       String(stale),
     ]);
-    assert.equal(ran.code, 1);
+    assert.equal(ran.code, 4, 'a conflict with stored state; nothing was applied');
     assert.equal(ran.stdout, '', 'a conflict produces no result');
-    assert.match(ran.stderr, /code: revision_conflict \(409\)/);
-    assert.match(ran.stderr, new RegExp(`It is now at revision ${current.revision}\\.`));
-    assert.match(ran.stderr, /apply your change to the current version, and send it again/);
+    assert.match(ran.stderr, /^code: revision_conflict \(409\)$/m);
+    assert.match(
+      ran.stderr,
+      new RegExp(
+        `^/work/stale-revision changed after revision ${stale}: it is now at revision ${current.revision}\\.$`,
+        'm',
+      ),
+    );
+    assert.match(ran.stderr, /^Nothing was changed\.$/m);
+    assert.match(ran.stderr, /^hint: Run "raphael get \/work\/stale-revision" to see the change/m);
 
     // The entity is exactly where the earlier update left it.
     const afterConflict = await entityAt('/work/stale-revision');
@@ -1215,8 +1335,8 @@ describe('updating', () => {
   });
 
   it('classifies a real conflict as a definite rejection in the machine report', async () => {
-    // The CLI has no JSON failure output, so the machine shape is asserted where it is actually
-    // built, against a failure a real server produced rather than a handwritten one.
+    // The client's own failure for a conflict a real server produced: answered, a write, and the
+    // current revision as a structured detail the CLI words its sentence from.
     const note = await seedNote('report-shape');
     const transport = createTransport({
       endpoint,
@@ -1242,9 +1362,12 @@ describe('updating', () => {
     if (!result.ok) {
       assert.deepEqual(result.failure, {
         kind: 'http',
+        effect: 'write',
+        delivery: 'answered',
         status: 409,
         code: 'revision_conflict',
         message: `This changed on the server. It is now at revision ${note.revision + 1}.`,
+        details: { currentRevision: note.revision + 1 },
       });
     }
   });
@@ -1344,9 +1467,9 @@ describe('updating', () => {
     const ran = await run(['update', '/work/anything', '--tag', 'reviewed'], {
       env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
     });
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /The change was not sent\./);
-    assert.match(ran.stderr, /Check the server address/);
+    assert.equal(ran.code, 6);
+    assert.match(ran.stderr, /^The change was not sent\.$/m);
+    assert.match(ran.stderr, /^hint: Check that the server is running/m);
   });
 
   it('points at its own help when a body on standard input is refused', async () => {
@@ -1358,7 +1481,7 @@ describe('updating', () => {
     );
     assert.equal(ran.code, 2);
     assert.match(ran.stderr, /larger than the 1048576-byte request limit/);
-    assert.match(ran.stderr, /Run "raphael update --help" for usage\./);
+    assert.match(ran.stderr, /^hint: Run "raphael update --help" for usage\.$/m);
   });
 
   it('documents the revision rule in its help', async () => {
@@ -1440,8 +1563,8 @@ describe('updating', () => {
     });
     assert.equal(ran.code, 2);
     assert.match(ran.stderr, /Give --active or --inactive, not both\./);
-    assert.match(ran.stderr, /Run "raphael update --help" for usage\./);
-    assert.equal(ran.stderr.includes('Check the server address'), false);
+    assert.match(ran.stderr, /^hint: Run "raphael update --help" for usage\.$/m);
+    assert.equal(ran.stderr.includes('Could not connect'), false);
   });
 
   it('refuses to mark anything but a project, and says why', async () => {
@@ -1454,10 +1577,13 @@ describe('updating', () => {
     for (const path of ['/work', '/work/selection-on-a-note']) {
       for (const flag of ['--active', '--inactive']) {
         const ran = await run(['update', path, flag]);
-        assert.equal(ran.code, 1, ran.stderr);
-        assert.match(ran.stderr, /invalid_input \(400\)/);
-        assert.match(ran.stderr, /Only a project can be marked active\./);
-        assert.match(ran.stderr, /Only a project can be marked active\./);
+        assert.equal(ran.code, 2, ran.stderr);
+        assert.match(ran.stderr, /^code: invalid_input \(400\)$/m);
+        assert.match(
+          ran.stderr,
+          new RegExp(`^Only a project can be active, and ${path} is not a project\\.$`, 'm'),
+        );
+        assert.match(ran.stderr, /^Nothing was changed\.$/m);
       }
     }
     // Nothing was written by any of the four attempts. Asserted on the note, whose revision this test
@@ -1476,9 +1602,9 @@ describe('updating', () => {
       '--revision',
       String(created.revision),
     ]);
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /revision_conflict \(409\)/);
-    assert.match(ran.stderr, new RegExp(`It is now at revision ${created.revision + 1}\\.`));
+    assert.equal(ran.code, 4);
+    assert.match(ran.stderr, /^code: revision_conflict \(409\)$/m);
+    assert.match(ran.stderr, new RegExp(`it is now at revision ${created.revision + 1}\\.$`, 'm'));
     // The stale write did not silently undo a decision it never saw.
     assert.equal((await entityAt('/work/selection-stale')).active, true);
   });
@@ -1489,20 +1615,21 @@ describe('updating', () => {
 
     const shown = await run(['get', '/work/selection-shown']);
     assert.equal(shown.code, 0, shown.stderr);
-    assert.match(shown.stdout, /^active: yes$/m);
+    assert.match(shown.stdout, /^ {2}active: +yes$/m);
 
     await run(['update', '/work/selection-shown', '--inactive']);
-    assert.match((await run(['get', '/work/selection-shown'])).stdout, /^active: no$/m);
+    assert.match((await run(['get', '/work/selection-shown'])).stdout, /^ {2}active: +no$/m);
 
-    // An area is never active, so the line would answer a question nobody can ask of it.
-    assert.equal(/^active:/m.test((await run(['get', '/work'])).stdout), false);
+    // An area is never active: the field is there, and says it does not apply rather than "no".
+    assert.match((await run(['get', '/work'])).stdout, /^ {2}active: +-$/m);
 
     // A listing marks the selected row and leaves every other row exactly as it was.
     await run(['update', '/work/selection-shown', '--active']);
     const listed = await run(['list', '/work']);
     const rows = listed.stdout.split('\n').filter((line) => line.includes('selection-shown'));
     assert.equal(rows.length, 1);
-    assert.match(rows[0] ?? '', /selection-shown {2}active$/);
+    // The state is its own column before the free text, so a title or slug cannot imitate it.
+    assert.match(rows[0] ?? '', / {2}active {2}selection-shown$/);
 
     // --json is unchanged in shape and simply carries the field, so it is the independent statement
     // of which rows are selected that the marker can be checked against.
@@ -1518,15 +1645,16 @@ describe('updating', () => {
       .sort();
     const marked = listed.stdout
       .split('\n')
-      .filter((line) => line.endsWith('  active'))
-      .map((line) => line.trim().split(/\s+/)[2])
+      .map((line) => line.trim().split(/\s+/))
+      .filter((columns) => columns[2] === 'active')
+      .map((columns) => columns[3])
       .sort();
     assert.ok(selected.includes('selection-shown'));
     assert.deepEqual(marked, selected, 'exactly the selected rows are marked, and no others');
 
-    // An inactive row's width is untouched: nothing is padded or reserved for the marker.
+    // An inactive row says so in the same column, with the fixed word for "nothing to mark".
     const plain = listed.stdout.split('\n').find((line) => line.includes('selection-by-path'));
-    assert.match(plain ?? '', /selection-by-path$/);
+    assert.match(plain ?? '', / {2}- +selection-by-path$/);
     assert.equal(jsonOf(await run(['get', '/work', '--json'])).entity.active, false);
     assert.equal(created.active, false);
   });
@@ -1558,8 +1686,8 @@ describe('search', () => {
   it('finds a note by its text, and prints the title beside the slug', async () => {
     const ran = await run(['search', '/searching', '-r', '-q', 'auth tokens']);
     assert.equal(ran.code, 0, ran.stderr);
-    assert.match(ran.stdout, /resource\.note {2}tokens {2}Auth tokens/);
-    assert.match(ran.stdout, /shown, skip 0, limit \d+/);
+    assert.match(ran.stdout, /resource\.note {2}- {2}tokens {2}Auth tokens$/m);
+    assert.match(ran.stderr, /shown, skip 0, limit \d+/);
 
     // The same request as JSON is the independent statement of what was found, so the text form is
     // checked against it rather than against a hand-written expectation.
@@ -1567,8 +1695,11 @@ describe('search', () => {
     assert.equal(json.code, 0, json.stderr);
     const page = jsonOf(json);
     assert.equal(Array.isArray(page.items), true);
-    assert.equal(page.skip, 0);
-    assert.equal(typeof page.hasMore, 'boolean');
+    assert.equal(page.ok, true);
+    assert.equal(page.command, 'search');
+    assert.equal(page.page.skip, 0);
+    assert.equal(typeof page.page.hasMore, 'boolean');
+    assert.equal(typeof page.page.archivedLeftOut, 'boolean');
     // A hit is a wrapper around the summary, not the summary itself.
     assert.ok(page.items.every((hit: { node: unknown }) => typeof hit.node === 'object'));
     const slugs = page.items.map((hit: { node: { slug: string } }) => hit.node.slug);
@@ -1675,7 +1806,7 @@ describe('search', () => {
     const ran = await run(['search', '/searching', '-r', '-q', 'deep']);
     assert.equal(ran.code, 0, ran.stderr);
     const row = ran.stdout.split('\n').find((line) => line.includes('  deep  '));
-    assert.match(row ?? '', /project {6}  deep {2}Deep {2}active$/);
+    assert.match(row ?? '', /project +active {2}deep {2}Deep$/);
     await run(['update', '/searching/deep', '--inactive']);
   });
 
@@ -1798,10 +1929,11 @@ describe('search', () => {
 
   it('names the position of a scope that cannot be resolved', async () => {
     const ran = await run(['search', '--id', '9', '/missing', '-q', 'x']);
-    assert.equal(ran.code, 1, ran.stderr);
-    assert.match(ran.stderr, /node_not_found/);
-    // Paths are sent before ids, so the path is the first scope however the flags were typed.
-    assert.match(ran.stderr, /^Scope 1 does not exist\.$/m);
+    assert.equal(ran.code, 3, ran.stderr);
+    assert.match(ran.stderr, /^code: node_not_found \(404\)$/m);
+    // Paths are sent before ids, and the server names the position it received; the CLI maps that
+    // back to what was typed, however the flags were ordered.
+    assert.match(ran.stderr, /^Nothing exists at \/missing\.$/m);
   });
 
   it('refuses --order-by rather than accepting an order it cannot honour', async () => {
@@ -1850,8 +1982,8 @@ describe('moving', () => {
       [
         `Moved resource.note ${note.id}: Moving note`,
         `  revision: ${note.revision + 1}`,
-        '  slug: move-keep',
-        `  parent: ${personal.id}`,
+        '  slug:     move-keep',
+        `  parent:   ${personal.id}`,
         '',
       ].join('\n'),
     );
@@ -1861,7 +1993,7 @@ describe('moving', () => {
     assert.equal(moved.id, note.id);
     assert.deepEqual(moved.body, note.body);
     const old = await run(['get', '/work/move-keep']);
-    assert.equal(old.code, 1);
+    assert.equal(old.code, 3);
     assert.match(old.stderr, /node_not_found/);
   });
 
@@ -1869,11 +2001,11 @@ describe('moving', () => {
     const note = await seedNote('/work/move-rename');
     const ran = await run(['move', '/work/move-rename', '/personal/move-renamed']);
     assert.equal(ran.code, 0, ran.stderr);
-    assert.match(ran.stdout, /\n {2}slug: move-renamed\n/);
+    assert.match(ran.stdout, /\n {2}slug: +move-renamed\n/);
 
     const path = await run(['path', '--id', String(note.id)]);
     assert.equal(path.stdout.trim(), '/personal/move-renamed');
-    assert.equal((await run(['get', '/work/move-rename'])).code, 1);
+    assert.equal((await run(['get', '/work/move-rename'])).code, 3);
   });
 
   it('carries a moved container’s descendants with it', async () => {
@@ -1925,10 +2057,10 @@ describe('moving', () => {
     await run(['update', '/work/move-stale', '--title', 'Newer']);
 
     const ran = await run(['move', '/work/move-stale', '/personal', '--revision', '1']);
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /code: revision_conflict \(409\)/);
-    assert.match(ran.stderr, new RegExp(`It is now at revision ${note.revision + 1}\\.`));
-    assert.equal(ran.stderr.includes('Could not confirm'), false);
+    assert.equal(ran.code, 4);
+    assert.match(ran.stderr, /^code: revision_conflict \(409\)$/m);
+    assert.match(ran.stderr, new RegExp(`it is now at revision ${note.revision + 1}\\.$`, 'm'));
+    assert.match(ran.stderr, /^Nothing was changed\.$/m);
     assert.equal((await entityAt('/work/move-stale')).id, note.id);
   });
 
@@ -1944,25 +2076,31 @@ describe('moving', () => {
     await seedArea('/work/move-to-top');
     const ran = await run(['move', '/work/move-to-top', '/']);
     assert.equal(ran.code, 0, ran.stderr);
-    assert.match(ran.stdout, /\n {2}parent: top level\n$/);
+    assert.match(ran.stdout, /\n {2}parent: +top level\n$/);
     assert.equal((await run(['path', '/move-to-top'])).stdout.trim(), '/move-to-top');
   });
 
   it('refuses anything but an area at the top level, as a parentage problem', async () => {
     await seedProject('/work/move-project-top');
     const ran = await run(['move', '/work/move-project-top', '/']);
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /code: invalid_parent \(422\)/);
-    assert.match(ran.stderr, /Only areas can exist at the root\./);
+    assert.equal(ran.code, 4);
+    assert.match(ran.stderr, /^code: invalid_parent \(422\)$/m);
+    assert.match(
+      ran.stderr,
+      /^\/work\/move-project-top cannot move to \/: only areas can be at the top level\. A project can go inside an area\.$/m,
+    );
   });
 
   it('refuses a destination held by a note, and never overwrites it', async () => {
     const mover = await seedNote('/work/move-collide-a');
     const holder = await seedNote('/work/move-collide-b');
     const ran = await run(['move', '/work/move-collide-a', '/work/move-collide-b']);
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /code: slug_conflict \(409\)/);
-    assert.match(ran.stderr, /"move-collide-b" is already used here\./);
+    assert.equal(ran.code, 4);
+    assert.match(ran.stderr, /^code: slug_conflict \(409\)$/m);
+    assert.match(
+      ran.stderr,
+      new RegExp(`^/work/move-collide-b is already taken by note ${holder.id}\\.$`, 'm'),
+    );
     assert.equal((await entityAt('/work/move-collide-a')).id, mover.id);
     assert.equal((await entityAt('/work/move-collide-b')).id, holder.id);
   });
@@ -1971,9 +2109,12 @@ describe('moving', () => {
     await seedArea('/work/move-cycle');
     await seedArea('/work/move-cycle/child');
     const ran = await run(['move', '/work/move-cycle', '/work/move-cycle/child']);
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /code: invalid_parent \(422\)/);
-    assert.match(ran.stderr, /Something cannot be moved inside itself\./);
+    assert.equal(ran.code, 4);
+    assert.match(ran.stderr, /^code: invalid_parent \(422\)$/m);
+    assert.match(
+      ran.stderr,
+      /^\/work\/move-cycle cannot move into \/work\/move-cycle\/child, which is inside it\.$/m,
+    );
     assert.equal((await run(['path', '/work/move-cycle/child'])).code, 0);
   });
 
@@ -2003,9 +2144,9 @@ describe('moving', () => {
     const ran = await run(['move', '/work/anything', '/personal'], {
       env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
     });
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /The change was not sent\./);
-    assert.equal(ran.stderr.includes('Could not confirm'), false);
+    assert.equal(ran.code, 6);
+    assert.match(ran.stderr, /^The change was not sent\.$/m);
+    assert.equal(ran.stderr.includes('may or may not'), false);
   });
 });
 
@@ -2077,6 +2218,11 @@ describe('archiving and restoring', () => {
         '',
       ].join('\n'),
     );
+    // The next step is not a result, so it is on stderr: restore the container that holds it.
+    assert.equal(
+      still.stderr,
+      `hint: Run "raphael restore --id ${shelf.id}" to restore area ${shelf.id} too.\n`,
+    );
 
     const json = await run(['restore', '--id', String(shelf.id), '--json']);
     assert.equal(json.code, 0, json.stderr);
@@ -2092,14 +2238,15 @@ describe('archiving and restoring', () => {
     const shelf = await created(['create', 'area', '/work/arch-get', '--title', 'Shelf']);
     await created(['create', 'project', '/work/arch-get/inner', '--title', 'Inner']);
 
+    // Always the field, so an active item says so rather than leaving it to be inferred.
     const active = await run(['get', '/work/arch-get/inner']);
-    assert.equal(active.stdout.includes('archived'), false);
+    assert.match(active.stdout, /\n {2}archived: +no\n {2}favorite:/);
 
     assert.equal((await run(['archive', '/work/arch-get'])).code, 0);
     const inherited = await run(['get', '/work/arch-get/inner']);
     assert.match(
       inherited.stdout,
-      /\nactive: no\narchived: yes\n {2}through area \d+ "Shelf" \(user\)\n/,
+      /\n {2}active: +no\n {2}archived: +yes\n {4}through area \d+ "Shelf" \(user\)\n/,
     );
     assert.equal(inherited.stdout.includes(`area ${shelf.id}`), true);
   });
@@ -2115,13 +2262,13 @@ describe('archiving and restoring', () => {
     assert.match(hidden.stdout, /breeze\n/);
 
     const shown = await run(['list', '/work/arch-list', '--include-archived']);
-    assert.match(shown.stdout, /zephyr {2}archived\n/);
+    assert.match(shown.stdout, / {2}archived {2}zephyr\n/);
     assert.match(shown.stdout, /breeze\n/);
 
     const searched = await run(['search', '/work/arch-list', '-q', 'zephyr']);
     assert.equal(searched.stdout.includes('Zephyr one'), false);
     const included = await run(['search', '/work/arch-list', '-q', 'zephyr', '--include-archived']);
-    assert.match(included.stdout, /Zephyr one {2}archived\n/);
+    assert.match(included.stdout, / {2}archived {2}zephyr {2}Zephyr one\n/);
   });
 
   it('explains each refusal of something archived by what is archived and how', async () => {
@@ -2131,14 +2278,32 @@ describe('archiving and restoring', () => {
     assert.equal((await run(['archive', '/work/arch-refuse'])).code, 0);
     assert.equal((await run(['archive', '/work/arch-direct'])).code, 0);
 
+    const refuse = await entityAt('/work/arch-refuse');
     const onDirect = await run(['update', '--id', String(direct.id), '--title', 'X']);
-    assert.equal(onDirect.code, 1);
-    assert.match(onDirect.stderr, /code: node_archived \(409\)/);
-    assert.match(onDirect.stderr, /^This is archived\.$/m);
+    assert.equal(onDirect.code, 4);
+    assert.match(onDirect.stderr, /^code: node_archived \(409\)$/m);
+    assert.match(
+      onDirect.stderr,
+      new RegExp(`^--id ${direct.id} is archived, so it cannot be changed\\.$`, 'm'),
+    );
+    assert.match(
+      onDirect.stderr,
+      new RegExp(`^hint: Run "raphael restore --id ${direct.id}" first`, 'm'),
+    );
 
     const onInherited = await run(['update', '/work/arch-refuse/inner', '--active']);
-    assert.equal(onInherited.code, 1);
-    assert.match(onInherited.stderr, /^This is inside something archived\.$/m);
+    assert.equal(onInherited.code, 4);
+    assert.match(
+      onInherited.stderr,
+      new RegExp(
+        `^/work/arch-refuse/inner is inside archived area ${refuse.id}, so it cannot be changed\\.$`,
+        'm',
+      ),
+    );
+    assert.match(
+      onInherited.stderr,
+      new RegExp(`^hint: Run "raphael restore --id ${refuse.id}" first`, 'm'),
+    );
 
     const underArchived = await run([
       'create',
@@ -2147,13 +2312,16 @@ describe('archiving and restoring', () => {
       '--title',
       'N',
     ]);
-    assert.equal(underArchived.code, 1);
-    assert.match(underArchived.stderr, /^The parent is inside something archived\.$/m);
+    assert.equal(underArchived.code, 4);
+    assert.match(
+      underArchived.stderr,
+      new RegExp(`^The parent /work/arch-refuse/inner is inside archived area ${refuse.id}`, 'm'),
+    );
 
     const note = await created(['create', 'resource.note', '/work/arch-mover', '--title', 'M']);
     const toArchived = await run(['move', '--id', String(note.id), '/work/arch-refuse']);
-    assert.equal(toArchived.code, 1);
-    assert.match(toArchived.stderr, /^The destination is archived\.$/m);
+    assert.equal(toArchived.code, 4);
+    assert.match(toArchived.stderr, /^The destination \/work\/arch-refuse is archived/m);
 
     // An inherited-only item moves out, and is active once it is somewhere active.
     const out = await run(['move', '/work/arch-refuse/inner', '/work/arch-rescued']);
@@ -2166,8 +2334,8 @@ describe('archiving and restoring', () => {
       const unread = await run([verb, '/work/anything'], {
         env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
       });
-      assert.equal(unread.code, 1);
-      assert.match(unread.stderr, /The change was not sent\./);
+      assert.equal(unread.code, 6);
+      assert.match(unread.stderr, /^The change was not sent\.$/m);
     }
   });
 
@@ -2186,8 +2354,12 @@ describe('favorites', () => {
     assert.equal(ran.code, 0, ran.stderr);
     return jsonOf(ran).entity;
   };
+  /** The favorite field of `get`, with its padding collapsed: `favorite: yes`. */
   const favoriteLine = async (path: string): Promise<string | undefined> =>
-    (await run(['get', path])).stdout.split('\n').find((line) => line.startsWith('favorite: '));
+    (await run(['get', path])).stdout
+      .split('\n')
+      .map((line) => line.trim().replace(/: +/, ': '))
+      .find((line) => line.startsWith('favorite: '));
   const listedIds = async (): Promise<number[]> => {
     const ran = await run(['favorites', '--json']);
     assert.equal(ran.code, 0, ran.stderr);
@@ -2201,19 +2373,19 @@ describe('favorites', () => {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const added = await run(['favorite', '/work/fav-basic']);
       assert.equal(added.code, 0, added.stderr);
-      assert.equal(added.stdout, `Node ${project.id} is a favorite.\n`);
+      assert.equal(added.stdout, `Item ${project.id} is a favorite.\n`);
     }
     assert.equal(await favoriteLine('/work/fav-basic'), 'favorite: yes');
 
     const listed = await run(['favorites']);
     assert.equal(listed.code, 0, listed.stderr);
-    assert.match(listed.stdout, new RegExp(`^ *${project.id}  project +Basic$`, 'm'));
-    assert.match(listed.stdout, /shown, skip 0, limit 50\. No more\.\n$/);
+    assert.match(listed.stdout, new RegExp(`^${project.id} +project +- +Basic$`, 'm'));
+    assert.match(listed.stderr, /shown, skip 0, limit 50\. No more\.\n$/);
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const removed = await run(['unfavorite', '--id', String(project.id)]);
       assert.equal(removed.code, 0, removed.stderr);
-      assert.equal(removed.stdout, `Node ${project.id} is not a favorite.\n`);
+      assert.equal(removed.stdout, `Item ${project.id} is not a favorite.\n`);
     }
     assert.equal(await favoriteLine('/work/fav-basic'), 'favorite: no');
     assert.equal((await listedIds()).includes(project.id), false);
@@ -2230,7 +2402,9 @@ describe('favorites', () => {
 
     const page = await run(['favorites', '--limit', '1', '--skip', '0', '--json']);
     assert.equal(page.code, 0, page.stderr);
-    const decoded = decodeListResponse(jsonOf(page));
+    // The page window travels under `page`; the items are exactly the contract's summaries.
+    const envelope = jsonOf(page);
+    const decoded = decodeListResponse({ items: envelope.items, ...envelope.page });
     assert.equal(Either.isRight(decoded), true);
     if (Either.isRight(decoded)) {
       assert.equal(decoded.right.limit, 1);
@@ -2247,8 +2421,11 @@ describe('favorites', () => {
     await created(['create', 'resource.note', '/work/fav-note/runbook', '--title', 'Runbook']);
 
     const refused = await run(['favorite', '/work/fav-note/runbook']);
-    assert.equal(refused.code, 1);
-    assert.match(refused.stderr, /Only areas and projects can be favorites\./);
+    assert.equal(refused.code, 2);
+    assert.match(
+      refused.stderr,
+      /^Only areas and projects can be favorites, and \/work\/fav-note\/runbook is neither\.$/m,
+    );
     assert.equal(await favoriteLine('/work/fav-note/runbook'), 'favorite: no');
   });
 

@@ -2,4 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-Raphael speaks HTTP and HTTPS. "ftp" is not supported.
+Raphael speaks HTTP and HTTPS. "ftp" is not supported. Nothing was saved.
+hint: Run "raphael login" again and give the full address, such as https://raphael.example.com.

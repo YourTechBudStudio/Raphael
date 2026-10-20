@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+/work cannot move into /work/sub, which is inside it.
+Nothing was changed.
+hint: Run "raphael list /" to choose a destination outside it.
+code: invalid_parent (422)

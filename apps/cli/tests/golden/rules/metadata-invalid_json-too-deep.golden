@@ -3,3 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 Expected metadata: "a.a.a.a.a" nests deeper than 5 levels
+The change was not sent.
+hint: Run "raphael create --help" for usage.

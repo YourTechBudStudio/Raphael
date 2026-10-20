@@ -1,0 +1,5 @@
+==== exit ====
+1
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"archive","error":{"code":"quota_exhausted","category":"failed","message":"The server's sentence for quota_exhausted.","hint":"Check that this CLI and the server are the same version with \"raphael version\".","exitCode":1,"status":429,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for quota_exhausted."}}

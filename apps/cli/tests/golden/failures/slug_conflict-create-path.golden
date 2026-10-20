@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+/work/n2 is already taken by note 12.
+Nothing was changed.
+hint: Run "raphael get --id 12" to see what holds it, or choose another slug.
+code: slug_conflict (409)

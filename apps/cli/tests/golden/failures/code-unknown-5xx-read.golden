@@ -1,0 +1,7 @@
+==== exit ====
+1
+==== stdout ====
+==== stderr ====
+The server's sentence for quota_exhausted.
+hint: Check that this CLI and the server are the same version with "raphael version".
+code: quota_exhausted (507)

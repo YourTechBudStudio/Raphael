@@ -1,4 +1,9 @@
-import { API_ERROR_STATUS, type ApiErrorCode } from '@raphael/contracts';
+import {
+  API_ERROR_STATUS,
+  type ApiErrorCode,
+  type ApiErrorDetails,
+  type UnsupportedMediaReason,
+} from '@raphael/contracts';
 
 /**
  * Failures the transport produces on its own, before any operation runs.
@@ -16,6 +21,8 @@ import { API_ERROR_STATUS, type ApiErrorCode } from '@raphael/contracts';
 export interface TransportError {
   readonly code: ApiErrorCode;
   readonly message: string;
+  /** Structured facts for a client to word the failure itself. Our own vocabulary only. */
+  readonly details?: ApiErrorDetails;
   /** Response headers this failure requires. `405` has to name what the route does accept. */
   readonly headers?: Readonly<Record<string, string>>;
 }
@@ -36,10 +43,7 @@ export const methodNotAllowed = (): TransportError => ({
   headers: { Allow: 'POST' },
 });
 
-export type MediaRejection =
-  | 'unsupported_media_type'
-  | 'unsupported_content_encoding'
-  | 'unsupported_charset';
+export type MediaRejection = UnsupportedMediaReason;
 
 const MEDIA_MESSAGES: Readonly<Record<MediaRejection, string>> = {
   unsupported_media_type: 'Request bodies must be application/json.',
@@ -51,11 +55,13 @@ const MEDIA_MESSAGES: Readonly<Record<MediaRejection, string>> = {
 export const unsupportedMedia = (reason: MediaRejection): TransportError => ({
   code: 'unsupported_media_type',
   message: MEDIA_MESSAGES[reason],
+  details: { reason },
 });
 
 export const payloadTooLarge = (limit: number): TransportError => ({
   code: 'payload_too_large',
   message: `The request body is larger than the ${limit} bytes this server accepts.`,
+  details: { limit },
 });
 
 /**
@@ -78,6 +84,7 @@ const BODY_MESSAGES: Readonly<Record<BodyRejection, string>> = {
 export const invalidBody = (reason: BodyRejection): TransportError => ({
   code: 'invalid_input',
   message: BODY_MESSAGES[reason],
+  details: { reason },
 });
 
 /**
@@ -90,6 +97,7 @@ export const invalidBody = (reason: BodyRejection): TransportError => ({
 export const incompleteRequest = (): TransportError => ({
   code: 'invalid_input',
   message: 'The request body did not finish arriving.',
+  details: { reason: 'incomplete_body' },
 });
 
 /** Shutdown has begun. Nothing was applied, and a retry is the right recovery. */
@@ -108,6 +116,16 @@ export const statusOf = (error: TransportError): number => API_ERROR_STATUS[erro
 /** The wire envelope. Built field by field; no error instance is ever serialized. */
 export const envelopeOf = (
   error: TransportError,
-): { error: { readonly code: ApiErrorCode; readonly message: string } } => ({
-  error: { code: error.code, message: error.message },
+): {
+  error: {
+    readonly code: ApiErrorCode;
+    readonly message: string;
+    readonly details?: ApiErrorDetails;
+  };
+} => ({
+  error: {
+    code: error.code,
+    message: error.message,
+    ...(error.details === undefined ? {} : { details: error.details }),
+  },
 });

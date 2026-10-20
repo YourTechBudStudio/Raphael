@@ -2,5 +2,6 @@
 1
 ==== stdout ====
 ==== stderr ====
-The server's sentence for internal_error.
-  code: internal_error (500)
+The server at http://raphael.invalid could not complete the request.
+hint: Check the server's log for what failed, then run the command again.
+code: internal_error (500)

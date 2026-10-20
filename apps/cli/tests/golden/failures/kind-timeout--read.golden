@@ -1,0 +1,6 @@
+==== exit ====
+6
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid did not answer in time.
+hint: Run the command again, or allow longer by setting RAPHAEL_TIMEOUT in seconds.

@@ -17,12 +17,19 @@ export {
   type EndpointRejection,
   type EndpointRejectionReason,
 } from './shared/endpoint.ts';
-export { retryable, type ClientFailure, type ClientResult } from './shared/failure.ts';
+export {
+  retryable,
+  type ClientFailure,
+  type ClientResult,
+  type FailureDelivery,
+  type OperationEffect,
+} from './shared/failure.ts';
 export {
   DEFAULT_TIMEOUT_MS,
   createTransport,
   isTransportRejection,
   type FetchLike,
+  type OperationCall,
   type Transport,
   type TransportOptions,
   type TransportRejection,

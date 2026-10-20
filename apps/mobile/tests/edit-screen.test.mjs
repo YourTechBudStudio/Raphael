@@ -251,8 +251,8 @@ describe('the editor over an existing entity', () => {
       [{ kind: 'offline' }, 'Offline · kept on this phone', false],
       [{ kind: 'waiting' }, 'Waiting for your server · kept on this phone', false],
       [
-        { kind: 'refused', message: '"idea" is already used here.' },
-        'Not saved: "idea" is already used here.',
+        { kind: 'refused', message: 'That slug is already used here.' },
+        'Not saved: That slug is already used here.',
         true,
       ],
     ]) {

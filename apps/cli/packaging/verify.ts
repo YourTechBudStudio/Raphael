@@ -271,7 +271,8 @@ const ready = async (processes: Processes, server: Server, label: string): Promi
   const deadline = Date.now() + STARTUP_TIMEOUT_MS;
   let exited: Ran | undefined;
   void server.exited.then((ran) => (exited = ran));
-  while (!/Press Ctrl-C to stop\./.test(server.stdout())) {
+  // Every operator line, readiness included, is on stderr; a server's stdout stays empty.
+  while (!/Press Ctrl-C to stop\./.test(server.stderr())) {
     processes.checkpoint();
     if (exited !== undefined) throw new PackagingError(describeRun(label, exited));
     if (Date.now() > deadline) {
@@ -449,8 +450,8 @@ const verifyInstalled = async (
     log('starting the installed server');
     let server = serve(install, config);
     await ready(processes, server, 'raphael server serve');
-    const port = /port=(\d+)/.exec(server.stdout())?.[1];
-    expect(port !== undefined, `the server did not report its port:\n${server.stdout()}`);
+    const port = /port=(\d+)/.exec(server.stderr())?.[1];
+    expect(port !== undefined, `the server did not report its port:\n${server.stderr()}`);
     const endpoint = `http://127.0.0.1:${String(port)}`;
     expect(
       existsSync(join(configDirectory, 'data', 'raphael.sqlite')),
@@ -492,7 +493,7 @@ const verifyInstalled = async (
     expect((await verifyRequest(`Bearer ${WRONG_KEY}`)) === 401, 'a wrong key was not refused.');
     const refused = await remote(install, ['get', '/work'], WRONG_KEY);
     expect(
-      refused.code === 1 && /unauthorized/.test(refused.stderr),
+      refused.code === 5 && /^code: unauthorized \(401\)$/m.test(refused.stderr),
       describeRun('raphael get with a wrong key (expected a refusal)', refused),
     );
 

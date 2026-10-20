@@ -1,6 +1,6 @@
 ==== exit ====
-2
+5
 ==== stdout ====
 ==== stderr ====
 That is not a valid URL. Include the scheme, as in "https://raphael.example.com".
-  reason: malformed
+hint: Give the full address, such as http://127.0.0.1:3000.

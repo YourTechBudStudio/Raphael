@@ -40,7 +40,14 @@ Options:
       --version     Show the version.
 
 Exit codes:
-  0  success
-  1  the command was right and the work did not succeed
-  2  the command was wrong; nothing was sent
+  0    Done. This includes no-ops and success with warnings.
+  1    Failed for another reason, with nothing left uncertain.
+  2    The command as typed can never succeed; nothing was applied.
+  3    Not found.
+  4    Conflicts with stored state; nothing was applied.
+  5    Not configured, or not authorized.
+  6    Not applied, and retrying may work.
+  7    Outcome unknown: a write was sent and no definite answer came back.
+  130  Interrupted by SIGINT.
+  143  Interrupted by SIGTERM.
 ==== stderr ====

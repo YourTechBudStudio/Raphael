@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+The slug this item would have at /personal is already taken by project 11.
+Nothing was changed.
+hint: Run "raphael get --id 11" to see what holds it, or choose another slug.
+code: slug_conflict (409)

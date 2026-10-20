@@ -1,0 +1,7 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid answered 304, which this command does not expect.
+Nothing was changed.
+hint: Check that the address points at the Raphael server itself, then run "raphael login" again.

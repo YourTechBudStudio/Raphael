@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"archive","error":{"code":"unauthorized","category":"not_configured","message":"The server at http://raphael.invalid refused the API key.","hint":"Run \"raphael login\" with the server's key, or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY.","exitCode":5,"status":401,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for unauthorized."}}

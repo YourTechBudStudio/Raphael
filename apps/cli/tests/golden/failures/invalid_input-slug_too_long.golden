@@ -1,0 +1,8 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The slug in /personal/long is longer than 100 characters.
+Nothing was changed.
+hint: Run "raphael move --help" for usage.
+code: invalid_input (400)

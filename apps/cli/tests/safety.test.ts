@@ -117,7 +117,7 @@ const runProcess = (
   stdin: { readonly text: string } | 'dev-null' | 'closed',
 ): Promise<Ran> =>
   new Promise((resolveRun, rejectRun) => {
-    // An address nothing listens on: a request that is sent fails as unreachable, exit 1, which is
+    // An address nothing listens on: a request that is sent fails as unreachable, exit 6, which is
     // what tells a body that went ahead apart from a refusal.
     const env = {
       PATH: process.env.PATH ?? '',
@@ -172,7 +172,62 @@ describe('an empty body on standard input', () => {
 
   it('sends whitespace, which is a body someone wrote', async () => {
     const ran = await runProcess(update, { text: '\n' });
-    assert.equal(ran.code, 1);
-    assert.match(ran.stderr, /The server could not be reached\./);
+    // It got as far as the connection, which nothing answers: not sent, and trying again may work.
+    assert.equal(ran.code, 6);
+    assert.match(ran.stderr, /^Could not connect to the server at /);
+    assert.match(ran.stderr, /^The change was not sent\.$/m);
   });
+});
+
+describe('a signal while waiting on standard input', () => {
+  /**
+   * Start `update --body @-`, give it part of a body, then send the signal. A signal that lands before
+   * node has started the CLI kills the process outright (exit null), which says nothing about the CLI,
+   * so such a run is repeated with a longer wait rather than counted.
+   */
+  const interrupted = async (
+    signal: 'SIGINT' | 'SIGTERM',
+  ): Promise<{ code: number | null; stdout: string; stderr: string }> => {
+    for (const wait of [500, 1_500, 4_000]) {
+      const child = spawn(
+        process.execPath,
+        [main, 'update', '/work/contracts', '--body', '@-', '--revision', '3'],
+        {
+          env: {
+            PATH: process.env.PATH ?? '',
+            RAPHAEL_ENDPOINT: 'http://127.0.0.1:9',
+            RAPHAEL_API_KEY: 'stdin-key-0123456789abcdef0123456789',
+          },
+          stdio: ['pipe', 'pipe', 'pipe'],
+          timeout: 15_000,
+          killSignal: 'SIGKILL',
+        },
+      );
+      let stdout = '';
+      let stderr = '';
+      child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
+      // Some input arrives and more is still coming when the signal does.
+      child.stdin.write('# Half a body\n');
+      setTimeout(() => child.kill(signal), wait);
+      const code = await new Promise<number | null>((done) => child.on('close', done));
+      if (code !== null) return { code, stdout, stderr };
+    }
+    assert.fail('the CLI never got as far as reading standard input');
+  };
+
+  for (const [signal, exit] of [
+    ['SIGINT', 130],
+    ['SIGTERM', 143],
+  ] as const) {
+    it(`ends ${signal === 'SIGINT' ? 'with Ctrl-C' : 'on SIGTERM'}: exit ${exit}, and nothing was sent`, async () => {
+      const ran = await interrupted(signal);
+      assert.equal(ran.code, exit);
+      assert.equal(ran.stdout, '');
+      assert.equal(
+        ran.stderr,
+        `Interrupted by ${signal}.\nThe change was not sent.\nhint: Run the command again.\n`,
+      );
+    });
+  }
 });

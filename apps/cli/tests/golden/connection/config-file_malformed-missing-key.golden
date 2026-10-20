@@ -1,6 +1,6 @@
 ==== exit ====
-2
+5
 ==== stdout ====
 ==== stderr ====
-"<tmp>/raphael/config.json" does not contain an endpoint and an API key. Run "raphael login" again.
-  reason: file_malformed
+"<tmp>/raphael/config.json" does not contain an endpoint and an API key.
+hint: Run "raphael login" again to replace it.

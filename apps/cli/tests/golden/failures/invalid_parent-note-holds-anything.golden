@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+/work/n1/inner cannot be created: a note cannot contain anything. A note can go inside an area or a project.
+Nothing was changed.
+hint: Run "raphael list /" to choose another place.
+code: invalid_parent (422)

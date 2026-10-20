@@ -1,5 +1,10 @@
 import { describeContentFailure, type ContentFailure } from '@raphael/content';
-import type { ApiErrorCode } from '@raphael/contracts';
+import type {
+  ApiErrorCode,
+  ApiErrorDetails,
+  InvalidInputReason as ApiInvalidInputReason,
+} from '@raphael/contracts';
+import { PARENTAGE, RESOURCE_KINDS } from '@raphael/contracts/nodes';
 import { Data } from 'effect';
 
 import type { NodeType } from './types.ts';
@@ -13,17 +18,11 @@ import type { NodeType } from './types.ts';
  * are shown to people as they are, so each one explains itself without repeating note content.
  */
 
-export type InvalidInputReason =
-  | 'invalid'
-  | 'title_required'
-  | 'title_too_long'
-  | 'slug_too_long'
-  | 'active_requires_project'
-  | 'favorite_requires_container'
-  | 'query_malformed'
-  | 'query_too_long'
-  | 'query_too_many_terms'
-  | 'filter_unsupported';
+/** The reasons an operation can refuse its input for; the rest belong to the HTTP host. */
+export type InvalidInputReason = Exclude<
+  ApiInvalidInputReason,
+  'malformed_json' | 'invalid_utf8' | 'incomplete_body'
+>;
 
 /** Request fields a failure may name. Our own vocabulary, so naming one discloses nothing submitted. */
 export const REQUEST_FIELDS = [
@@ -83,11 +82,25 @@ export class InvalidParent extends Data.TaggedError('InvalidParent')<{
   readonly childType: NodeType;
 }> {}
 
-/** An address that is already taken, by the slug the write would have produced. */
+/** The item that stands in the way of a change: an archived container, or a slug's holder. */
+export interface BlockingNode {
+  readonly id: number;
+  readonly type: NodeType;
+}
+
+/**
+ * An address that is already taken, by the slug the write would have produced.
+ *
+ * `parentId` is where the clash happened (`null` at the root), when the operation knows it, so the
+ * holder can be looked up once the write has rolled back. `holder` is that lookup's answer, or the
+ * occupant itself when the operation already had it in hand.
+ */
 export class SlugConflict extends Data.TaggedError('SlugConflict')<{
   readonly field: 'slug' | 'destination';
   readonly slug: string;
   readonly scope: 'root' | 'sibling';
+  readonly parentId?: number | null;
+  readonly holder?: BlockingNode;
 }> {}
 
 /** A write that named a revision the row is not at. */
@@ -104,6 +117,8 @@ export class RevisionConflict extends Data.TaggedError('RevisionConflict')<{
 export class NodeArchived extends Data.TaggedError('NodeArchived')<{
   readonly field: 'target' | 'parent' | 'destination';
   readonly standing: 'direct' | 'inherited';
+  /** The nearest archived item: the node itself when `direct`, else the container it inherits from. */
+  readonly blocking?: BlockingNode;
 }> {}
 
 /** A failure converting or validating *submitted* content. Stored content is never this error. */
@@ -134,6 +149,7 @@ export type NodeError =
 export interface PublicApiError {
   readonly code: ApiErrorCode;
   readonly message: string;
+  readonly details?: ApiErrorDetails;
 }
 
 /** Fields named in the plural, so a sentence about them agrees. */
@@ -149,7 +165,7 @@ const invalidInputMessage = ({ field, reason, limit }: InvalidInput): string => 
     case 'title_too_long':
       return `Title is longer than ${limit} characters.`;
     case 'slug_too_long':
-      return `The address is longer than ${limit} characters.`;
+      return `The slug is longer than ${limit} characters.`;
     case 'active_requires_project':
       return 'Only a project can be marked active.';
     case 'favorite_requires_container':
@@ -186,38 +202,96 @@ const archivedMessage = ({ field, standing }: NodeArchived): string => {
     : `${subject} is inside something archived.`;
 };
 
+/** How a type reads in a sentence. A resource is named by its kinds. */
+const nounOf = (type: NodeType): string =>
+  type === 'resource' ? RESOURCE_KINDS.join(' or ') : type;
+
+const withArticle = (word: string): string => `${/^[aeiou]/.test(word) ? 'an' : 'a'} ${word}`;
+
+const capitalized = (text: string): string => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+
+/** The containment refusal, stated from `PARENTAGE` so it changes with the rule it describes. */
+const parentMessage = ({ reason, parentType, childType }: InvalidParent): string => {
+  if (reason === 'cycle') return 'Something cannot be moved inside itself.';
+  if (parentType === 'root') {
+    const allowed = PARENTAGE.root.map((type) => `${nounOf(type)}s`).join(' and ');
+    return `Only ${allowed} can exist at the root.`;
+  }
+  const parent = capitalized(withArticle(nounOf(parentType)));
+  return PARENTAGE[parentType].length === 0
+    ? `${parent} holds nothing, so it cannot be a parent.`
+    : `${parent} cannot contain ${withArticle(nounOf(childType))}.`;
+};
+
+/** Drops absent members, so a projection never carries `undefined` onto the wire. */
+const detailsOf = (details: ApiErrorDetails): ApiErrorDetails =>
+  Object.fromEntries(
+    Object.entries(details).filter(([, value]) => value !== undefined),
+  ) as ApiErrorDetails;
+
 /** The complete public projection. Every field is chosen here; nothing is spread from an error. */
 export const toPublicError = (error: NodeError): PublicApiError => {
   switch (error._tag) {
     case 'InvalidInput':
-      return { code: 'invalid_input', message: invalidInputMessage(error) };
+      return {
+        code: 'invalid_input',
+        message: invalidInputMessage(error),
+        details: detailsOf({ field: error.field, reason: error.reason, limit: error.limit }),
+      };
     case 'NodeNotFound':
-      return { code: 'node_not_found', message: notFoundMessage(error) };
+      return {
+        code: 'node_not_found',
+        message: notFoundMessage(error),
+        details: detailsOf({ field: error.field, index: error.index }),
+      };
     case 'InvalidParent':
       return {
         code: 'invalid_parent',
-        message:
-          error.reason === 'cycle'
-            ? 'Something cannot be moved inside itself.'
-            : error.parentType === 'root'
-              ? 'Only areas can exist at the root.'
-              : error.parentType === 'resource'
-                ? 'A note holds nothing, so it cannot be a parent.'
-                : `A ${error.parentType} cannot contain a ${error.childType === 'resource' ? 'note' : error.childType}.`,
+        message: parentMessage(error),
+        details: {
+          field: error.field,
+          reason: error.reason,
+          parentType: error.parentType,
+          childType: error.childType,
+        },
       };
     case 'SlugConflict':
-      return { code: 'slug_conflict', message: `"${error.slug}" is already used here.` };
+      return {
+        code: 'slug_conflict',
+        message: 'That slug is already used here.',
+        details: detailsOf({
+          field: error.field,
+          reason: error.scope,
+          blocking: error.holder === undefined ? undefined : { ...error.holder },
+        }),
+      };
     case 'RevisionConflict':
       return {
         code: 'revision_conflict',
         message: `This changed on the server. It is now at revision ${error.current}.`,
+        details: { currentRevision: error.current },
       };
     case 'NodeArchived':
-      return { code: 'node_archived', message: archivedMessage(error) };
+      return {
+        code: 'node_archived',
+        message: archivedMessage(error),
+        details: detailsOf({
+          field: error.field,
+          reason: error.standing,
+          blocking: error.blocking === undefined ? undefined : { ...error.blocking },
+        }),
+      };
     case 'UnsupportedContent':
       return {
         code: 'unsupported_content',
         message: `The body is not supported: ${describeContentFailure(error.failure)}.`,
+        details: detailsOf({
+          field: 'body',
+          reason: error.failure.reason,
+          location: [...error.failure.path],
+          element: error.failure.element,
+          limit: error.failure.limit,
+        }),
       };
     case 'InternalFailure':
       // Neither `detail` nor `cause` is published; the operator reads those in the log.

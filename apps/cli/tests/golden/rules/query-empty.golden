@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 -q: a query must contain something to search for
-Run "raphael search --help" for usage.
+hint: Run "raphael search --help" for usage.

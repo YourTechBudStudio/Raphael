@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 scope "/work/": a path must not end with "/"
-Run "raphael list --help" for usage.
+hint: Run "raphael list --help" for usage.

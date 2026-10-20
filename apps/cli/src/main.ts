@@ -21,6 +21,7 @@ import type { Transport } from '@raphael/client';
 import { version } from './distribution.ts';
 import { ROOT_HELP, SERVER_HELP } from './help.ts';
 import { ConfigError } from './modules/connection/config.ts';
+import { connectionFailure } from './modules/connection/failures.ts';
 import {
   LOGIN_HELP,
   LOGIN_OPTIONS,
@@ -63,12 +64,26 @@ import {
   runSearch,
   runUnfavorite,
   runUpdate,
-  type CommandContext,
 } from './modules/nodes/commands.ts';
 import { SERVE_HELP, SERVE_OPTIONS, runServe } from './modules/server/serve.ts';
-import { UsageError, wantsHelp, type OptionConfig } from './shared/args.ts';
-import { EXIT_FAILURE, EXIT_OK, EXIT_USAGE, type ExitCode } from './shared/exit.ts';
-import { processStreams, writeLine, type Streams } from './shared/output.ts';
+import {
+  UsageError,
+  hasOption,
+  mentionsJson,
+  wantsHelp,
+  type OptionConfig,
+} from './shared/args.ts';
+import {
+  newSession,
+  observedTransport,
+  type CommandContext,
+  type Invocation,
+  type Session,
+} from './shared/command.ts';
+import { EXIT_FAILURE, EXIT_OK, EXIT_UNKNOWN, EXIT_USAGE, type ExitCode } from './shared/exit.ts';
+import { renderFailure, type Failure } from './shared/failure.ts';
+import { Interrupted, exitCodeForSignal, watchSignals } from './shared/interrupt.ts';
+import { forTerminal, guardedProcessStreams, writeLine, type Streams } from './shared/output.ts';
 
 export interface CliEnvironment {
   readonly streams: Streams;
@@ -85,19 +100,28 @@ export interface CliEnvironment {
   readonly connect: () => Transport;
 }
 
+/**
+ * The remote commands. `writes` says whether a success changes stored state, which decides whether a
+ * failure states how far the change got.
+ */
 const REMOTE_COMMANDS = {
-  create: { run: runCreate, help: CREATE_HELP, options: CREATE_OPTIONS },
-  update: { run: runUpdate, help: UPDATE_HELP, options: UPDATE_OPTIONS },
-  move: { run: runMove, help: MOVE_HELP, options: MOVE_OPTIONS },
-  archive: { run: runArchive, help: ARCHIVE_HELP, options: LIFECYCLE_OPTIONS },
-  restore: { run: runRestore, help: RESTORE_HELP, options: LIFECYCLE_OPTIONS },
-  favorite: { run: runFavorite, help: FAVORITE_HELP, options: FAVORITE_OPTIONS },
-  unfavorite: { run: runUnfavorite, help: UNFAVORITE_HELP, options: FAVORITE_OPTIONS },
-  favorites: { run: runFavorites, help: FAVORITES_HELP, options: FAVORITES_OPTIONS },
-  get: { run: runGet, help: GET_HELP, options: GET_OPTIONS },
-  path: { run: runPath, help: PATH_HELP, options: PATH_OPTIONS },
-  list: { run: runList, help: LIST_HELP, options: LIST_OPTIONS },
-  search: { run: runSearch, help: SEARCH_HELP, options: SEARCH_OPTIONS },
+  create: { run: runCreate, help: CREATE_HELP, options: CREATE_OPTIONS, writes: true },
+  update: { run: runUpdate, help: UPDATE_HELP, options: UPDATE_OPTIONS, writes: true },
+  move: { run: runMove, help: MOVE_HELP, options: MOVE_OPTIONS, writes: true },
+  archive: { run: runArchive, help: ARCHIVE_HELP, options: LIFECYCLE_OPTIONS, writes: true },
+  restore: { run: runRestore, help: RESTORE_HELP, options: LIFECYCLE_OPTIONS, writes: true },
+  favorite: { run: runFavorite, help: FAVORITE_HELP, options: FAVORITE_OPTIONS, writes: true },
+  unfavorite: {
+    run: runUnfavorite,
+    help: UNFAVORITE_HELP,
+    options: FAVORITE_OPTIONS,
+    writes: true,
+  },
+  favorites: { run: runFavorites, help: FAVORITES_HELP, options: FAVORITES_OPTIONS, writes: false },
+  get: { run: runGet, help: GET_HELP, options: GET_OPTIONS, writes: false },
+  path: { run: runPath, help: PATH_HELP, options: PATH_OPTIONS, writes: false },
+  list: { run: runList, help: LIST_HELP, options: LIST_OPTIONS, writes: false },
+  search: { run: runSearch, help: SEARCH_HELP, options: SEARCH_OPTIONS, writes: false },
 } as const;
 
 /** `server` has no options of its own; only help is recognized before the subcommand. */
@@ -111,7 +135,49 @@ export const REMOTE_COMMAND_NAMES = Object.keys(REMOTE_COMMANDS) as readonly Rem
 const isRemoteCommand = (name: string): name is RemoteCommandName =>
   Object.hasOwn(REMOTE_COMMANDS, name);
 
-export const dispatch = async (argv: readonly string[], cli: CliEnvironment): Promise<ExitCode> => {
+/**
+ * What is known before anything runs: the command, whether `--json` was asked for, and whether it
+ * writes. Decided from the arguments alone, so a usage error found while parsing them is still
+ * reported in the form the caller asked for.
+ */
+/**
+ * Whether `--json` was asked for. The token-aware check answers for arguments that parse; the raw
+ * scan before `--` answers when they do not, as in `get --id --json`, where the lenient parser takes
+ * `--json` as the missing value. Strict parsing refuses a bare `--json` given as a value, so the raw
+ * scan can never call a successful parse JSON that was not.
+ */
+const asksForJson = (argv: readonly string[], options: OptionConfig): boolean =>
+  hasOption(argv, options, 'json') || mentionsJson(argv);
+
+export const invocationOf = (argv: readonly string[]): Invocation => {
+  const [command, ...rest] = argv;
+  if (command !== undefined && isRemoteCommand(command)) {
+    const entry = REMOTE_COMMANDS[command];
+    return { command, json: asksForJson(rest, entry.options), writes: entry.writes };
+  }
+  if (command === 'login') {
+    return { command, json: asksForJson(rest, LOGIN_OPTIONS), writes: false };
+  }
+  // These take no --json yet; one given anyway is still answered with a JSON error document.
+  if (command === 'server') {
+    const [subcommand] = rest;
+    return {
+      command: subcommand === 'serve' ? 'server serve' : 'server',
+      json: mentionsJson(rest),
+      writes: false,
+    };
+  }
+  if (command === 'version' || command === '--version') {
+    return { command: 'version', json: mentionsJson(rest), writes: false };
+  }
+  return { command: null, json: mentionsJson(argv), writes: false };
+};
+
+export const dispatch = async (
+  argv: readonly string[],
+  cli: CliEnvironment,
+  session: Session = newSession(invocationOf(argv)),
+): Promise<ExitCode> => {
   const { streams } = cli;
   const [command, ...rest] = argv;
 
@@ -145,6 +211,7 @@ export const dispatch = async (argv: readonly string[], cli: CliEnvironment): Pr
     }
     return runServe(serverRest, {
       streams,
+      session,
       onSignal: cli.onSignal,
       exit: cli.exit,
       cwd: cli.cwd,
@@ -158,6 +225,7 @@ export const dispatch = async (argv: readonly string[], cli: CliEnvironment): Pr
     }
     return runLogin(rest, {
       streams,
+      session,
       prompter: terminalPrompter,
       environment: cli.environment,
       platform: cli.platform,
@@ -170,54 +238,102 @@ export const dispatch = async (argv: readonly string[], cli: CliEnvironment): Pr
       writeLine(streams.out, entry.help);
       return EXIT_OK;
     }
+    // A signal cancels what the command is waiting on, and the command then ends through the failure
+    // renderer, which says whether the change was sent. A second signal does not wait for that.
+    const interruption = watchSignals(cli.onSignal, (signal) =>
+      cli.exit(exitCodeForSignal(signal)),
+    );
+    session.interruption = interruption;
     // The transport is built lazily, inside the command, so that argument errors are reported before
     // a credential is read. Someone with a typo in a flag should not first be told they are not
     // logged in.
-    const context: CommandContext = { streams, transport: cli.connect };
+    let transport: Transport | undefined;
+    const context: CommandContext = {
+      streams,
+      session,
+      signal: interruption.signal,
+      transport: () => (transport ??= observedTransport(session, cli.connect())),
+    };
     return entry.run(rest, context);
   }
 
   throw new UsageError(`"${command}" is not a command.`);
 };
 
-/** Turn an unhandled failure into an exit code and a message that is safe to print. */
-export const toExitCode = (error: unknown, streams: Streams): ExitCode => {
+/**
+ * Describe anything thrown past a command: a usage error, a connection that could not be set up, an
+ * interruption while waiting on input, or a fault of our own.
+ */
+export const failureFromThrown = (error: unknown, session: Session): Failure => {
+  if (error instanceof Interrupted) {
+    const sent = session.writeSent;
+    return {
+      code: 'interrupted',
+      exitCode: exitCodeForSignal(error.signal) as Failure['exitCode'],
+      message: `Interrupted by ${error.signal}.`,
+      hint: sent
+        ? 'Check whether the change was applied before sending it again.'
+        : 'Run the command again.',
+      state: sent ? 'unknown' : 'not_sent',
+      fromServer: false,
+    };
+  }
   if (error instanceof UsageError) {
-    writeLine(streams.err, error.message);
-    writeLine(
-      streams.err,
-      error.command === undefined
-        ? 'Run "raphael help" to see the commands.'
-        : `Run "raphael ${error.command} --help" for usage.`,
-    );
-    return EXIT_USAGE;
+    return {
+      code: 'usage',
+      exitCode: EXIT_USAGE,
+      message: forTerminal(error.message),
+      hint:
+        error.command === undefined
+          ? 'Run "raphael help" to see the commands.'
+          : `Run "raphael ${error.command} --help" for usage.`,
+      state: 'not_sent',
+      fromServer: false,
+    };
   }
-  if (error instanceof ConfigError) {
-    writeLine(streams.err, error.message);
-    writeLine(streams.err, `  reason: ${error.reason}`);
-    // A credential that is not set up, or not protected, is something to fix locally before anything
-    // is sent - the same class of problem as a mistyped flag.
-    return EXIT_USAGE;
-  }
-  if (error instanceof ConnectionError) {
-    writeLine(streams.err, error.message);
-    writeLine(streams.err, `  reason: ${error.reason}`);
-    return EXIT_USAGE;
+  if (error instanceof ConfigError || error instanceof ConnectionError) {
+    return connectionFailure(error);
   }
   // Anything else is ours. The message is printed because it is the only clue available; no stack and
-  // no cause chain, because those carry paths and internals.
-  writeLine(
-    streams.err,
-    error instanceof Error ? error.message : 'An unexpected failure occurred.',
-  );
-  return EXIT_FAILURE;
+  // no cause chain unless RAPHAEL_DEBUG asks for them, because those carry paths and internals.
+  const sent = session.writeSent;
+  return {
+    code: 'unexpected',
+    exitCode: sent ? EXIT_UNKNOWN : EXIT_FAILURE,
+    message: forTerminal(
+      error instanceof Error && error.message !== ''
+        ? error.message
+        : 'An unexpected failure occurred.',
+    ),
+    hint: 'Run it again with RAPHAEL_DEBUG=1 to see where it failed.',
+    state: sent ? 'unknown' : 'not_sent',
+    fromServer: false,
+  };
+};
+
+/** Turn a thrown failure into an exit code and a message that is safe to print. */
+export const toExitCode = (
+  error: unknown,
+  streams: Streams,
+  session: Session = newSession({ command: null, json: false, writes: false }),
+  debug = false,
+): ExitCode => {
+  const code = renderFailure(streams, session, failureFromThrown(error, session));
+  if (debug && error instanceof Error && error.stack !== undefined) {
+    writeLine(streams.err, error.stack);
+  }
+  return code;
 };
 
 export const run = async (argv: readonly string[], cli: CliEnvironment): Promise<ExitCode> => {
+  const session = newSession(invocationOf(argv));
   try {
-    return await dispatch(argv, cli);
+    return await dispatch(argv, cli, session);
   } catch (error) {
-    return toExitCode(error, cli.streams);
+    return toExitCode(error, cli.streams, session, cli.environment.RAPHAEL_DEBUG === '1');
+  } finally {
+    // The command has its outcome; nothing is waiting to be cancelled any more.
+    session.interruption?.release();
   }
 };
 
@@ -240,7 +356,7 @@ const isEntryPoint = (): boolean => {
 
 if (isEntryPoint()) {
   const code = await run(process.argv.slice(2), {
-    streams: processStreams,
+    streams: guardedProcessStreams(),
     environment: process.env,
     platform: process.platform,
     cwd: process.cwd(),

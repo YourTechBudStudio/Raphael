@@ -66,13 +66,21 @@ export const parseArgs = (
     throw new UsageError((error as Error).message, command);
   }
 
-  const seen = new Set<string>();
+  // Every value each single-value flag was given, in order, so a refusal can show them all.
+  const given = new Map<string, (string | undefined)[]>();
   for (const token of parsed.tokens) {
     if (token.kind !== 'option' || options[token.name]?.multiple === true) continue;
-    if (seen.has(token.name)) {
-      throw new UsageError(`--${token.name} can be given only once.`, command);
-    }
-    seen.add(token.name);
+    given.set(token.name, [...(given.get(token.name) ?? []), token.value]);
+  }
+  for (const [name, values] of given) {
+    if (values.length < 2) continue;
+    const shown = values.filter((value): value is string => value !== undefined);
+    throw new UsageError(
+      shown.length === 0
+        ? `--${name} can be given only once.`
+        : `--${name} can be given only once. Got ${shown.map((value) => `"${value}"`).join(' and ')}.`,
+      command,
+    );
   }
 
   return { values: parsed.values, positionals: parsed.positionals };
@@ -142,20 +150,39 @@ export const choiceOption = <T extends string>(
 };
 
 /**
- * Whether the caller asked for help rather than for the command to run.
+ * Whether an option appears among the option tokens the parser finds with this command's own
+ * options.
  *
- * Decided from the option tokens the parser finds with this command's own options, so a value is
- * never mistaken for a request: in `search / -q help` and `search / -q -h` the word belongs to `-q`,
- * and after `--` nothing is an option. A cluster such as `-rh` counts, because the parser expands it.
+ * Decided from tokens, so a value is never mistaken for a request: in `search / -q help` and
+ * `search / -q -h` the word belongs to `-q`, and after `--` nothing is an option. A cluster such as
+ * `-rh` counts, because the parser expands it.
  *
- * Not strict, so an unknown flag beside `--help` still shows help rather than an error about the flag
- * the person was about to look up.
+ * Not strict, so an unknown flag beside the one asked about does not hide it: help is still shown,
+ * and a usage error is still reported in JSON when `--json` was given.
  */
-export const wantsHelp = (argv: readonly string[], options: OptionConfig): boolean =>
+export const hasOption = (argv: readonly string[], options: OptionConfig, name: string): boolean =>
   nodeParseArgs({
     args: [...argv],
     options,
     strict: false,
     allowPositionals: true,
     tokens: true,
-  }).tokens.some((token) => token.kind === 'option' && token.name === 'help');
+  }).tokens.some((token) => token.kind === 'option' && token.name === name);
+
+/** Whether the caller asked for help rather than for the command to run. */
+export const wantsHelp = (argv: readonly string[], options: OptionConfig): boolean =>
+  hasOption(argv, options, 'help');
+
+/**
+ * Whether `--json` appears before `--`, for a command whose options are not known.
+ *
+ * Used only when no command was recognized, so a usage error about an unknown command can still be
+ * reported as a JSON document to a caller that asked for one.
+ */
+export const mentionsJson = (argv: readonly string[]): boolean => {
+  for (const token of argv) {
+    if (token === '--') return false;
+    if (token === '--json' || token.startsWith('--json=')) return true;
+  }
+  return false;
+};

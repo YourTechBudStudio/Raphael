@@ -1,0 +1,8 @@
+==== exit ====
+7
+==== stdout ====
+==== stderr ====
+The server's sentence for quota_exhausted.
+The change may or may not have been applied.
+hint: Run "raphael get /work" to check whether it was applied before sending it again.
+code: quota_exhausted (507)

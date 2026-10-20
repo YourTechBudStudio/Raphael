@@ -242,7 +242,7 @@ test('an unsupported body is refused and the entity is untouched', () => {
 
 test('a combined update is one fact: a colliding slug leaves the title unchanged', () => {
   withMigrated('update-atomic', (connection) => {
-    note(connection, 'Alpha');
+    const alpha = note(connection, 'Alpha');
     const beta = note(connection, 'Beta');
     const before = stored(connection, beta.id);
 
@@ -257,7 +257,12 @@ test('a combined update is one fact: a colliding slug leaves the title unchanged
 
     const published = toPublicError(error);
     assert.equal(published.code, 'slug_conflict');
-    assert.equal(published.message, '"alpha" is already used here.');
+    assert.equal(published.message, 'That slug is already used here.');
+    assert.deepEqual(published.details, {
+      field: 'slug',
+      reason: 'sibling',
+      blocking: { id: alpha.id, type: 'resource' },
+    });
     assert.deepEqual(stored(connection, beta.id), before);
   });
 });
@@ -624,9 +629,9 @@ test('something archived directly or through a container is not updated, selecti
     causeOn(connection, direct.id);
     causeOn(connection, container.id);
 
-    for (const [target, revision, reason] of [
-      [direct.id, direct.revision, 'direct'],
-      [inherited.id, selected.revision, 'inherited'],
+    for (const [target, revision, reason, blocking] of [
+      [direct.id, direct.revision, 'direct', { id: direct.id, type: 'project' }],
+      [inherited.id, selected.revision, 'inherited', { id: container.id, type: 'area' }],
     ] as const) {
       for (const change of [{ title: 'Renamed' }, { active: false }, { active: true }]) {
         const before = stored(connection, target);
@@ -634,7 +639,7 @@ test('something archived directly or through a container is not updated, selecti
           update(connection, { target: { id: target }, revision, ...change }),
         );
         assert.equal(toPublicError(error).code, 'node_archived', JSON.stringify(change));
-        assert.deepEqual(fieldsOf(error), { field: 'target', standing: reason });
+        assert.deepEqual(fieldsOf(error), { field: 'target', standing: reason, blocking });
         assert.deepEqual(stored(connection, target), before, 'nothing was written');
       }
     }

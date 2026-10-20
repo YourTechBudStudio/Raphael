@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 Unexpected argument "help".
-Run "raphael get --help" for usage.
+hint: Run "raphael get --help" for usage.

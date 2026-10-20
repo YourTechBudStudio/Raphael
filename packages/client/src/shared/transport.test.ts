@@ -61,6 +61,7 @@ const anyObject = (input: unknown): ClientResult<unknown> extends never ? never 
 const call = (transport: Transport, overrides: Record<string, unknown> = {}) =>
   transport.invoke({
     route: { method: 'POST', path: '/api/nodes/get' },
+    effect: 'read',
     body: { target: { id: 1 } },
     decode: anyObject,
     successStatus: 200,
@@ -277,10 +278,20 @@ describe('response reading', () => {
     );
     assert.deepEqual(await failureOf(endpoint), {
       kind: 'http',
+      effect: 'read',
+      delivery: 'answered',
       status: 409,
       code: 'slug_conflict',
       message: '"idea" is already used here.',
     });
+  });
+
+  it('carries the structured details of an error envelope', async () => {
+    const details = { field: 'slug', reason: 'sibling', blocking: { id: 4, type: 'resource' } };
+    const endpoint = await listen((_request, response) =>
+      json(response, 409, { error: { code: 'slug_conflict', message: 'x', details } }),
+    );
+    assert.deepEqual((await failureOf(endpoint)).details, details);
   });
 
   it('keeps an unfamiliar code as sent', async () => {
@@ -297,7 +308,13 @@ describe('response reading', () => {
       response.end('<html><body>Bad gateway</body></html>');
     });
     const failure = await failureOf(endpoint);
-    assert.deepEqual(failure, { kind: 'http', status: 502, message: 'The server answered 502.' });
+    assert.deepEqual(failure, {
+      kind: 'http',
+      effect: 'read',
+      delivery: 'answered',
+      status: 502,
+      message: 'The server answered 502.',
+    });
     assert.equal(retryable(failure), true);
   });
 });
@@ -311,7 +328,11 @@ describe('timeout and cancellation', () => {
     });
     const result = await call(transportFor(endpoint, { timeoutMs: 1_000 }));
     assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.failure.kind, 'timeout');
+    if (!result.ok) {
+      assert.equal(result.failure.kind, 'timeout');
+      // The request was out; a timeout can never say it was not.
+      assert.equal(result.failure.delivery, 'unknown');
+    }
   });
 
   it('reports a caller cancellation before or after dispatch as cancelled', async () => {
@@ -320,11 +341,16 @@ describe('timeout and cancellation', () => {
     });
     const early = new AbortController();
     early.abort();
-    assert.equal((await failureOf(endpoint, { signal: early.signal })).kind, 'cancelled');
+    const unsent = await failureOf(endpoint, { signal: early.signal });
+    assert.equal(unsent.kind, 'cancelled');
+    assert.equal(unsent.delivery, 'not_sent');
 
     const late = new AbortController();
     setTimeout(() => late.abort(), 50);
-    assert.equal((await failureOf(endpoint, { signal: late.signal })).kind, 'cancelled');
+    const sent = await failureOf(endpoint, { signal: late.signal, effect: 'write' });
+    assert.equal(sent.kind, 'cancelled');
+    assert.equal(sent.delivery, 'unknown');
+    assert.equal(sent.effect, 'write');
   });
 });
 
@@ -335,7 +361,64 @@ describe('an unreachable server', () => {
     await new Promise<void>((resolve) => server?.close(() => resolve()));
     const failure = await failureOf(endpoint);
     assert.equal(failure.kind, 'network');
+    // Nothing listened, so nothing was sent.
+    assert.equal(failure.delivery, 'not_sent');
     assert.equal(retryable(failure), true);
+  });
+
+  it('is unknown when the connection drops after the request was read', async () => {
+    const endpoint = await listen((request) => {
+      request.on('data', () => {});
+      request.on('end', () => request.socket.destroy());
+    });
+    const failure = await failureOf(endpoint, { effect: 'write' });
+    assert.equal(failure.kind, 'network');
+    assert.equal(failure.delivery, 'unknown');
+  });
+
+  it('is unknown when the answer started and the body never finished', async () => {
+    const endpoint = await listen((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json', 'content-length': '100' });
+      response.write('{"partial":');
+      setTimeout(() => response.socket?.destroy(), 20);
+    });
+    const failure = await failureOf(endpoint, { effect: 'write' });
+    assert.equal(failure.delivery, 'unknown');
+  });
+
+  it('classifies a failed fetch by its cause, assuming it was sent when in doubt', async () => {
+    const failing = (error: unknown) =>
+      transportFor('http://127.0.0.1:9', {
+        fetch: (async () => {
+          throw error;
+        }) as FetchLike,
+      });
+    const withCause = (cause: unknown) => new TypeError('fetch failed', { cause });
+    const cases: ReadonlyArray<readonly [unknown, string]> = [
+      [withCause(Object.assign(new Error('refused'), { code: 'ECONNREFUSED' })), 'not_sent'],
+      [withCause(Object.assign(new Error('dns'), { code: 'ENOTFOUND' })), 'not_sent'],
+      [
+        withCause(
+          Object.assign(new AggregateError([], 'both'), {
+            errors: [{ code: 'ECONNREFUSED' }, { code: 'ECONNREFUSED' }],
+          }),
+        ),
+        'not_sent',
+      ],
+      [withCause(Object.assign(new Error('reset'), { code: 'ECONNRESET' })), 'unknown'],
+      [withCause(Object.assign(new Error('socket'), { code: 'UND_ERR_SOCKET' })), 'unknown'],
+      [withCause(new Error('no code')), 'unknown'],
+      // The Fetch standard's port blocklist: refused before anything is opened.
+      [withCause(new Error('bad port')), 'not_sent'],
+      // A bare error proves nothing about how far the request got.
+      [new TypeError('Network request failed'), 'unknown'],
+      ['not even an error', 'unknown'],
+    ];
+    for (const [error, delivery] of cases) {
+      const result = await call(failing(error), { effect: 'write' });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.equal(result.failure.delivery, delivery, String(error));
+    }
   });
 });
 

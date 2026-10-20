@@ -10,6 +10,6 @@ The key is never taken as an argument, so it stays out of shell history and the 
 For scripts, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY instead of logging in.
 
 Options:
-  --json        Report the outcome as JSON on stdout.
+  --json        Report the outcome as JSON on stdout. Prompts go to standard error.
   -h, --help    Show this help.
 ==== stderr ====

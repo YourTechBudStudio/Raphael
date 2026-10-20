@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+--id 8 is inside archived area 3, so it cannot be changed.
+Nothing was changed.
+hint: Run "raphael restore --id 3" first to bring it back.
+code: node_archived (409)

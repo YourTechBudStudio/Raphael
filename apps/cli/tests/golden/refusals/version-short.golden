@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 "-v" is not a command.
-Run "raphael help" to see the commands.
+hint: Run "raphael help" to see the commands.

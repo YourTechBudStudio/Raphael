@@ -1,6 +1,6 @@
 ==== exit ====
-2
+5
 ==== stdout ====
 ==== stderr ====
 "<tmp>/raphael/config.json" is larger than a configuration should be.
-  reason: file_too_large
+hint: Run "raphael login" again to replace it.

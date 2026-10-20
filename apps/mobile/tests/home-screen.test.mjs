@@ -105,7 +105,7 @@ describe('Home’s one indicator for unfinished work', () => {
       useUnsentState.setState({
         rows: [
           createRow(),
-          createRow({ id: 'd2', status: 'refused', error: '"idea" is already used here.' }),
+          createRow({ id: 'd2', status: 'refused', error: 'That slug is already used here.' }),
           editRow(7, { status: 'conflict' }),
           editRow(8, { error: 'The server could not be reached.' }),
           // Syncing normally: not the person's business.

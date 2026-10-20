@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+RAPHAEL_TIMEOUT must be a whole number of seconds from 1 to 120. Got "121".
+hint: Set RAPHAEL_TIMEOUT to a value in that range, or unset it to wait the default 15 seconds.

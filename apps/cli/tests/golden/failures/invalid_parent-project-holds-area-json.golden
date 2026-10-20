@@ -1,0 +1,5 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"create","error":{"code":"invalid_parent","category":"conflict","message":"/work/raphael/sub cannot be created: a project cannot contain an area. An area can go at the top level or inside an area.","hint":"Run \"raphael list /\" to choose another place.","exitCode":4,"status":422,"target":{"path":"/work/raphael/sub"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for invalid_parent.","details":{"field":"parent","reason":"parentage","parentType":"project","childType":"area"}}}

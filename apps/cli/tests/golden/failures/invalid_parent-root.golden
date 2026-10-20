@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+/plan cannot be created: only areas can be at the top level. A project can go inside an area.
+Nothing was changed.
+hint: Run "raphael list /" to choose another place.
+code: invalid_parent (422)

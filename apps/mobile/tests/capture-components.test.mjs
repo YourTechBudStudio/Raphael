@@ -430,7 +430,7 @@ describe('Unfinished', () => {
         items: [
           item('draft', { detail: 'Notes' }),
           item('waiting', { detail: 'Notes' }),
-          item('refused', { detail: '"idea" is already used here.' }),
+          item('refused', { detail: 'That slug is already used here.' }),
           item('conflict'),
         ],
         onOpen: () => {},
@@ -444,7 +444,7 @@ describe('Unfinished', () => {
       assert.ok(text.includes('Writing that hasn’t reached your server yet.'));
       assert.ok(text.includes('Draft · Notes'));
       assert.ok(text.includes('Waiting to sync · Notes'));
-      assert.ok(text.includes('Not saved · "idea" is already used here.'));
+      assert.ok(text.includes('Not saved · That slug is already used here.'));
       assert.ok(text.includes('Changed on your server'));
     } finally {
       screen.unmount();

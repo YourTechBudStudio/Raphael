@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+-q has more than 32 terms.
+hint: Run "raphael search --help" for usage.
+code: invalid_input (400)

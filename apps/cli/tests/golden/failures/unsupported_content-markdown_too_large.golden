@@ -1,0 +1,8 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The Markdown body is larger than 1000000 bytes.
+Nothing was changed.
+hint: Run "raphael update --help" for the body formats Raphael accepts.
+code: unsupported_content (422)

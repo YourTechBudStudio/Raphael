@@ -1,6 +1,8 @@
 ==== exit ====
-1
+5
 ==== stdout ====
 ==== stderr ====
-The server's sentence for unauthorized.
-  code: unauthorized (401)
+The server at http://raphael.invalid refused the API key.
+Nothing was changed.
+hint: Run "raphael login" with the server's key, or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY.
+code: unauthorized (401)

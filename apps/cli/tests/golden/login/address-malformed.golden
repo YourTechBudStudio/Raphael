@@ -2,4 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-That is not a valid URL. Include the scheme, as in "https://raphael.example.com".
+That is not a valid URL. Include the scheme, as in "https://raphael.example.com". Nothing was saved.
+hint: Run "raphael login" again and give the full address, such as https://raphael.example.com.

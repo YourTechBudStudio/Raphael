@@ -106,10 +106,11 @@ describe('starting', () => {
       },
       directory,
     );
-    await waitFor(() => started.stdout().includes('Press Ctrl-C'), 'the server to be ready');
-    // The address is reported by the backend's startup log, which the CLI does not duplicate.
-    assert.match(started.stdout(), /server\.listening/);
-    assert.match(started.stdout(), /port=39217/);
+    await waitFor(() => started.stderr().includes('Press Ctrl-C'), 'the server to be ready');
+    // The address is reported by the backend's startup log, which the CLI does not duplicate. A
+    // server produces no results, so every line it writes is an operator line on stderr.
+    assert.match(started.stderr(), /server\.listening/);
+    assert.match(started.stderr(), /port=39217/);
 
     const response = await fetch('http://127.0.0.1:39217/api/connection/verify', {
       method: 'POST',
@@ -125,6 +126,8 @@ describe('starting', () => {
 
     assert.equal(code, 0, 'an orderly shutdown after a signal is a success');
     assert.match(started.stderr(), /Received SIGINT, shutting down/);
+    assert.match(started.stderr(), /server\.stopped/);
+    assert.equal(started.stdout(), '', 'nothing a reader is expected to keep');
   });
 
   it('shuts down cleanly on SIGTERM too', async () => {
@@ -134,10 +137,37 @@ describe('starting', () => {
       `server:\n  host: 127.0.0.1\n  port: 39218\ndatabase:\n  path: ./data/raphael.sqlite\n`,
     );
     const started = startServe(['--config', config], { RAPHAEL_API_KEY: KEY }, directory);
-    await waitFor(() => started.stdout().includes('Press Ctrl-C'), 'the server to be ready');
+    await waitFor(() => started.stderr().includes('Press Ctrl-C'), 'the server to be ready');
 
     started.child.kill('SIGTERM');
     assert.equal(await started.exited, 0);
+  });
+});
+
+describe('a log reader that goes away', () => {
+  it('does not stop the server, and the shutdown still drains and exits 0', async () => {
+    // `raphael server serve 2>&1 | head -1`: the reader leaves after the first line. The shutdown
+    // logs more lines after that, and a failed write must not crash the server mid-shutdown.
+    const directory = workspace();
+    const config = configFile(
+      directory,
+      `server:\n  host: 127.0.0.1\n  port: 39219\ndatabase:\n  path: ./data/raphael.sqlite\n`,
+    );
+    const started = startServe(['--config', config], { RAPHAEL_API_KEY: KEY }, directory);
+    await waitFor(() => started.stderr().includes('Press Ctrl-C'), 'the server to be ready');
+    started.child.stderr.destroy();
+    started.child.stdout.destroy();
+
+    // Still serving.
+    const response = await fetch('http://127.0.0.1:39219/api/connection/verify', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${KEY}`, 'content-type': 'application/json' },
+      body: '{}',
+    });
+    assert.equal(response.status, 200);
+
+    started.child.kill('SIGTERM');
+    assert.equal(await started.exited, 0, 'the orderly shutdown ran to the end');
   });
 });
 
@@ -147,9 +177,9 @@ describe('refusing to start', () => {
     const config = configFile(directory, `server:\n  host: 127.0.0.1\n  port: 39220\n`);
     const started = startServe(['--config', config], {}, directory);
 
-    assert.equal(await started.exited, 2, 'a configuration problem is a local setup failure');
+    assert.equal(await started.exited, 5, 'a configuration problem is "not configured"');
     assert.match(started.stderr(), /RAPHAEL_API_KEY/);
-    assert.match(started.stderr(), /reason: api_key_missing/);
+    assert.match(started.stderr(), /^hint: Fix the configuration/m);
   });
 
   it('reports an invalid configuration file with its typed reason', async () => {
@@ -157,8 +187,8 @@ describe('refusing to start', () => {
     const config = configFile(directory, `server:\n  port: 70000\n`);
     const started = startServe(['--config', config], { RAPHAEL_API_KEY: KEY }, directory);
 
-    assert.equal(await started.exited, 2);
-    assert.match(started.stderr(), /reason: config_invalid/);
+    assert.equal(await started.exited, 5);
+    assert.match(started.stderr(), /^hint: /m);
     assert.equal(started.stderr().includes(KEY), false);
     assert.equal(started.stdout().includes(KEY), false);
   });
@@ -170,7 +200,7 @@ describe('refusing to start', () => {
       { RAPHAEL_API_KEY: KEY },
       directory,
     );
-    assert.equal(await started.exited, 2);
-    assert.match(started.stderr(), /reason: config_unreadable/);
+    assert.equal(await started.exited, 5);
+    assert.match(started.stderr(), /absent\.yaml/);
   });
 });

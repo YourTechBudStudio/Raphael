@@ -3,3 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 a title is required
+The change was not sent.
+hint: Run "raphael create --help" for usage.

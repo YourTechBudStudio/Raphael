@@ -1,0 +1,5 @@
+==== exit ====
+1
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"get","error":{"code":"internal_error","category":"failed","message":"The server at http://raphael.invalid could not complete the request.","hint":"Check the server's log for what failed, then run the command again.","exitCode":1,"status":500,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for internal_error."}}

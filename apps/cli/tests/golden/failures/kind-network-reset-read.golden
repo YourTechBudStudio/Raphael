@@ -1,0 +1,6 @@
+==== exit ====
+6
+==== stdout ====
+==== stderr ====
+The connection to the server at http://raphael.invalid was lost before an answer arrived.
+hint: Run the command again.

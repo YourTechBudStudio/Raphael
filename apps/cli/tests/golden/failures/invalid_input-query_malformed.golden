@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+-q is not a well-formed query.
+hint: Run "raphael search --help" for usage.
+code: invalid_input (400)

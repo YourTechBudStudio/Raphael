@@ -234,7 +234,8 @@ test('the public projection is built field by field, not spread from the error',
   withMigrated('disclosure-projection', (connection) => {
     const error = expectLeft(runNodes(connection, getNode({ target: { id: 999_999 } })));
     const published = toPublicError(error);
-    assert.deepEqual(Object.keys(published).sort(), ['code', 'message']);
+    assert.deepEqual(Object.keys(published).sort(), ['code', 'details', 'message']);
+    assert.deepEqual(published.details, { field: 'target' });
     assert.equal('_tag' in published, false, 'an internal tag is not part of the wire contract');
     assert.equal('stack' in published, false);
     assert.equal('cause' in published, false);

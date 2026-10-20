@@ -1,0 +1,5 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"move","error":{"code":"invalid_parent","category":"conflict","message":"/work cannot move into /work/sub, which is inside it.","hint":"Run \"raphael list /\" to choose a destination outside it.","exitCode":4,"status":422,"field":"<destination>","target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for invalid_parent.","details":{"field":"destination","reason":"cycle","parentType":"area","childType":"area"}}}

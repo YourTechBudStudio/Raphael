@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--filter uses a key or an operator that is not supported. Keys: type, kind, tags.
+hint: Run "raphael list --help" for usage.
+code: invalid_input (400)

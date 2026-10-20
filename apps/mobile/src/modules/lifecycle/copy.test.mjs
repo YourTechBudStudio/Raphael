@@ -165,8 +165,8 @@ test('a failed plain action says what failed and why, in one sentence', () => {
       kind: 'http',
       status: 409,
       code: 'slug_conflict',
-      message: '"idea" is already used here.',
+      message: 'That slug is already used here.',
     }),
-    'Couldn’t move. "idea" is already used here.',
+    'Couldn’t move. That slug is already used here.',
   );
 });

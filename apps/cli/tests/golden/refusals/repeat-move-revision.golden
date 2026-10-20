@@ -2,5 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---revision can be given only once.
-Run "raphael move --help" for usage.
+--revision can be given only once. Got "1" and "2".
+The change was not sent.
+hint: Run "raphael move --help" for usage.

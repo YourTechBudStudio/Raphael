@@ -257,7 +257,14 @@ const CONNECTION_CASES: Record<ConnectionReason, Case> = {
     },
   },
   timeout_out_of_range: {
-    unreachable: 'the CLI never passes a timeout to the transport; phase 04 adds RAPHAEL_TIMEOUT',
+    runs: async () => {
+      const pair = { RAPHAEL_ENDPOINT: 'http://127.0.0.1:9', RAPHAEL_API_KEY: STUB_KEY };
+      return [
+        ['zero', await getWith({ ...pair, RAPHAEL_TIMEOUT: '0' })],
+        ['too-long', await getWith({ ...pair, RAPHAEL_TIMEOUT: '121' })],
+        ['not-seconds', await getWith({ ...pair, RAPHAEL_TIMEOUT: '1.5' })],
+      ];
+    },
   },
 };
 

@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 "server help" is not a command.
-Run "raphael server --help" for usage.
+hint: Run "raphael server --help" for usage.

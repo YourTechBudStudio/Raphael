@@ -21,7 +21,11 @@ import { updateNode } from './update.ts';
 const failureOf = (error: NodeError): OperationFailure => {
   const projected = toPublicError(error);
   const failure: OperationFailure = {
-    error: { code: projected.code, message: projected.message },
+    error: {
+      code: projected.code,
+      message: projected.message,
+      ...(projected.details === undefined ? {} : { details: projected.details }),
+    },
   };
   return error._tag === 'InternalFailure'
     ? { ...failure, diagnostic: { stage: error.operation, detail: error.detail } }

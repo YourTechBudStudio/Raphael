@@ -66,3 +66,33 @@ test('an envelope tolerates an added property like any other response', () => {
   });
   assert.equal(Either.isRight(decoded), true);
 });
+
+test('an envelope carries optional structured details, and tolerates unfamiliar ones', () => {
+  const decoded = decodeApiErrorEnvelope({
+    error: {
+      code: 'node_archived',
+      message: 'This is inside something archived.',
+      details: {
+        field: 'target',
+        reason: 'inherited',
+        blocking: { id: 3, type: 'project' },
+        futureFact: 'kept out',
+      },
+    },
+  });
+  assert.equal(Either.isRight(decoded), true);
+  if (Either.isRight(decoded)) {
+    assert.deepEqual(decoded.right.error.details, {
+      field: 'target',
+      reason: 'inherited',
+      blocking: { id: 3, type: 'project' },
+    });
+  }
+});
+
+test('details with a known member of the wrong shape do not decode', () => {
+  for (const details of [{ currentRevision: 'four' }, { blocking: { id: 'x', type: 'area' } }]) {
+    const decoded = decodeApiErrorEnvelope({ error: { code: 'x', message: 'y', details } });
+    assert.equal(Either.isLeft(decoded), true, JSON.stringify(details));
+  }
+});

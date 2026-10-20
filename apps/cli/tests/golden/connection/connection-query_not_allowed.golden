@@ -1,6 +1,6 @@
 ==== exit ====
-2
+5
 ==== stdout ====
 ==== stderr ====
 The server address must not carry a query string.
-  reason: query_not_allowed
+hint: Remove the part of the address after "?".

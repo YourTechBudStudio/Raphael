@@ -16,9 +16,9 @@ import { invalidInputFrom } from './diagnostics.ts';
 import { InvalidInput, RevisionConflict, type NodeError } from './errors.ts';
 import { requireActive } from './lifecycle.ts';
 import { bodyProjection, entityProjection, storedBody } from './projection.ts';
-import { loadEntity, loadSummary, type Selector } from './resolve.ts';
+import { loadEntity, loadSummary, withSlugHolder, type Selector } from './resolve.ts';
 import { nodes } from './schema.ts';
-import { raise, unwrapFailure } from './storage-failures.ts';
+import { classifyFailure, raise, unwrapFailure } from './storage-failures.ts';
 import { orm, sampleNow, writeTransaction } from './store.ts';
 import type { StoredEntity } from './types.ts';
 
@@ -61,17 +61,9 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
 
       const written = yield* Effect.try({
         try: () => writeTransaction(db, () => commit(db, prepared, content, clock)),
-        catch: (cause) =>
-          // Only a supplied slug can make a unique violation an address clash.
-          unwrapFailure(
-            {
-              operation: OPERATION,
-              stage: 'write',
-              ...(prepared.slug === undefined ? {} : { slug: prepared.slug }),
-            },
-            cause,
-          ),
-      });
+        // The slug clash is classified inside `commit`, around the one statement that can raise it.
+        catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'write' }, cause),
+      }).pipe(Effect.mapError((error) => withSlugHolder(orm(db), error)));
 
       return yield* Effect.try({
         try: () => ({
@@ -138,20 +130,34 @@ const commit = (
   }
   requireActive(handle, row, 'target', OPERATION);
 
-  handle
-    .update(nodes)
-    .set({
-      ...(prepared.title === undefined ? {} : { title: prepared.title }),
-      ...(prepared.description === undefined ? {} : { description: prepared.description }),
-      ...(prepared.slug === undefined ? {} : { slug: prepared.slug }),
-      ...(prepared.tags === undefined ? {} : { tags: JSON.stringify(prepared.tags) }),
-      ...(prepared.active === undefined ? {} : { active: prepared.active ? 1 : 0 }),
-      ...(content === undefined ? {} : { body: content.stored, bodyText: content.text }),
-      revision: row.revision + 1,
-      updatedAt: now,
-    })
-    .where(eq(nodes.id, row.id))
-    .run();
+  try {
+    handle
+      .update(nodes)
+      .set({
+        ...(prepared.title === undefined ? {} : { title: prepared.title }),
+        ...(prepared.description === undefined ? {} : { description: prepared.description }),
+        ...(prepared.slug === undefined ? {} : { slug: prepared.slug }),
+        ...(prepared.tags === undefined ? {} : { tags: JSON.stringify(prepared.tags) }),
+        ...(prepared.active === undefined ? {} : { active: prepared.active ? 1 : 0 }),
+        ...(content === undefined ? {} : { body: content.stored, bodyText: content.text }),
+        revision: row.revision + 1,
+        updatedAt: now,
+      })
+      .where(eq(nodes.id, row.id))
+      .run();
+  } catch (cause) {
+    // Only a supplied slug can make a unique violation an address clash.
+    return raise(
+      classifyFailure(
+        {
+          operation: OPERATION,
+          stage: 'write',
+          ...(prepared.slug === undefined ? {} : { slug: prepared.slug, parentId: row.parentId }),
+        },
+        cause,
+      ),
+    );
+  }
 
   return loadEntity(handle, { id: row.id }, 'target', OPERATION);
 };

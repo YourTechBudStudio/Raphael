@@ -120,7 +120,7 @@ describe('operations over HTTP', () => {
     });
   });
 
-  test('a slug collision answers 409 naming the slug, and the error is only a code and a message', async () => {
+  test('a slug collision answers 409 naming the holder, and never echoes the slug', async () => {
     await withServer('http-slug-conflict', async (server) => {
       const body = JSON.stringify({
         type: 'area',
@@ -132,7 +132,11 @@ describe('operations over HTTP', () => {
 
       assert.equal(response.status, 409);
       assert.deepEqual(response.json, {
-        error: { code: 'slug_conflict', message: '"work" is already used here.' },
+        error: {
+          code: 'slug_conflict',
+          message: 'That slug is already used here.',
+          details: { field: 'slug', reason: 'root', blocking: { id: 1, type: 'area' } },
+        },
       });
     });
   });
@@ -403,6 +407,7 @@ describe('operations over HTTP', () => {
       assert.deepEqual(envelope(response.json), {
         code: 'invalid_input',
         message: 'Title is required.',
+        details: { field: 'title', reason: 'title_required' },
       });
 
       const container = await call(server, '/api/nodes/create', {
@@ -466,6 +471,7 @@ describe('operations over HTTP', () => {
       assert.deepEqual(envelope(response.json), {
         code: 'invalid_input',
         message: 'Title is longer than 200 characters.',
+        details: { field: 'title', reason: 'title_too_long', limit: 200 },
       });
     });
   });

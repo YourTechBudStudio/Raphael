@@ -57,11 +57,12 @@ import {
 } from '@raphael/contracts/nodes';
 import { Either } from 'effect';
 
-import { fail, type ClientResult } from '../shared/failure.ts';
+import { fail, type ClientResult, type OperationEffect } from '../shared/failure.ts';
 import type { Transport } from '../shared/transport.ts';
 
 const run = async <A>(
   transport: Transport,
+  effect: OperationEffect,
   route: { readonly method: 'POST'; readonly path: string },
   decodeRequest: Decoder<unknown>,
   decodeResponse: Decoder<A>,
@@ -71,12 +72,18 @@ const run = async <A>(
 ): Promise<ClientResult<A>> => {
   const decoded = decodeRequest(request);
   if (Either.isLeft(decoded)) {
-    return fail({ kind: 'invalid_request', message: decoded.left.message });
+    return fail({
+      kind: 'invalid_request',
+      effect,
+      delivery: 'not_sent',
+      message: decoded.left.message,
+    });
   }
   // The decoded value is what travels, not the caller's object. Effect Schema returns a new
   // structure, so a caller mutating its input after this point cannot change the logical attempt.
   return transport.invoke({
     route,
+    effect,
     body: decoded.right,
     decode: decodeResponse,
     successStatus,
@@ -92,6 +99,7 @@ export const create = (
 ): Promise<ClientResult<CreateResponse>> =>
   run(
     transport,
+    'write',
     NODE_ROUTES.create,
     decodeCreateRequest as Decoder<unknown>,
     decodeCreateResponse,
@@ -111,6 +119,7 @@ export const update = (
 ): Promise<ClientResult<UpdateResponse>> =>
   run(
     transport,
+    'write',
     NODE_ROUTES.update,
     decodeUpdateRequest as Decoder<unknown>,
     decodeUpdateResponse,
@@ -130,6 +139,7 @@ export const move = (
 ): Promise<ClientResult<MoveResponse>> =>
   run(
     transport,
+    'write',
     NODE_ROUTES.move,
     decodeMoveRequest as Decoder<unknown>,
     decodeMoveResponse,
@@ -149,6 +159,7 @@ export const archive = (
 ): Promise<ClientResult<LifecycleResponse>> =>
   run(
     transport,
+    'write',
     NODE_ROUTES.archive,
     decodeLifecycleRequest as Decoder<unknown>,
     decodeLifecycleResponse,
@@ -170,6 +181,7 @@ export const restore = (
 ): Promise<ClientResult<LifecycleResponse>> =>
   run(
     transport,
+    'write',
     NODE_ROUTES.restore,
     decodeLifecycleRequest as Decoder<unknown>,
     decodeLifecycleResponse,
@@ -185,6 +197,7 @@ export const get = (
 ): Promise<ClientResult<GetResponse>> =>
   run(
     transport,
+    'read',
     NODE_ROUTES.get,
     decodeGetRequest as Decoder<unknown>,
     decodeGetResponse,
@@ -200,6 +213,7 @@ export const list = (
 ): Promise<ClientResult<ListResponse>> =>
   run(
     transport,
+    'read',
     NODE_ROUTES.list,
     decodeListRequest as Decoder<unknown>,
     decodeListResponse,
@@ -222,6 +236,7 @@ export const search = (
 ): Promise<ClientResult<SearchResponse>> =>
   run(
     transport,
+    'read',
     NODE_ROUTES.search,
     decodeSearchRequest as Decoder<unknown>,
     decodeSearchResponse,
@@ -241,6 +256,7 @@ export const addFavorite = (
 ): Promise<ClientResult<AddFavoriteResponse>> =>
   run(
     transport,
+    'write',
     NODE_ROUTES.addFavorite,
     decodeFavoriteRequest as Decoder<unknown>,
     decodeAddFavoriteResponse,
@@ -257,6 +273,7 @@ export const removeFavorite = (
 ): Promise<ClientResult<RemoveFavoriteResponse>> =>
   run(
     transport,
+    'write',
     NODE_ROUTES.removeFavorite,
     decodeFavoriteRequest as Decoder<unknown>,
     decodeRemoveFavoriteResponse,
@@ -273,6 +290,7 @@ export const listFavorites = (
 ): Promise<ClientResult<ListResponse>> =>
   run(
     transport,
+    'read',
     NODE_ROUTES.listFavorites,
     decodeFavoriteListRequest as Decoder<unknown>,
     decodeListResponse,
@@ -288,6 +306,7 @@ export const getPath = (
 ): Promise<ClientResult<GetPathResponse>> =>
   run(
     transport,
+    'read',
     NODE_ROUTES.getPath,
     decodeGetPathRequest as Decoder<unknown>,
     decodeGetPathResponse,

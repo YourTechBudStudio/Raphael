@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+/work/raphael/sub cannot be created: a project cannot contain an area. An area can go at the top level or inside an area.
+Nothing was changed.
+hint: Run "raphael list /" to choose another place.
+code: invalid_parent (422)

@@ -215,7 +215,7 @@ console.log('aliases passed');
 describe('remote commands never load the backend', () => {
   it('fails for want of configuration, not for want of a driver', async () => {
     const ran = await runGuarded(['get', '/work']);
-    assert.equal(ran.code, 2);
+    assert.equal(ran.code, 5, 'not configured');
     assert.equal(ran.stdout, '');
     assert.equal(ran.stderr.includes('FORBIDDEN_IMPORT'), false);
   });

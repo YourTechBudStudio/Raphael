@@ -1,6 +1,6 @@
 ==== exit ====
-2
+5
 ==== stdout ====
 ==== stderr ====
-"<tmp>/raphael/config.json" is not valid JSON. Run "raphael login" again to replace it.
-  reason: file_malformed
+"<tmp>/raphael/config.json" is not valid JSON.
+hint: Run "raphael login" again to replace it.

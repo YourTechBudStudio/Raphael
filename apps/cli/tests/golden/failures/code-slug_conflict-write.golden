@@ -1,6 +1,8 @@
 ==== exit ====
-1
+4
 ==== stdout ====
 ==== stderr ====
-The server's sentence for slug_conflict.
-  code: slug_conflict (409)
+That slug is already taken by area 9.
+Nothing was changed.
+hint: Run "raphael get --id 9" to see what holds it, or choose another slug.
+code: slug_conflict (409)

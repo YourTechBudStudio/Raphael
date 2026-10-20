@@ -1,8 +1,6 @@
 ==== exit ====
-1
+6
 ==== stdout ====
 ==== stderr ====
-Could not verify that connection, so nothing was saved.
-The server could not be reached.
-
-Check the server address and that the server is running.
+Could not connect to the server at http://127.0.0.1:9. Nothing was saved.
+hint: Check that the server is running and the address is right, then run the command again.

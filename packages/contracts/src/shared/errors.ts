@@ -52,9 +52,83 @@ export const API_ERROR_STATUS: Readonly<Record<ApiErrorCode, number>> = {
 /** The code the server is constrained to when producing an error. */
 export const ApiErrorCodeSchema = Schema.Literal(...API_ERROR_CODES);
 
-/** The message is shown to people as it is, so it must explain itself. */
+/**
+ * Why an `invalid_input` failure happened. The operation reasons come from a capability's own checks;
+ * `malformed_json`, `invalid_utf8`, and `incomplete_body` come from the HTTP host before any operation
+ * runs. A client words each one itself, so the server's sentence never has to echo what was sent.
+ */
+export const INVALID_INPUT_REASONS = [
+  'invalid',
+  'title_required',
+  'title_too_long',
+  'slug_too_long',
+  'active_requires_project',
+  'favorite_requires_container',
+  'query_malformed',
+  'query_too_long',
+  'query_too_many_terms',
+  'filter_unsupported',
+  'malformed_json',
+  'invalid_utf8',
+  'incomplete_body',
+] as const;
+
+export type InvalidInputReason = (typeof INVALID_INPUT_REASONS)[number];
+
+/** Why an `unsupported_media_type` failure happened. */
+export const UNSUPPORTED_MEDIA_REASONS = [
+  'unsupported_media_type',
+  'unsupported_content_encoding',
+  'unsupported_charset',
+] as const;
+
+export type UnsupportedMediaReason = (typeof UNSUPPORTED_MEDIA_REASONS)[number];
+
+/**
+ * Structured facts about a failure, for a client to word it itself.
+ *
+ * Every member is optional and each code fills only the ones it has. Values are our own vocabulary
+ * or numbers and identifiers the server already holds; nothing here is text the caller submitted.
+ *
+ * - `field` names the request field concerned, and `index` the entry within a list field (`scopes`).
+ * - `reason` is the code-specific reason: one of `INVALID_INPUT_REASONS`, a content failure reason,
+ *   `parentage` or `cycle`, `root` or `sibling`, `direct` or `inherited`.
+ * - `limit` is the bound that was exceeded.
+ * - `currentRevision` is the revision the target holds now.
+ * - `blocking` is the item in the way: the archived container, or the holder of a slug.
+ * - `parentType` and `childType` are the two sides of a containment refusal.
+ * - `location` is the child-index path inside a submitted document, and `element` names one of our own
+ *   supported document elements.
+ *
+ * Strings are decoded as strings, not as the literals above, so a newer server's reason still reaches
+ * a client that does not know it yet.
+ */
+export const ApiErrorDetails = Schema.Struct({
+  field: Schema.optional(Schema.String),
+  index: Schema.optional(Schema.Number),
+  reason: Schema.optional(Schema.String),
+  limit: Schema.optional(Schema.Number),
+  currentRevision: Schema.optional(Schema.Number),
+  blocking: Schema.optional(Schema.Struct({ id: Schema.Number, type: Schema.String })),
+  parentType: Schema.optional(Schema.String),
+  childType: Schema.optional(Schema.String),
+  location: Schema.optional(Schema.Array(Schema.Number)),
+  element: Schema.optional(Schema.String),
+});
+export type ApiErrorDetails = Schema.Schema.Type<typeof ApiErrorDetails>;
+
+/**
+ * The message is shown to people as it is, so it must explain itself. It stays generic and never
+ * repeats what was submitted; `details` carries the facts a client needs to say more.
+ */
 const errorBody = <Code extends Schema.Schema.All>(code: Code) =>
-  Schema.Struct({ error: Schema.Struct({ code, message: Schema.String }) });
+  Schema.Struct({
+    error: Schema.Struct({
+      code,
+      message: Schema.String,
+      details: Schema.optional(ApiErrorDetails),
+    }),
+  });
 
 /** What the server emits: the code must come from the known catalog. */
 export const ApiErrorResponse = errorBody(ApiErrorCodeSchema);

@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid answered 403 without a Raphael error.
+hint: Check that the address points at a Raphael server.

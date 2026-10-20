@@ -1,0 +1,8 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The body has a heading level Raphael does not support (block 2). Use 1 to 3.
+Nothing was changed.
+hint: Run "raphael update --help" for the body formats Raphael accepts.
+code: unsupported_content (422)

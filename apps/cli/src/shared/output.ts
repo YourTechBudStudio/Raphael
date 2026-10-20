@@ -60,10 +60,41 @@ export interface Streams {
   readonly err: (text: string) => void;
 }
 
-/** The real streams. Tests substitute their own so nothing is captured by intercepting globals. */
-export const processStreams: Streams = {
-  out: (text) => process.stdout.write(text),
-  err: (text) => process.stderr.write(text),
+/**
+ * The real streams, guarded so a reader that goes away is never an error.
+ *
+ * `raphael list / | head -1` closes the pipe after one line. Node then fails the next write with
+ * EPIPE, asynchronously, as an 'error' event; with no listener that event crashes the process with a
+ * stack trace, and whether it happens depends on how much output was still buffered. Here each stream
+ * gets one listener that marks it closed, and nothing more is written to it. The exit code is
+ * untouched: it describes the operation, and the operation's outcome does not change because nobody
+ * read about it.
+ *
+ * Installed once, by the entry point. Tests substitute their own streams so nothing is captured by
+ * intercepting globals.
+ */
+export const guardedProcessStreams = (): Streams => {
+  const closed = { out: false, err: false };
+  const guard = (stream: NodeJS.WriteStream, which: 'out' | 'err'): void => {
+    stream.on('error', (error: NodeJS.ErrnoException) => {
+      const wasOpen = !closed[which];
+      closed[which] = true;
+      // A reader that left is not news. Anything else is, and stderr is the only place to say it.
+      if (wasOpen && which === 'out' && error.code !== 'EPIPE' && !closed.err) {
+        process.stderr.write(`Could not write the output (${error.code ?? 'unknown error'}).\n`);
+      }
+    });
+  };
+  guard(process.stdout, 'out');
+  guard(process.stderr, 'err');
+  return {
+    out: (text) => {
+      if (!closed.out) process.stdout.write(text);
+    },
+    err: (text) => {
+      if (!closed.err) process.stderr.write(text);
+    },
+  };
 };
 
 export const writeLine = (write: (text: string) => void, text = ''): void => {
@@ -71,12 +102,12 @@ export const writeLine = (write: (text: string) => void, text = ''): void => {
 };
 
 /**
- * Machine-readable output, one JSON document per invocation.
+ * Machine-readable output: exactly one JSON document per invocation, on one line.
  *
- * Success goes to stdout and is the operation result exactly as the contract defines it, so a consumer
- * decoding it against the same schema gets what the server said. Failure goes to stderr under a stable
- * `error` key. Neither ever carries a response body, a decoder message, or a cause chain.
+ * Success goes to stdout as the envelope `success.ts` builds; failure goes to stderr as the error
+ * document `failure.ts` builds. Neither ever carries a response body the client did not decode, a
+ * decoder message about one, or a cause chain.
  */
 export const writeJson = (write: (text: string) => void, value: unknown): void => {
-  writeLine(write, JSON.stringify(value, undefined, 2));
+  writeLine(write, JSON.stringify(value));
 };

@@ -2,5 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---body @- read nothing: standard input was empty, so nothing was sent. To create it without a body, leave out --body.
-Run "raphael create --help" for usage.
+--body @- read nothing: standard input was empty. To create it without a body, leave out --body.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

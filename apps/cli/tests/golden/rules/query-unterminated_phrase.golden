@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 -q: a quoted phrase is missing its closing quote
-Run "raphael search --help" for usage.
+hint: Run "raphael search --help" for usage.

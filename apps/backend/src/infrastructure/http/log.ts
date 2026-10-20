@@ -42,12 +42,36 @@ const format = (level: LogLevel, event: string, fields: LogFields): string => {
     : `[raphael] ${level} ${event} ${rendered}`;
 };
 
-/** The default logger. Warnings and errors go to stderr so they survive a redirected stdout. */
+/**
+ * Set once stderr has refused a write. A log line nobody can receive is dropped, never thrown: a
+ * reader that went away must not stop the server, least of all in the middle of its shutdown.
+ */
+let stderrClosed = false;
+let guarded = false;
+
+const guardStderr = (): void => {
+  if (guarded) return;
+  guarded = true;
+  // Without a listener, a write that fails later (EPIPE, EIO) is an unhandled 'error' event and
+  // takes the process down with it.
+  process.stderr.on('error', () => {
+    stderrClosed = true;
+  });
+};
+
+/**
+ * The default logger. Every level goes to stderr: a server produces no results, so standard output
+ * stays empty and every operator line - startup, shutdown, failures - lands in one place.
+ */
 export const consoleLogger: Logger = {
   log: (level, event, fields = {}) => {
-    const line = format(level, event, fields);
-    if (level === 'info') process.stdout.write(`${line}\n`);
-    else process.stderr.write(`${line}\n`);
+    guardStderr();
+    if (stderrClosed) return;
+    try {
+      process.stderr.write(`${format(level, event, fields)}\n`);
+    } catch {
+      stderrClosed = true;
+    }
   },
 };
 

@@ -15,6 +15,8 @@ export interface FailureContext {
   readonly stage: string;
   /** Supplied only around a statement that writes this slug, so no other unique violation is misread. */
   readonly slug?: string;
+  /** Where that slug is written (`null` at the root), so the holder can be found after rollback. */
+  readonly parentId?: number | null;
 }
 
 /** Classifies an unexpected exception. Only a slug clash is the caller's; everything else is ours. */
@@ -30,7 +32,12 @@ export const classifyFailure = (context: FailureContext, cause: unknown): NodeEr
 
   const scope = typeof message === 'string' ? SLUG_CONFLICT_SCOPES.get(message) : undefined;
   if (scope !== undefined && code === 'SQLITE_CONSTRAINT_UNIQUE' && context.slug !== undefined) {
-    return new SlugConflict({ field: 'slug', slug: context.slug, scope });
+    return new SlugConflict({
+      field: 'slug',
+      slug: context.slug,
+      scope,
+      ...(context.parentId === undefined ? {} : { parentId: context.parentId }),
+    });
   }
 
   return new InternalFailure({

@@ -1,8 +1,8 @@
 ==== exit ====
-1
+4
 ==== stdout ====
 ==== stderr ====
-The server's sentence for revision_conflict.
-  code: revision_conflict (409)
-
-Re-read it, apply your change to the current version, and send it again.
+/work changed after revision 1: it is now at revision 4.
+Nothing was changed.
+hint: Run "raphael get /work" to see the change, then send yours again with the revision it shows.
+code: revision_conflict (409)

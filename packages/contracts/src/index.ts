@@ -16,9 +16,14 @@ export {
   API_ERROR_CODES,
   API_ERROR_STATUS,
   ApiErrorCodeSchema,
+  ApiErrorDetails,
   ApiErrorEnvelope,
   ApiErrorResponse,
+  INVALID_INPUT_REASONS,
+  UNSUPPORTED_MEDIA_REASONS,
   type ApiErrorCode,
+  type InvalidInputReason,
+  type UnsupportedMediaReason,
   decodeApiErrorEnvelope,
 } from './shared/errors.ts';
 export {

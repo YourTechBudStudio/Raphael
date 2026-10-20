@@ -1,7 +1,7 @@
 ==== exit ====
-1
+5
 ==== stdout ====
 ==== stderr ====
-Could not verify that connection, so nothing was saved.
-A valid API key is required.
-  code: unauthorized (401)
+The server at <endpoint> refused the API key. Nothing was saved.
+hint: Run "raphael login" with the server's key, or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY.
+code: unauthorized (401)

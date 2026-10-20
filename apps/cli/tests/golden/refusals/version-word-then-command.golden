@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 "version" takes no arguments. Got "archive".
-Run "raphael help" to see the commands.
+hint: Run "raphael help" to see the commands.

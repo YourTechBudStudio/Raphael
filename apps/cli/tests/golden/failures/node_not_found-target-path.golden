@@ -1,0 +1,7 @@
+==== exit ====
+3
+==== stdout ====
+==== stderr ====
+Nothing exists at /work/nope/deeper.
+hint: Run "raphael list /work/nope" to see what is there.
+code: node_not_found (404)

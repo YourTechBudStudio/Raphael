@@ -63,10 +63,13 @@ export type ConfigReason =
 
 export class ConfigError extends Error {
   readonly reason: ConfigReason;
-  constructor(reason: ConfigReason, message: string) {
+  /** The one next step, when this failure has a more specific one than its reason's. */
+  readonly hint: string | undefined;
+  constructor(reason: ConfigReason, message: string, hint?: string) {
     super(message);
     this.name = 'ConfigError';
     this.reason = reason;
+    this.hint = hint;
   }
 }
 
@@ -98,7 +101,7 @@ export const configLocation = (
     throw new ConfigError(
       'unsupported_platform',
       'Saved logins are not supported on Windows yet: Raphael cannot protect a stored API key with ' +
-        'file permissions there. Set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY in the environment instead.',
+        'file permissions there.',
     );
   }
 
@@ -173,7 +176,8 @@ const verifiedDirectory = (directory: string, create: boolean): string => {
     throw new ConfigError(
       'directory_unusable',
       `"${resolved}" is accessible to other users (mode ${formatMode(info.mode)}). Raphael will not ` +
-        `report a credential as protected when it is not. Run "chmod 700 ${resolved}" if it is yours.`,
+        'report a credential as protected when it is not.',
+      `If it is yours, run "chmod 700 ${resolved}".`,
     );
   }
 
@@ -201,7 +205,7 @@ export const loadConfig = (location: ConfigLocation): StoredConfig => {
 
   const info = lstatSync(file, { throwIfNoEntry: false });
   if (info === undefined) {
-    throw new ConfigError('not_configured', 'No saved login was found. Run "raphael login" first.');
+    throw new ConfigError('not_configured', 'No saved login was found.');
   }
 
   const rejection = inspectProtectedFile(file, info);
@@ -211,11 +215,13 @@ export const loadConfig = (location: ConfigLocation): StoredConfig => {
       rejection.reason === 'symlink_rejected'
         ? `"${file}" is a symbolic link. Raphael will not read a credential through a link.`
         : rejection.reason === 'permissive_mode'
-          ? `"${file}" is readable by other users (mode ${formatMode(rejection.mode ?? 0)}). Run ` +
-            `"chmod 600 ${file}", or run "raphael login" again.`
+          ? `"${file}" is readable by other users (mode ${formatMode(rejection.mode ?? 0)}).`
           : rejection.reason === 'foreign_owner'
             ? `"${file}" is owned by uid ${rejection.uid}, not by you.`
             : `"${file}" is not a regular file.`,
+      rejection.reason === 'permissive_mode'
+        ? `Run "chmod 600 ${file}", or run "raphael login" again.`
+        : undefined,
     );
   }
 
@@ -235,10 +241,7 @@ export const loadConfig = (location: ConfigLocation): StoredConfig => {
     parsed = JSON.parse(raw);
   } catch {
     // The parse error would quote the file, which holds a key.
-    throw new ConfigError(
-      'file_malformed',
-      `"${file}" is not valid JSON. Run "raphael login" again to replace it.`,
-    );
+    throw new ConfigError('file_malformed', `"${file}" is not valid JSON.`);
   }
 
   if (
@@ -249,7 +252,7 @@ export const loadConfig = (location: ConfigLocation): StoredConfig => {
   ) {
     throw new ConfigError(
       'file_malformed',
-      `"${file}" does not contain an endpoint and an API key. Run "raphael login" again.`,
+      `"${file}" does not contain an endpoint and an API key.`,
     );
   }
 

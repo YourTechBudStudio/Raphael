@@ -92,14 +92,32 @@ export const requireActive = (
   operation: string,
 ): void => {
   if (node === null) return;
-  const standing = standingOf(node, effectiveCauses(orm, node, operation));
-  if (standing !== 'active') raise(new NodeArchived({ field, standing }));
+  const causes = effectiveCauses(orm, node, operation);
+  const standing = standingOf(node, causes);
+  if (standing === 'active') return;
+  // Nearest first, so this is the item whose restore would lift the nearest cause.
+  const [nearest] = causes;
+  raise(
+    new NodeArchived({
+      field,
+      standing,
+      ...(nearest === undefined
+        ? {}
+        : { blocking: { id: nearest.originId, type: nearest.originType } }),
+    }),
+  );
 };
 
 /** Something archived by its own cause is restored before it moves; an inherited-only one may move out. */
 export const requireMovable = (orm: Orm, target: StoredNode, operation: string): void => {
   if (standingOf(target, effectiveCauses(orm, target, operation)) === 'direct') {
-    raise(new NodeArchived({ field: 'target', standing: 'direct' }));
+    raise(
+      new NodeArchived({
+        field: 'target',
+        standing: 'direct',
+        blocking: { id: target.id, type: target.type },
+      }),
+    );
   }
 };
 

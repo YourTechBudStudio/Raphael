@@ -13,12 +13,14 @@ import {
   NODE_ORDER_FIELDS,
   NODE_TYPES,
   ORDER_DIRECTIONS,
+  PARENTAGE,
   TAGS_MAX_COUNT,
   TAG_MAX_CODE_POINTS,
   TagsInput,
   RESOURCE_KINDS,
   TITLE_MAX_CODE_POINTS,
   TitleInput,
+  canContain,
   inspectMetadataInput,
   inspectTagsInput,
   inspectTitleInput,
@@ -179,4 +181,17 @@ test('the exported tag rule is the one the decoder applies', () => {
   assert.equal(normalizeTag(''), '');
   assert.equal(normalizeTag('   '), '');
   assert.equal(normalizeTag('a'.repeat(1_000)).length, 1_000);
+});
+
+test('the parentage table covers the root and every type, and only names known types', () => {
+  assert.deepEqual(Object.keys(PARENTAGE).sort(), ['root', ...NODE_TYPES].sort());
+  for (const children of Object.values(PARENTAGE)) {
+    for (const child of children) assert.ok(NODE_TYPES.includes(child));
+  }
+  assert.equal(canContain('root', 'area'), true);
+  assert.equal(canContain('root', 'project'), false);
+  assert.equal(canContain('area', 'area'), true);
+  assert.equal(canContain('project', 'project'), false);
+  assert.equal(canContain('project', 'resource'), true);
+  assert.equal(canContain('resource', 'resource'), false);
 });

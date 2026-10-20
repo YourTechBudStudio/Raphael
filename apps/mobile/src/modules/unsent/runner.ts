@@ -242,7 +242,12 @@ export const createRunner = (ports: RunnerPorts): Runner => {
 
     sync: async (id) => {
       if (ports.session() === null || !ports.online()) {
-        const offline: ClientFailure = { kind: 'network', message: OFFLINE_MESSAGE };
+        const offline: ClientFailure = {
+          kind: 'network',
+          effect: 'write',
+          delivery: 'not_sent',
+          message: OFFLINE_MESSAGE,
+        };
 
         await store.change({ id }, (row) =>
           row === undefined

@@ -364,7 +364,7 @@ describe('bodies', () => {
       assert.equal(response.text.includes(secret), false);
       assert.match(
         response.text,
-        /^\{"error":\{"code":"invalid_input","message":"The request body is not a JSON document\."\}\}$/u,
+        /^\{"error":\{"code":"invalid_input","message":"The request body is not a JSON document\.","details":\{"reason":"malformed_json"\}\}\}$/u,
       );
     });
   });

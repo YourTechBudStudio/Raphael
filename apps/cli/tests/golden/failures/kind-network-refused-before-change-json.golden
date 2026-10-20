@@ -1,0 +1,5 @@
+==== exit ====
+6
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"archive","error":{"code":"unreachable","category":"retryable","message":"Could not connect to the server at http://raphael.invalid.","hint":"Check that the server is running and the address is right, then run the command again.","exitCode":6,"target":{"path":"/work"},"applied":false,"retryable":true}}

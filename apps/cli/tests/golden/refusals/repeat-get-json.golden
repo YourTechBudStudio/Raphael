@@ -2,5 +2,4 @@
 2
 ==== stdout ====
 ==== stderr ====
---json can be given only once.
-Run "raphael get --help" for usage.
+{"ok":false,"command":"get","error":{"code":"usage","category":"usage","message":"--json can be given only once.","hint":"Run \"raphael get --help\" for usage.","exitCode":2,"applied":false,"retryable":false}}

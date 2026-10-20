@@ -1,0 +1,5 @@
+==== exit ====
+6
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"get","error":{"code":"storage_busy","category":"retryable","message":"The server is shutting down and did not take the request.","hint":"Run the command again once the server is back.","exitCode":6,"status":503,"target":{"path":"/work"},"applied":false,"retryable":true,"serverMessage":"The server's sentence for storage_busy."}}

@@ -1,6 +1,6 @@
 ==== exit ====
-2
+5
 ==== stdout ====
 ==== stderr ====
-RAPHAEL_ENDPOINT is set but RAPHAEL_API_KEY is not. Set both, or unset both to use your saved login.
-  reason: incomplete_environment
+RAPHAEL_ENDPOINT is set but RAPHAEL_API_KEY is not.
+hint: Set RAPHAEL_API_KEY too, or unset RAPHAEL_ENDPOINT to use your saved login.

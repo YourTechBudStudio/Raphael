@@ -1,0 +1,7 @@
+==== exit ====
+130
+==== stdout ====
+==== stderr ====
+Interrupted by SIGINT.
+The change may or may not have been applied.
+hint: Run "raphael get /work" to check whether it was applied before sending it again.

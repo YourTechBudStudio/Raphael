@@ -1,0 +1,7 @@
+==== exit ====
+0
+==== stdout ====
+Connected to <endpoint>.
+Saved to <tmp>/raphael/config.json.
+==== stderr ====
+warning: Saved to <tmp>/raphael/config.json, but the filesystem did not confirm the write is durable. If this machine loses power soon, run "raphael login" again.

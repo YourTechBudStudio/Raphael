@@ -1,0 +1,8 @@
+==== exit ====
+3
+==== stdout ====
+==== stderr ====
+Nothing exists at /work/raphael.
+Nothing was changed.
+hint: Run "raphael list /work" to see what is there.
+code: node_not_found (404)

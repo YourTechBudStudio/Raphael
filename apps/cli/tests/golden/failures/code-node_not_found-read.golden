@@ -1,6 +1,7 @@
 ==== exit ====
-1
+3
 ==== stdout ====
 ==== stderr ====
-The server's sentence for node_not_found.
-  code: node_not_found (404)
+Nothing exists at /work.
+hint: Run "raphael list /" to see what is there.
+code: node_not_found (404)

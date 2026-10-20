@@ -3,3 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 No key was entered. Nothing was saved.
+hint: Run "raphael login" again and enter the key the server was started with.

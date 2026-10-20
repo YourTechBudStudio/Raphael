@@ -2,5 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---title can be given only once.
-Run "raphael create --help" for usage.
+--title can be given only once. Got "A" and "B".
+The change was not sent.
+hint: Run "raphael create --help" for usage.

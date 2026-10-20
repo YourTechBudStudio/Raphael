@@ -1,0 +1,7 @@
+==== exit ====
+7
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid did not answer in time.
+The change may or may not have been applied.
+hint: Run "raphael get /work" to check whether it was applied before sending it again.

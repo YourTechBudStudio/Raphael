@@ -75,6 +75,23 @@ export type NodeType = (typeof NODE_TYPES)[number];
 export const NodeTypeSchema = Schema.Literal(...NODE_TYPES);
 
 /**
+ * What may hold what. `root` is the virtual top level, which is not a node.
+ *
+ * The one statement of the containment rule: the server enforces it from this table and clients
+ * describe it from this table, so the rule and every sentence about it change together.
+ */
+export const PARENTAGE: Readonly<Record<'root' | NodeType, readonly NodeType[]>> = {
+  root: ['area'],
+  area: ['area', 'project', 'resource'],
+  project: ['resource'],
+  resource: [],
+};
+
+/** Whether `parent` may directly hold a child of type `child`. */
+export const canContain = (parent: 'root' | NodeType, child: NodeType): boolean =>
+  PARENTAGE[parent].includes(child);
+
+/**
  * The resource kinds core admits. One built-in kind; this is deliberately not an extension registry.
  *
  * A kind is not a node type. It says what a resource *is*, and it exists as its own closed vocabulary

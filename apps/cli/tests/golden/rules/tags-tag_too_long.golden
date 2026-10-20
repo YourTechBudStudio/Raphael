@@ -3,3 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 a tag may be at most 50 characters
+The change was not sent.
+hint: Run "raphael create --help" for usage.

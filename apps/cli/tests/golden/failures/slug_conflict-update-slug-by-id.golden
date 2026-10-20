@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+The slug "taken" is already taken by project 5.
+Nothing was changed.
+hint: Run "raphael get --id 5" to see what holds it, or choose another slug.
+code: slug_conflict (409)

@@ -1,6 +1,6 @@
 ==== exit ====
-2
+5
 ==== stdout ====
 ==== stderr ====
-"<tmp>/raphael/config.json" is readable by other users (mode 644). Run "chmod 600 <tmp>/raphael/config.json", or run "raphael login" again.
-  reason: file_unusable
+"<tmp>/raphael/config.json" is readable by other users (mode 644).
+hint: Run "chmod 600 <tmp>/raphael/config.json", or run "raphael login" again.

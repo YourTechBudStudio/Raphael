@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
---limit can be given only once.
-Run "raphael favorites --help" for usage.
+--limit can be given only once. Got "1" and "2".
+hint: Run "raphael favorites --help" for usage.

@@ -72,20 +72,95 @@ export const goldenSurface = (surface: string): GoldenSurface => {
   };
 };
 
+/** The keys the JSON error document may carry, and the ones it always does. */
+const ERROR_KEYS = [
+  'code',
+  'category',
+  'message',
+  'hint',
+  'exitCode',
+  'status',
+  'field',
+  'target',
+  'applied',
+  'retryable',
+  'serverMessage',
+  'details',
+] as const;
+const REQUIRED_ERROR_KEYS = [
+  'code',
+  'category',
+  'message',
+  'hint',
+  'exitCode',
+  'applied',
+  'retryable',
+];
+
+export interface ErrorDocument {
+  readonly ok: false;
+  readonly command: string | null;
+  readonly error: Readonly<Record<(typeof ERROR_KEYS)[number], unknown>>;
+}
+
+/**
+ * A `--json` failure: nothing on stdout, and exactly one error document on stderr, on one line, in
+ * the documented shape, agreeing with the exit code.
+ */
+export const assertErrorDocument = (
+  ran: Ran,
+  expected: { readonly exit: number; readonly code?: string; readonly command?: string | null },
+): ErrorDocument => {
+  assert.equal(ran.stdout, '', 'a --json failure prints nothing on stdout');
+  assert.equal(ran.code, expected.exit);
+  assert.ok(ran.stderr.endsWith('\n'), 'the document ends its line');
+  assert.equal(ran.stderr.trimEnd().includes('\n'), false, 'stderr is one line: one document');
+  const document = JSON.parse(ran.stderr) as ErrorDocument;
+  assert.deepEqual(Object.keys(document).sort(), ['command', 'error', 'ok']);
+  assert.equal(document.ok, false);
+  if (expected.command !== undefined) assert.equal(document.command, expected.command);
+  const { error } = document;
+  for (const key of Object.keys(error)) {
+    assert.ok((ERROR_KEYS as readonly string[]).includes(key), `unexpected key "${key}"`);
+  }
+  for (const key of REQUIRED_ERROR_KEYS) assert.ok(key in error, `missing key "${key}"`);
+  assert.equal(error.exitCode, expected.exit);
+  if (expected.code !== undefined) assert.equal(error.code, expected.code);
+  for (const key of ['code', 'category', 'message', 'hint']) {
+    assert.equal(typeof error[key as 'code'], 'string');
+    assert.notEqual(error[key as 'code'], '', `${key} is not empty`);
+  }
+  assert.ok([true, false, null].includes(error.applied as boolean | null));
+  assert.equal(
+    error.retryable,
+    expected.exit === 6,
+    'retryable exactly when the exit code says so',
+  );
+  return document;
+};
+
 /**
  * A refusal: nothing on stdout, exactly these lines on stderr, and this exit code.
  *
  * Exact lines rather than a pattern, so a refusal cannot quietly regress to raw parser or decoder
- * text while a fragment of the old wording still matches. Phase 02 extends this to the JSON error
- * document.
+ * text while a fragment of the old wording still matches. Given the same command run with `--json`,
+ * it also checks the error document, and that its message is the text's first line.
  */
 export const assertRefusal = (
   ran: Ran,
-  expected: { readonly exit: number; readonly lines: readonly string[] },
+  expected: { readonly exit: number; readonly lines: readonly string[]; readonly code?: string },
+  asJson?: Ran,
 ): void => {
   assert.equal(ran.stdout, '', 'a refusal prints nothing on stdout');
   assert.equal(ran.stderr, `${expected.lines.join('\n')}\n`);
   assert.equal(ran.code, expected.exit);
+  if (asJson !== undefined) {
+    const document = assertErrorDocument(asJson, {
+      exit: expected.exit,
+      ...(expected.code === undefined ? {} : { code: expected.code }),
+    });
+    assert.equal(document.error.message, expected.lines[0]);
+  }
 };
 
 /** A file-name-safe slug for a case label. */

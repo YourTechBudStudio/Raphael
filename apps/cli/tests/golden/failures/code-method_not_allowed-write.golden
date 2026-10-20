@@ -1,6 +1,8 @@
 ==== exit ====
-1
+5
 ==== stdout ====
 ==== stderr ====
-The server's sentence for method_not_allowed.
-  code: method_not_allowed (405)
+The server at http://raphael.invalid does not offer this command; it may not be a Raphael server, or not this version.
+Nothing was changed.
+hint: Check that the address points at the Raphael server itself, then run "raphael login" again.
+code: method_not_allowed (405)

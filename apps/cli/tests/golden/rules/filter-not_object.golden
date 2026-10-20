@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 --filter: a filter must be a JSON object
-Run "raphael list --help" for usage.
+hint: Run "raphael list --help" for usage.

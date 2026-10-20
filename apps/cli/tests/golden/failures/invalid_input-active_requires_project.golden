@@ -1,0 +1,8 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Only a project can be active, and /work is not a project.
+Nothing was changed.
+hint: Run "raphael update --help" for usage.
+code: invalid_input (400)

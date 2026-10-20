@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
---config can be given only once.
-Run "raphael server serve --help" for usage.
+--config can be given only once. Got "a.yaml" and "b.yaml".
+hint: Run "raphael server serve --help" for usage.

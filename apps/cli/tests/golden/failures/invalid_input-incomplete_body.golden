@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The server could not read the request: it did not finish arriving.
+hint: Check that this CLI and the server are the same version with "raphael version".
+code: invalid_input (400)

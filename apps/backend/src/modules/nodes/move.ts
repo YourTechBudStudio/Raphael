@@ -28,6 +28,7 @@ import {
   lookupScope,
   resolveScope,
   validateParentage,
+  withSlugHolder,
   type Selector,
 } from './resolve.ts';
 import { nodes } from './schema.ts';
@@ -41,7 +42,8 @@ const OPERATION = 'nodes.move';
  * Moves one entity, optionally renaming its slug, in one write transaction checked against the
  * caller's revision. Only the target row is written; paths are computed on request.
  *
- * Order is the contract: a stale revision first, then a cycle before a type mismatch, then lifecycle.
+ * Order is the contract: a stale revision first, then a cycle before a taken address or a type
+ * mismatch, then lifecycle.
  * A target archived by its own cause must be restored first; one archived only through an ancestor may
  * move out. An unchanged location answers without writing.
  */
@@ -66,7 +68,7 @@ export const moveNode = (input: unknown): Effect.Effect<MoveResponse, NodeError,
         try: () => writeTransaction(db, () => commit(db, prepared, clock)),
         // The slug clash is classified inside `commit`, around the one statement that can raise it.
         catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'write' }, cause),
-      });
+      }).pipe(Effect.mapError((error) => withSlugHolder(orm(db), error)));
     }),
   );
 
@@ -117,11 +119,27 @@ const resolveDestination = (
     if (found.kind === 'root' || found.node.type !== 'resource') {
       return { parentScope: found, slug: target.slug };
     }
+    // A note inside the target is a move into itself before it is a taken address: the cycle is the
+    // problem to report, and naming the note's slug would send the caller after the wrong one.
+    if (
+      found.node.id !== target.id &&
+      ancestorChain(handle, found.node, OPERATION).some((step) => step.id === target.id)
+    ) {
+      return raise(
+        new InvalidParent({
+          field: 'destination',
+          reason: 'cycle',
+          parentType: found.node.type,
+          childType: target.type,
+        }),
+      );
+    }
     return raise(
       new SlugConflict({
         field: 'destination',
         slug: found.node.slug,
         scope: found.node.parentId === null ? 'root' : 'sibling',
+        holder: { id: found.node.id, type: found.node.type },
       }),
     );
   }
@@ -208,7 +226,12 @@ const commit = (
       .run();
   } catch (cause) {
     // The retained or the new slug can clash in the destination.
-    return raise(classifyFailure({ operation: OPERATION, stage: 'write', slug }, cause));
+    return raise(
+      classifyFailure(
+        { operation: OPERATION, stage: 'write', slug, parentId: nextParentId },
+        cause,
+      ),
+    );
   }
   return response;
 };

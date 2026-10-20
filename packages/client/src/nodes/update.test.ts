@@ -113,6 +113,8 @@ describe('update', () => {
     if (!result.ok) {
       assert.deepEqual(result.failure, {
         kind: 'http',
+        effect: 'write',
+        delivery: 'answered',
         status: 409,
         code: 'revision_conflict',
         message: 'This changed on the server. It is now at revision 12.',
@@ -126,6 +128,10 @@ describe('update', () => {
     const result = await update(transport, { target: { id: 7 }, revision: 8, title: 'Contracts' });
 
     assert.equal(result.ok, false);
-    if (!result.ok) assert.equal(result.failure.kind, 'network');
+    if (!result.ok) {
+      assert.equal(result.failure.kind, 'network');
+      // An update is a write, and a failure with no cause cannot prove it never arrived.
+      assert.deepEqual([result.failure.effect, result.failure.delivery], ['write', 'unknown']);
+    }
   });
 });

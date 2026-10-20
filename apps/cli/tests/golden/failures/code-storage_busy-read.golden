@@ -1,6 +1,7 @@
 ==== exit ====
-1
+6
 ==== stdout ====
 ==== stderr ====
-The server's sentence for storage_busy.
-  code: storage_busy (503)
+The server is shutting down and did not take the request.
+hint: Run the command again once the server is back.
+code: storage_busy (503)

@@ -1,0 +1,8 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Only areas and projects can be favorites, and /work/note is neither.
+Nothing was changed.
+hint: Run "raphael favorite --help" for usage.
+code: invalid_input (400)

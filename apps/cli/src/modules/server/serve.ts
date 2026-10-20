@@ -24,15 +24,17 @@ import { Deferred, Effect, Exit, Scope } from 'effect';
 
 import { migrationsFolder } from '../../distribution.ts';
 import { UsageError, parseArgs, stringOption, type OptionConfig } from '../../shared/args.ts';
+import type { Session } from '../../shared/command.ts';
 import {
   EXIT_FAILURE,
+  EXIT_NOT_CONFIGURED,
   EXIT_OK,
   EXIT_SIGINT,
   EXIT_SIGTERM,
-  EXIT_USAGE,
   type ExitCode,
 } from '../../shared/exit.ts';
-import { writeLine, type Streams } from '../../shared/output.ts';
+import { renderFailure } from '../../shared/failure.ts';
+import { forTerminal, writeLine, type Streams } from '../../shared/output.ts';
 
 export const SERVE_HELP = `Usage: raphael server serve [--config <path>]
 
@@ -50,6 +52,7 @@ Options:
 
 export interface ServeDependencies {
   readonly streams: Streams;
+  readonly session: Session;
   /** Registers a handler and returns a function that removes it. Tests supply their own. */
   readonly onSignal: (signal: 'SIGINT' | 'SIGTERM', handler: () => void) => () => void;
   /** Forced termination. Separated so a test can observe it instead of dying. */
@@ -87,11 +90,16 @@ export const runServe = async (
     });
   } catch (error) {
     if (error instanceof backend.ConfigurationError) {
-      // A configuration problem is a local setup failure: nothing was started and nothing is pending,
-      // which is what exit 2 means here. The typed reason is used rather than the raw cause.
-      writeLine(streams.err, error.message);
-      writeLine(streams.err, `  reason: ${error.reason}`);
-      return EXIT_USAGE;
+      // A configuration problem: nothing was started and nothing is pending. The typed reason is the
+      // code, rather than the raw cause.
+      return renderFailure(streams, dependencies.session, {
+        code: error.reason,
+        exitCode: EXIT_NOT_CONFIGURED,
+        message: forTerminal(error.message),
+        hint: 'Fix the configuration, then run "raphael server serve" again.',
+        state: 'not_sent',
+        fromServer: false,
+      });
     }
     throw error;
   }
@@ -151,8 +159,9 @@ export const runServe = async (
     arm('SIGTERM');
 
     // The bound address is reported by the backend's own startup log. Repeating it here would be a
-    // second claim about the same fact, from a component that did not establish it.
-    writeLine(streams.out, 'Press Ctrl-C to stop.');
+    // second claim about the same fact, from a component that did not establish it. A server produces
+    // no results, so every line it prints is for the operator and goes to stderr.
+    writeLine(streams.err, 'Press Ctrl-C to stop.');
 
     await Effect.runPromise(Deferred.await(stopping));
     return EXIT_OK;

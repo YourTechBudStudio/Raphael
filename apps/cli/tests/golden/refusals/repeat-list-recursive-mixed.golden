@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 --recursive can be given only once.
-Run "raphael list --help" for usage.
+hint: Run "raphael list --help" for usage.

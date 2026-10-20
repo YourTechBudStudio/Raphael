@@ -48,6 +48,7 @@ export const verify = async (
 ): Promise<ClientResult<VerifiedConnection>> => {
   const result = await transport.invoke<VerifyResponse>({
     route: CONNECTION_ROUTES.verify,
+    effect: 'read',
     // Verification's only legal input is a strict empty object.
     body: {},
     decode: decodeVerifyResponse,
@@ -61,6 +62,8 @@ export const verify = async (
   if (!isCompatibleProtocolVersion(protocolVersion)) {
     return fail({
       kind: 'bad_response',
+      effect: 'read',
+      delivery: 'answered',
       code: 'incompatible_protocol',
       message: describeProtocolMismatch(protocolVersion),
     });

@@ -36,6 +36,7 @@ import {
 import { Either, Schema } from 'effect';
 
 import { UsageError } from '../../shared/args.ts';
+import { Interrupted, type InterruptSignal } from '../../shared/interrupt.ts';
 
 /** What `raphael create <type>` was asked to make. */
 export type CreateTarget =
@@ -266,25 +267,44 @@ const decodeUtf8 = (bytes: Uint8Array, label: string, command: string): string =
  * it would replace a note's body with nothing under a successful exit. Clearing a body on purpose has
  * its own explicit spelling, so the empty case can be refused without losing anything.
  */
-const readStdin = async (command: string): Promise<string> => {
+const readStdin = async (command: string, signal?: AbortSignal): Promise<string> => {
   const chunks: Buffer[] = [];
   let total = 0;
-  for await (const chunk of process.stdin) {
-    const buffer = chunk as Buffer;
-    total += buffer.byteLength;
-    // Counted as it arrives. Reading all of standard input and measuring afterwards would be a
-    // bound that does not bound anything.
-    if (total > REQUEST_MAX_BYTES) {
-      throw new UsageError(
-        `The body on standard input is larger than the ${REQUEST_MAX_BYTES}-byte request limit.`,
-        command,
-      );
+  // A signal ends the wait: the input is abandoned, and the command ends as interrupted with nothing
+  // sent. Destroying the stream is what releases the loop below; a paused one would hold it forever.
+  const interrupted = (): Interrupted =>
+    new Interrupted((signal?.reason as InterruptSignal | undefined) ?? 'SIGINT');
+  // A function, not a property test: `aborted` flips while this code is suspended.
+  const aborted = (): boolean => signal?.aborted === true;
+  if (aborted()) throw interrupted();
+  const abandon = (): void => {
+    process.stdin.destroy();
+  };
+  signal?.addEventListener('abort', abandon, { once: true });
+  try {
+    for await (const chunk of process.stdin) {
+      const buffer = chunk as Buffer;
+      total += buffer.byteLength;
+      // Counted as it arrives. Reading all of standard input and measuring afterwards would be a
+      // bound that does not bound anything.
+      if (total > REQUEST_MAX_BYTES) {
+        throw new UsageError(
+          `The body on standard input is larger than the ${REQUEST_MAX_BYTES}-byte request limit.`,
+          command,
+        );
+      }
+      chunks.push(buffer);
     }
-    chunks.push(buffer);
+  } catch (error) {
+    if (aborted()) throw interrupted();
+    throw error;
+  } finally {
+    signal?.removeEventListener('abort', abandon);
   }
+  if (aborted()) throw interrupted();
   if (total === 0) {
     throw new UsageError(
-      `--body @- read nothing: standard input was empty, so nothing was sent. ${
+      `--body @- read nothing: standard input was empty. ${
         command === 'update'
           ? "To clear the body on purpose, give --body '' --revision <n>."
           : 'To create it without a body, leave out --body.'
@@ -349,6 +369,7 @@ export const resolveBody = async (
   bodyLiteral: string | undefined,
   format: 'markdown' | 'tiptap' | undefined,
   command: string,
+  signal?: AbortSignal,
 ): Promise<BodySource | undefined> => {
   if (body !== undefined && bodyLiteral !== undefined) {
     throw new UsageError('Give either --body or --body-literal, not both.', command);
@@ -360,7 +381,7 @@ export const resolveBody = async (
   if (bodyLiteral !== undefined) {
     text = bodyLiteral;
   } else if (body !== undefined) {
-    if (body === '@-') text = await readStdin(command);
+    if (body === '@-') text = await readStdin(command, signal);
     else if (body.startsWith('@')) text = readLocalFile(body.slice(1), 'the body file', command);
     else text = body;
   }
