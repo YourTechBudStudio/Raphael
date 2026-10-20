@@ -542,3 +542,66 @@ describe('links', () => {
     session.close();
   });
 });
+
+describe('the keyboard shortening the page', () => {
+  /**
+   * Layout is a device fact, so the caret's position, the focus and the page height are set here; what
+   * is under test is what the runtime does with them when the page is resized.
+   */
+  const shortened = ({ focused, caretBottom }) => {
+    const session = open();
+    const scrolls = [];
+    const { view } = session.runtime.editor;
+    view.hasFocus = () => focused;
+    view.coordsAtPos = () => ({ top: caretBottom - 20, bottom: caretBottom, left: 0, right: 0 });
+    const scrollBy = dom.window.scrollBy;
+    dom.window.scrollBy = (x, y) => scrolls.push([x, y]);
+    const resize = () => dom.window.dispatchEvent(new dom.window.Event('resize'));
+
+    const restore = () => {
+      dom.window.scrollBy = scrollBy;
+    };
+
+    return {
+      session,
+      scrolls,
+      resize,
+      restore,
+      close: () => {
+        restore();
+        session.close();
+      },
+    };
+  };
+
+  it('brings a caret left below the page back into view, with room beneath it', async () => {
+    const { CARET_CLEARANCE } = await import('../src/modules/editor/webview/runtime.ts');
+    const page = shortened({ focused: true, caretBottom: dom.window.innerHeight + 100 });
+    page.resize();
+    assert.deepEqual(page.scrolls, [[0, 100 + CARET_CLEARANCE]]);
+    page.close();
+  });
+
+  it('leaves the page alone while the caret is still in view', () => {
+    const page = shortened({ focused: true, caretBottom: 100 });
+    page.resize();
+    assert.deepEqual(page.scrolls, []);
+    page.close();
+  });
+
+  it('leaves the page alone when nobody is writing in it', () => {
+    const page = shortened({ focused: false, caretBottom: dom.window.innerHeight + 100 });
+    page.resize();
+    assert.deepEqual(page.scrolls, []);
+    page.close();
+  });
+
+  it('stops listening once the editor is gone', () => {
+    const page = shortened({ focused: true, caretBottom: dom.window.innerHeight + 100 });
+    page.session.runtime.destroy();
+    page.resize();
+    assert.deepEqual(page.scrolls, []);
+    page.restore();
+    page.session.element.remove();
+  });
+});

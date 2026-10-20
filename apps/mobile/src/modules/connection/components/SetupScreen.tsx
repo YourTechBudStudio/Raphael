@@ -1,10 +1,18 @@
 import { ChevronLeft, Eye, EyeOff } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
-import { KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { Chip, confirmDiscard, IconButton, PrimaryButton } from '../../../ui';
-import { gutter } from '../../../ui/theme';
+import {
+  AnimatedSurface,
+  Chip,
+  confirmDiscard,
+  IconButton,
+  PrimaryButton,
+  useKeyboardClearance,
+} from '../../../ui';
+import { colors, gutter } from '../../../ui/theme';
 import { verifyConnection } from '../client/verify';
 import { handshakeRows, hasFieldProblem, inspectSetupInput, type SetupPhase } from '../setup';
 import type { Connection } from '../state/connection';
@@ -80,6 +88,8 @@ export function SetupScreen({
   const retryRemoval = useConnectionStore((state) => state.retryRemoval);
   const [retryingRemoval, setRetryingRemoval] = useState(false);
   const insets = useSafeAreaInsets();
+  // The footer rides up on the keyboard, and gives back the system inset the keyboard covers.
+  const footerClearance = useKeyboardClearance(insets.bottom + 12, 12);
 
   // Kept in a ref so an in-flight verification cannot resolve into a later verification's state.
   const verification = useRef(0);
@@ -201,10 +211,7 @@ export function SetupScreen({
   const rows = handshakeRows({ endpoint, key, settled, pressed, phase });
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      className="flex-1 bg-canvas"
-    >
+    <KeyboardAvoidingView behavior="padding" style={{ flex: 1, backgroundColor: colors.canvas }}>
       {replacing === undefined ? null : (
         <View className="absolute z-10" style={{ left: gutter - 10, top: insets.top + 8 }}>
           <IconButton
@@ -364,7 +371,7 @@ export function SetupScreen({
         </View>
       </ScrollView>
 
-      <View className="gap-3 bg-canvas px-5 pt-2" style={{ paddingBottom: insets.bottom + 12 }}>
+      <AnimatedSurface className="gap-3 bg-canvas px-5 pt-2" style={footerClearance}>
         {replacing === undefined || unsent === 0 || phase.kind === 'connected' ? null : (
           <Text
             accessibilityLiveRegion="polite"
@@ -399,7 +406,7 @@ export function SetupScreen({
           onPress={onConnect}
           testID="setup-connect"
         />
-      </View>
+      </AnimatedSurface>
     </KeyboardAvoidingView>
   );
 }

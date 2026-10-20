@@ -23,6 +23,13 @@
       "expo-router",
       "./plugins/dev-variant.ts",
       [
+        "expo-navigation-bar",
+        {
+          "enforceContrast": false,
+          "style": "dark"
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#f8f6fc",

@@ -17,6 +17,7 @@ export {
 } from './Emblem';
 export { emblemFor } from './emblem-for';
 export { EmptyState, type EmptyStateProps } from './EmptyState';
+export { useKeyboardClearance } from './keyboard-clearance';
 export { lobedPath } from './lobed-path';
 export { ListRow, type ListRowParent, type ListRowProps, type ListRowStatus } from './ListRow';
 export { GrowingTextInput, type GrowingTextInputProps } from './GrowingTextInput';

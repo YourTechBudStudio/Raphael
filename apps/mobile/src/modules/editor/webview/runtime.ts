@@ -30,6 +30,9 @@ import { createLockCoordinator, type LockCoordinator } from './lock.ts';
 /** Trailing coalescing window for edit snapshots. */
 export const EDIT_DEBOUNCE_MS = 300;
 
+/** Room left below the caret when the page brings it back into view, so it never sits on the edge. */
+export const CARET_CLEARANCE = 24;
+
 export interface RuntimeTimers {
   readonly setTimer: (run: () => void, ms: number) => unknown;
   readonly clearTimer: (handle: unknown) => void;
@@ -237,6 +240,20 @@ export const createEditorRuntime = (options: RuntimeOptions): EditorRuntime => {
   };
   options.element.addEventListener('click', onClick);
 
+  /**
+   * The WebView is shortened, not covered, while the keyboard is up, so a caret low in the document
+   * can end up below what is left of it. A resize under a focused editor scrolls the page just far
+   * enough to bring the caret back, and never scrolls it the other way.
+   */
+  const page = options.element.ownerDocument.defaultView;
+  const onResize = () => {
+    if (page === null || !editor.view.hasFocus()) return;
+    const caret = editor.view.coordsAtPos(editor.state.selection.head);
+    const hidden = caret.bottom + CARET_CLEARANCE - page.innerHeight;
+    if (hidden > 0) page.scrollBy(0, hidden);
+  };
+  page?.addEventListener('resize', onResize);
+
   const applyInit = (document: unknown, editable: boolean): void => {
     const canonical = canonicalizeDocument(document);
     if (Either.isLeft(canonical)) {
@@ -376,6 +393,7 @@ export const createEditorRuntime = (options: RuntimeOptions): EditorRuntime => {
       options.element.removeEventListener('compositionstart', onCompositionStart);
       options.element.removeEventListener('compositionend', onCompositionEnd);
       options.element.removeEventListener('click', onClick);
+      page?.removeEventListener('resize', onResize);
       editor.destroy();
     },
     editor,

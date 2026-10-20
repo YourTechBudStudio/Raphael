@@ -1,14 +1,7 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
-import {
-  KeyboardAvoidingView,
-  Modal,
-  Platform,
-  Pressable,
-  useWindowDimensions,
-  View,
-  type LayoutChangeEvent,
-} from 'react-native';
+import { Modal, Pressable, useWindowDimensions, View, type LayoutChangeEvent } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import {
   Easing,
   runOnJS,
@@ -21,7 +14,9 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AnimatedSurface } from '../core/animated-surface';
+import { useKeyboardClearance } from '../core/keyboard-clearance';
 import { radii, sheetShadow } from '../theme';
+import { SystemBarFrame } from './SystemBarFrame';
 
 /**
  * One light settle on the way up. The spring travels the full sheet height, so the damping is
@@ -53,8 +48,6 @@ export interface SheetProps {
   children: ReactNode;
   /** Fixed height in logical pixels. Left out, the sheet sizes to its content. */
   snapHeight?: number | undefined;
-  /** Wraps the sheet in a KeyboardAvoidingView, for sheets that hold text inputs. */
-  keyboardAvoiding?: boolean | undefined;
   /** Classes for the sheet surface, usually padding. */
   className?: string | undefined;
   /** Spoken name of the sheet, for the scrim's close action. */
@@ -84,7 +77,6 @@ export function Sheet({
   onClose,
   children,
   snapHeight,
-  keyboardAvoiding = false,
   className,
   label,
   closeUnavailable,
@@ -185,6 +177,10 @@ export function Sheet({
   }));
 
   const scrimStyle = useAnimatedStyle(() => ({ opacity: scrimOpacity.value }));
+  const clearance = useKeyboardClearance(
+    insets.bottom + 16 + OVERSHOOT_LIMIT,
+    16 + OVERSHOOT_LIMIT,
+  );
 
   const handleLayout = (event: LayoutChangeEvent) => {
     sheetHeight.value = event.nativeEvent.layout.height;
@@ -196,6 +192,7 @@ export function Sheet({
       onLayout={handleLayout}
       style={[
         sheetStyle,
+        clearance,
         {
           borderTopLeftRadius: radii.sheet,
           borderTopRightRadius: radii.sheet,
@@ -205,7 +202,6 @@ export function Sheet({
           // overflowing keeps the surface inside the window, and a `SheetBody` inside it gives
           // up the space; without one, tall content still runs past the bottom edge.
           flexShrink: 1,
-          paddingBottom: insets.bottom + 16 + OVERSHOOT_LIMIT,
           ...(snapHeight === undefined ? {} : { height: snapHeight }),
         },
       ]}
@@ -231,33 +227,31 @@ export function Sheet({
       transparent
       visible={mounted}
     >
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <View className="flex-1 justify-end">
-          <AnimatedSurface className="absolute inset-0 bg-scrim" style={scrimStyle}>
-            <Pressable
-              accessibilityHint={
-                closeUnavailable ?? (label === undefined ? undefined : `Closes ${label}`)
-              }
-              accessibilityLabel="Close"
-              accessibilityRole="button"
-              accessibilityState={{ disabled: !closable }}
-              className="flex-1"
-              disabled={!closable}
-              onPress={onClose}
-            />
-          </AnimatedSurface>
-          {keyboardAvoiding ? (
-            <KeyboardAvoidingView
-              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-              style={{ flexShrink: 1 }}
-            >
+      {/* The modal is a window of its own, so it keeps the navigation band itself. */}
+      <SystemBarFrame>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <View className="flex-1 justify-end">
+            <AnimatedSurface className="absolute inset-0 bg-scrim" style={scrimStyle}>
+              <Pressable
+                accessibilityHint={
+                  closeUnavailable ?? (label === undefined ? undefined : `Closes ${label}`)
+                }
+                accessibilityLabel="Close"
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !closable }}
+                className="flex-1"
+                disabled={!closable}
+                onPress={onClose}
+              />
+            </AnimatedSurface>
+            {/* Every sheet makes room for the keyboard: one with no field never raises it, and one
+              with a field cannot forget to. */}
+            <KeyboardAvoidingView behavior="padding" style={{ flexShrink: 1 }}>
               {surface}
             </KeyboardAvoidingView>
-          ) : (
-            surface
-          )}
-        </View>
-      </GestureHandlerRootView>
+          </View>
+        </GestureHandlerRootView>
+      </SystemBarFrame>
     </Modal>
   );
 }

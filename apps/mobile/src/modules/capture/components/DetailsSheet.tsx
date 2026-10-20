@@ -3,7 +3,7 @@ import { Plus, X } from 'lucide-react-native';
 import { useEffect, useRef, useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
 
-import { Chip, IconButton, SavePill, Sheet, SheetBody, SheetHeader } from '../../../ui';
+import { Chip, colors, IconButton, SavePill, Sheet, SheetBody, SheetHeader } from '../../../ui';
 
 export interface DetailsSheetProps {
   visible: boolean;
@@ -113,7 +113,6 @@ export function DetailsSheet({
   return (
     <Sheet
       className="gap-5 px-5 pb-4 pt-3"
-      keyboardAvoiding
       label="the details sheet"
       onClose={onClose}
       visible={visible}
@@ -159,6 +158,7 @@ export function DetailsSheet({
               editable={!readOnly}
               onChangeText={setDraftSlug}
               placeholder={idLabel}
+              placeholderTextColor={colors.inkSoft}
               style={off}
               testID="details-slug"
               value={draftSlug}
@@ -209,6 +209,7 @@ export function DetailsSheet({
               onChangeText={setEntry}
               onSubmitEditing={addTag}
               placeholder="Add a tag"
+              placeholderTextColor={colors.inkSoft}
               returnKeyType="done"
               testID="details-tag-entry"
               value={entry}

@@ -4,7 +4,15 @@ import { useEffect, useRef, useState } from 'react';
 import { Text, TextInput } from 'react-native';
 
 import type { ContainerRef } from '../../../infrastructure/api/contracts';
-import { GrowingTextInput, IconButton, SavePill, Sheet, SheetBody, SheetHeader } from '../../../ui';
+import {
+  colors,
+  GrowingTextInput,
+  IconButton,
+  SavePill,
+  Sheet,
+  SheetBody,
+  SheetHeader,
+} from '../../../ui';
 import { announce, type CreateProblem, type UnsentRow } from '../../unsent';
 import { useContainerDraft } from '../client/container-creation';
 
@@ -113,13 +121,7 @@ export function NewContainerSheet({
     (title ?? row?.title ?? '').trim() !== '' || (notes ?? row?.description ?? '') !== '';
 
   return (
-    <Sheet
-      className="gap-5 px-5 pb-6 pt-3"
-      keyboardAvoiding
-      label={`New ${noun}`}
-      onClose={close}
-      visible={visible}
-    >
+    <Sheet className="gap-5 px-5 pb-6 pt-3" label={`New ${noun}`} onClose={close} visible={visible}>
       <SheetHeader
         leading={<IconButton icon={X} label="Close" onPress={close} />}
         subtitle={subtitleFor(row, draft.problem, draft.saving, written)}
@@ -144,6 +146,7 @@ export function NewContainerSheet({
             draft.write({ title: value });
           }}
           placeholder="Title"
+          placeholderTextColor={colors.inkSoft}
           ref={titleInput}
           returnKeyType="next"
           value={title ?? row?.title ?? ''}

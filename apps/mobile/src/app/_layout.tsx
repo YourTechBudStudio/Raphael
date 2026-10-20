@@ -11,6 +11,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, type ReactNode } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import '../../global.css';
@@ -19,7 +20,7 @@ import { StorageGate, VoiceCaptureSheet } from '../modules/capture';
 import { ContainerCreationHost } from '../modules/collections';
 import { ConnectionGate, OfflineGate } from '../modules/connection';
 import { startUnsent } from '../modules/unsent';
-import { colors } from '../ui/theme';
+import { colors, SystemBarFrame } from '../ui';
 
 // Keep Home underneath directly opened routes, including the search modal.
 // oxlint-disable-next-line react/only-export-components -- Expo Router reads route configuration here.
@@ -59,36 +60,42 @@ export default function RootLayout() {
 
   return (
     <SafeAreaProvider>
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <QueryClientProvider client={queryClient}>
-          <StatusBar style="dark" />
-          {/* Setup is a prerequisite for using the app, not a screen with the app behind it. */}
-          <ConnectionGate>
-            <StorageGate>
-              <Offline>
-                <Stack
-                  initialRouteName="index"
-                  screenOptions={{
-                    headerShown: false,
-                    contentStyle: { backgroundColor: colors.canvas },
-                  }}
-                >
-                  <Stack.Screen name="index" />
-                  <Stack.Screen name="browse" />
-                  <Stack.Screen name="capture/[draftId]" />
-                  <Stack.Screen name="edit/[id]" />
-                  <Stack.Screen name="unfinished" />
-                  <Stack.Screen name="settings" />
-                  <Stack.Screen name="change-server" />
-                  <Stack.Screen name="search" options={{ presentation: 'modal' }} />
-                </Stack>
-                <VoiceCaptureSheet />
-                <ContainerCreationHost />
-              </Offline>
-            </StorageGate>
-          </ConnectionGate>
-        </QueryClientProvider>
-      </GestureHandlerRootView>
+      <SystemBarFrame paintBand>
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          {/* Android draws edge to edge, so the window no longer resizes for the keyboard. This tracks
+            it instead, in every window including a sheet's modal, for the views that make room. */}
+          <KeyboardProvider>
+            <QueryClientProvider client={queryClient}>
+              <StatusBar style="dark" />
+              {/* Setup is a prerequisite for using the app, not a screen with the app behind it. */}
+              <ConnectionGate>
+                <StorageGate>
+                  <Offline>
+                    <Stack
+                      initialRouteName="index"
+                      screenOptions={{
+                        headerShown: false,
+                        contentStyle: { backgroundColor: colors.canvas },
+                      }}
+                    >
+                      <Stack.Screen name="index" />
+                      <Stack.Screen name="browse" />
+                      <Stack.Screen name="capture/[draftId]" />
+                      <Stack.Screen name="edit/[id]" />
+                      <Stack.Screen name="unfinished" />
+                      <Stack.Screen name="settings" />
+                      <Stack.Screen name="change-server" />
+                      <Stack.Screen name="search" options={{ presentation: 'modal' }} />
+                    </Stack>
+                    <VoiceCaptureSheet />
+                    <ContainerCreationHost />
+                  </Offline>
+                </StorageGate>
+              </ConnectionGate>
+            </QueryClientProvider>
+          </KeyboardProvider>
+        </GestureHandlerRootView>
+      </SystemBarFrame>
     </SafeAreaProvider>
   );
 }

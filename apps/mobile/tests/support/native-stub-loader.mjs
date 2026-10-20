@@ -34,6 +34,7 @@ const SUBSTITUTES = new Map(
     'lucide-react-native',
     'expo-router',
     'react-native-gesture-handler',
+    'react-native-keyboard-controller',
     'expo-secure-store',
     'expo-sqlite',
     'expo-crypto',

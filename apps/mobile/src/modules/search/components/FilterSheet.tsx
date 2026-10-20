@@ -19,7 +19,15 @@ import { Archive, Plus, X } from 'lucide-react-native';
 import { useState } from 'react';
 import { Text, TextInput, View } from 'react-native';
 
-import { Chip, IconButton, SectionHeading, Sheet, SheetHeader } from '../../../ui';
+import {
+  Chip,
+  colors,
+  IconButton,
+  SectionHeading,
+  Sheet,
+  SheetBody,
+  SheetHeader,
+} from '../../../ui';
 import { ARCHIVED_LABEL, INCLUDE_ARCHIVED_HINT, INCLUDE_ARCHIVED_LABEL } from '../../lifecycle';
 import type { SearchTypeFilter } from '../client/requests.ts';
 import { describeTagsRejection } from './filter-copy';
@@ -74,7 +82,6 @@ export function FilterSheet({
   return (
     <Sheet
       className="gap-5 px-5 pb-6 pt-3"
-      keyboardAvoiding
       label="the filter sheet"
       onClose={onClose}
       visible={visible}
@@ -85,81 +92,91 @@ export function FilterSheet({
         title="Filters"
         trailing={<View className="w-11" />}
       />
-      <View className="gap-3">
-        <SectionHeading>Show</SectionHeading>
-        <View className="flex-row flex-wrap gap-2">
-          {TYPE_CHIPS.map((chip) => (
-            <Chip
-              key={chip.key}
-              label={chip.label}
-              onPress={() => {
-                onType(chip.key);
-              }}
-              selected={type === chip.key}
-            />
-          ))}
+      {/* The filters scroll under the pinned header, so the tag field stays reachable when the sheet
+          shrinks above the keyboard, on a short screen, or at a large text size. */}
+      <SheetBody contentContainerStyle={{ gap: 20 }}>
+        <View className="gap-3">
+          <SectionHeading>Show</SectionHeading>
+          <View className="flex-row flex-wrap gap-2">
+            {TYPE_CHIPS.map((chip) => (
+              <Chip
+                key={chip.key}
+                label={chip.label}
+                onPress={() => {
+                  onType(chip.key);
+                }}
+                selected={type === chip.key}
+              />
+            ))}
+          </View>
         </View>
-      </View>
-      <View className="gap-3">
-        <SectionHeading>{ARCHIVED_LABEL}</SectionHeading>
-        <View className="flex-row flex-wrap gap-2">
-          <Chip
-            accessibilityHint={INCLUDE_ARCHIVED_HINT}
-            icon={Archive}
-            label={INCLUDE_ARCHIVED_LABEL}
-            onPress={() => {
-              onIncludeArchived(!includeArchived);
-            }}
-            selected={includeArchived}
-            testID="include-archived"
-          />
-        </View>
-      </View>
-      <View className="gap-3">
-        <SectionHeading>Tags</SectionHeading>
-        <View className="flex-row flex-wrap gap-2">
-          {tags.map((tag) => (
+        <View className="gap-3">
+          <SectionHeading>{ARCHIVED_LABEL}</SectionHeading>
+          <View className="flex-row flex-wrap gap-2">
             <Chip
-              accessibilityHint="Removes this tag from the filter"
-              accessibilityLabel={`Remove tag ${tag}`}
-              key={tag}
-              label={tag}
+              accessibilityHint={INCLUDE_ARCHIVED_HINT}
+              icon={Archive}
+              label={INCLUDE_ARCHIVED_LABEL}
               onPress={() => {
-                onTags(tags.filter((item) => item !== tag));
+                onIncludeArchived(!includeArchived);
               }}
-              trailingIcon={X}
+              selected={includeArchived}
+              testID="include-archived"
             />
-          ))}
-          {tags.length === 0 ? (
-            <Text className="font-body text-[15px] leading-[22px] text-ink-soft">
-              Any tag. Add one to narrow it down.
+          </View>
+        </View>
+        <View className="gap-3">
+          <SectionHeading>Tags</SectionHeading>
+          <View className="flex-row flex-wrap gap-2">
+            {tags.map((tag) => (
+              <Chip
+                accessibilityHint="Removes this tag from the filter"
+                accessibilityLabel={`Remove tag ${tag}`}
+                key={tag}
+                label={tag}
+                onPress={() => {
+                  onTags(tags.filter((item) => item !== tag));
+                }}
+                trailingIcon={X}
+              />
+            ))}
+            {tags.length === 0 ? (
+              <Text className="font-body text-[15px] leading-[22px] text-ink-soft">
+                Any tag. Add one to narrow it down.
+              </Text>
+            ) : null}
+          </View>
+          {rejection === undefined ? null : (
+            <Text
+              accessibilityLiveRegion="polite"
+              className="font-body text-[15px] leading-[22px] text-ink-soft"
+            >
+              {describeTagsRejection(rejection)}
             </Text>
-          ) : null}
+          )}
+          <View className="flex-row items-center gap-2">
+            <TextInput
+              accessibilityLabel="Tag to filter by"
+              autoCapitalize="none"
+              autoCorrect={false}
+              blurOnSubmit={false}
+              className="h-11 flex-1 rounded-full bg-card px-4 font-body text-[16px] text-ink"
+              onChangeText={setEntry}
+              onSubmitEditing={addTag}
+              placeholder="Add a tag"
+              placeholderTextColor={colors.inkSoft}
+              returnKeyType="done"
+              value={entry}
+            />
+            <IconButton
+              disabled={entry.trim() === ''}
+              icon={Plus}
+              label="Add tag"
+              onPress={addTag}
+            />
+          </View>
         </View>
-        {rejection === undefined ? null : (
-          <Text
-            accessibilityLiveRegion="polite"
-            className="font-body text-[15px] leading-[22px] text-ink-soft"
-          >
-            {describeTagsRejection(rejection)}
-          </Text>
-        )}
-        <View className="flex-row items-center gap-2">
-          <TextInput
-            accessibilityLabel="Tag to filter by"
-            autoCapitalize="none"
-            autoCorrect={false}
-            blurOnSubmit={false}
-            className="h-11 flex-1 rounded-full bg-card px-4 font-body text-[16px] text-ink"
-            onChangeText={setEntry}
-            onSubmitEditing={addTag}
-            placeholder="Add a tag"
-            returnKeyType="done"
-            value={entry}
-          />
-          <IconButton disabled={entry.trim() === ''} icon={Plus} label="Add tag" onPress={addTag} />
-        </View>
-      </View>
+      </SheetBody>
     </Sheet>
   );
 }

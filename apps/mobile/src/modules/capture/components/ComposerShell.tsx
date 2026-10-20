@@ -218,6 +218,7 @@ export function ComposerShell({
               descriptionInput.current?.focus();
             }}
             placeholder="Title"
+            placeholderTextColor={colors.inkSoft}
             returnKeyType="next"
             // Return moves on rather than inserting a line break: a title is one line of text that
             // happens to wrap, not a place to write paragraphs.
@@ -237,6 +238,7 @@ export function ComposerShell({
               setBodyActive(false);
             }}
             placeholder="Add a description"
+            placeholderTextColor={colors.inkSoft}
             ref={descriptionInput}
             testID={`${namespace}-description`}
             value={description}

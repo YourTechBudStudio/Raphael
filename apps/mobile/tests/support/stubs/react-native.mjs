@@ -173,7 +173,6 @@ export const TextInput = function TextInput({
     children,
   );
 };
-export const KeyboardAvoidingView = passThrough('div', 'data-kav');
 export const ActivityIndicator = passThrough('div', 'data-activity');
 /**
  * The pull-to-refresh control: says whether it is refreshing, and holds the handler a pull would run.

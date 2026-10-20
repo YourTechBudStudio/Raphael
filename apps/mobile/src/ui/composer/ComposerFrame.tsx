@@ -1,6 +1,11 @@
 import type { ReactNode } from 'react';
-import { KeyboardAvoidingView, Platform, View } from 'react-native';
+import { View } from 'react-native';
+import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { AnimatedSurface } from '../core/animated-surface';
+import { useKeyboardClearance } from '../core/keyboard-clearance';
+import { colors } from '../theme';
 
 export interface ComposerFrameProps {
   /** The control at the top left. A close cross on every screen that uses this so far. */
@@ -28,11 +33,13 @@ export interface ComposerFrameProps {
  */
 export function ComposerFrame({ leading, status, children, bar, testID }: ComposerFrameProps) {
   const insets = useSafeAreaInsets();
+  const barClearance = useKeyboardClearance(Math.max(insets.bottom, 8), 8);
 
   return (
+    // A style rather than classes: this view is not a core component, so classes do not reach it.
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      className="flex-1 bg-canvas"
+      behavior="padding"
+      style={{ flex: 1, backgroundColor: colors.canvas }}
       testID={testID}
     >
       <View className="flex-1">
@@ -44,12 +51,9 @@ export function ComposerFrame({ leading, status, children, bar, testID }: Compos
         <View className="flex-1">{children}</View>
 
         {bar === undefined ? null : (
-          <View
-            className="border-t border-line bg-card"
-            style={{ paddingBottom: Math.max(insets.bottom, 8) }}
-          >
+          <AnimatedSurface className="border-t border-line bg-card" style={barClearance}>
             {bar}
-          </View>
+          </AnimatedSurface>
         )}
       </View>
     </KeyboardAvoidingView>

@@ -115,7 +115,6 @@ export function DestinationSheet({
   return (
     <Sheet
       className="gap-4 px-5 pb-4 pt-3"
-      keyboardAvoiding
       label="the destination sheet"
       onClose={onClose}
       snapHeight={560}
@@ -271,6 +270,7 @@ function InlineCreate({ containerType, parentAreaId, onCreated, onCancel }: Inli
           }}
           onSubmitEditing={create}
           placeholder={containerType === 'area' ? 'New area' : 'New project'}
+          placeholderTextColor={colors.inkSoft}
           ref={titleInput}
           returnKeyType="done"
           value={title}
