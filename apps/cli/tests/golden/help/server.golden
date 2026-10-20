@@ -1,10 +1,23 @@
 ==== exit ====
 0
 ==== stdout ====
-Usage: raphael server <subcommand>
+Usage: raphael server <subcommand> [options]
 
-Subcommands:
-  serve     Run a Raphael server on this machine.
+Manage the server on this machine.
 
-Run "raphael server serve --help" for details.
+Use server serve to run the server.
+
+Options:
+  -h, --help
+      Show help.
+
+Examples:
+  raphael server serve --help
+  raphael help server serve
+  raphael help connecting
+
+Prints:
+  Help for local server commands.
+
+Next: raphael server serve --help
 ==== stderr ====

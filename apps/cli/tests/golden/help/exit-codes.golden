@@ -1,0 +1,27 @@
+==== exit ====
+0
+==== stdout ====
+raphael help exit-codes - Choose recovery from the process exit code.
+
+  0    Done. This includes no-ops and success with warnings.
+  1    Failed for another reason, with nothing left uncertain.
+  2    The command as typed can never succeed; nothing was applied.
+  3    Not found.
+  4    Conflicts with stored state; nothing was applied.
+  5    Not configured, or not authorized.
+  6    Not applied, and retrying may work.
+  7    Outcome unknown: a write was sent and no definite answer came back.
+  130  Interrupted by SIGINT.
+  143  Interrupted by SIGTERM.
+
+For exit 7 reconcile by reading before retrying. SIGINT and SIGTERM retain their conventional codes; a write interrupted after sending may still have been applied. JSON failures also report applied and retryable.
+
+Server error codes: invalid_input, unauthorized, node_not_found, route_not_found, method_not_allowed, slug_conflict, revision_conflict, node_archived, payload_too_large, unsupported_media_type, invalid_parent, unsupported_content, storage_busy, internal_error. Machine codes are stable identifiers; use exitCode to choose a recovery category.
+
+Examples:
+  raphael get /work --json
+  raphael help revisions
+  raphael help output
+
+Next: raphael help reference
+==== stderr ====

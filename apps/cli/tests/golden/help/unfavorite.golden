@@ -4,10 +4,27 @@
 Usage: raphael unfavorite <path> [options]
        raphael unfavorite --id <id> [options]
 
-Remove something from your favorites. Not a favorite is fine.
+Remove an area or project from favorites.
+
+An item that is not a favorite succeeds without a change.
 
 Options:
-      --id <id>   Address by identifier instead of by path.
-      --json      Print the result as JSON.
-  -h, --help      Show this help.
+      --id <id>
+      Address by durable id instead of path.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael unfavorite /work
+  raphael unfavorite --id 42
+  raphael unfavorite /work/raphael --json
+
+Prints:
+  The id and favorite state. JSON carries `nodeId` and `isFavorite`.
+
+Next: raphael favorites
+
+See also: raphael help favorite
 ==== stderr ====

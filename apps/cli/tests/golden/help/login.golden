@@ -3,13 +3,29 @@
 ==== stdout ====
 Usage: raphael login [--json]
 
-Connect this machine to a Raphael server. Prompts for the server address and an API key,
-verifies them, then saves them with owner-only permissions.
+Save a verified server address and API key on this machine.
 
-The key is never taken as an argument, so it stays out of shell history and the process table.
-For scripts, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY instead of logging in.
+Prompts for the server address and an API key, verifies them, then saves them with owner-only permissions.
+
+The key is never taken as an argument. For scripts, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together instead of logging in.
+
+Prompts go to standard error. Cancelling exits 2 and saves nothing.
 
 Options:
-  --json        Report the outcome as JSON on stdout. Prompts go to standard error.
-  -h, --help    Show this help.
+      --json
+      Print the result as one JSON document.
+  -h, --help
+      Show help.
+
+Examples:
+  raphael login
+  raphael login --json
+  raphael login --help
+
+Prints:
+  The verified address and saved configuration path; JSON also includes the protocol version.
+
+Next: raphael list / -r
+
+See also: raphael help connecting
 ==== stderr ====

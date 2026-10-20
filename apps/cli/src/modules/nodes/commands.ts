@@ -24,19 +24,37 @@ import {
   update,
 } from '@raphael/client/nodes';
 import {
+  decodeCreateRequest,
+  decodeUpdateRequest,
+  decodeMoveRequest,
+  decodeLifecycleRequest,
+  decodeFavoriteRequest,
+  decodeFavoriteListRequest,
+  decodeGetRequest,
+  decodeGetPathRequest,
+  decodeListRequest,
+  decodeSearchRequest,
   BODY_FORMATS,
   DIRECT_ARCHIVE_REASON,
   FILTER_KEYS,
+  LIST_LIMIT_DEFAULT,
+  LIST_SKIP_DEFAULT,
   LIST_LIMIT_MAX,
   LIST_LIMIT_MIN,
   NODE_ORDER_FIELDS,
   ORDER_DIRECTIONS,
   SCOPES_MAX_COUNT,
+  TITLE_MAX_CODE_POINTS,
+  DESCRIPTION_MAX_CODE_POINTS,
+  TAGS_MAX_COUNT,
+  TAG_MAX_CODE_POINTS,
+  SLUG_MAX_CODE_POINTS,
   type ArchiveCause,
   type NodeEntity,
   type NodeFilterInput,
   type NodeSummary,
   type ScopeSelector,
+  type RequestField,
 } from '@raphael/contracts/nodes';
 
 import {
@@ -47,16 +65,29 @@ import {
   parseArgs,
   stringListOption,
   stringOption,
-  type OptionConfig,
   type ParsedArgs,
 } from '../../shared/args.ts';
-import type { CommandContext } from '../../shared/command.ts';
+import {
+  optionsFor,
+  type CommandContext,
+  type CommandDefinition,
+  type CommandOption,
+} from '../../shared/command.ts';
 import type { ExitCode } from '../../shared/exit.ts';
 import { reportClientFailure, type RequestContext, type Subject } from '../../shared/failure.ts';
+import { HELP_RULES } from '../../shared/help-rules.ts';
 import { forTerminal, forTerminalBlock } from '../../shared/output.ts';
 import { renderSuccess, type Success } from '../../shared/success.ts';
 import {
   CREATE_TARGETS,
+  checkRequestSize,
+  validateTitle,
+  validateSlug,
+  validateDescription,
+  validateTags,
+  validateBodyArguments,
+  prevalidateMetadata,
+  prevalidateFilter,
   destinationFrom,
   parseCreateTarget,
   parseId,
@@ -71,6 +102,484 @@ import {
   titleFromContent,
   type Selector,
 } from './input.ts';
+
+const textOption = (
+  name: string,
+  valueName: string,
+  description: string,
+  extra: Partial<CommandOption> = {},
+): CommandOption => ({ name, type: 'string', valueName, description, ...extra });
+const flagOption = (
+  name: string,
+  description: string,
+  extra: Partial<CommandOption> = {},
+): CommandOption => ({ name, type: 'boolean', description, ...extra });
+const commonOptions: readonly CommandOption[] = [
+  flagOption('json', 'Print one JSON result.'),
+  flagOption('help', 'Show this help.', { short: 'h' }),
+];
+const idOption = textOption('id', 'id', 'Address by durable id instead of path.');
+const revisionOption = textOption(
+  'revision',
+  'n',
+  'Revision read previously. Without a body change, omitted revisions are read immediately before sending.',
+);
+const returnFormatOption = textOption(
+  'return-format',
+  'format',
+  `Returned body: ${BODY_FORMATS.join(' or ')}. Requires --json.`,
+  { default: BODY_FORMATS[0] },
+);
+const titleOption = textOption(
+  'title',
+  'text',
+  `Name, at most ${TITLE_MAX_CODE_POINTS} characters.`,
+  { changes: true },
+);
+const slugOption = textOption(
+  'slug',
+  'slug',
+  `Address within the parent, at most ${SLUG_MAX_CODE_POINTS} characters. See help addressing.`,
+  { changes: true },
+);
+const descriptionOption = textOption(
+  'description',
+  'text',
+  `Description, at most ${DESCRIPTION_MAX_CODE_POINTS} characters. An empty string clears it.`,
+  { changes: true },
+);
+const tagOption = textOption(
+  'tag',
+  'tag',
+  `Repeat for each tag; at most ${TAGS_MAX_COUNT} tags of ${TAG_MAX_CODE_POINTS} characters. Commas are refused. Updates replace all tags.`,
+  { multiple: true, changes: true },
+);
+const bodyOptions: readonly CommandOption[] = [
+  textOption(
+    'body',
+    'text|@file|@-',
+    'Body text, @file, or @- for stdin. An empty string clears it; updates require --revision.',
+    { changes: true },
+  ),
+  textOption(
+    'body-literal',
+    'text',
+    'Literal body text, including text beginning with @. Updates require --revision.',
+    { changes: true },
+  ),
+  textOption('body-format', 'format', `Submitted body: ${BODY_FORMATS.join(' or ')}.`, {
+    default: BODY_FORMATS[0],
+  }),
+];
+const pageOptions: readonly CommandOption[] = [
+  textOption('id', 'id', 'Include this id alongside positional paths.', {
+    multiple: true,
+  }),
+  textOption(
+    'filter',
+    'json|@file',
+    `JSON object. Keys: ${FILTER_KEYS.join(', ')}. Values may use {"$in":[...]}. See help addressing.`,
+  ),
+  textOption('skip', 'n', 'Number of results to skip.', { default: String(LIST_SKIP_DEFAULT) }),
+  textOption('limit', 'n', `Page size, ${LIST_LIMIT_MIN} to ${LIST_LIMIT_MAX}.`, {
+    default: String(LIST_LIMIT_DEFAULT),
+  }),
+  flagOption('include-archived', 'Include archived items.'),
+];
+const fieldFlags = {
+  type: '<type>',
+  kind: '<type>',
+  includeArchived: '--include-archived',
+  target: '<path> or --id',
+  parent: '--parent-id',
+  slug: '--slug',
+  title: '--title',
+  description: '--description',
+  tags: '--tag',
+  metadata: '--metadata',
+  body: '--body',
+  format: '--return-format',
+  revision: '--revision',
+  destination: '<destination>',
+  scopes: '<path> or --id',
+  queries: '-q',
+  filter: '--filter',
+  skip: '--skip',
+  limit: '--limit',
+  orderBy: '--order-by',
+  active: '--active',
+} satisfies Partial<Record<RequestField, string>>;
+const example = (...argv: string[]) => ({ argv });
+
+export const CREATE_DEFINITION: CommandDefinition = {
+  name: 'create',
+  summary: 'Create an area, project, or note.',
+  group: 'Write',
+  writes: true,
+  usage: [
+    'raphael create <type> <path> [options]',
+    'raphael create <type> --parent-id <id> --slug <slug> [options]',
+  ],
+  behavior: [
+    `Types: ${CREATE_TARGETS.join(', ')}. A full path supplies both parent and slug. The parent must already exist.`,
+    'Areas and projects require --title. Notes may derive their title from the first body line, then the description. Metadata is set once, at create.',
+  ],
+  constraints: [
+    'See help addressing for containment and slug rules. A taken slug, including one reserved by an archived item, is refused.',
+    'When supplying a body, give either --body or --body-literal. Give each tag its own --tag.',
+  ],
+  options: [
+    titleOption,
+    textOption('parent-id', 'id', 'Parent id instead of a full path. Requires --slug.'),
+    slugOption,
+    descriptionOption,
+    tagOption,
+    textOption('metadata', 'json|@file', 'JSON object set once at create. @- is refused.'),
+    ...bodyOptions,
+    returnFormatOption,
+    ...commonOptions,
+  ],
+  examples: [
+    example('create', 'area', '/work', '--title', 'Work'),
+    example('create', 'project', '/work/raphael', '--title', 'Raphael'),
+    example('create', 'resource.note', '/work/raphael/api-design', '--body', '# API design'),
+    example(
+      'create',
+      'resource.note',
+      '--parent-id',
+      '42',
+      '--slug',
+      'review',
+      '--title',
+      'Review',
+      '--tag',
+      'reviewed',
+    ),
+  ],
+  prints: 'The created item with its id and revision. JSON carries `entity`.',
+  next: 'raphael list / -r',
+  seeAlso: ['addressing', 'content', 'update'],
+  fieldFlags,
+};
+export const UPDATE_DEFINITION: CommandDefinition = {
+  name: 'update',
+  summary: 'Change an item with revision protection.',
+  group: 'Write',
+  writes: true,
+  usage: [
+    'raphael update <path> [changes] [options]',
+    'raphael update --id <id> [changes] [options]',
+  ],
+  behavior: [
+    'Give at least one change. Tags replace the complete tag list; --no-tags clears it. A renamed title does not change the path.',
+    'A body replacement requires the revision you read. Other changes may read and pin the current id and revision for you. Conflicts are never retried automatically.',
+  ],
+  constraints: [
+    'Metadata is set once, at create. --active and --inactive apply only to projects.',
+    'On a revision conflict, get the item again and reconcile your intended change before updating with its new revision.',
+  ],
+  options: [
+    idOption,
+    titleOption,
+    descriptionOption,
+    slugOption,
+    ...bodyOptions,
+    tagOption,
+    flagOption('no-tags', 'Clear all tags.', { changes: true }),
+    flagOption('active', 'Mark the project active.', { changes: true }),
+    flagOption('inactive', 'Mark the project inactive.', { changes: true }),
+    revisionOption,
+    returnFormatOption,
+    ...commonOptions,
+  ],
+  examples: [
+    example('update', '/work/raphael/api-design', '--body', '# Revised design', '--revision', '8'),
+    example('update', '/work/raphael', '--tag', 'reviewed', '--tag', 'contracts'),
+    example('update', '--id', '42', '--title', 'Contract review', '--description', ''),
+  ],
+  prints: 'The updated item and revision. JSON carries `entity`.',
+  next: 'raphael get --id 42',
+  seeAlso: ['revisions', 'content'],
+  fieldFlags,
+};
+export const MOVE_DEFINITION: CommandDefinition = {
+  name: 'move',
+  summary: 'Move an item while keeping its id.',
+  group: 'Write',
+  writes: true,
+  usage: [
+    'raphael move <path> <destination> [options]',
+    'raphael move --id <id> <destination> [options]',
+  ],
+  behavior: [
+    'An existing destination area or project receives the item with its current slug. Otherwise the last path segment supplies a new slug and its parent must exist.',
+    'Everything inside moves with it. Nothing is overwritten. A directly archived item must be restored first; an item archived only through a parent can move to an active parent.',
+  ],
+  options: [idOption, revisionOption, ...commonOptions],
+  examples: [
+    example('move', '/work/raphael', '/engineering'),
+    example('move', '/work/raphael', '/engineering/platform'),
+    example('move', '--id', '42', '/'),
+  ],
+  prints: 'The moved item, id and revision. JSON carries `node`.',
+  next: 'raphael path --id 42',
+  seeAlso: ['addressing', 'revisions'],
+  fieldFlags,
+};
+export const ARCHIVE_DEFINITION: CommandDefinition = {
+  name: 'archive',
+  summary: 'Hide an item and everything inside it.',
+  group: 'Write',
+  writes: true,
+  usage: ['raphael archive <path> [options]', 'raphael archive --id <id> [options]'],
+  behavior: [
+    'Archive hides items from ordinary lists and search without deleting them. The slug stays reserved, and favorites and project active state are retained.',
+    'Archiving an item already hidden through a parent adds its own archive cause. Restoring the parent then leaves this item archived. There is no delete command.',
+  ],
+  options: [idOption, revisionOption, ...commonOptions],
+  examples: [
+    example('archive', '/work/raphael'),
+    example('archive', '--id', '42'),
+    example('archive', '--id', '42', '--revision', '8', '--json'),
+  ],
+  prints: 'The item and remaining archive causes. JSON carries `node` and `archiveCauses`.',
+  next: 'raphael restore --id 42',
+  seeAlso: ['restore', 'revisions'],
+  fieldFlags,
+};
+export const RESTORE_DEFINITION: CommandDefinition = {
+  name: 'restore',
+  summary: 'Remove an item’s own archive cause.',
+  group: 'Write',
+  writes: true,
+  usage: ['raphael restore <path> [options]', 'raphael restore --id <id> [options]'],
+  behavior: [
+    'Restore removes only the item’s own archive cause. If a parent remains archived, the item stays archived and the answer names the parent to restore.',
+    'An already active item succeeds without a change.',
+  ],
+  options: [idOption, revisionOption, ...commonOptions],
+  examples: [
+    example('restore', '/work/raphael'),
+    example('restore', '--id', '42'),
+    example('restore', '--id', '42', '--revision', '8', '--json'),
+  ],
+  prints: 'The item and remaining archive causes. JSON carries `node` and `archiveCauses`.',
+  next: 'raphael get --id 42',
+  seeAlso: ['archive', 'revisions'],
+  fieldFlags,
+};
+export const FAVORITE_DEFINITION: CommandDefinition = {
+  name: 'favorite',
+  summary: 'Add an area or project to favorites.',
+  group: 'Write',
+  writes: true,
+  usage: ['raphael favorite <path> [options]', 'raphael favorite --id <id> [options]'],
+  behavior: [
+    'Already a favorite succeeds. Favorites keep their state while archived, but archived items are omitted from the favorites list.',
+  ],
+  options: [idOption, ...commonOptions],
+  examples: [
+    example('favorite', '/work'),
+    example('favorite', '--id', '42'),
+    example('favorite', '/work/raphael', '--json'),
+  ],
+  prints: 'The id and favorite state. JSON carries `nodeId` and `isFavorite`.',
+  next: 'raphael favorites',
+  seeAlso: ['unfavorite'],
+  fieldFlags,
+};
+export const UNFAVORITE_DEFINITION: CommandDefinition = {
+  name: 'unfavorite',
+  summary: 'Remove an area or project from favorites.',
+  group: 'Write',
+  writes: true,
+  usage: ['raphael unfavorite <path> [options]', 'raphael unfavorite --id <id> [options]'],
+  behavior: ['An item that is not a favorite succeeds without a change.'],
+  options: [idOption, ...commonOptions],
+  examples: [
+    example('unfavorite', '/work'),
+    example('unfavorite', '--id', '42'),
+    example('unfavorite', '/work/raphael', '--json'),
+  ],
+  prints: 'The id and favorite state. JSON carries `nodeId` and `isFavorite`.',
+  next: 'raphael favorites',
+  seeAlso: ['favorite'],
+  fieldFlags,
+};
+export const FAVORITES_DEFINITION: CommandDefinition = {
+  name: 'favorites',
+  summary: 'List favorites by title.',
+  group: 'Read',
+  writes: false,
+  usage: ['raphael favorites [options]'],
+  behavior: [
+    'List favorite areas and projects by title. Archived favorites are left out and stay favorites.',
+  ],
+  options: [
+    ...pageOptions.filter((option) => ['skip', 'limit'].includes(option.name)),
+    ...commonOptions,
+  ],
+  examples: [
+    example('favorites'),
+    example('favorites', '--limit', '20'),
+    example('favorites', '--skip', '20', '--limit', '20', '--json'),
+  ],
+  prints: 'A page of items. JSON carries `items` and `page`; paging notes go to stderr.',
+  next: 'raphael get --id 42',
+  seeAlso: ['output'],
+  fieldFlags,
+};
+export const GET_DEFINITION: CommandDefinition = {
+  name: 'get',
+  summary: 'Read one item and its current revision.',
+  group: 'Read',
+  writes: false,
+  usage: ['raphael get <path> [options]', 'raphael get --id <id> [options]'],
+  behavior: [
+    'Read one area, project, or note, including its body, tags, metadata and archive causes. Markdown export is best effort; see help content.',
+  ],
+  options: [idOption, returnFormatOption, ...commonOptions],
+  examples: [
+    example('get', '/work/raphael/api-design'),
+    example('get', '--id', '42'),
+    example('get', '--id', '42', '--return-format', 'tiptap', '--json'),
+  ],
+  prints: 'Fields and body. JSON carries `entity`.',
+  next: 'raphael update --id 42 --title "Reviewed design"',
+  seeAlso: ['content', 'revisions'],
+  fieldFlags,
+};
+export const PATH_DEFINITION: CommandDefinition = {
+  name: 'path',
+  summary: 'Print an item’s current full path.',
+  group: 'Read',
+  writes: false,
+  usage: ['raphael path <path> [options]', 'raphael path --id <id> [options]'],
+  behavior: ['Paths change when an item or a parent moves or changes slug. Ids remain stable.'],
+  options: [idOption, ...commonOptions],
+  examples: [
+    example('path', '/work/raphael'),
+    example('path', '--id', '42'),
+    example('path', '--id', '42', '--json'),
+  ],
+  prints: 'The full path. JSON carries `id` and `path`.',
+  next: 'raphael get --id 42',
+  seeAlso: ['addressing'],
+  fieldFlags,
+};
+export const LIST_DEFINITION: CommandDefinition = {
+  name: 'list',
+  summary: 'List children of one or more paths or ids.',
+  group: 'Read',
+  writes: false,
+  usage: ['raphael list <path>... [options]', 'raphael list --id <id> [options]'],
+  behavior: [
+    `Use / for the root. Mix paths and repeated --id, up to ${SCOPES_MAX_COUNT} distinct places. A note has no children and returns an empty page.`,
+    'Direct children are listed by default. -r includes all descendants. Ordering applies before paging.',
+  ],
+  constraints: [HELP_RULES.paging, HELP_RULES.ordering, HELP_RULES.filter],
+  options: [
+    ...pageOptions,
+    flagOption('recursive', 'Include all descendants.', { short: 'r' }),
+    textOption(
+      'order-by',
+      'field:direction',
+      `Repeat in priority order. Fields: ${NODE_ORDER_FIELDS.join(', ')}. Directions: ${ORDER_DIRECTIONS.join(', ')}.`,
+      {
+        multiple: true,
+        default: `${NODE_ORDER_FIELDS[0]}:${ORDER_DIRECTIONS[0]} then ${NODE_ORDER_FIELDS[2]}:${ORDER_DIRECTIONS[0]}`,
+      },
+    ),
+    ...commonOptions,
+  ],
+  examples: [
+    example('list', '/'),
+    example(
+      'list',
+      '/',
+      '-r',
+      '--filter',
+      '{"type":"resource"}',
+      '--order-by',
+      'updatedAt:desc',
+      '--limit',
+      '4',
+    ),
+    example('list', '/work', '/personal', '--filter', '{"tags":{"$in":["urgent"]}}'),
+  ],
+  prints: 'One row per item. JSON carries `items` and `page`; paging notes go to stderr.',
+  next: 'raphael get --id 42',
+  seeAlso: ['addressing', 'output'],
+  fieldFlags: { ...fieldFlags, recursive: '--recursive' } satisfies Partial<
+    Record<RequestField, string>
+  >,
+};
+export const SEARCH_DEFINITION: CommandDefinition = {
+  name: 'search',
+  summary: 'Search all descendants by text.',
+  group: 'Read',
+  writes: false,
+  usage: [
+    'raphael search <path>... -q <query> [options]',
+    'raphael search --id <id> -q <query> [options]',
+  ],
+  behavior: [HELP_RULES.search, 'Results are ordered by relevance; --order-by is not accepted.'],
+  constraints: [HELP_RULES.paging, HELP_RULES.filter],
+  options: [
+    ...pageOptions,
+    textOption('query', 'text', 'Text to search. At least one required.', {
+      short: 'q',
+      multiple: true,
+    }),
+    flagOption('direct', 'Search direct children only.'),
+    ...commonOptions,
+  ],
+  examples: [
+    example('search', '/', '-q', 'auth'),
+    example('search', '/work', '-q', '"login flow" AND retry'),
+    example('search', '/work', '/personal', '-q', 'auth', '--limit', '20'),
+    example(
+      'search',
+      '/work',
+      '--direct',
+      '-q',
+      'auth',
+      '--filter',
+      '{"type":"resource","kind":"note"}',
+    ),
+  ],
+  prints: 'One row per match, with closest matches first. JSON carries `items[].node` and `page`.',
+  next: 'raphael get --id 42',
+  seeAlso: ['addressing', 'output'],
+  fieldFlags: { ...fieldFlags, recursive: '--direct' } satisfies Partial<
+    Record<RequestField, string>
+  >,
+};
+
+const parserContext = {
+  otherCommands: Object.fromEntries(
+    [
+      CREATE_DEFINITION,
+      UPDATE_DEFINITION,
+      MOVE_DEFINITION,
+      ARCHIVE_DEFINITION,
+      RESTORE_DEFINITION,
+      FAVORITE_DEFINITION,
+      UNFAVORITE_DEFINITION,
+      FAVORITES_DEFINITION,
+      GET_DEFINITION,
+      PATH_DEFINITION,
+      LIST_DEFINITION,
+      SEARCH_DEFINITION,
+    ].map((definition) => [definition.name, optionsFor(definition)]),
+  ),
+};
+const returnedFormat = (parsed: ParsedArgs, command: string) => {
+  const format = choiceOption(parsed, 'return-format', command, BODY_FORMATS);
+  if (format !== undefined && !booleanOption(parsed, 'json'))
+    throw new UsageError('--return-format requires --json.', command);
+  return format;
+};
 
 const failed = (
   context: CommandContext,
@@ -206,16 +715,6 @@ const pageNote = (page: Page): string =>
  * the contract. Each command spreads this and adds its own: `--order-by` for a listing, `-q` for a
  * search.
  */
-const SCOPE_PAGE_OPTIONS = {
-  id: { type: 'string', multiple: true },
-  recursive: { type: 'boolean', short: 'r' },
-  filter: { type: 'string' },
-  skip: { type: 'string' },
-  limit: { type: 'string' },
-  'include-archived': { type: 'boolean' },
-  json: { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
 
 /**
  * Adapt the shared half of a scope-page request, for either command.
@@ -237,18 +736,20 @@ const scopePageFrom = (
   // Every positional is a scope. There is no "unexpected argument" case, because a second path is a
   // second place to look rather than a mistake.
   const scopes = scopesFrom(parsed.positionals, stringListOption(parsed, 'id'), command);
-  const recursive = booleanOption(parsed, 'recursive');
-  const filter = resolveFilter(stringOption(parsed, 'filter'), command);
+  const recursive =
+    command === 'search' ? !booleanOption(parsed, 'direct') : booleanOption(parsed, 'recursive');
+  prevalidateFilter(stringOption(parsed, 'filter'), command);
   const skip = integerOption(parsed, 'skip', command, { min: 0, max: Number.MAX_SAFE_INTEGER });
   const limit = integerOption(parsed, 'limit', command, {
     min: LIST_LIMIT_MIN,
     max: LIST_LIMIT_MAX,
   });
   const includeArchived = booleanOption(parsed, 'include-archived');
+  const filter = resolveFilter(stringOption(parsed, 'filter'), command);
 
   return {
     scopes,
-    ...(recursive ? { recursive } : {}),
+    recursive,
     ...(filter === undefined ? {} : { filter }),
     ...(skip === undefined ? {} : { skip }),
     ...(limit === undefined ? {} : { limit }),
@@ -267,58 +768,11 @@ const scopeRequest = (scopes: readonly ScopeSelector[]): RequestContext => ({
   flags: { scopes: '<path>' },
 });
 
-export const CREATE_HELP = `Usage: raphael create <type> <path> [--title <title>] [options]
-       raphael create <type> --parent-id <id> --slug <slug> [--title <title>] [options]
-
-Create an area, a project, or a note. The path form splits a complete absolute path into the
-parent it goes under and the slug it will occupy, so "/work/raphael/backend" creates "backend"
-under "/work/raphael". The id form addresses the parent by its durable identifier instead.
-
-Types: ${CREATE_TARGETS.join(', ')}
-
-A note may omit --title, in which case it is named from the first line of its body, or from its
-description. A note with no usable text in either needs --title.
-
-Examples:
-  raphael create resource.note /work/api-design --title "API design" --body '# API design'
-  raphael create resource.note /work/api-design --body @./note.md
-  raphael create resource.note /work/api-design --body @-
-  raphael get /work/api-design
-
-Options:
-      --title <text>         The human name. Required for an area or a project.
-      --parent-id <id>       Parent by identifier. Use instead of a path.
-      --slug <slug>          Address within the parent. Required with --parent-id.
-      --description <text>   Plain description.
-      --tag <tag>            Repeatable.
-      --metadata <json>      A JSON object, or @file containing one.
-      --body <text|@file|@-> Body content. @file reads a file, @- reads standard input.
-      --body-literal <text>  Body text that starts with "@" and is not a path.
-      --body-format <fmt>    Format of the submitted body: ${BODY_FORMATS.join(' or ')}. Default markdown.
-      --format <fmt>         Format of the returned body: ${BODY_FORMATS.join(' or ')}. Default markdown.
-      --json                 Print the result as JSON.
-  -h, --help                 Show this help.`;
-
-export const CREATE_OPTIONS = {
-  title: { type: 'string' },
-  'parent-id': { type: 'string' },
-  slug: { type: 'string' },
-  description: { type: 'string' },
-  tag: { type: 'string', multiple: true },
-  metadata: { type: 'string' },
-  body: { type: 'string' },
-  'body-literal': { type: 'string' },
-  'body-format': { type: 'string' },
-  format: { type: 'string' },
-  json: { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
-
 export const runCreate = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, CREATE_OPTIONS, 'create');
+  const parsed = parseArgs(argv, optionsFor(CREATE_DEFINITION), 'create', parserContext);
 
   const [typeToken, path, ...extra] = parsed.positionals;
   if (typeToken === undefined) {
@@ -326,7 +780,10 @@ export const runCreate = async (
   }
   const target = parseCreateTarget(typeToken, 'create');
   if (extra.length > 0) {
-    throw new UsageError(`Unexpected argument "${extra[0]}".`, 'create');
+    throw new UsageError(
+      'create takes one type and one path, or one type with --parent-id and --slug.',
+      'create',
+    );
   }
 
   const titleFlag = stringOption(parsed, 'title');
@@ -352,21 +809,32 @@ export const runCreate = async (
     if (parentId === undefined || slugFlag === undefined) {
       throw new UsageError('Give a complete path, or --parent-id together with --slug.', 'create');
     }
-    parent = { id: parseId(parentId, 'create') };
+    parent = { id: parseId(parentId, 'create', '--parent-id') };
     slug = slugFlag;
   }
 
+  const tags = stringListOption(parsed, 'tag');
+  const description = stringOption(parsed, 'description');
+  const format = returnedFormat(parsed, 'create');
+  const bodyFormat = choiceOption(parsed, 'body-format', 'create', BODY_FORMATS);
+  validateBodyArguments(
+    stringOption(parsed, 'body'),
+    stringOption(parsed, 'body-literal'),
+    'create',
+  );
+  validateSlug(slug, 'create', path === undefined ? '--slug' : '<path>');
+  if (titleFlag !== undefined || target.type !== 'resource') validateTitle(titleFlag, 'create');
+  if (description !== undefined) validateDescription(description, 'create');
+  validateTags(tags, 'create', '--tag');
+  prevalidateMetadata(stringOption(parsed, 'metadata'), 'create');
   const body = await resolveBody(
     stringOption(parsed, 'body'),
     stringOption(parsed, 'body-literal'),
-    choiceOption(parsed, 'body-format', 'create', BODY_FORMATS),
+    bodyFormat,
     'create',
     context.signal,
   );
   const metadata = resolveMetadata(stringOption(parsed, 'metadata'), 'create');
-  const tags = stringListOption(parsed, 'tag');
-  const description = stringOption(parsed, 'description');
-  const format = choiceOption(parsed, 'format', 'create', BODY_FORMATS);
 
   // Every creation is named by the caller. A container must be named here; a note may be named from
   // what it already says, the same way every client does it.
@@ -383,6 +851,8 @@ export const runCreate = async (
       );
     }
   }
+
+  validateTitle(title, 'create');
 
   const common = {
     parent,
@@ -401,6 +871,7 @@ export const runCreate = async (
       ? { ...common, type: target.type, kind: target.kind }
       : { ...common, type: target.type };
 
+  checkRequestSize(request, 'create', decodeCreateRequest);
   const result = await create(context.transport(), request, context.signal);
   if (!result.ok) {
     const byPath = path !== undefined;
@@ -433,50 +904,10 @@ export const runCreate = async (
   });
 };
 
-export const UPDATE_HELP = `Usage: raphael update <path> [changes] [--revision <n>] [options]
-       raphael update --id <id> [changes] [--revision <n>] [options]
-
-Change an area, a project, or a note. An update names the revision it was written against, so a
-newer version on the server is refused rather than overwritten. Raphael does not retry a change
-on its own.
-
-Examples:
-  raphael update /work/contracts --body @./contracts.md --revision 8
-  raphael update /work/contracts --tag reviewed --tag contracts
-  raphael update --id 42 --title "Contract review" --description ""
-
-Changes (at least one):
-      --title <text>          Replace the name. The address does not follow it.
-      --description <text>    Replace the description. "" clears it.
-      --slug <slug>           Replace the address within the parent.
-      --body <text|@file|@->  Replace the body. "" clears it. Requires --revision.
-      --body-literal <text>   Body text that starts with "@" and is not a path. Requires --revision.
-      --body-format <fmt>     Format of the submitted body: ${BODY_FORMATS.join(' or ')}. Default markdown.
-      --tag <tag>             Repeatable. Replaces the whole tag list with the tags given.
-      --no-tags               Remove every tag.
-      --active                Mark the project as currently being worked on.
-      --inactive              Mark it as not being worked on. Only a project can be either.
-
-Options:
-      --id <id>               Address by identifier instead of by path.
-      --revision <n>          The revision you read. Without it, and without a body change, the
-                              current revision is read for you just before the update is sent.
-      --format <fmt>          Format of the returned body: ${BODY_FORMATS.join(' or ')}. Default markdown.
-      --json                  Print the result as JSON.
-  -h, --help                  Show this help.`;
-
 /** Every flag that asks for something to change. Presence is the rule; an empty value still changes. */
-const CHANGE_FLAGS = [
-  'title',
-  'description',
-  'slug',
-  'body',
-  'body-literal',
-  'tag',
-  'no-tags',
-  'active',
-  'inactive',
-] as const;
+const CHANGE_FLAGS = UPDATE_DEFINITION.options
+  .filter((option) => option.changes)
+  .map((option) => option.name);
 
 /** Whether a flag was given at all, whatever it was given as. */
 const wasGiven = (parsed: ParsedArgs, name: string): boolean => parsed.values[name] !== undefined;
@@ -523,32 +954,14 @@ const pinRevision = async (
   };
 };
 
-export const UPDATE_OPTIONS = {
-  id: { type: 'string' },
-  title: { type: 'string' },
-  description: { type: 'string' },
-  slug: { type: 'string' },
-  body: { type: 'string' },
-  'body-literal': { type: 'string' },
-  'body-format': { type: 'string' },
-  tag: { type: 'string', multiple: true },
-  'no-tags': { type: 'boolean' },
-  active: { type: 'boolean' },
-  inactive: { type: 'boolean' },
-  revision: { type: 'string' },
-  format: { type: 'string' },
-  json: { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
-
 export const runUpdate = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, UPDATE_OPTIONS, 'update');
+  const parsed = parseArgs(argv, optionsFor(UPDATE_DEFINITION), 'update', parserContext);
 
   const [path, ...extra] = parsed.positionals;
-  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'update');
+  if (extra.length > 0) throw new UsageError('update takes one path, or --id.', 'update');
 
   const target = selectorFrom(path, stringOption(parsed, 'id'), 'update');
   const revisionFlag = integerOption(parsed, 'revision', 'update', {
@@ -563,7 +976,7 @@ export const runUpdate = async (
   // being told the command was wrong.
   if (!CHANGE_FLAGS.some((flag) => wasGiven(parsed, flag))) {
     throw new UsageError(
-      'Give at least one change: --title, --description, --slug, --body, --tag, --no-tags, --active or --inactive.',
+      `Give at least one change: ${CHANGE_FLAGS.map((flag) => `--${flag}`).join(', ')}.`,
       'update',
     );
   }
@@ -584,13 +997,6 @@ export const runUpdate = async (
     );
   }
 
-  const body = await resolveBody(
-    stringOption(parsed, 'body'),
-    stringOption(parsed, 'body-literal'),
-    choiceOption(parsed, 'body-format', 'update', BODY_FORMATS),
-    'update',
-    context.signal,
-  );
   const title = stringOption(parsed, 'title');
   const description = stringOption(parsed, 'description');
   const slug = stringOption(parsed, 'slug');
@@ -608,8 +1014,36 @@ export const runUpdate = async (
     : wasGiven(parsed, 'inactive')
       ? false
       : undefined;
-  const format = choiceOption(parsed, 'format', 'update', BODY_FORMATS);
+  const format = returnedFormat(parsed, 'update');
 
+  validateBodyArguments(
+    stringOption(parsed, 'body'),
+    stringOption(parsed, 'body-literal'),
+    'update',
+  );
+  if (title !== undefined) validateTitle(title, 'update');
+  if (description !== undefined) validateDescription(description, 'update');
+  if (slug !== undefined) validateSlug(slug, 'update');
+  if (tags !== undefined) validateTags(tags, 'update', '--tag');
+  const body = await resolveBody(
+    stringOption(parsed, 'body'),
+    stringOption(parsed, 'body-literal'),
+    choiceOption(parsed, 'body-format', 'update', BODY_FORMATS),
+    'update',
+    context.signal,
+  );
+  const changes = {
+    ...(title === undefined ? {} : { title }),
+    ...(description === undefined ? {} : { description }),
+    ...(slug === undefined ? {} : { slug }),
+    ...(body === undefined ? {} : { body }),
+    ...(tags === undefined ? {} : { tags }),
+    ...(active === undefined ? {} : { active }),
+    ...(format === undefined ? {} : { format }),
+  };
+  if (revisionFlag !== undefined)
+    checkRequestSize({ target, revision: revisionFlag, ...changes }, 'update', decodeUpdateRequest);
+  else checkRequestSize({ target }, 'update', decodeGetRequest);
   const transport = context.transport();
   const request: RequestContext = {
     subject: target,
@@ -625,21 +1059,9 @@ export const runUpdate = async (
   const pinned = await pinRevision(context, transport, target, revisionFlag, request);
   if ('exit' in pinned) return pinned.exit;
 
-  const result = await update(
-    transport,
-    {
-      target: pinned.sendTo,
-      revision: pinned.revision,
-      ...(title === undefined ? {} : { title }),
-      ...(description === undefined ? {} : { description }),
-      ...(slug === undefined ? {} : { slug }),
-      ...(body === undefined ? {} : { body }),
-      ...(tags === undefined ? {} : { tags }),
-      ...(active === undefined ? {} : { active }),
-      ...(format === undefined ? {} : { format }),
-    },
-    context.signal,
-  );
+  const writeRequest = { target: pinned.sendTo, revision: pinned.revision, ...changes };
+  checkRequestSize(writeRequest, 'update', decodeUpdateRequest);
+  const result = await update(transport, writeRequest, context.signal);
 
   if (!result.ok) {
     return failed(context, result.failure, {
@@ -662,41 +1084,11 @@ export const runUpdate = async (
   });
 };
 
-export const MOVE_HELP = `Usage: raphael move <path> <destination> [--revision <n>] [options]
-       raphael move --id <id> <destination> [--revision <n>] [options]
-
-Move an area, a project, or a note somewhere else, keeping its identifier and everything inside it.
-
-  raphael move /work/backend /engineering            into the area /engineering, keeping "backend"
-  raphael move /work/backend /engineering/platform   under /engineering, as "platform"
-  raphael move /work/inbox /                         an area to the top level
-
-If <destination> is an existing area or project, it is where this goes. Otherwise its last
-segment becomes the new address and the rest must already exist. Nothing is ever overwritten:
-an address that is taken, including one held by a note, is refused.
-
-Something archived directly must be restored before it moves. Something archived only because a
-container above it is archived can move somewhere active.
-
-Options:
-      --id <id>        Address the thing to move by identifier instead of by path.
-      --revision <n>   The revision you read. Without it, the current revision is read for you
-                       just before the move is sent.
-      --json           Print the result as JSON.
-  -h, --help           Show this help.`;
-
-export const MOVE_OPTIONS = {
-  id: { type: 'string' },
-  revision: { type: 'string' },
-  json: { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
-
 export const runMove = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, MOVE_OPTIONS, 'move');
+  const parsed = parseArgs(argv, optionsFor(MOVE_DEFINITION), 'move', parserContext);
 
   // With --id the only positional is the destination; without it, the source path comes first. A
   // positional beyond those is extra, not a second source, so it is reported as what it is.
@@ -704,7 +1096,11 @@ export const runMove = async (
   const positionals = [...parsed.positionals];
   const source = id === undefined ? positionals.shift() : undefined;
   const [destination, ...extra] = positionals;
-  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'move');
+  if (extra.length > 0)
+    throw new UsageError(
+      'move takes one source and one destination, or --id and one destination.',
+      'move',
+    );
 
   const target = selectorFrom(source, id, 'move');
   const destinationPath = destinationFrom(destination, 'move');
@@ -713,6 +1109,13 @@ export const runMove = async (
     max: Number.MAX_SAFE_INTEGER,
   });
 
+  if (revisionFlag !== undefined)
+    checkRequestSize(
+      { target, revision: revisionFlag, destination: { path: destinationPath } },
+      'move',
+      decodeMoveRequest,
+    );
+  else checkRequestSize({ target }, 'move', decodeGetRequest);
   const transport = context.transport();
   const request: RequestContext = {
     subject: target,
@@ -725,11 +1128,13 @@ export const runMove = async (
   const pinned = await pinRevision(context, transport, target, revisionFlag, request);
   if ('exit' in pinned) return pinned.exit;
 
-  const result = await move(
-    transport,
-    { target: pinned.sendTo, revision: pinned.revision, destination: { path: destinationPath } },
-    context.signal,
-  );
+  const writeRequest = {
+    target: pinned.sendTo,
+    revision: pinned.revision,
+    destination: { path: destinationPath },
+  };
+  checkRequestSize(writeRequest, 'move', decodeMoveRequest);
+  const result = await move(transport, writeRequest, context.signal);
 
   if (!result.ok) {
     return failed(context, result.failure, {
@@ -757,43 +1162,7 @@ export const runMove = async (
   });
 };
 
-export const ARCHIVE_HELP = `Usage: raphael archive <path> [--revision <n>] [options]
-       raphael archive --id <id> [--revision <n>] [options]
-
-Hide an area, a project, or a note from lists and search. Nothing is deleted: everything inside
-an archived area or project is hidden with it, keeps its address, and comes back on restore.
-A project's selection is kept too.
-
-Archiving something that is already archived because a container above it is, keeps it
-archived when that container is restored.
-
-Options:
-      --id <id>        Address by identifier instead of by path.
-      --revision <n>   The revision you read. Without it, the current revision is read for you
-                       just before the archive is sent.
-      --json           Print the result as JSON.
-  -h, --help           Show this help.`;
-
-export const RESTORE_HELP = `Usage: raphael restore <path> [--revision <n>] [options]
-       raphael restore --id <id> [--revision <n>] [options]
-
-Bring back something you archived. Only your own archive of this item is removed: if a container
-above it is archived too, it stays archived, and the answer says which container to restore.
-
-Options:
-      --id <id>        Address by identifier instead of by path.
-      --revision <n>   The revision you read. Without it, the current revision is read for you
-                       just before the restore is sent.
-      --json           Print the result as JSON.
-  -h, --help           Show this help.`;
-
 /** Archive and restore take the same options. */
-export const LIFECYCLE_OPTIONS = {
-  id: { type: 'string' },
-  revision: { type: 'string' },
-  json: { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
 
 export const runArchive = (argv: readonly string[], context: CommandContext): Promise<ExitCode> =>
   runLifecycle('archive', argv, context);
@@ -813,9 +1182,14 @@ const runLifecycle = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, LIFECYCLE_OPTIONS, verb);
+  const parsed = parseArgs(
+    argv,
+    optionsFor(verb === 'archive' ? ARCHIVE_DEFINITION : RESTORE_DEFINITION),
+    verb,
+    parserContext,
+  );
   const [path, ...extra] = parsed.positionals;
-  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, verb);
+  if (extra.length > 0) throw new UsageError(`${verb} takes one path, or --id.`, verb);
 
   const target = selectorFrom(path, stringOption(parsed, 'id'), verb);
   const revisionFlag = integerOption(parsed, 'revision', verb, {
@@ -823,6 +1197,9 @@ const runLifecycle = async (
     max: Number.MAX_SAFE_INTEGER,
   });
 
+  if (revisionFlag !== undefined)
+    checkRequestSize({ target, revision: revisionFlag }, verb, decodeLifecycleRequest);
+  else checkRequestSize({ target }, verb, decodeGetRequest);
   const transport = context.transport();
   const request: RequestContext = { subject: target, flags: selectorFlags(target) };
 
@@ -831,11 +1208,9 @@ const runLifecycle = async (
   if ('exit' in pinned) return pinned.exit;
 
   const send = verb === 'archive' ? archive : restore;
-  const result = await send(
-    transport,
-    { target: pinned.sendTo, revision: pinned.revision },
-    context.signal,
-  );
+  const writeRequest = { target: pinned.sendTo, revision: pinned.revision };
+  checkRequestSize(writeRequest, verb, decodeLifecycleRequest);
+  const result = await send(transport, writeRequest, context.signal);
   if (!result.ok) {
     return failed(context, result.failure, {
       ...request,
@@ -874,32 +1249,7 @@ const runLifecycle = async (
   });
 };
 
-export const FAVORITE_HELP = `Usage: raphael favorite <path> [options]
-       raphael favorite --id <id> [options]
-
-Add an area or a project to your favorites. Already a favorite is fine.
-
-Options:
-      --id <id>   Address by identifier instead of by path.
-      --json      Print the result as JSON.
-  -h, --help      Show this help.`;
-
-export const UNFAVORITE_HELP = `Usage: raphael unfavorite <path> [options]
-       raphael unfavorite --id <id> [options]
-
-Remove something from your favorites. Not a favorite is fine.
-
-Options:
-      --id <id>   Address by identifier instead of by path.
-      --json      Print the result as JSON.
-  -h, --help      Show this help.`;
-
 /** Favorite and unfavorite take the same options. */
-export const FAVORITE_OPTIONS = {
-  id: { type: 'string' },
-  json: { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
 
 export const runFavorite = (argv: readonly string[], context: CommandContext): Promise<ExitCode> =>
   runFavoriteChange(true, argv, context);
@@ -922,11 +1272,17 @@ const runFavoriteChange = async (
   context: CommandContext,
 ): Promise<ExitCode> => {
   const verb = wanted ? 'favorite' : 'unfavorite';
-  const parsed = parseArgs(argv, FAVORITE_OPTIONS, verb);
+  const parsed = parseArgs(
+    argv,
+    optionsFor(wanted ? FAVORITE_DEFINITION : UNFAVORITE_DEFINITION),
+    verb,
+    parserContext,
+  );
   const [path, ...extra] = parsed.positionals;
-  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, verb);
+  if (extra.length > 0) throw new UsageError(`${verb} takes one path, or --id.`, verb);
 
   const target = selectorFrom(path, stringOption(parsed, 'id'), verb);
+  checkRequestSize({ target }, verb, decodeFavoriteRequest);
   const send = wanted ? addFavorite : removeFavorite;
   const result = await send(context.transport(), { target }, context.signal);
   if (!result.ok) {
@@ -944,31 +1300,13 @@ const runFavoriteChange = async (
   });
 };
 
-export const FAVORITES_HELP = `Usage: raphael favorites [options]
-
-List your favorites by title. Archived ones are left out and stay favorites.
-Open one with "raphael get --id <id>".
-
-Options:
-      --skip <n>      How many to skip. Default 0.
-      --limit <n>     How many to return, ${LIST_LIMIT_MIN} to ${LIST_LIMIT_MAX}.
-      --json          Print the result as JSON.
-  -h, --help          Show this help.`;
-
-export const FAVORITES_OPTIONS = {
-  skip: { type: 'string' },
-  limit: { type: 'string' },
-  json: { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
-
 export const runFavorites = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, FAVORITES_OPTIONS, 'favorites');
+  const parsed = parseArgs(argv, optionsFor(FAVORITES_DEFINITION), 'favorites', parserContext);
   if (parsed.positionals.length > 0) {
-    throw new UsageError(`Unexpected argument "${parsed.positionals[0]}".`, 'favorites');
+    throw new UsageError('favorites takes no positional arguments.', 'favorites');
   }
   // The bounds `scopePageFrom` uses: it is the same page window.
   const skip = integerOption(parsed, 'skip', 'favorites', {
@@ -980,6 +1318,11 @@ export const runFavorites = async (
     max: LIST_LIMIT_MAX,
   });
 
+  checkRequestSize(
+    { ...(skip === undefined ? {} : { skip }), ...(limit === undefined ? {} : { limit }) },
+    'favorites',
+    decodeFavoriteListRequest,
+  );
   const result = await listFavorites(
     context.transport(),
     {
@@ -1006,35 +1349,22 @@ export const runFavorites = async (
   });
 };
 
-export const GET_HELP = `Usage: raphael get <path> [options]
-       raphael get --id <id> [options]
-
-Read one area, project, or note.
-
-Options:
-      --id <id>       Address by identifier instead of by path.
-      --format <fmt>  Format of the returned body: ${BODY_FORMATS.join(' or ')}. Default markdown.
-      --json          Print the result as JSON.
-  -h, --help          Show this help.`;
-
-export const GET_OPTIONS = {
-  id: { type: 'string' },
-  format: { type: 'string' },
-  json: { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
-
 export const runGet = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, GET_OPTIONS, 'get');
+  const parsed = parseArgs(argv, optionsFor(GET_DEFINITION), 'get', parserContext);
   const [path, ...extra] = parsed.positionals;
-  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'get');
+  if (extra.length > 0) throw new UsageError('get takes one path, or --id.', 'get');
 
   const target = selectorFrom(path, stringOption(parsed, 'id'), 'get');
-  const format = choiceOption(parsed, 'format', 'get', BODY_FORMATS);
+  const format = returnedFormat(parsed, 'get');
 
+  checkRequestSize(
+    { target, ...(format === undefined ? {} : { format }) },
+    'get',
+    decodeGetRequest,
+  );
   const result = await get(
     context.transport(),
     { target, ...(format === undefined ? {} : { format }) },
@@ -1081,32 +1411,16 @@ export const runGet = async (
   });
 };
 
-export const PATH_HELP = `Usage: raphael path <path> [options]
-       raphael path --id <id> [options]
-
-Print the current full path of an area, project, or note. Paths change when things are renamed
-or moved; identifiers do not.
-
-Options:
-      --id <id>   Address by identifier instead of by path.
-      --json      Print the result as JSON.
-  -h, --help      Show this help.`;
-
-export const PATH_OPTIONS = {
-  id: { type: 'string' },
-  json: { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
-
 export const runPath = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, PATH_OPTIONS, 'path');
+  const parsed = parseArgs(argv, optionsFor(PATH_DEFINITION), 'path', parserContext);
   const [path, ...extra] = parsed.positionals;
-  if (extra.length > 0) throw new UsageError(`Unexpected argument "${extra[0]}".`, 'path');
+  if (extra.length > 0) throw new UsageError('path takes one path, or --id.', 'path');
 
   const target = selectorFrom(path, stringOption(parsed, 'id'), 'path');
+  checkRequestSize({ target }, 'path', decodeGetPathRequest);
   const result = await getPath(context.transport(), { target }, context.signal);
   if (!result.ok) {
     return failed(context, result.failure, { subject: target, flags: selectorFlags(target) });
@@ -1118,49 +1432,19 @@ export const runPath = async (
   });
 };
 
-export const LIST_HELP = `Usage: raphael list <path>... [options]
-       raphael list --id <id> [options]
-
-List what is inside an area or project. Use "/" for the root. A note holds nothing, so listing
-one is an empty page rather than an error.
-
-Several paths list all of them at once, as one page. Repeat --id to address a scope by its
-durable identifier instead, and mix the two forms freely. At most ${SCOPES_MAX_COUNT} scopes.
-
-Ordering applies to everything in scope before the page is cut, so paging through a sorted
-listing is paging through one order rather than sorting each page on its own.
-
-Examples:
-  raphael list / -r --filter '{"type":"resource"}' --order-by updatedAt:desc --limit 4
-  raphael list /work -r --filter '{"type":"resource"}' --order-by updatedAt:desc --order-by slug:asc
-  raphael list /work /personal --filter '{"tags":{"$in":["urgent"]}}'
-
-Options:
-      --id <id>       Address a scope by identifier. Repeatable.
-  -r, --recursive     Include everything underneath, not just direct children.
-      --filter <json> A JSON object, or @file containing one. Keys: ${FILTER_KEYS.join(', ')}.
-                      A value is either the value itself or {"$in": [...]}.
-      --order-by <f:d>  Repeatable, in priority order. Fields: ${NODE_ORDER_FIELDS.join(', ')}.
-                      Directions: ${ORDER_DIRECTIONS.join(', ')}. Default slug:asc then id:asc.
-      --skip <n>      How many to skip. Default 0.
-      --limit <n>     How many to return, ${LIST_LIMIT_MIN} to ${LIST_LIMIT_MAX}.
-      --include-archived  Also show archived things, marked "archived".
-      --json          Print the result as JSON.
-  -h, --help          Show this help.`;
-
-export const LIST_OPTIONS = {
-  ...SCOPE_PAGE_OPTIONS,
-  'order-by': { type: 'string', multiple: true },
-} as const satisfies OptionConfig;
-
 export const runList = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, LIST_OPTIONS, 'list');
+  const parsed = parseArgs(argv, optionsFor(LIST_DEFINITION), 'list', parserContext);
 
-  const scopePage = scopePageFrom(parsed, 'list');
   const orderBy = parseOrderBy(stringListOption(parsed, 'order-by'), 'list');
+  const scopePage = scopePageFrom(parsed, 'list');
+  checkRequestSize(
+    { ...scopePage, ...(orderBy === undefined ? {} : { orderBy }) },
+    'list',
+    decodeListRequest,
+  );
 
   const result = await list(
     context.transport(),
@@ -1185,54 +1469,15 @@ export const runList = async (
   });
 };
 
-export const SEARCH_HELP = `Usage: raphael search <path>... -q <query> [options]
-       raphael search --id <id> -q <query> [options]
-
-Find areas, projects and notes by their text. Title, description and body are all searched, and
-results come back with the closest match first.
-
-Words match any of them.
-Quote a phrase to match it exactly.
-Uppercase AND narrows; OR is the default.
-
-Several paths search all of them at once, as one page. Repeat --id to address a scope by its
-durable identifier instead, and mix the two forms freely. At most ${SCOPES_MAX_COUNT} scopes.
-Repeat -q to ask more than one question of the same scopes.
-
-Examples:
-  raphael search /work -q 'auth tokens'
-  raphael search /work -r -q '"login flow" AND retry'
-  raphael search / -r -q auth --filter '{"type":"resource","kind":"note"}'
-  raphael search /work /personal -r -q auth --limit 20
-
-Options:
-      --id <id>       Address a scope by identifier. Repeatable.
-  -q, --query <text>  What to look for. Repeatable. At least one is required.
-  -r, --recursive     Search everything underneath, not just direct children.
-      --filter <json> A JSON object, or @file containing one. Keys: ${FILTER_KEYS.join(', ')}.
-                      A value is either the value itself or {"$in": [...]}.
-      --skip <n>      How many to skip. Default 0.
-      --limit <n>     How many to return, ${LIST_LIMIT_MIN} to ${LIST_LIMIT_MAX}.
-      --include-archived  Also show archived things, marked "archived".
-      --json          Print the result as JSON.
-  -h, --help          Show this help.
-
-There is no --order-by. A search answers in relevance order; ask "raphael list" for an
-authored one.`;
-
-export const SEARCH_OPTIONS = {
-  ...SCOPE_PAGE_OPTIONS,
-  query: { type: 'string', multiple: true, short: 'q' },
-} as const satisfies OptionConfig;
-
 export const runSearch = async (
   argv: readonly string[],
   context: CommandContext,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, SEARCH_OPTIONS, 'search');
+  const parsed = parseArgs(argv, optionsFor(SEARCH_DEFINITION), 'search', parserContext);
 
-  const scopePage = scopePageFrom(parsed, 'search');
   const queries = parseQueries(stringListOption(parsed, 'query'), 'search');
+  const scopePage = scopePageFrom(parsed, 'search');
+  checkRequestSize({ ...scopePage, queries }, 'search', decodeSearchRequest);
 
   const result = await search(context.transport(), { ...scopePage, queries }, context.signal);
   if (!result.ok) return failed(context, result.failure, scopeRequest(scopePage.scopes));

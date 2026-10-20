@@ -342,7 +342,7 @@ test('a missing or malformed scope is distinguished from an empty one', () => {
     const missing = toPublicError(expectLeft(list(connection, { scopes: [{ id: 777_777 }] })));
     assert.equal(missing.code, 'node_not_found');
     // The field is `scopes` now, and it names the position in the caller's own list.
-    assert.equal(missing.message, 'Scope 1 does not exist.');
+    assert.equal(missing.message, 'Search location 1 does not exist.');
 
     const malformed = toPublicError(expectLeft(list(connection, { scopes: [{ path: 'work' }] })));
     assert.equal(malformed.code, 'invalid_input');
@@ -362,7 +362,7 @@ test('a missing or malformed scope is distinguished from an empty one', () => {
       expectLeft(list(connection, { scopes: [{ path: '/' }, { id: 777_777 }] })),
     );
     assert.equal(second.code, 'node_not_found');
-    assert.equal(second.message, 'Scope 2 does not exist.');
+    assert.equal(second.message, 'Search location 2 does not exist.');
   });
 });
 

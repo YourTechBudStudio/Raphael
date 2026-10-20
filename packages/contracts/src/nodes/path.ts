@@ -1,6 +1,6 @@
 import { Either } from 'effect';
 
-import { isCanonicalSlugShape } from './slug.ts';
+import { SLUG_GRAMMAR_DESCRIPTION, isCanonicalSlugShape } from './slug.ts';
 
 /** The virtual root. It is a valid scope for create and list, and never selects an entity. */
 export const ROOT_PATH = '/';
@@ -67,6 +67,6 @@ export const describePathRejection = (rejection: PathRejection): string => {
     case 'empty_segment':
       return `a path must not contain an empty segment${at}`;
     case 'noncanonical_segment':
-      return `a path segment must be a canonical slug${at}`;
+      return `a path segment must follow the slug grammar${at}: ${SLUG_GRAMMAR_DESCRIPTION}`;
   }
 };

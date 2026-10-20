@@ -1,35 +1,55 @@
 ==== exit ====
 0
 ==== stdout ====
-Usage: raphael create <type> <path> [--title <title>] [options]
-       raphael create <type> --parent-id <id> --slug <slug> [--title <title>] [options]
+Usage: raphael create <type> <path> [options]
+       raphael create <type> --parent-id <id> --slug <slug> [options]
 
-Create an area, a project, or a note. The path form splits a complete absolute path into the
-parent it goes under and the slug it will occupy, so "/work/raphael/backend" creates "backend"
-under "/work/raphael". The id form addresses the parent by its durable identifier instead.
+Create an area, project, or note.
 
-Types: area, project, resource.note
+Types: area, project, resource.note. A full path supplies both parent and slug. The parent must already exist.
 
-A note may omit --title, in which case it is named from the first line of its body, or from its
-description. A note with no usable text in either needs --title.
+Areas and projects require --title. Notes may derive their title from the first body line, then the description. Metadata is set once, at create.
 
-Examples:
-  raphael create resource.note /work/api-design --title "API design" --body '# API design'
-  raphael create resource.note /work/api-design --body @./note.md
-  raphael create resource.note /work/api-design --body @-
-  raphael get /work/api-design
+Rules:
+  See help addressing for containment and slug rules. A taken slug, including one reserved by an archived item, is refused.
+  When supplying a body, give either --body or --body-literal. Give each tag its own --tag.
 
 Options:
-      --title <text>         The human name. Required for an area or a project.
-      --parent-id <id>       Parent by identifier. Use instead of a path.
-      --slug <slug>          Address within the parent. Required with --parent-id.
-      --description <text>   Plain description.
-      --tag <tag>            Repeatable.
-      --metadata <json>      A JSON object, or @file containing one.
-      --body <text|@file|@-> Body content. @file reads a file, @- reads standard input.
-      --body-literal <text>  Body text that starts with "@" and is not a path.
-      --body-format <fmt>    Format of the submitted body: markdown or tiptap. Default markdown.
-      --format <fmt>         Format of the returned body: markdown or tiptap. Default markdown.
-      --json                 Print the result as JSON.
-  -h, --help                 Show this help.
+      --title <text>
+      Name, at most 200 characters.
+      --parent-id <id>
+      Parent id instead of a full path. Requires --slug.
+      --slug <slug>
+      Address within the parent, at most 100 characters. See help addressing.
+      --description <text>
+      Description, at most 4000 characters. An empty string clears it.
+      --tag <tag>
+      Repeat for each tag; at most 25 tags of 50 characters. Commas are refused. Updates replace all tags. Repeatable.
+      --metadata <json|@file>
+      JSON object set once at create. @- is refused.
+      --body <text|@file|@->
+      Body text, @file, or @- for stdin. An empty string clears it; updates require --revision.
+      --body-literal <text>
+      Literal body text, including text beginning with @. Updates require --revision.
+      --body-format <format>
+      Submitted body: markdown or tiptap. Default: markdown.
+      --return-format <format>
+      Returned body: markdown or tiptap. Requires --json. Default: markdown.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael create area /work --title Work
+  raphael create project /work/raphael --title Raphael
+  raphael create resource.note /work/raphael/api-design --body '# API design'
+  raphael create resource.note --parent-id 42 --slug review --title Review --tag reviewed
+
+Prints:
+  The created item with its id and revision. JSON carries `entity`.
+
+Next: raphael list / -r
+
+See also: raphael help addressing; raphael help content; raphael help update
 ==== stderr ====

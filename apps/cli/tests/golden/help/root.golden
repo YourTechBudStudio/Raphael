@@ -5,39 +5,67 @@ raphael - an actionable second brain for agents
 
 Usage: raphael <command> [options]
 
-Commands:
-  login             Connect this machine to a Raphael server.
-  create            Create an area or a project.
-  update            Change an area, a project, or a note.
-  move              Move an area, a project, or a note somewhere else.
-  archive           Hide an area, a project, or a note from lists and search.
-  restore           Bring back something you archived.
-  favorite          Add an area or a project to your favorites.
-  unfavorite        Remove something from your favorites.
-  favorites         List your favorites.
-  get               Read one area or project.
-  path              Print the current full path of an area or project.
-  list              List what is inside an area or project.
-  search            Find areas, projects and notes by their text.
-  server serve      Run a Raphael server on this machine.
-  help              Show this help.
+Start here:
+  1. Put RAPHAEL_API_KEY=local-development-key-change-this in a private .env file in the current directory.
+  2. Run raphael server serve; keep that terminal open.
+  3. In another terminal run raphael login. Enter http://127.0.0.1:3000 and the same key.
+  4. Run raphael list /, then raphael create resource.note /work/first-note --body 'My first note'.
+  Already have a server? Start at step 3 with its address and key. See raphael help connecting.
 
-Run "raphael <command> --help" for details of one command.
+Read:
+  favorites          List favorites by title.
+  get                Read one item and its current revision.
+  path               Print an item’s current full path.
+  list               List children of one or more paths or ids.
+  search             Search all descendants by text.
+  help               Read command help and cross-command guidance.
 
-Addressing:
-  Paths are how people address things: /work/raphael/backend
-  Identifiers are how they stay addressable: --id 42
-  A path changes when something is renamed or moved. An identifier does not.
+Write:
+  create             Create an area, project, or note.
+  update             Change an item with revision protection.
+  move               Move an item while keeping its id.
+  archive            Hide an item and everything inside it.
+  restore            Remove an item’s own archive cause.
+  favorite           Add an area or project to favorites.
+  unfavorite         Remove an area or project from favorites.
 
-Types: area, project, resource.note
+Setup:
+  login              Save a verified server address and API key on this machine.
+  server             Manage the server on this machine.
+  server serve       Run a Raphael server on this machine.
+  version            Print the installed Raphael version.
 
-Connecting:
-  "raphael login" saves an address and key with owner-only permissions.
-  For scripts, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together. Both or neither.
+What things are:
+  An area holds ongoing work. A project holds work with an outcome. A note holds content.
+  Types: area, project, resource.note. Items that can hold children: area, project.
+  The root (/) can directly hold area.
+  area can directly hold area, project, resource.note.
+  project can directly hold resource.note.
+  resource.note cannot hold children.
+  Address an item by absolute path or stable id; a revision protects a write from concurrent edits.
+
+Topics:
+  addressing         Paths, ids, slugs, containment and field limits.
+  content            Note bodies, files, stdin and Markdown conversion.
+  revisions          Safe writes, conflicts, archives and uncertain outcomes.
+  output             Text results, JSON envelopes, paging and diagnostics.
+  connecting         Start a local server and connect a client.
+  exit-codes         Choose recovery from the process exit code.
+  reference          All command pages and topics in one stream.
+  Use raphael help <command-or-topic>, or raphael <command> --help.
+  raphael help --json prints machine-readable definitions.
+
+Examples:
+  raphael login
+    Connect using the server address and key.
+  raphael create resource.note /work/first-note --body 'My first note'
+    Write a note in the initial work area.
+  raphael list /
+    Read the top level.
 
 Options:
-  -h, --help        Show help.
-      --version     Show the version.
+  -h, --help    Show help.
+      --version Show the version.
 
 Exit codes:
   0    Done. This includes no-ops and success with warnings.

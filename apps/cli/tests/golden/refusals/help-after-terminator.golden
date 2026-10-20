@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-scope "-h": a path must start with "/"
+path: A path must start with "/".
 hint: Run "raphael list --help" for usage.

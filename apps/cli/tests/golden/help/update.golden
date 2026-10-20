@@ -1,35 +1,60 @@
 ==== exit ====
 0
 ==== stdout ====
-Usage: raphael update <path> [changes] [--revision <n>] [options]
-       raphael update --id <id> [changes] [--revision <n>] [options]
+Usage: raphael update <path> [changes] [options]
+       raphael update --id <id> [changes] [options]
 
-Change an area, a project, or a note. An update names the revision it was written against, so a
-newer version on the server is refused rather than overwritten. Raphael does not retry a change
-on its own.
+Change an item with revision protection.
 
-Examples:
-  raphael update /work/contracts --body @./contracts.md --revision 8
-  raphael update /work/contracts --tag reviewed --tag contracts
-  raphael update --id 42 --title "Contract review" --description ""
+Give at least one change. Tags replace the complete tag list; --no-tags clears it. A renamed title does not change the path.
 
-Changes (at least one):
-      --title <text>          Replace the name. The address does not follow it.
-      --description <text>    Replace the description. "" clears it.
-      --slug <slug>           Replace the address within the parent.
-      --body <text|@file|@->  Replace the body. "" clears it. Requires --revision.
-      --body-literal <text>   Body text that starts with "@" and is not a path. Requires --revision.
-      --body-format <fmt>     Format of the submitted body: markdown or tiptap. Default markdown.
-      --tag <tag>             Repeatable. Replaces the whole tag list with the tags given.
-      --no-tags               Remove every tag.
-      --active                Mark the project as currently being worked on.
-      --inactive              Mark it as not being worked on. Only a project can be either.
+A body replacement requires the revision you read. Other changes may read and pin the current id and revision for you. Conflicts are never retried automatically.
+
+Rules:
+  Metadata is set once, at create. --active and --inactive apply only to projects.
+  On a revision conflict, get the item again and reconcile your intended change before updating with its new revision.
 
 Options:
-      --id <id>               Address by identifier instead of by path.
-      --revision <n>          The revision you read. Without it, and without a body change, the
-                              current revision is read for you just before the update is sent.
-      --format <fmt>          Format of the returned body: markdown or tiptap. Default markdown.
-      --json                  Print the result as JSON.
-  -h, --help                  Show this help.
+      --id <id>
+      Address by durable id instead of path.
+      --title <text>
+      Name, at most 200 characters.
+      --description <text>
+      Description, at most 4000 characters. An empty string clears it.
+      --slug <slug>
+      Address within the parent, at most 100 characters. See help addressing.
+      --body <text|@file|@->
+      Body text, @file, or @- for stdin. An empty string clears it; updates require --revision.
+      --body-literal <text>
+      Literal body text, including text beginning with @. Updates require --revision.
+      --body-format <format>
+      Submitted body: markdown or tiptap. Default: markdown.
+      --tag <tag>
+      Repeat for each tag; at most 25 tags of 50 characters. Commas are refused. Updates replace all tags. Repeatable.
+      --no-tags
+      Clear all tags.
+      --active
+      Mark the project active.
+      --inactive
+      Mark the project inactive.
+      --revision <n>
+      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+      --return-format <format>
+      Returned body: markdown or tiptap. Requires --json. Default: markdown.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael update /work/raphael/api-design --body '# Revised design' --revision 8
+  raphael update /work/raphael --tag reviewed --tag contracts
+  raphael update --id 42 --title 'Contract review' --description ''
+
+Prints:
+  The updated item and revision. JSON carries `entity`.
+
+Next: raphael get --id 42
+
+See also: raphael help revisions; raphael help content
 ==== stderr ====

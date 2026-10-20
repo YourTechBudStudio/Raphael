@@ -202,7 +202,7 @@ export const describeClientFailure = (
   const signal = session.interruption?.received();
   const { exitCode, state } = classify(failure, context, signal);
   const worded = clientFailureWording(failure, {
-    context,
+    context: { ...context, flags: { ...session.invocation.fieldFlags, ...context.flags } },
     endpoint: session.endpoint,
     command: session.invocation.command,
     state,

@@ -31,10 +31,104 @@ export type OptionConfig = Record<
 
 export type OptionValue = string | boolean | (string | boolean)[] | undefined;
 
+export interface ParseDiagnostics {
+  readonly otherCommands?: Readonly<Record<string, OptionConfig>>;
+}
+
 export interface ParsedArgs {
   readonly values: Readonly<Record<string, OptionValue>>;
   readonly positionals: readonly string[];
 }
+
+/** Small spelling suggestions stay local to the command's declared options. */
+const editDistance = (left: string, right: string): number => {
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= left.length; row += 1) {
+    const current = [row];
+    for (let column = 1; column <= right.length; column += 1) {
+      current[column] = Math.min(
+        (current[column - 1] ?? 0) + 1,
+        (previous[column] ?? 0) + 1,
+        (previous[column - 1] ?? 0) + (left[row - 1] === right[column - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length] ?? left.length;
+};
+
+const optionExample = (name: string): string => {
+  if (name === 'title') return '"A title"';
+  if (name === 'body' || name === 'body-literal') return '"Some text"';
+  if (name === 'return-format') return 'markdown';
+  if (name === 'order-by') return 'updatedAt:desc';
+  if (name.endsWith('id') || name === 'revision' || name === 'limit') return '1';
+  if (name === 'skip') return '0';
+  return 'value';
+};
+
+const parseDiagnostic = (
+  argv: readonly string[],
+  options: OptionConfig,
+  command: string,
+  diagnostics: ParseDiagnostics,
+): string => {
+  const loose = nodeParseArgs({
+    args: [...argv],
+    options,
+    strict: false,
+    allowPositionals: true,
+    tokens: true,
+  });
+  for (const token of loose.tokens) {
+    if (token.kind !== 'option') continue;
+    const option = options[token.name];
+    if (!option) {
+      if (command === 'search' && token.rawName === '-r') {
+        return 'Search includes descendants by default. Remove -r, or use --direct for direct children only.';
+      }
+      if (command === 'update' && token.name === 'metadata') {
+        return '--metadata is set once, at create. It cannot be changed with update.';
+      }
+      if (token.name === 'format' && options['return-format']) {
+        return '--format has been renamed to --return-format. Use --return-format with --json.';
+      }
+      // Never print inline values or arbitrary submitted text as part of a diagnostic.
+      const shown = /^--?[a-zA-Z][a-zA-Z0-9-]{0,63}$/.test(token.rawName)
+        ? token.rawName
+        : 'This option';
+      const ranked = Object.keys(options)
+        .map((name) => ({ name, distance: editDistance(token.name.toLowerCase(), name) }))
+        .sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name));
+      const suggestion = ranked[0];
+      if (suggestion && suggestion.distance <= 2 && token.name.length >= 3) {
+        return `${command} does not take ${shown}. Did you mean --${suggestion.name}?`;
+      }
+      const matches = Object.entries(diagnostics.otherCommands ?? {})
+        .filter(([name, config]) => name !== command && config[token.name] !== undefined)
+        .map(([name]) => name);
+      const preferred = matches.includes('update') ? 'update' : matches[0];
+      return `${command} does not take ${shown}.${preferred ? ` Use "raphael ${preferred} --help" for that option.` : ''}`;
+    }
+    if (option.type === 'boolean' && token.value !== undefined) {
+      return `--${token.name} does not take a value. Use --${token.name} on its own.`;
+    }
+    if (
+      option.type === 'string' &&
+      (token.value === undefined || (!token.inlineValue && token.value.startsWith('-')))
+    ) {
+      if (
+        token.value !== undefined &&
+        /^-\d/.test(token.value) &&
+        ['id', 'parent-id', 'revision', 'limit', 'skip'].includes(token.name)
+      ) {
+        return `--${token.name} must be ${token.name === 'skip' ? 'zero or a positive' : 'a positive'} whole number.`;
+      }
+      return `--${token.name} needs a value. For example: --${token.name} ${optionExample(token.name)}. To pass a value starting with a dash, use --${token.name}=value.`;
+    }
+  }
+  return 'The arguments are invalid. Check the option names and their values.';
+};
 
 /**
  * Parse one command's arguments.
@@ -52,6 +146,7 @@ export const parseArgs = (
   argv: readonly string[],
   options: OptionConfig,
   command: string,
+  diagnostics: ParseDiagnostics = {},
 ): ParsedArgs => {
   let parsed;
   try {
@@ -62,25 +157,17 @@ export const parseArgs = (
       allowPositionals: true,
       tokens: true,
     });
-  } catch (error) {
-    throw new UsageError((error as Error).message, command);
+  } catch {
+    throw new UsageError(parseDiagnostic(argv, options, command, diagnostics), command);
   }
 
-  // Every value each single-value flag was given, in order, so a refusal can show them all.
-  const given = new Map<string, (string | undefined)[]>();
+  const given = new Set<string>();
   for (const token of parsed.tokens) {
     if (token.kind !== 'option' || options[token.name]?.multiple === true) continue;
-    given.set(token.name, [...(given.get(token.name) ?? []), token.value]);
-  }
-  for (const [name, values] of given) {
-    if (values.length < 2) continue;
-    const shown = values.filter((value): value is string => value !== undefined);
-    throw new UsageError(
-      shown.length === 0
-        ? `--${name} can be given only once.`
-        : `--${name} can be given only once. Got ${shown.map((value) => `"${value}"`).join(' and ')}.`,
-      command,
-    );
+    if (given.has(token.name)) {
+      throw new UsageError(`--${token.name} can be given only once.`, command);
+    }
+    given.add(token.name);
   }
 
   return { values: parsed.values, positionals: parsed.positionals };
@@ -122,14 +209,22 @@ export const integerOption = (
   const raw = stringOption(parsed, name);
   if (raw === undefined) return undefined;
   if (!/^\d+$/.test(raw)) {
-    throw new UsageError(`--${name} must be a whole number. Got "${raw}".`, command);
+    throw new UsageError(`--${name} must be a whole number.`, command);
   }
   const value = Number(raw);
+  if (bounds.max === Number.MAX_SAFE_INTEGER) {
+    if (!Number.isSafeInteger(value) || value > bounds.max) {
+      throw new UsageError(`--${name} is too large. Give a smaller whole number.`, command);
+    }
+    if (value < bounds.min) {
+      throw new UsageError(
+        `--${name} must be ${bounds.min === 0 ? 'zero or a positive' : 'a positive'} whole number.`,
+        command,
+      );
+    }
+  }
   if (!Number.isSafeInteger(value) || value < bounds.min || value > bounds.max) {
-    throw new UsageError(
-      `--${name} must be between ${bounds.min} and ${bounds.max}. Got "${raw}".`,
-      command,
-    );
+    throw new UsageError(`--${name} must be between ${bounds.min} and ${bounds.max}.`, command);
   }
   return value;
 };
@@ -144,7 +239,7 @@ export const choiceOption = <T extends string>(
   const raw = stringOption(parsed, name);
   if (raw === undefined) return undefined;
   if (!(choices as readonly string[]).includes(raw)) {
-    throw new UsageError(`--${name} must be one of ${choices.join(', ')}. Got "${raw}".`, command);
+    throw new UsageError(`--${name} must be one of ${choices.join(', ')}.`, command);
   }
   return raw as T;
 };
@@ -171,7 +266,15 @@ export const hasOption = (argv: readonly string[], options: OptionConfig, name: 
 
 /** Whether the caller asked for help rather than for the command to run. */
 export const wantsHelp = (argv: readonly string[], options: OptionConfig): boolean =>
-  hasOption(argv, options, 'help');
+  nodeParseArgs({
+    args: [...argv],
+    options,
+    strict: false,
+    allowPositionals: true,
+    tokens: true,
+  }).tokens.some(
+    (token) => token.kind === 'option' && token.name === 'help' && token.value === undefined,
+  );
 
 /**
  * Whether `--json` appears before `--`, for a command whose options are not known.

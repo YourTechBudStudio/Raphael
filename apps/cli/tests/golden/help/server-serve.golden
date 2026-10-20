@@ -5,13 +5,29 @@ Usage: raphael server serve [--config <path>]
 
 Run a Raphael server on this machine.
 
-Configuration comes from a YAML file and the API key comes from the environment, or from a
-.env file beside the command you run. Relative database paths resolve against the configuration
-file's directory, or the current directory when no file is given.
+The API key comes from RAPHAEL_API_KEY in the environment or a .env file in the current directory.
 
-This command never reads your saved login: it runs a server, it does not connect to one.
+Put the key in .env to keep it out of client environment variables. Clients use RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together.
+
+Configuration comes from an optional YAML file. Relative database paths resolve against that file’s directory, or the current directory when no file is given.
+
+This command never reads your saved login. Press Ctrl-C to stop the server.
 
 Options:
-      --config <path>  YAML configuration file.
-  -h, --help           Show this help.
+      --config <path>
+      Read configuration from this YAML file.
+  -h, --help
+      Show help.
+
+Examples:
+  raphael server serve
+  raphael server serve --config ./raphael.yaml
+  raphael server serve --help
+
+Prints:
+  Operator messages on standard error. Standard output is empty.
+
+Next: raphael login
+
+See also: raphael help connecting
 ==== stderr ====

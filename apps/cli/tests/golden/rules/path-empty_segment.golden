@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-scope "/work//notes": a path must not contain an empty segment at segment 2
+path: A path must not contain an empty segment at segment 2.
 hint: Run "raphael list --help" for usage.

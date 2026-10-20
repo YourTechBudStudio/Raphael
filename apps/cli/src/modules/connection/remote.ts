@@ -24,15 +24,14 @@ import {
   type TransportRejection,
 } from '@raphael/client';
 
+import { TIMEOUT_MIN_SECONDS, TIMEOUT_MAX_SECONDS } from '../../shared/timeout.ts';
 import { ConfigError, configLocation, loadConfig, type StoredConfig } from './config.ts';
+
+export { TIMEOUT_MIN_SECONDS, TIMEOUT_MAX_SECONDS } from '../../shared/timeout.ts';
 
 export const ENDPOINT_VARIABLE = 'RAPHAEL_ENDPOINT';
 export const API_KEY_VARIABLE = 'RAPHAEL_API_KEY';
 export const TIMEOUT_VARIABLE = 'RAPHAEL_TIMEOUT';
-
-/** The bounds `RAPHAEL_TIMEOUT` accepts, in seconds: the transport's own, in the unit people type. */
-export const TIMEOUT_MIN_SECONDS = 1;
-export const TIMEOUT_MAX_SECONDS = 120;
 
 export type ConnectionSource = 'environment' | 'configuration';
 

@@ -220,9 +220,12 @@ describe('a note the CLI wrote, read by the phone', () => {
         );
 
         // By path as well as by id, and the two agree on everything.
-        const byPath = await cliJson(['get', `${WORK.path}/${row.slug}`, '--format', 'tiptap'], {
-          endpoint,
-        });
+        const byPath = await cliJson(
+          ['get', `${WORK.path}/${row.slug}`, '--return-format', 'tiptap'],
+          {
+            endpoint,
+          },
+        );
         assert.equal(
           byPath.entity.id,
           written.id,

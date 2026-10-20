@@ -1,4 +1,5 @@
 import type { ApiErrorDetails } from '@raphael/contracts';
+import type { InvalidRequestIssue } from '@raphael/contracts/nodes';
 
 /**
  * What can go wrong with a request, as one flat shape.
@@ -24,6 +25,8 @@ export interface ClientFailure {
   readonly message: string;
   /** The server's structured facts about an `http` failure, when its envelope carried any. */
   readonly details?: ApiErrorDetails;
+  /** Safe structured problems for a locally refused request. */
+  readonly issues?: readonly InvalidRequestIssue[];
 }
 
 /** A capability declares this for each operation; the transport cannot tell from the route. */

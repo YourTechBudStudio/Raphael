@@ -4,10 +4,27 @@
 Usage: raphael favorite <path> [options]
        raphael favorite --id <id> [options]
 
-Add an area or a project to your favorites. Already a favorite is fine.
+Add an area or project to favorites.
+
+Already a favorite succeeds. Favorites keep their state while archived, but archived items are omitted from the favorites list.
 
 Options:
-      --id <id>   Address by identifier instead of by path.
-      --json      Print the result as JSON.
-  -h, --help      Show this help.
+      --id <id>
+      Address by durable id instead of path.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael favorite /work
+  raphael favorite --id 42
+  raphael favorite /work/raphael --json
+
+Prints:
+  The id and favorite state. JSON carries `nodeId` and `isFavorite`.
+
+Next: raphael favorites
+
+See also: raphael help unfavorite
 ==== stderr ====

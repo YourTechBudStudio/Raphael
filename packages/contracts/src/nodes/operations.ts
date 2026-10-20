@@ -559,7 +559,20 @@ export type UpdateRequestInput = Schema.Schema.Encoded<typeof UpdateRequest>;
 export type MoveRequestInput = Schema.Schema.Encoded<typeof MoveRequest>;
 export type LifecycleRequestInput = Schema.Schema.Encoded<typeof LifecycleRequest>;
 
-export const decodeCreateRequest = requestDecoder(CreateRequest);
+const decodeContainerCreateRequest = requestDecoder(ContainerCreateRequest);
+const decodeResourceCreateRequest = requestDecoder(ResourceCreateRequest);
+const decodeUnknownCreateRequest = requestDecoder(CreateRequest);
+/** Decode the matching member so other members cannot obscure its field diagnostics. */
+export const decodeCreateRequest = (input: unknown) => {
+  const descriptor =
+    typeof input === 'object' && input !== null
+      ? Object.getOwnPropertyDescriptor(input, 'type')
+      : undefined;
+  const type = descriptor !== undefined && 'value' in descriptor ? descriptor.value : undefined;
+  if (type === 'resource') return decodeResourceCreateRequest(input);
+  if (type === 'area' || type === 'project') return decodeContainerCreateRequest(input);
+  return decodeUnknownCreateRequest(input);
+};
 export const decodeGetRequest = requestDecoder(GetRequest);
 export const decodeListRequest = requestDecoder(ListRequest);
 export const decodeSearchRequest = requestDecoder(SearchRequest);

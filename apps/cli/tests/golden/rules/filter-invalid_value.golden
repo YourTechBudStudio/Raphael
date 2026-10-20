@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
---filter: the value given for type is not one this filter accepts
+--filter: Type must be area, project, resource, or $in with one or more of those values.
 hint: Run "raphael list --help" for usage.

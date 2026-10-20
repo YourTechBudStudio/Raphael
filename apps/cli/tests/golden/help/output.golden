@@ -1,0 +1,26 @@
+==== exit ====
+0
+==== stdout ====
+raphael help output - Text results, JSON envelopes, paging and diagnostics.
+
+Standard output holds results only. Without --json, lists print tab-separated rows; a header is printed only on a terminal. Rows include id, type, path, title, revision and updatedAt. List order defaults to slug ascending; use list --order-by updatedAt:desc for recent changes. Search orders by relevance and does not accept --order-by. Bodies are printed as Markdown by default.
+
+With --json, a successful command prints exactly one document: {"ok":true,"command":"get",...data}. Full-item reads and writes use entity; move, archive and restore use node; lists and favorites use items; search uses items[].node. These are machine field names. Summaries include path and updatedAt. No createdAt field is exposed. Writes that can leave values unchanged include changed; false means success without a revision bump. Favorite commands report nodeId and isFavorite. Path reports path.
+
+Paged results include page with skip, limit, hasMore and nextSkip. The result footer and runnable next-page command go to standard error, never standard output. Empty-result notes, warnings, hints, prompts and failures also go to standard error. Warnings appear in warnings[] on JSON successes. Closing a pipe early does not turn a completed command into a failure.
+
+JSON failures leave stdout empty and print exactly one document to stderr: {"ok":false,"error":{"code":...,"category":...,"message":...,"hint":...,"exitCode":...,"applied":...,"retryable":...}}. Optional fields include status, field, target, serverMessage and details. applied is false when no change was applied, true when known applied, and null when unknown. Retry decisions must consider exitCode and applied; do not blindly retry an uncertain write. The JSON envelope and exit-code meanings are stable within a major version.
+
+For text write failures, the state line distinguishes Nothing was changed., The change was not sent., and The change may or may not have been applied. Set RAPHAEL_DEBUG=1 to include diagnostic stacks. Keep stdout for results when scripting.
+
+The default page contains at most 50 results. --limit accepts 1–500; --skip skips results. At most 10 paths or ids may be searched or listed in one request.
+
+For list: --order-by accepts slug, updatedAt, id with asc or desc; for example --order-by updatedAt:desc. Search orders by relevance and does not accept --order-by.
+
+Examples:
+  raphael list / --json
+  raphael list / --json --order-by updatedAt:desc
+  raphael get --id 42 --json --return-format tiptap
+
+Next: raphael help reference
+==== stderr ====

@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-a tag must not be empty
+--tag must not contain an empty tag.
 The change was not sent.
 hint: Run "raphael create --help" for usage.

@@ -175,7 +175,7 @@ describe('stdout on failure', () => {
       // A flag missing its value: the lenient parser takes --json as that value, strict parsing fails.
       ['get', '--id', '--json'],
       ['create', 'project', '/work/x', '--title', '--json'],
-      ['get', '/work', '--format', '--json'],
+      ['get', '/work', '--return-format', '--json'],
     ]) {
       const ran = await runCli(argv);
       assertErrorDocument(ran, { exit: 2, code: 'usage' });

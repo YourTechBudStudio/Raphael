@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
--q: a search word must contain a letter or a digit
+-q: A search word must contain a letter or a digit.
 hint: Run "raphael search --help" for usage.

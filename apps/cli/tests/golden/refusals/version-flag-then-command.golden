@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-"--version" takes no arguments. Got "list".
-hint: Run "raphael help" to see the commands.
+version takes no positional arguments.
+hint: Run "raphael version --help" for usage.

@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-Expected "resource", actual "area"
+--title must not be empty.
 The change was not sent.
 hint: Run "raphael create --help" for usage.

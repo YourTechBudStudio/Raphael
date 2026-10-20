@@ -1,20 +1,25 @@
-/**
- * Turning command-line arguments into request fields.
- *
- * Everything here is adaptation, not authority. Splitting `/work/raphael/backend` into a parent path
- * and a slug is string work; whether `backend` is a usable slug, whether a project may live under that
- * parent, and what the slug becomes are all the server's to decide. The CLI does no preparatory lookup
- * and derives no slug of its own.
- */
+/** Command-line adaptation and local checks through the shared contracts inspectors. */
 
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 import { createEmptyDocument } from '@raphael/content';
 import { fromMarkdown } from '@raphael/content/conversion';
 import { canonicalizeDocument, deriveTitle } from '@raphael/content/schema';
-import { REQUEST_MAX_BYTES, isJsonObject, type JsonObject } from '@raphael/contracts';
+import { REQUEST_MAX_BYTES, isJsonObject, type Decoder, type JsonObject } from '@raphael/contracts';
 import {
   CONTAINER_TYPES,
+  DESCRIPTION_MAX_CODE_POINTS,
+  DocumentTransportInput,
+  SCOPES_MAX_COUNT,
+  SEARCH_QUERIES_MAX_COUNT,
+  SLUG_MAX_CODE_POINTS,
+  SLUG_GRAMMAR_DESCRIPTION,
+  inspectTitleInput,
+  inspectTagsInput,
+  inspectMetadataInput,
+  normalizeTag,
+  isCanonicalSlug,
   NODE_ORDER_FIELDS,
   NodeOrderBy,
   ORDER_DIRECTIONS,
@@ -63,7 +68,7 @@ export const CREATE_TARGETS: readonly string[] = [
 export const parseCreateTarget = (token: string, command: string): CreateTarget => {
   const refuse = (): never => {
     throw new UsageError(
-      `"${token}" is not something Raphael can create. Give ${CREATE_TARGETS.join(', ')}.`,
+      `"${token}" is not something Raphael can create. Give ${CREATE_TARGETS.join(', ')}.${token === 'note' ? ' Did you mean resource.note?' : ''}`,
       command,
     );
   };
@@ -104,18 +109,21 @@ export const parseOrderBy = (
   const clauses = values.map((value) => {
     const parts = value.split(':');
     if (parts.length !== 2) {
-      throw new UsageError(`--order-by takes "field:direction". Got "${value}".`, command);
+      throw new UsageError(
+        '--order-by takes field:direction, for example --order-by updatedAt:desc.',
+        command,
+      );
     }
     const [field, direction] = parts;
     if (field === undefined || !(NODE_ORDER_FIELDS as readonly string[]).includes(field)) {
       throw new UsageError(
-        `--order-by must name ${NODE_ORDER_FIELDS.join(', ')}. Got "${field ?? ''}".`,
+        `--order-by must name ${NODE_ORDER_FIELDS.join(', ')}; for example --order-by updatedAt:desc.`,
         command,
       );
     }
     if (direction === undefined || !(ORDER_DIRECTIONS as readonly string[]).includes(direction)) {
       throw new UsageError(
-        `--order-by direction must be ${ORDER_DIRECTIONS.join(' or ')}. Got "${direction ?? ''}".`,
+        `--order-by direction must be ${ORDER_DIRECTIONS.join(' or ')}; for example --order-by updatedAt:desc.`,
         command,
       );
     }
@@ -153,7 +161,12 @@ export const selectorFrom = (
     );
   }
   if (id !== undefined) return { id: parseId(id, command) };
-  if (positional !== undefined) return { path: positional };
+  if (positional !== undefined) {
+    validatePath(positional, command, 'path');
+    if (positional === ROOT_PATH)
+      throw new UsageError('The root path cannot select an item.', command);
+    return { path: positional };
+  }
   throw new UsageError(`Give a path, or --id.`, command);
 };
 
@@ -186,13 +199,13 @@ export const destinationFrom = (raw: string | undefined, command: string): strin
  * `Number()` would accept `4.0`, `4e0`, ` 4 `, and `0x4`, all of which would then be sent as a
  * different value than the one that was typed, or rejected by the server with a confusing message.
  */
-export const parseId = (raw: string, command: string): number => {
+export const parseId = (raw: string, command: string, flag = '--id'): number => {
   if (!/^[1-9]\d*$/.test(raw)) {
-    throw new UsageError(`--id must be a positive whole number. Got "${raw}".`, command);
+    throw new UsageError(`${flag} must be a positive whole number.`, command);
   }
   const value = Number(raw);
   if (!Number.isSafeInteger(value)) {
-    throw new UsageError(`--id is too large to be an identifier. Got "${raw}".`, command);
+    throw new UsageError(`${flag} is too large to be an identifier.`, command);
   }
   return value;
 };
@@ -211,6 +224,7 @@ export interface SplitPath {
  * server, and a second opinion in the CLI could only ever disagree with them.
  */
 export const splitCreatePath = (raw: string, command: string): SplitPath => {
+  validatePath(raw, command, 'path');
   if (!raw.startsWith('/')) {
     throw new UsageError(`A path must be absolute, starting with "/". Got "${raw}".`, command);
   }
@@ -223,6 +237,7 @@ export const splitCreatePath = (raw: string, command: string): SplitPath => {
   if (slug === '') {
     throw new UsageError(`A path must not end with "/". Got "${raw}".`, command);
   }
+  validateSlug(slug, command, 'path slug');
   return { parent: { path: parentPath }, slug };
 };
 
@@ -325,14 +340,25 @@ const readStdin = async (command: string, signal?: AbortSignal): Promise<string>
  * descriptor is bounded whatever the entry turns out to be.
  */
 export const readLocalFile = (path: string, label: string, command: string): string => {
+  path = resolve(path);
   let fd: number;
   try {
     // `O_NONBLOCK` is what makes the type check below reachable. Opening a FIFO for reading blocks
     // until a writer appears, so without it the command hangs on the open and never gets as far as
     // discovering that the path is not a regular file. It has no effect on an ordinary file.
     fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
-  } catch {
-    throw new UsageError(`Cannot read ${label} at "${path}".`, command);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    const reason =
+      code === 'ENOENT'
+        ? 'does not exist'
+        : code === 'EACCES' || code === 'EPERM'
+          ? 'permission denied'
+          : 'cannot be opened';
+    throw new UsageError(
+      `${label} at "${path}" ${reason}. Use --body-literal for text beginning with @.`,
+      command,
+    );
   }
 
   try {
@@ -394,12 +420,10 @@ export const resolveBody = async (
   // original string would produce a request the shared contract can never accept, since a TipTap body
   // is an object. Parsing locally also means a malformed document is a usage error before a round
   // trip rather than a rejection after one.
-  let document: unknown;
-  try {
-    document = JSON.parse(text);
-  } catch {
+  const document = parseJson(text, '--body', command);
+  if (Either.isLeft(Schema.decodeUnknownEither(DocumentTransportInput)(document))) {
     throw new UsageError(
-      'The body is not valid JSON, and --body-format tiptap expects a TipTap document.',
+      '--body must be a TipTap document object with type doc and optional array content.',
       command,
     );
   }
@@ -416,22 +440,15 @@ export const resolveMetadata = (
   command: string,
 ): JsonObject | undefined => {
   if (raw === undefined) return undefined;
+  prevalidateMetadata(raw, command);
   const text = raw.startsWith('@')
     ? readLocalFile(raw.slice(1), 'the metadata file', command)
     : raw;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new UsageError('--metadata must be valid JSON, or @file containing it.', command);
-  }
-  // `isJsonObject` is the contracts' own predicate for an arbitrary JSON object, so "an object" means
-  // the same thing here as it does where the request is decoded. It narrows the shape; the depth, key,
-  // and byte bounds remain the decoder's, which is where they are defined.
-  if (!isJsonObject(parsed)) {
-    throw new UsageError('--metadata must be a JSON object.', command);
-  }
+  const parsed = parseJson(text, '--metadata', command);
+  const rejection = inspectMetadataInput(parsed);
+  if (rejection !== undefined)
+    throw new UsageError(`--metadata: ${sentence(rejection.detail)}`, command);
+  if (!isJsonObject(parsed)) throw new UsageError('--metadata must be a JSON object.', command);
   return parsed;
 };
 
@@ -459,10 +476,7 @@ export const scopesFrom = (
       // same verdict the request decoder would, early enough to say which scope was wrong and why.
       // Without it the decoder answers for a union of two selector shapes, and someone who forgot the
       // leading slash is told an `id` was expected - true of the union, and useless to them.
-      const parsed = parsePath(path);
-      if (Either.isLeft(parsed)) {
-        throw new UsageError(`scope "${path}": ${describePathRejection(parsed.left)}`, command);
-      }
+      validatePath(path, command, 'path');
       // The original string travels, not a path rebuilt from the segments. `parsePath` refuses a
       // noncanonical path rather than repairing one, so there is nothing to rebuild and rebuilding
       // would be the rewriting it exists to prevent.
@@ -471,8 +485,13 @@ export const scopesFrom = (
     ...ids.map((id) => ({ id: parseId(id, command) })),
   ];
   if (scopes.length === 0) throw new UsageError('Give at least one path, or --id.', command);
-  // The count bound and the no-repeat rule stay the decoder's. Both already report themselves
-  // adequately, and a local copy could only ever come to disagree with the one that decides.
+  if (scopes.length > SCOPES_MAX_COUNT)
+    throw new UsageError(
+      `Paths and --id take at most ${SCOPES_MAX_COUNT} targets in total.`,
+      command,
+    );
+  if (new Set(scopes.map((value) => JSON.stringify(value))).size !== scopes.length)
+    throw new UsageError('Paths and --id must not repeat a target.', command);
   return scopes;
 };
 
@@ -498,18 +517,13 @@ export const resolveFilter = (
   command: string,
 ): NodeFilterInput | undefined => {
   if (raw === undefined) return undefined;
+  prevalidateFilter(raw, command);
   const text = raw.startsWith('@') ? readLocalFile(raw.slice(1), 'the filter file', command) : raw;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new UsageError('--filter must be valid JSON, or @file containing it.', command);
-  }
+  const parsed = parseJson(text, '--filter', command);
 
   const rejection = inspectFilterInput(parsed);
   if (rejection !== undefined) {
-    throw new UsageError(`--filter: ${describeFilterRejection(rejection)}`, command);
+    throw new UsageError(`--filter: ${sentence(describeFilterRejection(rejection))}`, command);
   }
   // A compile-time bridge across a runtime-checked boundary. `inspectFilterInput` has just established
   // that the value carries only the keys this filter owns, each with a value its own decoder accepts.
@@ -529,10 +543,12 @@ export const resolveFilter = (
  */
 export const parseQueries = (values: readonly string[], command: string): readonly string[] => {
   if (values.length === 0) throw new UsageError('Give at least one -q query.', command);
+  if (values.length > SEARCH_QUERIES_MAX_COUNT)
+    throw new UsageError(`-q takes at most ${SEARCH_QUERIES_MAX_COUNT} queries.`, command);
   for (const value of values) {
     const rejection = inspectQueryInput(value);
     if (rejection !== undefined) {
-      throw new UsageError(`-q: ${describeQueryRejection(rejection)}`, command);
+      throw new UsageError(`-q: ${sentence(describeQueryRejection(rejection))}`, command);
     }
   }
   return values;
@@ -554,4 +570,264 @@ export const titleFromContent = (
         ? fromMarkdown(body.value)
         : canonicalizeDocument(body.value);
   return Either.isRight(document) ? deriveTitle(document.right, description) : undefined;
+};
+
+const sentence = (text: string): string =>
+  `${text.charAt(0).toUpperCase()}${text.slice(1).replace(/[.]$/, '')}.`;
+
+const validatePath = (raw: string, command: string, flag: string): void => {
+  const result = parsePath(raw);
+  if (Either.isLeft(result)) {
+    const candidate = raw.normalize('NFC').toLowerCase();
+    const hint =
+      candidate !== raw && Either.isRight(parsePath(candidate)) ? ` Try "${candidate}".` : '';
+    throw new UsageError(
+      `${flag}: ${sentence(describePathRejection(result.left))}${hint}`,
+      command,
+    );
+  }
+};
+
+export const validateSlug = (raw: string | undefined, command: string, flag = '--slug'): void => {
+  if (raw === undefined || isCanonicalSlug(raw)) return;
+  const candidate = raw.normalize('NFC').toLowerCase();
+  throw new UsageError(
+    `${flag} must follow this grammar: ${SLUG_GRAMMAR_DESCRIPTION}; at most ${SLUG_MAX_CODE_POINTS} characters.${candidate !== raw && isCanonicalSlug(candidate) ? ` Try "${candidate}".` : ''}`,
+    command,
+  );
+};
+
+export const validateTitle = (raw: string | undefined, command: string): void => {
+  if (raw === undefined) throw new UsageError('--title is required.', command);
+  const rejection = inspectTitleInput(raw);
+  if (rejection !== undefined)
+    throw new UsageError(
+      rejection.reason === 'title_too_long'
+        ? `--title must be at most ${rejection.limit} characters after trimming.`
+        : '--title must not be empty.',
+      command,
+    );
+};
+
+export const validateDescription = (raw: string | undefined, command: string): void => {
+  if (raw !== undefined && [...raw].length > DESCRIPTION_MAX_CODE_POINTS)
+    throw new UsageError(
+      `--description must be at most ${DESCRIPTION_MAX_CODE_POINTS} characters.`,
+      command,
+    );
+};
+
+export const validateTags = (values: readonly string[], command: string, flag = '--tag'): void => {
+  if (values.some((value) => value.includes(',')))
+    throw new UsageError(
+      `${flag} does not accept commas inside a tag. Give each tag its own --tag.`,
+      command,
+    );
+  const rejection = inspectTagsInput(values.map(normalizeTag));
+  if (rejection !== undefined) {
+    const rule =
+      rejection.reason === 'tags_too_many'
+        ? `takes at most ${rejection.limit} tags`
+        : rejection.reason === 'tag_too_long'
+          ? `takes tags of at most ${rejection.limit} characters`
+          : rejection.reason === 'tags_repeat'
+            ? 'must not repeat a tag'
+            : 'must not contain an empty tag';
+    throw new UsageError(`${flag} ${rule}.`, command);
+  }
+};
+
+export const validateBodyArguments = (
+  body: string | undefined,
+  literal: string | undefined,
+  command: string,
+): void => {
+  if (body !== undefined && literal !== undefined)
+    throw new UsageError('Give either --body or --body-literal, not both.', command);
+};
+
+/** Locate the first syntax failure without depending on engine-specific JSON error prose. */
+const jsonSyntaxOffset = (text: string): number => {
+  type Expected =
+    | 'value'
+    | 'array-first'
+    | 'array-next'
+    | 'object-first'
+    | 'object-key'
+    | 'object-next'
+    | 'colon'
+    | 'end';
+  const expected: Expected[] = ['end', 'value'];
+  let cursor = 0;
+  const whitespace = (): void => {
+    while (cursor < text.length && /[\x20\t\r\n]/.test(text[cursor] ?? '')) cursor += 1;
+  };
+  const string = (): number | undefined => {
+    cursor += 1;
+    while (cursor < text.length) {
+      const character = text[cursor];
+      if (character === '"') {
+        cursor += 1;
+        return undefined;
+      }
+      if (text.charCodeAt(cursor) < 0x20) return cursor;
+      if (character === '\\') {
+        cursor += 1;
+        const escape = text[cursor];
+        if (escape === 'u') {
+          for (let digit = 0; digit < 4; digit += 1) {
+            cursor += 1;
+            if (!/[0-9a-f]/i.test(text[cursor] ?? '')) return cursor;
+          }
+        } else if (escape === undefined || !'"\\/bfnrt'.includes(escape)) return cursor;
+      }
+      cursor += 1;
+    }
+    return cursor;
+  };
+  while (expected.length > 0) {
+    whitespace();
+    const next = expected.pop();
+    const character = text[cursor];
+    switch (next) {
+      case 'end':
+        if (cursor !== text.length) return cursor;
+        break;
+      case 'colon':
+        if (character !== ':') return cursor;
+        cursor += 1;
+        break;
+      case 'object-first':
+        if (character === '}') {
+          cursor += 1;
+          break;
+        }
+        expected.push('object-key');
+        break;
+      case 'object-key': {
+        if (character !== '"') return cursor;
+        const failure = string();
+        if (failure !== undefined) return failure;
+        expected.push('object-next', 'value', 'colon');
+        break;
+      }
+      case 'object-next':
+        if (character === '}') {
+          cursor += 1;
+          break;
+        }
+        if (character !== ',') return cursor;
+        cursor += 1;
+        expected.push('object-key');
+        break;
+      case 'array-first':
+        if (character === ']') {
+          cursor += 1;
+          break;
+        }
+        expected.push('array-next', 'value');
+        break;
+      case 'array-next':
+        if (character === ']') {
+          cursor += 1;
+          break;
+        }
+        if (character !== ',') return cursor;
+        cursor += 1;
+        expected.push('array-next', 'value');
+        break;
+      case 'value': {
+        if (character === '{' || character === '[') {
+          cursor += 1;
+          expected.push(character === '{' ? 'object-first' : 'array-first');
+        } else if (character === '"') {
+          const failure = string();
+          if (failure !== undefined) return failure;
+        } else if (character === 't' || character === 'f' || character === 'n') {
+          const literal = character === 't' ? 'true' : character === 'f' ? 'false' : 'null';
+          for (const letter of literal) {
+            if (text[cursor] !== letter) return cursor;
+            cursor += 1;
+          }
+        } else {
+          if (character === '-') cursor += 1;
+          if (text[cursor] === '0') cursor += 1;
+          else {
+            if (!/[1-9]/.test(text[cursor] ?? '')) return cursor;
+            do {
+              cursor += 1;
+            } while (/\d/.test(text[cursor] ?? ''));
+          }
+          if (text[cursor] === '.') {
+            cursor += 1;
+            if (!/\d/.test(text[cursor] ?? '')) return cursor;
+            do {
+              cursor += 1;
+            } while (/\d/.test(text[cursor] ?? ''));
+          }
+          if (text[cursor] === 'e' || text[cursor] === 'E') {
+            cursor += 1;
+            if (text[cursor] === '+' || text[cursor] === '-') cursor += 1;
+            if (!/\d/.test(text[cursor] ?? '')) return cursor;
+            do {
+              cursor += 1;
+            } while (/\d/.test(text[cursor] ?? ''));
+          }
+        }
+        break;
+      }
+    }
+  }
+  return cursor;
+};
+
+/** Parse syntax without quoting submitted JSON in diagnostics. */
+const parseJson = (text: string, flag: string, command: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const offset = jsonSyntaxOffset(text);
+    const prefix = text.slice(0, offset);
+    const line = prefix.split('\n').length;
+    const column = offset - prefix.lastIndexOf('\n');
+    throw new UsageError(
+      `${flag} must be valid JSON: syntax error at line ${line}, column ${column}.`,
+      command,
+    );
+  }
+};
+
+export const prevalidateMetadata = (raw: string | undefined, command: string): void => {
+  if (raw === undefined) return;
+  if (raw === '@-')
+    throw new UsageError('--metadata does not accept @-. Give inline JSON or @file.', command);
+  if (raw.startsWith('@')) return;
+  const rejection = inspectMetadataInput(parseJson(raw, '--metadata', command));
+  if (rejection !== undefined)
+    throw new UsageError(`--metadata: ${sentence(rejection.detail)}`, command);
+};
+
+export const prevalidateFilter = (raw: string | undefined, command: string): void => {
+  if (raw === undefined) return;
+  if (raw === '@-')
+    throw new UsageError('--filter does not accept @-. Give inline JSON or @file.', command);
+  if (raw.startsWith('@')) return;
+  const rejection = inspectFilterInput(parseJson(raw, '--filter', command));
+  if (rejection !== undefined)
+    throw new UsageError(`--filter: ${sentence(describeFilterRejection(rejection))}`, command);
+};
+
+/** Measure the same contract-decoded representation the HTTP client sends, including defaults. */
+export const checkRequestSize = <A>(
+  request: unknown,
+  command: string,
+  decode: Decoder<A>,
+): void => {
+  const decoded = decode(request);
+  if (Either.isLeft(decoded)) throw new UsageError('The request is not valid.', command);
+  if (Buffer.byteLength(JSON.stringify(decoded.right), 'utf8') > REQUEST_MAX_BYTES)
+    throw new UsageError(
+      `The serialized request must be at most ${REQUEST_MAX_BYTES} bytes. Reduce --body, --metadata, or other input.`,
+      command,
+    );
 };

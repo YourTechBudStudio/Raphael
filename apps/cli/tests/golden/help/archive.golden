@@ -1,20 +1,34 @@
 ==== exit ====
 0
 ==== stdout ====
-Usage: raphael archive <path> [--revision <n>] [options]
-       raphael archive --id <id> [--revision <n>] [options]
+Usage: raphael archive <path> [options]
+       raphael archive --id <id> [options]
 
-Hide an area, a project, or a note from lists and search. Nothing is deleted: everything inside
-an archived area or project is hidden with it, keeps its address, and comes back on restore.
-A project's selection is kept too.
+Hide an item and everything inside it.
 
-Archiving something that is already archived because a container above it is, keeps it
-archived when that container is restored.
+Archive hides items from ordinary lists and search without deleting them. The slug stays reserved, and favorites and project active state are retained.
+
+Archiving an item already hidden through a parent adds its own archive cause. Restoring the parent then leaves this item archived. There is no delete command.
 
 Options:
-      --id <id>        Address by identifier instead of by path.
-      --revision <n>   The revision you read. Without it, the current revision is read for you
-                       just before the archive is sent.
-      --json           Print the result as JSON.
-  -h, --help           Show this help.
+      --id <id>
+      Address by durable id instead of path.
+      --revision <n>
+      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael archive /work/raphael
+  raphael archive --id 42
+  raphael archive --id 42 --revision 8 --json
+
+Prints:
+  The item and remaining archive causes. JSON carries `node` and `archiveCauses`.
+
+Next: raphael restore --id 42
+
+See also: raphael help restore; raphael help revisions
 ==== stderr ====

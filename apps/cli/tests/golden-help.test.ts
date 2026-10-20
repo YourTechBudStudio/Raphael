@@ -5,38 +5,25 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { after, describe, it } from 'node:test';
 
-import { REMOTE_COMMAND_NAMES } from '../src/main.ts';
-import { errorResponse, runCli, stubServer } from './support/cli.ts';
-import { caseName, goldenSurface } from './support/golden.ts';
+import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
 
-/**
- * Every help page, byte for byte, and every example in them, executed.
- *
- * The pages are compared with golden files rather than with the constants that produce them: a test
- * that compares a page with its own constant passes whatever the page says.
- */
+import { HELP_TOPICS, ROOT_EXAMPLES } from '../src/help.ts';
+import { COMMAND_DEFINITIONS, REMOTE_COMMAND_NAMES } from '../src/main.ts';
+import { runLogin } from '../src/modules/connection/login.ts';
+import { parseServeArgs } from '../src/modules/server/serve.ts';
+import { newSession } from '../src/shared/command.ts';
+import { errorResponse, runCli, STUB_ENDPOINT, STUB_KEY, stubServer } from './support/cli.ts';
+import { goldenSurface } from './support/golden.ts';
 
 const help = goldenSurface('help');
-
-/** Each page once, by the spelling the golden file is named after. */
 const PAGES: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ['root', ['--help']],
-  ['server', ['server', '--help']],
-  ['server-serve', ['server', 'serve', '--help']],
-  ['login', ['login', '--help']],
-  ...REMOTE_COMMAND_NAMES.map((name) => [name, [name, '--help']] as const),
-];
-
-/** Other spellings that must print exactly what the page's own spelling prints. */
-const ALIASES: ReadonlyArray<readonly [string, readonly string[]]> = [
-  ['root', []],
-  ['root', ['-h']],
   ['root', ['help']],
-  ['server', ['server']],
-  ['server', ['server', '-h']],
-  ['server-serve', ['server', 'serve', '-h']],
-  ['login', ['login', '-h']],
-  ...REMOTE_COMMAND_NAMES.map((name) => [name, [name, '-h']] as const),
+  ['reference', ['help', 'reference']],
+  ...COMMAND_DEFINITIONS.map(
+    (definition) =>
+      [definition.name.replaceAll(' ', '-'), ['help', ...definition.name.split(' ')]] as const,
+  ),
+  ...HELP_TOPICS.map((topic) => [topic.name, ['help', topic.name]] as const),
 ];
 
 after(() => assert.deepEqual(help.strays(), []));
@@ -47,67 +34,64 @@ describe('help pages', () => {
       help.expectRun(name, await runCli(argv));
     });
   }
-
-  for (const [name, argv] of ALIASES) {
-    it(`prints the same bytes for ${argv.length === 0 ? '(no arguments)' : argv.join(' ')}`, async () => {
-      const page = PAGES.find(([pageName]) => pageName === name);
-      assert.ok(page !== undefined);
-      assert.deepEqual(await runCli(argv), await runCli(page[1]));
+  for (const definition of COMMAND_DEFINITIONS) {
+    it(`prints identical bytes for all ${definition.name} help spellings`, async () => {
+      const words = definition.name.split(' ');
+      const expected = await runCli(['help', ...words]);
+      assert.equal(expected.code, 0, expected.stderr);
+      assert.deepEqual(await runCli([...words, '--help']), expected);
+      assert.deepEqual(await runCli([...words, '-h']), expected);
     });
   }
+  for (const argv of [[], ['--help'], ['-h']]) {
+    it(`prints root help for ${argv.join(' ') || 'no arguments'}`, async () => {
+      assert.deepEqual(await runCli(argv), await runCli(['help']));
+    });
+  }
+  it('has no overlapping command and topic names', () => {
+    const names = new Set(COMMAND_DEFINITIONS.map((definition) => definition.name));
+    assert.deepEqual(
+      HELP_TOPICS.filter((topic) => names.has(topic.name)),
+      [],
+    );
+  });
+  for (const topic of HELP_TOPICS) {
+    it(`returns the full ${topic.name} topic as JSON`, async () => {
+      const ran = await runCli(['help', '--json', topic.name]);
+      assert.equal(ran.code, 0, ran.stderr);
+      assert.deepEqual(JSON.parse(ran.stdout), topic);
+    });
+  }
+  it('returns the aggregate reference as JSON', async () => {
+    const reference = await runCli(['help', '--json', 'reference']);
+    const aggregate = await runCli(['help', '--json']);
+    assert.equal(reference.code, 0, reference.stderr);
+    assert.deepEqual(JSON.parse(reference.stdout), JSON.parse(aggregate.stdout));
+    const result = JSON.parse(reference.stdout) as {
+      commands: readonly { name: string }[];
+      topics: readonly { name: string }[];
+    };
+    assert.deepEqual(
+      result.commands.map(({ name }) => name),
+      COMMAND_DEFINITIONS.map(({ name }) => name),
+    );
+    assert.deepEqual(
+      result.topics.map(({ name }) => name),
+      [...HELP_TOPICS.map(({ name }) => name), 'reference'],
+    );
+  });
+  it('offers machine definitions offline and has no separate search topic', async () => {
+    const ran = await runCli(['help', '--json']);
+    assert.equal(ran.code, 0, ran.stderr);
+    const result = JSON.parse(ran.stdout) as { topics: readonly { name: string }[] };
+    assert.equal(
+      result.topics.some((topic) => topic.name === 'search'),
+      false,
+    );
+  });
 });
 
-/**
- * Split an example line the way a POSIX shell would for the quoting help actually uses: single
- * quotes, double quotes, and bare words. Anything after a run of two or more spaces outside quotes is
- * the explanation printed beside the example, not part of it.
- */
-const tokenize = (line: string): string[] => {
-  const tokens: string[] = [];
-  let current = '';
-  let started = false;
-  let quote: '"' | "'" | undefined;
-  for (let index = 0; index < line.length; index += 1) {
-    const character = line.charAt(index);
-    if (quote !== undefined) {
-      if (character === quote) quote = undefined;
-      else current += character;
-      continue;
-    }
-    if (character === '"' || character === "'") {
-      quote = character;
-      started = true;
-    } else if (character === ' ') {
-      if (line.charAt(index + 1) === ' ') break;
-      if (started) tokens.push(current);
-      current = '';
-      started = false;
-    } else {
-      current += character;
-      started = true;
-    }
-  }
-  assert.equal(quote, undefined, `unbalanced quote in example: ${line}`);
-  if (started) tokens.push(current);
-  return tokens;
-};
-
-/**
- * Every line, on any page, that is an invocation someone could copy: it starts with `raphael` and has
- * no `<placeholder>` or `[optional]` part, which is what tells a usage line from an example. The root
- * page's title line is neither.
- */
-const examplesOf = (page: string): string[][] =>
-  page
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('raphael ') && !line.startsWith('raphael - '))
-    .filter((line) => !/<[a-z][a-z-]*>|\[(?:-|options|changes)/.test(line))
-    .map((line) => tokenize(line).slice(1));
-
-describe('help examples', () => {
-  // Examples read files relative to the current directory and from standard input, so each one runs
-  // from a directory holding the files the examples name, with something on standard input.
+describe('structured help examples', () => {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'raphael-examples-')));
   writeFileSync(join(directory, 'note.md'), '# A note\n');
   writeFileSync(join(directory, 'contracts.md'), '# Contracts\n');
@@ -120,29 +104,68 @@ describe('help examples', () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it('finds examples to run', async () => {
-    const all = await Promise.all(PAGES.map(async ([, argv]) => (await runCli(argv)).stdout));
-    // Seventeen today. A floor rather than an exact count, so adding an example is not a test change,
-    // while an extraction rule that silently stopped matching is.
-    assert.ok(all.flatMap(examplesOf).length >= 17);
-  });
+  const groups = [
+    { name: 'root', examples: ROOT_EXAMPLES },
+    ...COMMAND_DEFINITIONS,
+    ...HELP_TOPICS,
+  ];
 
-  for (const [name, argv] of PAGES) {
-    it(`runs every example on the ${name} page until it reaches the server`, async () => {
-      const page = (await runCli(argv)).stdout;
-      for (const example of examplesOf(page)) {
+  for (const group of groups) {
+    it(`executes the ${group.name} example data`, async () => {
+      for (const { argv } of group.examples) {
+        assert.equal(
+          argv.some((word) => /<[a-z][a-z-]*>|\[options\]/u.test(word)),
+          false,
+        );
         process.chdir(directory);
         Object.defineProperty(process, 'stdin', {
           configurable: true,
           value: Readable.from([Buffer.from('# From standard input\n')]),
         });
-        // Any answer will do; reaching the server at all is what proves the example parses.
-        const server = stubServer(() => errorResponse(503, 'storage_busy', 'Busy.'));
-        const ran = await runCli(example, { connect: server.connect });
-        assert.ok(
-          server.requests.length > 0,
-          `${caseName(name)}: "raphael ${example.join(' ')}" never reached the server:\n${ran.stderr}`,
-        );
+        if (argv[0] === 'server' && argv[1] === 'serve') {
+          parseServeArgs(argv.slice(2));
+        } else if (argv[0] === 'login') {
+          const server = stubServer(
+            () =>
+              new Response(JSON.stringify({ protocolVersion: PROTOCOL_VERSION }), {
+                headers: { 'content-type': 'application/json' },
+              }),
+          );
+          let output = '';
+          const code = await runLogin(argv.slice(1), {
+            streams: {
+              out: (text) => {
+                output += text;
+              },
+              err: (text) => {
+                output += text;
+              },
+            },
+            session: newSession({ command: 'login', writes: true, json: argv.includes('--json') }),
+            prompter: () => ({
+              ask: async () => STUB_ENDPOINT,
+              askHidden: async () => STUB_KEY,
+              close: () => {},
+            }),
+            environment: { HOME: directory, XDG_CONFIG_HOME: join(directory, 'config') },
+            platform: 'linux',
+            transport: server.connect,
+          });
+          assert.equal(code, 0, output);
+          assert.equal(server.requests.length, 1);
+        } else if (
+          REMOTE_COMMAND_NAMES.includes(argv[0] as (typeof REMOTE_COMMAND_NAMES)[number])
+        ) {
+          const server = stubServer(() => errorResponse(503, 'storage_busy', 'Busy.'));
+          const ran = await runCli(argv, { connect: server.connect });
+          assert.ok(
+            server.requests.length > 0,
+            `${group.name}: raphael ${argv.join(' ')}\n${ran.stderr}`,
+          );
+        } else {
+          const ran = await runCli(argv);
+          assert.equal(ran.code, 0, `${group.name}: ${ran.stderr}`);
+        }
       }
     });
   }

@@ -9,6 +9,7 @@
 
 import type { OperationCall, Transport } from '@raphael/client';
 
+import type { OptionConfig } from './args.ts';
 import type { Interruption, InterruptSignal } from './interrupt.ts';
 import type { Streams } from './output.ts';
 
@@ -18,6 +19,7 @@ export interface Invocation {
   readonly json: boolean;
   /** Whether a success would change stored state. Decides whether a failure carries a state line. */
   readonly writes: boolean;
+  readonly fieldFlags?: Readonly<Record<string, string>>;
 }
 
 export interface Session {
@@ -68,3 +70,51 @@ export const observedTransport = (session: Session, transport: Transport): Trans
     },
   };
 };
+
+/** A runnable example; argv excludes the executable name. */
+export interface CommandExample {
+  readonly argv: readonly string[];
+  readonly description?: string;
+}
+
+export interface CommandOption {
+  readonly name: string;
+  readonly short?: string;
+  readonly type: 'string' | 'boolean';
+  readonly multiple?: boolean;
+  readonly valueName?: string;
+  readonly default?: string | number | boolean;
+  readonly description: string;
+  readonly constraint?: string;
+  readonly changes?: boolean;
+}
+
+/** Product data owned beside a command's handler. Dispatch stays explicit. */
+export interface CommandDefinition {
+  readonly name: string;
+  readonly summary: string;
+  readonly group: 'Read' | 'Write' | 'Setup';
+  readonly writes: boolean;
+  readonly usage: readonly string[];
+  readonly behavior: readonly string[];
+  readonly constraints?: readonly string[];
+  readonly options: readonly CommandOption[];
+  readonly examples: readonly CommandExample[];
+  readonly prints: string;
+  readonly next: string;
+  readonly seeAlso?: readonly string[];
+  readonly fieldFlags: Readonly<Record<string, string>>;
+}
+
+/** Parser grammar derives from the same options the help renderer describes. */
+export const optionsFor = (definition: CommandDefinition): OptionConfig =>
+  Object.fromEntries(
+    definition.options.map(({ name, type, multiple, short }) => [
+      name,
+      {
+        type,
+        ...(multiple === undefined ? {} : { multiple }),
+        ...(short === undefined ? {} : { short }),
+      },
+    ]),
+  );

@@ -24,36 +24,9 @@ export type InvalidInputReason = Exclude<
   'malformed_json' | 'invalid_utf8' | 'incomplete_body'
 >;
 
-/** Request fields a failure may name. Our own vocabulary, so naming one discloses nothing submitted. */
-export const REQUEST_FIELDS = [
-  'type',
-  'kind',
-  'parent',
-  'target',
-  'revision',
-  'destination',
-  'title',
-  'slug',
-  'description',
-  'body',
-  'tags',
-  'active',
-  'metadata',
-  'format',
-  'recursive',
-  'scopes',
-  'filter',
-  'queries',
-  'skip',
-  'limit',
-  'orderBy',
-  'includeArchived',
-] as const;
+import { type RequestField } from '@raphael/contracts/nodes';
 
-export type RequestField = (typeof REQUEST_FIELDS)[number];
-
-export const isRequestField = (value: unknown): value is RequestField =>
-  (REQUEST_FIELDS as readonly unknown[]).includes(value);
+export { REQUEST_FIELDS, isRequestField, type RequestField } from '@raphael/contracts/nodes';
 
 export class InvalidInput extends Data.TaggedError('InvalidInput')<{
   readonly field?: RequestField;
@@ -190,7 +163,9 @@ const notFoundMessage = ({ field, index }: NodeNotFound): string => {
     case 'destination':
       return 'The destination does not exist.';
     case 'scopes':
-      return index === undefined ? 'A scope does not exist.' : `Scope ${index + 1} does not exist.`;
+      return index === undefined
+        ? 'A search location does not exist.'
+        : `Search location ${index + 1} does not exist.`;
   }
 };
 

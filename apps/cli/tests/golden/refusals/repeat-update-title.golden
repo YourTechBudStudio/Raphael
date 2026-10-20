@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---title can be given only once. Got "A" and "B".
+--title can be given only once.
 The change was not sent.
 hint: Run "raphael update --help" for usage.

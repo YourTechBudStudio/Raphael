@@ -1,0 +1,811 @@
+==== exit ====
+0
+==== stdout ====
+raphael - an actionable second brain for agents
+
+Usage: raphael <command> [options]
+
+Start here:
+  1. Put RAPHAEL_API_KEY=local-development-key-change-this in a private .env file in the current directory.
+  2. Run raphael server serve; keep that terminal open.
+  3. In another terminal run raphael login. Enter http://127.0.0.1:3000 and the same key.
+  4. Run raphael list /, then raphael create resource.note /work/first-note --body 'My first note'.
+  Already have a server? Start at step 3 with its address and key. See raphael help connecting.
+
+Read:
+  favorites          List favorites by title.
+  get                Read one item and its current revision.
+  path               Print an item’s current full path.
+  list               List children of one or more paths or ids.
+  search             Search all descendants by text.
+  help               Read command help and cross-command guidance.
+
+Write:
+  create             Create an area, project, or note.
+  update             Change an item with revision protection.
+  move               Move an item while keeping its id.
+  archive            Hide an item and everything inside it.
+  restore            Remove an item’s own archive cause.
+  favorite           Add an area or project to favorites.
+  unfavorite         Remove an area or project from favorites.
+
+Setup:
+  login              Save a verified server address and API key on this machine.
+  server             Manage the server on this machine.
+  server serve       Run a Raphael server on this machine.
+  version            Print the installed Raphael version.
+
+What things are:
+  An area holds ongoing work. A project holds work with an outcome. A note holds content.
+  Types: area, project, resource.note. Items that can hold children: area, project.
+  The root (/) can directly hold area.
+  area can directly hold area, project, resource.note.
+  project can directly hold resource.note.
+  resource.note cannot hold children.
+  Address an item by absolute path or stable id; a revision protects a write from concurrent edits.
+
+Topics:
+  addressing         Paths, ids, slugs, containment and field limits.
+  content            Note bodies, files, stdin and Markdown conversion.
+  revisions          Safe writes, conflicts, archives and uncertain outcomes.
+  output             Text results, JSON envelopes, paging and diagnostics.
+  connecting         Start a local server and connect a client.
+  exit-codes         Choose recovery from the process exit code.
+  reference          All command pages and topics in one stream.
+  Use raphael help <command-or-topic>, or raphael <command> --help.
+  raphael help --json prints machine-readable definitions.
+
+Examples:
+  raphael login
+    Connect using the server address and key.
+  raphael create resource.note /work/first-note --body 'My first note'
+    Write a note in the initial work area.
+  raphael list /
+    Read the top level.
+
+Options:
+  -h, --help    Show help.
+      --version Show the version.
+
+Exit codes:
+  0    Done. This includes no-ops and success with warnings.
+  1    Failed for another reason, with nothing left uncertain.
+  2    The command as typed can never succeed; nothing was applied.
+  3    Not found.
+  4    Conflicts with stored state; nothing was applied.
+  5    Not configured, or not authorized.
+  6    Not applied, and retrying may work.
+  7    Outcome unknown: a write was sent and no definite answer came back.
+  130  Interrupted by SIGINT.
+  143  Interrupted by SIGTERM.
+
+---
+
+Usage: raphael create <type> <path> [options]
+       raphael create <type> --parent-id <id> --slug <slug> [options]
+
+Create an area, project, or note.
+
+Types: area, project, resource.note. A full path supplies both parent and slug. The parent must already exist.
+
+Areas and projects require --title. Notes may derive their title from the first body line, then the description. Metadata is set once, at create.
+
+Rules:
+  See help addressing for containment and slug rules. A taken slug, including one reserved by an archived item, is refused.
+  When supplying a body, give either --body or --body-literal. Give each tag its own --tag.
+
+Options:
+      --title <text>
+      Name, at most 200 characters.
+      --parent-id <id>
+      Parent id instead of a full path. Requires --slug.
+      --slug <slug>
+      Address within the parent, at most 100 characters. See help addressing.
+      --description <text>
+      Description, at most 4000 characters. An empty string clears it.
+      --tag <tag>
+      Repeat for each tag; at most 25 tags of 50 characters. Commas are refused. Updates replace all tags. Repeatable.
+      --metadata <json|@file>
+      JSON object set once at create. @- is refused.
+      --body <text|@file|@->
+      Body text, @file, or @- for stdin. An empty string clears it; updates require --revision.
+      --body-literal <text>
+      Literal body text, including text beginning with @. Updates require --revision.
+      --body-format <format>
+      Submitted body: markdown or tiptap. Default: markdown.
+      --return-format <format>
+      Returned body: markdown or tiptap. Requires --json. Default: markdown.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael create area /work --title Work
+  raphael create project /work/raphael --title Raphael
+  raphael create resource.note /work/raphael/api-design --body '# API design'
+  raphael create resource.note --parent-id 42 --slug review --title Review --tag reviewed
+
+Prints:
+  The created item with its id and revision. JSON carries `entity`.
+
+Next: raphael list / -r
+
+See also: raphael help addressing; raphael help content; raphael help update
+
+---
+
+Usage: raphael update <path> [changes] [options]
+       raphael update --id <id> [changes] [options]
+
+Change an item with revision protection.
+
+Give at least one change. Tags replace the complete tag list; --no-tags clears it. A renamed title does not change the path.
+
+A body replacement requires the revision you read. Other changes may read and pin the current id and revision for you. Conflicts are never retried automatically.
+
+Rules:
+  Metadata is set once, at create. --active and --inactive apply only to projects.
+  On a revision conflict, get the item again and reconcile your intended change before updating with its new revision.
+
+Options:
+      --id <id>
+      Address by durable id instead of path.
+      --title <text>
+      Name, at most 200 characters.
+      --description <text>
+      Description, at most 4000 characters. An empty string clears it.
+      --slug <slug>
+      Address within the parent, at most 100 characters. See help addressing.
+      --body <text|@file|@->
+      Body text, @file, or @- for stdin. An empty string clears it; updates require --revision.
+      --body-literal <text>
+      Literal body text, including text beginning with @. Updates require --revision.
+      --body-format <format>
+      Submitted body: markdown or tiptap. Default: markdown.
+      --tag <tag>
+      Repeat for each tag; at most 25 tags of 50 characters. Commas are refused. Updates replace all tags. Repeatable.
+      --no-tags
+      Clear all tags.
+      --active
+      Mark the project active.
+      --inactive
+      Mark the project inactive.
+      --revision <n>
+      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+      --return-format <format>
+      Returned body: markdown or tiptap. Requires --json. Default: markdown.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael update /work/raphael/api-design --body '# Revised design' --revision 8
+  raphael update /work/raphael --tag reviewed --tag contracts
+  raphael update --id 42 --title 'Contract review' --description ''
+
+Prints:
+  The updated item and revision. JSON carries `entity`.
+
+Next: raphael get --id 42
+
+See also: raphael help revisions; raphael help content
+
+---
+
+Usage: raphael move <path> <destination> [options]
+       raphael move --id <id> <destination> [options]
+
+Move an item while keeping its id.
+
+An existing destination area or project receives the item with its current slug. Otherwise the last path segment supplies a new slug and its parent must exist.
+
+Everything inside moves with it. Nothing is overwritten. A directly archived item must be restored first; an item archived only through a parent can move to an active parent.
+
+Options:
+      --id <id>
+      Address by durable id instead of path.
+      --revision <n>
+      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael move /work/raphael /engineering
+  raphael move /work/raphael /engineering/platform
+  raphael move --id 42 /
+
+Prints:
+  The moved item, id and revision. JSON carries `node`.
+
+Next: raphael path --id 42
+
+See also: raphael help addressing; raphael help revisions
+
+---
+
+Usage: raphael archive <path> [options]
+       raphael archive --id <id> [options]
+
+Hide an item and everything inside it.
+
+Archive hides items from ordinary lists and search without deleting them. The slug stays reserved, and favorites and project active state are retained.
+
+Archiving an item already hidden through a parent adds its own archive cause. Restoring the parent then leaves this item archived. There is no delete command.
+
+Options:
+      --id <id>
+      Address by durable id instead of path.
+      --revision <n>
+      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael archive /work/raphael
+  raphael archive --id 42
+  raphael archive --id 42 --revision 8 --json
+
+Prints:
+  The item and remaining archive causes. JSON carries `node` and `archiveCauses`.
+
+Next: raphael restore --id 42
+
+See also: raphael help restore; raphael help revisions
+
+---
+
+Usage: raphael restore <path> [options]
+       raphael restore --id <id> [options]
+
+Remove an item’s own archive cause.
+
+Restore removes only the item’s own archive cause. If a parent remains archived, the item stays archived and the answer names the parent to restore.
+
+An already active item succeeds without a change.
+
+Options:
+      --id <id>
+      Address by durable id instead of path.
+      --revision <n>
+      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael restore /work/raphael
+  raphael restore --id 42
+  raphael restore --id 42 --revision 8 --json
+
+Prints:
+  The item and remaining archive causes. JSON carries `node` and `archiveCauses`.
+
+Next: raphael get --id 42
+
+See also: raphael help archive; raphael help revisions
+
+---
+
+Usage: raphael favorite <path> [options]
+       raphael favorite --id <id> [options]
+
+Add an area or project to favorites.
+
+Already a favorite succeeds. Favorites keep their state while archived, but archived items are omitted from the favorites list.
+
+Options:
+      --id <id>
+      Address by durable id instead of path.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael favorite /work
+  raphael favorite --id 42
+  raphael favorite /work/raphael --json
+
+Prints:
+  The id and favorite state. JSON carries `nodeId` and `isFavorite`.
+
+Next: raphael favorites
+
+See also: raphael help unfavorite
+
+---
+
+Usage: raphael unfavorite <path> [options]
+       raphael unfavorite --id <id> [options]
+
+Remove an area or project from favorites.
+
+An item that is not a favorite succeeds without a change.
+
+Options:
+      --id <id>
+      Address by durable id instead of path.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael unfavorite /work
+  raphael unfavorite --id 42
+  raphael unfavorite /work/raphael --json
+
+Prints:
+  The id and favorite state. JSON carries `nodeId` and `isFavorite`.
+
+Next: raphael favorites
+
+See also: raphael help favorite
+
+---
+
+Usage: raphael favorites [options]
+
+List favorites by title.
+
+List favorite areas and projects by title. Archived favorites are left out and stay favorites.
+
+Options:
+      --skip <n>
+      Number of results to skip. Default: 0.
+      --limit <n>
+      Page size, 1 to 500. Default: 50.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael favorites
+  raphael favorites --limit 20
+  raphael favorites --skip 20 --limit 20 --json
+
+Prints:
+  A page of items. JSON carries `items` and `page`; paging notes go to stderr.
+
+Next: raphael get --id 42
+
+See also: raphael help output
+
+---
+
+Usage: raphael get <path> [options]
+       raphael get --id <id> [options]
+
+Read one item and its current revision.
+
+Read one area, project, or note, including its body, tags, metadata and archive causes. Markdown export is best effort; see help content.
+
+Options:
+      --id <id>
+      Address by durable id instead of path.
+      --return-format <format>
+      Returned body: markdown or tiptap. Requires --json. Default: markdown.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael get /work/raphael/api-design
+  raphael get --id 42
+  raphael get --id 42 --return-format tiptap --json
+
+Prints:
+  Fields and body. JSON carries `entity`.
+
+Next: raphael update --id 42 --title "Reviewed design"
+
+See also: raphael help content; raphael help revisions
+
+---
+
+Usage: raphael path <path> [options]
+       raphael path --id <id> [options]
+
+Print an item’s current full path.
+
+Paths change when an item or a parent moves or changes slug. Ids remain stable.
+
+Options:
+      --id <id>
+      Address by durable id instead of path.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael path /work/raphael
+  raphael path --id 42
+  raphael path --id 42 --json
+
+Prints:
+  The full path. JSON carries `id` and `path`.
+
+Next: raphael get --id 42
+
+See also: raphael help addressing
+
+---
+
+Usage: raphael list <path>... [options]
+       raphael list --id <id> [options]
+
+List children of one or more paths or ids.
+
+Use / for the root. Mix paths and repeated --id, up to 10 distinct places. A note has no children and returns an empty page.
+
+Direct children are listed by default. -r includes all descendants. Ordering applies before paging.
+
+Rules:
+  The default page contains at most 50 results. --limit accepts 1–500; --skip skips results. At most 10 paths or ids may be searched or listed in one request.
+  --order-by accepts slug, updatedAt, id with asc or desc; for example --order-by updatedAt:desc.
+  --filter accepts a JSON object with keys type, kind, tags. Allowed type values: area, project, resource. Allowed kind values: note. Each value is a scalar or {"$in":[...]}; sibling keys are ANDed. Tags match at least one supplied tag, with exact case after trimming and NFC normalization. A kind does not imply a type.
+
+Options:
+      --id <id>
+      Include this id alongside positional paths. Repeatable.
+      --filter <json|@file>
+      JSON object. Keys: type, kind, tags. Values may use {"$in":[...]}. See help addressing.
+      --skip <n>
+      Number of results to skip. Default: 0.
+      --limit <n>
+      Page size, 1 to 500. Default: 50.
+      --include-archived
+      Include archived items.
+  -r, --recursive
+      Include all descendants.
+      --order-by <field:direction>
+      Repeat in priority order. Fields: slug, updatedAt, id. Directions: asc, desc. Repeatable. Default: slug:asc then id:asc.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael list /
+  raphael list / -r --filter '{"type":"resource"}' --order-by updatedAt:desc --limit 4
+  raphael list /work /personal --filter '{"tags":{"$in":["urgent"]}}'
+
+Prints:
+  One row per item. JSON carries `items` and `page`; paging notes go to stderr.
+
+Next: raphael get --id 42
+
+See also: raphael help addressing; raphael help output
+
+---
+
+Usage: raphael search <path>... -q <query> [options]
+       raphael search --id <id> -q <query> [options]
+
+Search all descendants by text.
+
+Search is recursive by default; use --direct for direct children only. Search everything with raphael search / -q auth. Matching includes titles, descriptions and note text. Repeat -q to OR queries together, at most 10 queries. Each query allows at most 1000 characters and 32 words or quoted phrases. Adjacent words mean OR; uppercase AND binds more tightly than uppercase OR. Double quotes make a phrase. Operators need a word or phrase on both sides. Lowercase and and or are ordinary search words. There are no parentheses, NOT, wildcards or field prefixes. Matching ignores case and accents; there is no stemming: token does not match tokens. Punctuation separates words: auth* matches auth, not authentication.
+
+Results are ordered by relevance; --order-by is not accepted.
+
+Rules:
+  The default page contains at most 50 results. --limit accepts 1–500; --skip skips results. At most 10 paths or ids may be searched or listed in one request.
+  --filter accepts a JSON object with keys type, kind, tags. Allowed type values: area, project, resource. Allowed kind values: note. Each value is a scalar or {"$in":[...]}; sibling keys are ANDed. Tags match at least one supplied tag, with exact case after trimming and NFC normalization. A kind does not imply a type.
+
+Options:
+      --id <id>
+      Include this id alongside positional paths. Repeatable.
+      --filter <json|@file>
+      JSON object. Keys: type, kind, tags. Values may use {"$in":[...]}. See help addressing.
+      --skip <n>
+      Number of results to skip. Default: 0.
+      --limit <n>
+      Page size, 1 to 500. Default: 50.
+      --include-archived
+      Include archived items.
+  -q, --query <text>
+      Text to search. At least one required. Repeatable.
+      --direct
+      Search direct children only.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael search / -q auth
+  raphael search /work -q '"login flow" AND retry'
+  raphael search /work /personal -q auth --limit 20
+  raphael search /work --direct -q auth --filter '{"type":"resource","kind":"note"}'
+
+Prints:
+  One row per match, with closest matches first. JSON carries `items[].node` and `page`.
+
+Next: raphael get --id 42
+
+See also: raphael help addressing; raphael help output
+
+---
+
+Usage: raphael login [--json]
+
+Save a verified server address and API key on this machine.
+
+Prompts for the server address and an API key, verifies them, then saves them with owner-only permissions.
+
+The key is never taken as an argument. For scripts, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together instead of logging in.
+
+Prompts go to standard error. Cancelling exits 2 and saves nothing.
+
+Options:
+      --json
+      Print the result as one JSON document.
+  -h, --help
+      Show help.
+
+Examples:
+  raphael login
+  raphael login --json
+  raphael login --help
+
+Prints:
+  The verified address and saved configuration path; JSON also includes the protocol version.
+
+Next: raphael list / -r
+
+See also: raphael help connecting
+
+---
+
+Usage: raphael server <subcommand> [options]
+
+Manage the server on this machine.
+
+Use server serve to run the server.
+
+Options:
+  -h, --help
+      Show help.
+
+Examples:
+  raphael server serve --help
+  raphael help server serve
+  raphael help connecting
+
+Prints:
+  Help for local server commands.
+
+Next: raphael server serve --help
+
+---
+
+Usage: raphael server serve [--config <path>]
+
+Run a Raphael server on this machine.
+
+The API key comes from RAPHAEL_API_KEY in the environment or a .env file in the current directory.
+
+Put the key in .env to keep it out of client environment variables. Clients use RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together.
+
+Configuration comes from an optional YAML file. Relative database paths resolve against that file’s directory, or the current directory when no file is given.
+
+This command never reads your saved login. Press Ctrl-C to stop the server.
+
+Options:
+      --config <path>
+      Read configuration from this YAML file.
+  -h, --help
+      Show help.
+
+Examples:
+  raphael server serve
+  raphael server serve --config ./raphael.yaml
+  raphael server serve --help
+
+Prints:
+  Operator messages on standard error. Standard output is empty.
+
+Next: raphael login
+
+See also: raphael help connecting
+
+---
+
+Usage: raphael version
+
+Print the installed Raphael version.
+
+The version comes from the release manifest.
+
+Options:
+  -h, --help
+      Show help.
+
+Examples:
+  raphael version
+  raphael --version
+  raphael version --help
+
+Prints:
+  The bare version number.
+
+Next: raphael help connecting
+
+---
+
+Usage: raphael help [<command> | <topic>] [--json]
+
+Read command help and cross-command guidance.
+
+Commands take precedence over topics. Help works without a connection or saved login.
+
+help reference prints every page in one stream.
+
+Options:
+      --json
+      Print machine-readable command definitions.
+  -h, --help
+      Show help.
+
+Examples:
+  raphael help create
+  raphael help reference
+  raphael help --json search
+
+Prints:
+  Help text, or machine-readable definitions with --json.
+
+Next: raphael help reference
+
+---
+
+raphael help addressing - Paths, ids, slugs, containment and field limits.
+
+Paths are absolute: /work/raphael/backend. The root is /. For commands that address one item, use a path or --id, never both. List and search may mix paths and repeated --id. The root can be listed and searched, but cannot be read or changed as an item. A path changes when an item or an ancestor moves or changes slug; its positive integer id stays the same. --id is repeatable only on list and search.
+
+Types: area, project, resource.note. Items that can hold children: area, project.
+
+The root (/) can directly hold area.
+area can directly hold area, project, resource.note.
+project can directly hold resource.note.
+resource.note cannot hold children.
+
+NFC lowercase Unicode letter or number tokens joined by single hyphens; combining marks may follow the first letter or number in each token. A slug may contain at most 100 Unicode characters.
+
+Create with a full path, or with --parent-id and --slug. The final path segment is the new slug. Parent items must already exist. Renaming a title does not change the slug; use update --slug to change its address. Archive retains the item and reserves its slug. There is no delete command.
+
+Titles are required and may contain at most 200 characters after trimming. Descriptions may contain at most 4000 characters. Give each tag its own --tag: 1–50 characters per tag, at most 25 tags. Tags are trimmed and NFC-normalized, are case-sensitive, and must not repeat or contain commas. Metadata is a JSON object set once at create: at most 50 top-level keys, 5 levels deep, 100 characters per key, and 16384 serialized UTF-8 bytes.
+
+The default page contains at most 50 results. --limit accepts 1–500; --skip skips results. At most 10 paths or ids may be searched or listed in one request.
+
+For list: --order-by accepts slug, updatedAt, id with asc or desc; for example --order-by updatedAt:desc. Search orders by relevance and does not accept --order-by.
+
+--filter accepts a JSON object with keys type, kind, tags. Allowed type values: area, project, resource. Allowed kind values: note. Each value is a scalar or {"$in":[...]}; sibling keys are ANDed. Tags match at least one supplied tag, with exact case after trimming and NFC normalization. A kind does not imply a type.
+
+Examples:
+  raphael get /work/raphael
+  raphael get --id 42
+  raphael create project --parent-id 42 --slug raphael --title Raphael
+
+Next: raphael help reference
+
+---
+
+raphael help content - Note bodies, files, stdin and Markdown conversion.
+
+Create a note with create resource.note. Give --title, or let the first non-empty line of the body (then description) supply it. A title must still be available when the body is empty.
+
+Body text is literal unless it starts with @: --body @draft.md reads a file, and --body @- reads stdin. Use --body-literal to keep a leading @ as text. Empty stdin is refused. To explicitly clear an existing body use update with --body '' and --revision. A pipe is read only when --body @- is given.
+
+Metadata and filters accept inline JSON or @file, but not @-. Metadata is set once at create and cannot be updated. File and stdin reads are bounded, and invalid independent arguments are refused before reading body content.
+
+Body formats: markdown, tiptap. Supported Markdown heading levels: 1, 2, 3. Supported document elements: doc, paragraph, text, heading, bulletList, orderedList, listItem, codeBlock, blockquote, horizontalRule, hardBreak. Supported text styles: bold, italic, strike, code, link. Documents allow at most 64 levels and 10000 elements. The complete serialized request may contain at most 1048576 UTF-8 bytes.
+
+Markdown conversion can degrade unsupported constructs. Markdown output is a best-effort export of the stored document; use --json --return-format tiptap to read its structured body. --return-format requires --json; it controls the response, while --body-format controls submitted content.
+
+Examples:
+  raphael create resource.note /work/idea --body '# An idea'
+  raphael get /work/idea --json --return-format tiptap
+  raphael update /work/idea --body '' --revision 3
+
+Next: raphael help reference
+
+---
+
+raphael help revisions - Safe writes, conflicts, archives and uncertain outcomes.
+
+A revision is a positive integer returned when an item is read. Update, move, archive and restore check it before changing anything. Pass --revision to apply a change only to the version you read. For changes other than body replacements, omitting --revision makes the CLI read the current revision first and pin the subsequent write to that same id. Body replacements require an explicit --revision.
+
+Exit 4 means stored state prevented the change and nothing was applied. For a revision conflict, run get again, compare your intended change with the current item, then retry with its new revision. Do not blindly replace the revision and overwrite a concurrent edit. A slug conflict can also be caused by an archived item: choose another slug or restore the existing item.
+
+Archiving an item hides it and its descendants from ordinary lists and search. --include-archived includes active and archived items. Archived items retain their slugs. Restoring removes your direct archive cause; an archived ancestor or another cause may keep the item archived. Read it again and restore the blocking ancestor when appropriate.
+
+Exit 7 means a write was sent and its outcome is unknown. Read the item to reconcile before deciding whether to try again. For an uncertain create, read the intended path; retrying create may encounter your own slug collision. Exit 6 means retrying may work and the change was not applied.
+
+Examples:
+  raphael get /work/idea --json
+  raphael update /work/idea --title 'Revised idea' --revision 3
+  raphael list /work --include-archived
+
+Next: raphael help reference
+
+---
+
+raphael help output - Text results, JSON envelopes, paging and diagnostics.
+
+Standard output holds results only. Without --json, lists print tab-separated rows; a header is printed only on a terminal. Rows include id, type, path, title, revision and updatedAt. List order defaults to slug ascending; use list --order-by updatedAt:desc for recent changes. Search orders by relevance and does not accept --order-by. Bodies are printed as Markdown by default.
+
+With --json, a successful command prints exactly one document: {"ok":true,"command":"get",...data}. Full-item reads and writes use entity; move, archive and restore use node; lists and favorites use items; search uses items[].node. These are machine field names. Summaries include path and updatedAt. No createdAt field is exposed. Writes that can leave values unchanged include changed; false means success without a revision bump. Favorite commands report nodeId and isFavorite. Path reports path.
+
+Paged results include page with skip, limit, hasMore and nextSkip. The result footer and runnable next-page command go to standard error, never standard output. Empty-result notes, warnings, hints, prompts and failures also go to standard error. Warnings appear in warnings[] on JSON successes. Closing a pipe early does not turn a completed command into a failure.
+
+JSON failures leave stdout empty and print exactly one document to stderr: {"ok":false,"error":{"code":...,"category":...,"message":...,"hint":...,"exitCode":...,"applied":...,"retryable":...}}. Optional fields include status, field, target, serverMessage and details. applied is false when no change was applied, true when known applied, and null when unknown. Retry decisions must consider exitCode and applied; do not blindly retry an uncertain write. The JSON envelope and exit-code meanings are stable within a major version.
+
+For text write failures, the state line distinguishes Nothing was changed., The change was not sent., and The change may or may not have been applied. Set RAPHAEL_DEBUG=1 to include diagnostic stacks. Keep stdout for results when scripting.
+
+The default page contains at most 50 results. --limit accepts 1–500; --skip skips results. At most 10 paths or ids may be searched or listed in one request.
+
+For list: --order-by accepts slug, updatedAt, id with asc or desc; for example --order-by updatedAt:desc. Search orders by relevance and does not accept --order-by.
+
+Examples:
+  raphael list / --json
+  raphael list / --json --order-by updatedAt:desc
+  raphael get --id 42 --json --return-format tiptap
+
+Next: raphael help reference
+
+---
+
+raphael help connecting - Start a local server and connect a client.
+
+To run a local server, put RAPHAEL_API_KEY=local-development-key-change-this in a .env file in the directory where you run raphael server serve. Keep that file private. The server reads the key from its environment or that .env file; an environment value wins. The default address is http://127.0.0.1:3000. An optional --config supplies a YAML configuration file; relative database paths resolve against that file's directory, or the current directory without one.
+
+In another terminal run raphael login, enter http://127.0.0.1:3000 and the same key. Login verifies the connection before saving the address and key with owner-only permissions. Server commands never read your saved login. Keeping the server key in .env avoids exporting only half of the client environment pair.
+
+For scripts set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together. Both or neither: a partial pair is refused. A complete environment pair overrides the saved login. Clients do not read .env. Saved login uses XDG_CONFIG_HOME/raphael when set to an absolute path, or ~/.config/raphael.
+
+RAPHAEL_TIMEOUT sets the request timeout in whole seconds, from 1 to 120; the default is 15 seconds. Exit 5 means configuration or authorization needs attention: check the address, key and chosen configuration source, then run raphael login. Exit 6 means the request was not applied and retrying may work. Read help exit-codes before retrying a failed write.
+
+Examples:
+  raphael server serve
+  raphael login
+  raphael help exit-codes
+
+Next: raphael help reference
+
+---
+
+raphael help exit-codes - Choose recovery from the process exit code.
+
+  0    Done. This includes no-ops and success with warnings.
+  1    Failed for another reason, with nothing left uncertain.
+  2    The command as typed can never succeed; nothing was applied.
+  3    Not found.
+  4    Conflicts with stored state; nothing was applied.
+  5    Not configured, or not authorized.
+  6    Not applied, and retrying may work.
+  7    Outcome unknown: a write was sent and no definite answer came back.
+  130  Interrupted by SIGINT.
+  143  Interrupted by SIGTERM.
+
+For exit 7 reconcile by reading before retrying. SIGINT and SIGTERM retain their conventional codes; a write interrupted after sending may still have been applied. JSON failures also report applied and retryable.
+
+Server error codes: invalid_input, unauthorized, node_not_found, route_not_found, method_not_allowed, slug_conflict, revision_conflict, node_archived, payload_too_large, unsupported_media_type, invalid_parent, unsupported_content, storage_busy, internal_error. Machine codes are stable identifiers; use exitCode to choose a recovery category.
+
+Examples:
+  raphael get /work --json
+  raphael help revisions
+  raphael help output
+
+Next: raphael help reference
+==== stderr ====

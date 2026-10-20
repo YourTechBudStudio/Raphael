@@ -178,20 +178,7 @@ const flagFor = (context: RequestContext, field: string | undefined): string | u
   if (field === undefined) return undefined;
   const given = context.flags?.[field];
   if (given !== undefined) return given;
-  return FIELD_FLAGS[field] ?? `--${field}`;
-};
-
-/** How request fields are spelled on the command line when a command does not say otherwise. */
-const FIELD_FLAGS: Readonly<Record<string, string>> = {
-  type: '<type>',
-  kind: '<type>',
-  tags: '--tag',
-  queries: '-q',
-  orderBy: '--order-by',
-  includeArchived: '--include-archived',
-  recursive: '--recursive',
-  format: '--format',
-  active: '--active',
+  return `--${field}`;
 };
 
 // ---- Client failures ---------------------------------------------------------------------------
@@ -206,12 +193,19 @@ export const clientFailureWording = (failure: ClientFailure, input: WordingInput
   const afterWrite = state === 'unknown';
 
   switch (failure.kind) {
-    case 'invalid_request':
+    case 'invalid_request': {
+      const issue = failure.issues?.[0];
+      const flag = flagFor(context, issue?.field);
       return {
         code: 'invalid_request',
-        message: forTerminal(failure.message),
+        message:
+          issue === undefined
+            ? 'The request is not valid.'
+            : INVALID_INPUT_SENTENCES[issue.reason](flag, issue, context),
         hint: helpHint(command),
+        ...(flag === undefined ? {} : { field: flag }),
       };
+    }
     case 'cancelled':
       return {
         code: 'interrupted',

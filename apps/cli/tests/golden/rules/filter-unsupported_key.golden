@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
---filter: a filter may only use type, kind, tags
+--filter: A filter may only use type, kind, tags.
 hint: Run "raphael list --help" for usage.

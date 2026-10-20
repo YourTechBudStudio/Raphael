@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---id can be given only once. Got "7" and "6".
+--id can be given only once.
 The change was not sent.
 hint: Run "raphael update --help" for usage.

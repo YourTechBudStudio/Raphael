@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---metadata must be a JSON object.
+--metadata: Metadata must be a JSON object.
 The change was not sent.
 hint: Run "raphael create --help" for usage.

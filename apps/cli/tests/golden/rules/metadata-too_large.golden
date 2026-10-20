@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-Expected metadata: metadata may be at most 16384 bytes when serialized
+--metadata: Metadata may be at most 16384 bytes when serialized.
 The change was not sent.
 hint: Run "raphael create --help" for usage.

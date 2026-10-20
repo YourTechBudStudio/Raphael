@@ -3,12 +3,29 @@
 ==== stdout ====
 Usage: raphael favorites [options]
 
-List your favorites by title. Archived ones are left out and stay favorites.
-Open one with "raphael get --id <id>".
+List favorites by title.
+
+List favorite areas and projects by title. Archived favorites are left out and stay favorites.
 
 Options:
-      --skip <n>      How many to skip. Default 0.
-      --limit <n>     How many to return, 1 to 500.
-      --json          Print the result as JSON.
-  -h, --help          Show this help.
+      --skip <n>
+      Number of results to skip. Default: 0.
+      --limit <n>
+      Page size, 1 to 500. Default: 50.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael favorites
+  raphael favorites --limit 20
+  raphael favorites --skip 20 --limit 20 --json
+
+Prints:
+  A page of items. JSON carries `items` and `page`; paging notes go to stderr.
+
+Next: raphael get --id 42
+
+See also: raphael help output
 ==== stderr ====

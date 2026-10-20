@@ -528,7 +528,7 @@ const verifyInstalled = async (
       (
         await json(
           'raphael search',
-          remote(root, ['search', '/verify', '-r', '-q', 'zebracorn', '--json']),
+          remote(root, ['search', '/verify', '-q', 'zebracorn', '--json']),
         )
       ).items.map((hit: { node: { id: number } }) => hit.node.id);
     expect(

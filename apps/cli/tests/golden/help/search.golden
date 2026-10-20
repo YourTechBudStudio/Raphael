@@ -4,35 +4,46 @@
 Usage: raphael search <path>... -q <query> [options]
        raphael search --id <id> -q <query> [options]
 
-Find areas, projects and notes by their text. Title, description and body are all searched, and
-results come back with the closest match first.
+Search all descendants by text.
 
-Words match any of them.
-Quote a phrase to match it exactly.
-Uppercase AND narrows; OR is the default.
+Search is recursive by default; use --direct for direct children only. Search everything with raphael search / -q auth. Matching includes titles, descriptions and note text. Repeat -q to OR queries together, at most 10 queries. Each query allows at most 1000 characters and 32 words or quoted phrases. Adjacent words mean OR; uppercase AND binds more tightly than uppercase OR. Double quotes make a phrase. Operators need a word or phrase on both sides. Lowercase and and or are ordinary search words. There are no parentheses, NOT, wildcards or field prefixes. Matching ignores case and accents; there is no stemming: token does not match tokens. Punctuation separates words: auth* matches auth, not authentication.
 
-Several paths search all of them at once, as one page. Repeat --id to address a scope by its
-durable identifier instead, and mix the two forms freely. At most 10 scopes.
-Repeat -q to ask more than one question of the same scopes.
+Results are ordered by relevance; --order-by is not accepted.
 
-Examples:
-  raphael search /work -q 'auth tokens'
-  raphael search /work -r -q '"login flow" AND retry'
-  raphael search / -r -q auth --filter '{"type":"resource","kind":"note"}'
-  raphael search /work /personal -r -q auth --limit 20
+Rules:
+  The default page contains at most 50 results. --limit accepts 1–500; --skip skips results. At most 10 paths or ids may be searched or listed in one request.
+  --filter accepts a JSON object with keys type, kind, tags. Allowed type values: area, project, resource. Allowed kind values: note. Each value is a scalar or {"$in":[...]}; sibling keys are ANDed. Tags match at least one supplied tag, with exact case after trimming and NFC normalization. A kind does not imply a type.
 
 Options:
-      --id <id>       Address a scope by identifier. Repeatable.
-  -q, --query <text>  What to look for. Repeatable. At least one is required.
-  -r, --recursive     Search everything underneath, not just direct children.
-      --filter <json> A JSON object, or @file containing one. Keys: type, kind, tags.
-                      A value is either the value itself or {"$in": [...]}.
-      --skip <n>      How many to skip. Default 0.
-      --limit <n>     How many to return, 1 to 500.
-      --include-archived  Also show archived things, marked "archived".
-      --json          Print the result as JSON.
-  -h, --help          Show this help.
+      --id <id>
+      Include this id alongside positional paths. Repeatable.
+      --filter <json|@file>
+      JSON object. Keys: type, kind, tags. Values may use {"$in":[...]}. See help addressing.
+      --skip <n>
+      Number of results to skip. Default: 0.
+      --limit <n>
+      Page size, 1 to 500. Default: 50.
+      --include-archived
+      Include archived items.
+  -q, --query <text>
+      Text to search. At least one required. Repeatable.
+      --direct
+      Search direct children only.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
 
-There is no --order-by. A search answers in relevance order; ask "raphael list" for an
-authored one.
+Examples:
+  raphael search / -q auth
+  raphael search /work -q '"login flow" AND retry'
+  raphael search /work /personal -q auth --limit 20
+  raphael search /work --direct -q auth --filter '{"type":"resource","kind":"note"}'
+
+Prints:
+  One row per match, with closest matches first. JSON carries `items[].node` and `page`.
+
+Next: raphael get --id 42
+
+See also: raphael help addressing; raphael help output
 ==== stderr ====

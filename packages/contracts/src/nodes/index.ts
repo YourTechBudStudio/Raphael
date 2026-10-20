@@ -180,6 +180,7 @@ export {
   type PathRejectionReason,
 } from './path.ts';
 export {
+  SLUG_GRAMMAR_DESCRIPTION,
   compareSlugBinary,
   deriveSlug,
   isCanonicalSlug,
@@ -187,3 +188,11 @@ export {
   type SlugDerivationFailure,
   type SlugDerivationReason,
 } from './slug.ts';
+
+export {
+  REQUEST_FIELDS,
+  isRequestField,
+  invalidRequestIssueFrom,
+  type RequestField,
+  type InvalidRequestIssue,
+} from './diagnostics.ts';

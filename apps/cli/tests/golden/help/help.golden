@@ -1,0 +1,27 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael help [<command> | <topic>] [--json]
+
+Read command help and cross-command guidance.
+
+Commands take precedence over topics. Help works without a connection or saved login.
+
+help reference prints every page in one stream.
+
+Options:
+      --json
+      Print machine-readable command definitions.
+  -h, --help
+      Show help.
+
+Examples:
+  raphael help create
+  raphael help reference
+  raphael help --json search
+
+Prints:
+  Help text, or machine-readable definitions with --json.
+
+Next: raphael help reference
+==== stderr ====

@@ -1,0 +1,20 @@
+==== exit ====
+0
+==== stdout ====
+raphael help connecting - Start a local server and connect a client.
+
+To run a local server, put RAPHAEL_API_KEY=local-development-key-change-this in a .env file in the directory where you run raphael server serve. Keep that file private. The server reads the key from its environment or that .env file; an environment value wins. The default address is http://127.0.0.1:3000. An optional --config supplies a YAML configuration file; relative database paths resolve against that file's directory, or the current directory without one.
+
+In another terminal run raphael login, enter http://127.0.0.1:3000 and the same key. Login verifies the connection before saving the address and key with owner-only permissions. Server commands never read your saved login. Keeping the server key in .env avoids exporting only half of the client environment pair.
+
+For scripts set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together. Both or neither: a partial pair is refused. A complete environment pair overrides the saved login. Clients do not read .env. Saved login uses XDG_CONFIG_HOME/raphael when set to an absolute path, or ~/.config/raphael.
+
+RAPHAEL_TIMEOUT sets the request timeout in whole seconds, from 1 to 120; the default is 15 seconds. Exit 5 means configuration or authorization needs attention: check the address, key and chosen configuration source, then run raphael login. Exit 6 means the request was not applied and retrying may work. Read help exit-codes before retrying a failed write.
+
+Examples:
+  raphael server serve
+  raphael login
+  raphael help exit-codes
+
+Next: raphael help reference
+==== stderr ====

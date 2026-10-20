@@ -23,8 +23,8 @@
 import { Deferred, Effect, Exit, Scope } from 'effect';
 
 import { migrationsFolder } from '../../distribution.ts';
-import { UsageError, parseArgs, stringOption, type OptionConfig } from '../../shared/args.ts';
-import type { Session } from '../../shared/command.ts';
+import { UsageError, parseArgs, stringOption } from '../../shared/args.ts';
+import { optionsFor, type CommandDefinition, type Session } from '../../shared/command.ts';
 import {
   EXIT_FAILURE,
   EXIT_NOT_CONFIGURED,
@@ -36,19 +36,55 @@ import {
 import { renderFailure } from '../../shared/failure.ts';
 import { forTerminal, writeLine, type Streams } from '../../shared/output.ts';
 
-export const SERVE_HELP = `Usage: raphael server serve [--config <path>]
+export const SERVE_DEFINITION: CommandDefinition = {
+  name: 'server serve',
+  summary: 'Run a Raphael server on this machine.',
+  group: 'Setup',
+  writes: false,
+  usage: ['raphael server serve [--config <path>]'],
+  behavior: [
+    'The API key comes from RAPHAEL_API_KEY in the environment or a .env file in the current directory.',
+    'Put the key in .env to keep it out of client environment variables. Clients use RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together.',
+    'Configuration comes from an optional YAML file. Relative database paths resolve against that file’s directory, or the current directory when no file is given.',
+    'This command never reads your saved login. Press Ctrl-C to stop the server.',
+  ],
+  options: [
+    {
+      name: 'config',
+      type: 'string',
+      valueName: 'path',
+      description: 'Read configuration from this YAML file.',
+    },
+    { name: 'help', short: 'h', type: 'boolean', description: 'Show help.' },
+  ],
+  examples: [
+    { argv: ['server', 'serve'] },
+    { argv: ['server', 'serve', '--config', './raphael.yaml'] },
+    { argv: ['server', 'serve', '--help'] },
+  ],
+  prints: 'Operator messages on standard error. Standard output is empty.',
+  next: 'raphael login',
+  seeAlso: ['connecting'],
+  fieldFlags: { config: '--config' },
+};
 
-Run a Raphael server on this machine.
-
-Configuration comes from a YAML file and the API key comes from the environment, or from a
-.env file beside the command you run. Relative database paths resolve against the configuration
-file's directory, or the current directory when no file is given.
-
-This command never reads your saved login: it runs a server, it does not connect to one.
-
-Options:
-      --config <path>  YAML configuration file.
-  -h, --help           Show this help.`;
+export const SERVER_DEFINITION: CommandDefinition = {
+  name: 'server',
+  summary: 'Manage the server on this machine.',
+  group: 'Setup',
+  writes: false,
+  usage: ['raphael server <subcommand> [options]'],
+  behavior: ['Use server serve to run the server.'],
+  options: [{ name: 'help', short: 'h', type: 'boolean', description: 'Show help.' }],
+  examples: [
+    { argv: ['server', 'serve', '--help'] },
+    { argv: ['help', 'server', 'serve'] },
+    { argv: ['help', 'connecting'] },
+  ],
+  prints: 'Help for local server commands.',
+  next: 'raphael server serve --help',
+  fieldFlags: {},
+};
 
 export interface ServeDependencies {
   readonly streams: Streams;
@@ -64,20 +100,21 @@ export interface ServeDependencies {
 const loadBackend = async (): Promise<typeof import('@raphael/backend')> =>
   import('@raphael/backend');
 
-export const SERVE_OPTIONS = {
-  config: { type: 'string' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
+/** Parse without loading the backend or starting a listener. */
+export const parseServeArgs = (argv: readonly string[]): { readonly configPath?: string } => {
+  const parsed = parseArgs(argv, optionsFor(SERVE_DEFINITION), 'server serve');
+  if (parsed.positionals.length > 0) {
+    throw new UsageError('server serve takes no positional arguments.', 'server serve');
+  }
+  const configPath = stringOption(parsed, 'config');
+  return configPath === undefined ? {} : { configPath };
+};
 
 export const runServe = async (
   argv: readonly string[],
   dependencies: ServeDependencies,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, SERVE_OPTIONS, 'server serve');
-  if (parsed.positionals.length > 0) {
-    throw new UsageError(`Unexpected argument "${parsed.positionals[0]}".`, 'server serve');
-  }
-  const configPath = stringOption(parsed, 'config');
+  const { configPath } = parseServeArgs(argv);
   const { streams } = dependencies;
 
   const backend = await loadBackend();

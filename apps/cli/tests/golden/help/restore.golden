@@ -1,16 +1,34 @@
 ==== exit ====
 0
 ==== stdout ====
-Usage: raphael restore <path> [--revision <n>] [options]
-       raphael restore --id <id> [--revision <n>] [options]
+Usage: raphael restore <path> [options]
+       raphael restore --id <id> [options]
 
-Bring back something you archived. Only your own archive of this item is removed: if a container
-above it is archived too, it stays archived, and the answer says which container to restore.
+Remove an item’s own archive cause.
+
+Restore removes only the item’s own archive cause. If a parent remains archived, the item stays archived and the answer names the parent to restore.
+
+An already active item succeeds without a change.
 
 Options:
-      --id <id>        Address by identifier instead of by path.
-      --revision <n>   The revision you read. Without it, the current revision is read for you
-                       just before the restore is sent.
-      --json           Print the result as JSON.
-  -h, --help           Show this help.
+      --id <id>
+      Address by durable id instead of path.
+      --revision <n>
+      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael restore /work/raphael
+  raphael restore --id 42
+  raphael restore --id 42 --revision 8 --json
+
+Prints:
+  The item and remaining archive causes. JSON carries `node` and `archiveCauses`.
+
+Next: raphael get --id 42
+
+See also: raphael help archive; raphael help revisions
 ==== stderr ====

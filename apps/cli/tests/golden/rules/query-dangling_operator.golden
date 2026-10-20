@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
--q: AND and OR must sit between two words
+-q: AND and OR must sit between two words.
 hint: Run "raphael search --help" for usage.

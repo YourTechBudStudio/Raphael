@@ -4,30 +4,46 @@
 Usage: raphael list <path>... [options]
        raphael list --id <id> [options]
 
-List what is inside an area or project. Use "/" for the root. A note holds nothing, so listing
-one is an empty page rather than an error.
+List children of one or more paths or ids.
 
-Several paths list all of them at once, as one page. Repeat --id to address a scope by its
-durable identifier instead, and mix the two forms freely. At most 10 scopes.
+Use / for the root. Mix paths and repeated --id, up to 10 distinct places. A note has no children and returns an empty page.
 
-Ordering applies to everything in scope before the page is cut, so paging through a sorted
-listing is paging through one order rather than sorting each page on its own.
+Direct children are listed by default. -r includes all descendants. Ordering applies before paging.
 
-Examples:
-  raphael list / -r --filter '{"type":"resource"}' --order-by updatedAt:desc --limit 4
-  raphael list /work -r --filter '{"type":"resource"}' --order-by updatedAt:desc --order-by slug:asc
-  raphael list /work /personal --filter '{"tags":{"$in":["urgent"]}}'
+Rules:
+  The default page contains at most 50 results. --limit accepts 1–500; --skip skips results. At most 10 paths or ids may be searched or listed in one request.
+  --order-by accepts slug, updatedAt, id with asc or desc; for example --order-by updatedAt:desc.
+  --filter accepts a JSON object with keys type, kind, tags. Allowed type values: area, project, resource. Allowed kind values: note. Each value is a scalar or {"$in":[...]}; sibling keys are ANDed. Tags match at least one supplied tag, with exact case after trimming and NFC normalization. A kind does not imply a type.
 
 Options:
-      --id <id>       Address a scope by identifier. Repeatable.
-  -r, --recursive     Include everything underneath, not just direct children.
-      --filter <json> A JSON object, or @file containing one. Keys: type, kind, tags.
-                      A value is either the value itself or {"$in": [...]}.
-      --order-by <f:d>  Repeatable, in priority order. Fields: slug, updatedAt, id.
-                      Directions: asc, desc. Default slug:asc then id:asc.
-      --skip <n>      How many to skip. Default 0.
-      --limit <n>     How many to return, 1 to 500.
-      --include-archived  Also show archived things, marked "archived".
-      --json          Print the result as JSON.
-  -h, --help          Show this help.
+      --id <id>
+      Include this id alongside positional paths. Repeatable.
+      --filter <json|@file>
+      JSON object. Keys: type, kind, tags. Values may use {"$in":[...]}. See help addressing.
+      --skip <n>
+      Number of results to skip. Default: 0.
+      --limit <n>
+      Page size, 1 to 500. Default: 50.
+      --include-archived
+      Include archived items.
+  -r, --recursive
+      Include all descendants.
+      --order-by <field:direction>
+      Repeat in priority order. Fields: slug, updatedAt, id. Directions: asc, desc. Repeatable. Default: slug:asc then id:asc.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael list /
+  raphael list / -r --filter '{"type":"resource"}' --order-by updatedAt:desc --limit 4
+  raphael list /work /personal --filter '{"tags":{"$in":["urgent"]}}'
+
+Prints:
+  One row per item. JSON carries `items` and `page`; paging notes go to stderr.
+
+Next: raphael get --id 42
+
+See also: raphael help addressing; raphael help output
 ==== stderr ====

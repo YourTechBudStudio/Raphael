@@ -14,6 +14,7 @@
 import type { Decoder } from '@raphael/contracts';
 import {
   NODE_ROUTES,
+  invalidRequestIssueFrom,
   type AddFavoriteResponse,
   type CreateRequestInput,
   type FavoriteListRequestInput,
@@ -76,7 +77,8 @@ const run = async <A>(
       kind: 'invalid_request',
       effect,
       delivery: 'not_sent',
-      message: decoded.left.message,
+      message: 'The request is not valid.',
+      issues: [invalidRequestIssueFrom(decoded.left, request)],
     });
   }
   // The decoded value is what travels, not the caller's object. Effect Schema returns a new

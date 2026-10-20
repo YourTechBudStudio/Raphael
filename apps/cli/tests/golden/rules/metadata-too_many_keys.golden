@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-Expected metadata: metadata may have at most 50 top-level keys
+--metadata: Metadata may have at most 50 top-level keys.
 The change was not sent.
 hint: Run "raphael create --help" for usage.

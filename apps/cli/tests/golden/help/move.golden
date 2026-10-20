@@ -1,26 +1,34 @@
 ==== exit ====
 0
 ==== stdout ====
-Usage: raphael move <path> <destination> [--revision <n>] [options]
-       raphael move --id <id> <destination> [--revision <n>] [options]
+Usage: raphael move <path> <destination> [options]
+       raphael move --id <id> <destination> [options]
 
-Move an area, a project, or a note somewhere else, keeping its identifier and everything inside it.
+Move an item while keeping its id.
 
-  raphael move /work/backend /engineering            into the area /engineering, keeping "backend"
-  raphael move /work/backend /engineering/platform   under /engineering, as "platform"
-  raphael move /work/inbox /                         an area to the top level
+An existing destination area or project receives the item with its current slug. Otherwise the last path segment supplies a new slug and its parent must exist.
 
-If <destination> is an existing area or project, it is where this goes. Otherwise its last
-segment becomes the new address and the rest must already exist. Nothing is ever overwritten:
-an address that is taken, including one held by a note, is refused.
-
-Something archived directly must be restored before it moves. Something archived only because a
-container above it is archived can move somewhere active.
+Everything inside moves with it. Nothing is overwritten. A directly archived item must be restored first; an item archived only through a parent can move to an active parent.
 
 Options:
-      --id <id>        Address the thing to move by identifier instead of by path.
-      --revision <n>   The revision you read. Without it, the current revision is read for you
-                       just before the move is sent.
-      --json           Print the result as JSON.
-  -h, --help           Show this help.
+      --id <id>
+      Address by durable id instead of path.
+      --revision <n>
+      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael move /work/raphael /engineering
+  raphael move /work/raphael /engineering/platform
+  raphael move --id 42 /
+
+Prints:
+  The moved item, id and revision. JSON carries `node`.
+
+Next: raphael path --id 42
+
+See also: raphael help addressing; raphael help revisions
 ==== stderr ====

@@ -1,0 +1,23 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael version
+
+Print the installed Raphael version.
+
+The version comes from the release manifest.
+
+Options:
+  -h, --help
+      Show help.
+
+Examples:
+  raphael version
+  raphael --version
+  raphael version --help
+
+Prints:
+  The bare version number.
+
+Next: raphael help connecting
+==== stderr ====

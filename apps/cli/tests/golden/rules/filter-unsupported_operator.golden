@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
---filter: only the $in operator is supported for type
+--filter: Only the $in operator is supported for type.
 hint: Run "raphael list --help" for usage.

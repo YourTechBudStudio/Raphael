@@ -4,6 +4,9 @@ import { codePointLength } from '../shared/json.ts';
 
 export const SLUG_MAX_CODE_POINTS = 100;
 
+export const SLUG_GRAMMAR_DESCRIPTION =
+  'NFC lowercase Unicode letter or number tokens joined by single hyphens; combining marks may follow the first letter or number in each token';
+
 /**
  * A canonical slug is one or more tokens joined by single hyphens. A token starts with a Unicode
  * letter or number and may continue with letters, numbers, and combining marks, so scripts that need

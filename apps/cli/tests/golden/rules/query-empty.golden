@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
--q: a query must contain something to search for
+-q: A query must contain something to search for.
 hint: Run "raphael search --help" for usage.

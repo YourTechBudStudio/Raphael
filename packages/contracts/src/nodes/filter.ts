@@ -6,6 +6,7 @@ import {
   RESOURCE_KINDS,
   ResourceKindSchema,
   TAGS_MAX_COUNT,
+  TAG_MAX_CODE_POINTS,
   TagInput,
 } from './fields.ts';
 
@@ -164,6 +165,15 @@ export const describeFilterRejection = (rejection: FilterRejection): string => {
       // sentence anyone should be shown beside a field.
       return `only the $in operator is supported for ${rejection.key ?? 'this filter key'}`;
     case 'invalid_value':
-      return `the value given for ${rejection.key ?? 'this filter key'} is not one this filter accepts`;
+      switch (rejection.key) {
+        case 'type':
+          return `type must be ${NODE_TYPES.join(', ')}, or $in with one or more of those values`;
+        case 'kind':
+          return `kind must be ${RESOURCE_KINDS.join(', ')}, or $in with one or more of those values`;
+        case 'tags':
+          return `tags must be a nonempty tag of at most ${TAG_MAX_CODE_POINTS} characters, or $in with at most ${TAGS_MAX_COUNT} distinct tags`;
+        default:
+          return 'the value given for this filter key is not one this filter accepts';
+      }
   }
 };

@@ -1,0 +1,22 @@
+==== exit ====
+0
+==== stdout ====
+raphael help content - Note bodies, files, stdin and Markdown conversion.
+
+Create a note with create resource.note. Give --title, or let the first non-empty line of the body (then description) supply it. A title must still be available when the body is empty.
+
+Body text is literal unless it starts with @: --body @draft.md reads a file, and --body @- reads stdin. Use --body-literal to keep a leading @ as text. Empty stdin is refused. To explicitly clear an existing body use update with --body '' and --revision. A pipe is read only when --body @- is given.
+
+Metadata and filters accept inline JSON or @file, but not @-. Metadata is set once at create and cannot be updated. File and stdin reads are bounded, and invalid independent arguments are refused before reading body content.
+
+Body formats: markdown, tiptap. Supported Markdown heading levels: 1, 2, 3. Supported document elements: doc, paragraph, text, heading, bulletList, orderedList, listItem, codeBlock, blockquote, horizontalRule, hardBreak. Supported text styles: bold, italic, strike, code, link. Documents allow at most 64 levels and 10000 elements. The complete serialized request may contain at most 1048576 UTF-8 bytes.
+
+Markdown conversion can degrade unsupported constructs. Markdown output is a best-effort export of the stored document; use --json --return-format tiptap to read its structured body. --return-format requires --json; it controls the response, while --body-format controls submitted content.
+
+Examples:
+  raphael create resource.note /work/idea --body '# An idea'
+  raphael get /work/idea --json --return-format tiptap
+  raphael update /work/idea --body '' --revision 3
+
+Next: raphael help reference
+==== stderr ====

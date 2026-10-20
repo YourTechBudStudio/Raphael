@@ -291,7 +291,7 @@ describe('creating', () => {
         'Stdin',
         '--body',
         '@-',
-        '--format',
+        '--return-format',
         'tiptap',
         '--json',
       ],
@@ -355,7 +355,7 @@ describe('creating', () => {
         'tiptap',
         '--body',
         '@-',
-        '--format',
+        '--return-format',
         'tiptap',
         '--json',
       ],
@@ -394,7 +394,8 @@ describe('creating', () => {
       '{not json',
     ]);
     assert.equal(ran.code, 2);
-    assert.match(ran.stderr, /not valid JSON/);
+    assert.match(ran.stderr, /--body must be valid JSON: syntax error at line 1, column 2\./);
+    assert.equal(ran.stderr.includes('{not json'), false);
   });
 
   it('refuses a body file that is not valid UTF-8 rather than storing replaced characters', async () => {
@@ -445,7 +446,8 @@ describe('creating', () => {
       '@/does/not/exist',
     ]);
     assert.equal(missing.code, 2);
-    assert.match(missing.stderr, /Cannot read the body file/);
+    assert.match(missing.stderr, /the body file at "\/does\/not\/exist" does not exist\./);
+    assert.match(missing.stderr, /Use --body-literal for text beginning with @\./);
 
     const literal = await run([
       'create',
@@ -527,7 +529,10 @@ describe('pagination', () => {
     // that does not answer the question.
     const ran = await run(['list', '/work', '--filter', '{"type":{"$in":["area","area"]}}']);
     assert.equal(ran.code, 2);
-    assert.match(ran.stderr, /--filter: the value given for type/);
+    assert.match(
+      ran.stderr,
+      /--filter: Type must be area, project, resource, or \$in with one or more of those values\./,
+    );
   });
 
   it('filters by type', async () => {
@@ -862,7 +867,10 @@ describe('notes', () => {
     // names what to make; in a filter, which leaf is wanted is the `kind` key's question.
     const qualified = await run(['list', '/work', '--filter', '{"type":"resource.note"}']);
     assert.equal(qualified.code, 2);
-    assert.match(qualified.stderr, /--filter: the value given for type/);
+    assert.match(
+      qualified.stderr,
+      /--filter: Type must be area, project, resource, or \$in with one or more of those values\./,
+    );
 
     const byKind = await run([
       'list',
@@ -1144,18 +1152,24 @@ describe('ordering', () => {
     assert.match(repeated.stderr, /must not repeat/);
   });
 
-  it('documents both ordering examples in its help', async () => {
+  it('documents an ordering example and repeat priority in its help', async () => {
     const ran = await run(['list', '--help']);
     assert.equal(ran.code, 0);
     assert.match(ran.stdout, /--order-by updatedAt:desc --limit 4/);
-    assert.match(ran.stdout, /--order-by updatedAt:desc --order-by slug:asc/);
+    assert.match(
+      ran.stdout,
+      /Repeat in priority order\. Fields: slug, updatedAt, id\. Directions: asc, desc\./,
+    );
   });
 
   it('documents the note token and the optional title in create help', async () => {
     const ran = await run(['create', '--help']);
     assert.equal(ran.code, 0);
     assert.match(ran.stdout, /area, project, resource\.note/);
-    assert.match(ran.stdout, /A note may omit --title/);
+    assert.match(
+      ran.stdout,
+      /Notes may derive their title from the first body line, then the description\./,
+    );
   });
 });
 
@@ -1487,10 +1501,10 @@ describe('updating', () => {
   it('documents the revision rule in its help', async () => {
     const ran = await run(['update', '--help']);
     assert.equal(ran.code, 0);
-    assert.match(ran.stdout, /Requires --revision/);
+    assert.match(ran.stdout, /A body replacement requires the revision you read\./);
     assert.match(
       ran.stdout,
-      /the\n\s+current revision is read for you just before the update is sent/,
+      /Other changes may read and pin the current id and revision for you\./,
     );
   });
 
@@ -1545,13 +1559,13 @@ describe('updating', () => {
   it('counts the selection flags as a change on their own', async () => {
     const ran = await run(['update', '/work/anything', '--active', '--help']);
     assert.equal(ran.code, 0);
-    assert.match(ran.stdout, /--active\s+Mark the project as currently being worked on\./);
-    assert.match(ran.stdout, /--inactive\s+Mark it as not being worked on\./);
+    assert.match(ran.stdout, /--active\s+Mark the project active\./);
+    assert.match(ran.stdout, /--inactive\s+Mark the project inactive\./);
 
     // The refusal for an empty update now names them, so someone reading it knows they are changes.
     const nothing = await run(['update', '/work/anything']);
     assert.equal(nothing.code, 2);
-    assert.match(nothing.stderr, /--active or --inactive/);
+    assert.match(nothing.stderr, /--active, --inactive/);
   });
 
   it('refuses both selection flags together before it issues any request', async () => {
@@ -1683,15 +1697,35 @@ describe('search', () => {
     }
   });
 
+  it('searches descendants by default and restricts --direct to immediate children', async () => {
+    const recursive = await run(['search', '/searching', '-q', 'login', '--json']);
+    assert.equal(recursive.code, 0, recursive.stderr);
+    assert.deepEqual(
+      jsonOf(recursive).items.map((hit: { node: { slug: string } }) => hit.node.slug),
+      ['flow'],
+    );
+
+    const direct = await run(['search', '/searching', '--direct', '-q', 'login', '--json']);
+    assert.equal(direct.code, 0, direct.stderr);
+    assert.deepEqual(jsonOf(direct).items, []);
+
+    const removed = await run(['search', '/searching', '-r', '-q', 'login']);
+    assert.equal(removed.code, 2);
+    assert.match(
+      removed.stderr,
+      /Search includes descendants by default\. Remove -r, or use --direct/,
+    );
+  });
+
   it('finds a note by its text, and prints the title beside the slug', async () => {
-    const ran = await run(['search', '/searching', '-r', '-q', 'auth tokens']);
+    const ran = await run(['search', '/searching', '-q', 'auth tokens']);
     assert.equal(ran.code, 0, ran.stderr);
     assert.match(ran.stdout, /resource\.note {2}- {2}tokens {2}Auth tokens$/m);
     assert.match(ran.stderr, /shown, skip 0, limit \d+/);
 
     // The same request as JSON is the independent statement of what was found, so the text form is
     // checked against it rather than against a hand-written expectation.
-    const json = await run(['search', '/searching', '-r', '-q', 'auth tokens', '--json']);
+    const json = await run(['search', '/searching', '-q', 'auth tokens', '--json']);
     assert.equal(json.code, 0, json.stderr);
     const page = jsonOf(json);
     assert.equal(Array.isArray(page.items), true);
@@ -1708,7 +1742,7 @@ describe('search', () => {
   });
 
   it('searches the body, not only the title', async () => {
-    const ran = await run(['search', '/searching', '-r', '-q', 'rotating', '--json']);
+    const ran = await run(['search', '/searching', '-q', 'rotating', '--json']);
     assert.equal(ran.code, 0, ran.stderr);
     assert.deepEqual(
       jsonOf(ran).items.map((hit: { node: { slug: string } }) => hit.node.slug),
@@ -1717,7 +1751,7 @@ describe('search', () => {
   });
 
   it('takes a quoted phrase and an uppercase AND as the grammar describes', async () => {
-    const phrase = await run(['search', '/searching', '-r', '-q', '"login flow"', '--json']);
+    const phrase = await run(['search', '/searching', '-q', '"login flow"', '--json']);
     assert.equal(phrase.code, 0, phrase.stderr);
     assert.deepEqual(
       jsonOf(phrase).items.map((hit: { node: { slug: string } }) => hit.node.slug),
@@ -1725,7 +1759,7 @@ describe('search', () => {
     );
 
     // AND narrows: both words are in the one note, and no other note has both.
-    const narrowed = await run(['search', '/searching', '-r', '-q', 'login AND retry', '--json']);
+    const narrowed = await run(['search', '/searching', '-q', 'login AND retry', '--json']);
     assert.equal(narrowed.code, 0, narrowed.stderr);
     assert.deepEqual(
       jsonOf(narrowed).items.map((hit: { node: { slug: string } }) => hit.node.slug),
@@ -1733,7 +1767,7 @@ describe('search', () => {
     );
 
     // Whitespace is OR, so the same two words unnarrowed reach more than the one note.
-    const widened = await run(['search', '/searching', '-r', '-q', 'login kitchen', '--json']);
+    const widened = await run(['search', '/searching', '-q', 'login kitchen', '--json']);
     assert.equal(widened.code, 0, widened.stderr);
     const slugs = jsonOf(widened).items.map((hit: { node: { slug: string } }) => hit.node.slug);
     assert.ok(slugs.includes('flow'));
@@ -1744,7 +1778,6 @@ describe('search', () => {
     const inline = await run([
       'search',
       '/searching',
-      '-r',
       '-q',
       'login kitchen deep',
       '--filter',
@@ -1762,7 +1795,6 @@ describe('search', () => {
     const fromFile = await run([
       'search',
       '/searching',
-      '-r',
       '-q',
       'deep',
       '--filter',
@@ -1782,15 +1814,7 @@ describe('search', () => {
     // `/searching` recursively already contains `/searching/deep`, so naming both is a union with an
     // overlap. Deduplication happens in the page query; a client-side merge would either repeat the
     // row or cut a page that had already been made wrong.
-    const ran = await run([
-      'search',
-      '/searching',
-      '/searching/deep',
-      '-r',
-      '-q',
-      'login',
-      '--json',
-    ]);
+    const ran = await run(['search', '/searching', '/searching/deep', '-q', 'login', '--json']);
     assert.equal(ran.code, 0, ran.stderr);
     const ids = (jsonOf(ran).items as { node: { id: number } }[]).map((hit) => hit.node.id);
     assert.deepEqual(ids, [...new Set(ids)], 'no row appears twice');
@@ -1803,7 +1827,7 @@ describe('search', () => {
 
   it('marks an active project among its hits, exactly as a listing does', async () => {
     await run(['update', '/searching/deep', '--active']);
-    const ran = await run(['search', '/searching', '-r', '-q', 'deep']);
+    const ran = await run(['search', '/searching', '-q', 'deep']);
     assert.equal(ran.code, 0, ran.stderr);
     const row = ran.stdout.split('\n').find((line) => line.includes('  deep  '));
     assert.match(row ?? '', /project +active {2}deep {2}Deep$/);
@@ -1814,16 +1838,7 @@ describe('search', () => {
     // The help says so, so the suite has to hold it. Iterating and passing every value through
     // unchanged is the one thing about repetition the CLI owns; a build that sent only the first or
     // only the last would still type-check.
-    const both = await run([
-      'search',
-      '/searching',
-      '-r',
-      '-q',
-      'login',
-      '-q',
-      'kitchen',
-      '--json',
-    ]);
+    const both = await run(['search', '/searching', '-q', 'login', '-q', 'kitchen', '--json']);
     assert.equal(both.code, 0, both.stderr);
     const slugs = (jsonOf(both).items as { node: { slug: string } }[]).map((hit) => hit.node.slug);
     assert.ok(slugs.includes('flow'), 'the first query was asked');
@@ -1831,45 +1846,48 @@ describe('search', () => {
 
     // Each alone reaches only its own note, which is what makes the pair above a union rather than a
     // coincidence of one broad query.
-    const first = await run(['search', '/searching', '-r', '-q', 'login', '--json']);
+    const first = await run(['search', '/searching', '-q', 'login', '--json']);
     assert.deepEqual(
       (jsonOf(first).items as { node: { slug: string } }[]).map((hit) => hit.node.slug),
       ['flow'],
     );
-    const second = await run(['search', '/searching', '-r', '-q', 'kitchen', '--json']);
+    const second = await run(['search', '/searching', '-q', 'kitchen', '--json']);
     assert.deepEqual(
       (jsonOf(second).items as { node: { slug: string } }[]).map((hit) => hit.node.slug),
       ['unrelated'],
     );
   });
 
-  it('names the scope and the reason when a path cannot be a scope at all', async () => {
+  it('names the path and the reason when a path is invalid', async () => {
     // The decoder would answer for a union of two selector shapes here, telling someone who forgot
     // the leading slash that an `id` was expected. The contract's own path helper is asked first, so
     // the sentence is about the mistake that was actually made.
     const relative = await run(['search', 'work', '-q', 'x']);
     assert.equal(relative.code, 2);
-    assert.match(relative.stderr, /^scope "work": a path must start with "\/"$/m);
+    assert.match(relative.stderr, /^path: A path must start with "\/"\.$/m);
     assert.equal(relative.stderr.includes('expected: "id"'), false);
 
     for (const [path, expected] of [
-      ['/work/', /a path must not end with "\/"/],
-      ['/work//deep', /a path must not contain an empty segment at segment 2/],
-      ['/Work', /a path segment must be a canonical slug at segment 1/],
+      ['/work/', /A path must not end with "\/"/],
+      ['/work//deep', /A path must not contain an empty segment at segment 2/],
+      [
+        '/Work',
+        /A path segment must follow the slug grammar at segment 1: NFC lowercase Unicode letter or number tokens joined by single hyphens;/,
+      ],
     ] as const) {
       const ran = await run(['search', path, '-q', 'x']);
       assert.equal(ran.code, 2, path);
       assert.match(ran.stderr, expected, path);
-      assert.match(ran.stderr, new RegExp(`^scope "${path.replace('/', '\\/')}`, 'm'), path);
+      assert.match(ran.stderr, /^path: /m, path);
     }
 
     // The same check, on the same helper, for the other command that takes scopes.
     const listed = await run(['list', 'work']);
     assert.equal(listed.code, 2);
-    assert.match(listed.stderr, /^scope "work": a path must start with "\/"$/m);
+    assert.match(listed.stderr, /^path: A path must start with "\/"\.$/m);
 
     // The root is a valid scope and must survive the check that refuses the others.
-    const root = await run(['search', '/', '-r', '-q', 'auth', '--json']);
+    const root = await run(['search', '/', '-q', 'auth', '--json']);
     assert.equal(root.code, 0, root.stderr);
   });
 
@@ -1903,7 +1921,7 @@ describe('search', () => {
     // contract's own inspector is what refuses it.
     const ran = await run(['search', '/searching', '-q', 'auth', '--filter', '{"metadata.x":1}']);
     assert.equal(ran.code, 2);
-    assert.match(ran.stderr, /--filter: a filter may only use type, kind, tags/);
+    assert.match(ran.stderr, /--filter: A filter may only use type, kind, tags/);
 
     for (const filter of ['[]', '"nope"', '{"type":{"$nin":["area"]}}', 'not json']) {
       const bad = await run(['search', '/searching', '-q', 'auth', '--filter', filter]);
@@ -1913,16 +1931,7 @@ describe('search', () => {
 
     // An empty filter is no restriction, the same as omitting the flag. There is nothing to refuse
     // about asking for everything.
-    const empty = await run([
-      'search',
-      '/searching',
-      '-r',
-      '-q',
-      'auth',
-      '--filter',
-      '{}',
-      '--json',
-    ]);
+    const empty = await run(['search', '/searching', '-q', 'auth', '--filter', '{}', '--json']);
     assert.equal(empty.code, 0, empty.stderr);
     assert.ok((jsonOf(empty).items as unknown[]).length > 0);
   });
@@ -1944,14 +1953,20 @@ describe('search', () => {
   it('documents the grammar and the repeatable query in its help', async () => {
     const ran = await run(['search', '--help']);
     assert.equal(ran.code, 0);
-    assert.match(ran.stdout, /Words match any of them\./);
-    assert.match(ran.stdout, /Quote a phrase to match it exactly\./);
-    assert.match(ran.stdout, /Uppercase AND narrows; OR is the default\./);
-    assert.match(ran.stdout, /-q, --query <text> {2}What to look for\. Repeatable\./);
-    assert.match(ran.stdout, /Several paths search all of them at once/);
+    assert.match(
+      ran.stdout,
+      /Adjacent words mean OR; uppercase AND binds more tightly than uppercase OR\./,
+    );
+    assert.match(ran.stdout, /Double quotes make a phrase\./);
+    assert.match(ran.stdout, /Repeat -q to OR queries together/);
+    assert.match(
+      ran.stdout,
+      /-q, --query <text>\s+Text to search\. At least one required\. Repeatable\./,
+    );
+    assert.match(ran.stdout, /At most \d+ paths or ids may be searched or listed in one request\./);
 
     const root = await run(['--help']);
-    assert.match(root.stdout, /^ {2}search {12}Find areas, projects and notes by their text\.$/m);
+    assert.match(root.stdout, /^ {2}search +Search all descendants by text\.$/m);
   });
 });
 
@@ -2127,9 +2142,15 @@ describe('moving', () => {
       [['move', '--id', '5'], /Give a destination/],
       [['move', '/work/x', 'personal'], /destination "personal": /],
       [['move', '/work/x', '/personal/'], /destination "\/personal\/": /],
-      [['move', '/work/x', '/a', '/b'], /Unexpected argument "\/b"/],
+      [
+        ['move', '/work/x', '/a', '/b'],
+        /move takes one source and one destination, or --id and one destination\./,
+      ],
       // With --id the one positional is the destination, so a second one is extra, not a source.
-      [['move', '--id', '5', '/a', '/b'], /Unexpected argument "\/b"/],
+      [
+        ['move', '--id', '5', '/a', '/b'],
+        /move takes one source and one destination, or --id and one destination\./,
+      ],
       [['move', '/work/x', '/a', '--revision', '0'], /--revision/],
     ];
     for (const [args, message] of cases) {
@@ -2344,7 +2365,7 @@ describe('archiving and restoring', () => {
     assert.equal(root.code, 2);
     const extra = await run(['restore', '/work/a', '/work/b']);
     assert.equal(extra.code, 2);
-    assert.match(extra.stderr, /Unexpected argument/);
+    assert.match(extra.stderr, /restore takes one path, or --id\./);
   });
 });
 
@@ -2451,6 +2472,6 @@ describe('favorites', () => {
     assert.equal((await run(['favorite', '/'])).code, 2);
     const extra = await run(['unfavorite', '/work/a', '/work/b']);
     assert.equal(extra.code, 2);
-    assert.match(extra.stderr, /Unexpected argument/);
+    assert.match(extra.stderr, /unfavorite takes one path, or --id\./);
   });
 });

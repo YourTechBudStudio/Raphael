@@ -4,11 +4,27 @@
 Usage: raphael path <path> [options]
        raphael path --id <id> [options]
 
-Print the current full path of an area, project, or note. Paths change when things are renamed
-or moved; identifiers do not.
+Print an item’s current full path.
+
+Paths change when an item or a parent moves or changes slug. Ids remain stable.
 
 Options:
-      --id <id>   Address by identifier instead of by path.
-      --json      Print the result as JSON.
-  -h, --help      Show this help.
+      --id <id>
+      Address by durable id instead of path.
+      --json
+      Print one JSON result.
+  -h, --help
+      Show this help.
+
+Examples:
+  raphael path /work/raphael
+  raphael path --id 42
+  raphael path --id 42 --json
+
+Prints:
+  The full path. JSON carries `id` and `path`.
+
+Next: raphael get --id 42
+
+See also: raphael help addressing
 ==== stderr ====

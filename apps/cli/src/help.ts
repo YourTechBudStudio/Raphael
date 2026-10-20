@@ -1,66 +1,247 @@
-/**
- * Help text.
- *
- * Literal and plain throughout. The design system's voice allows occasional dry humour in empty
- * states and footers; it also says actions, status, and errors stay literal, and a command reference
- * is all three. Someone reading this is trying to get something done.
- *
- * Nothing here reads configuration, the environment, the network, or the backend, which is what makes
- * `raphael help` work on a machine that is not set up yet.
- */
+/** Help is pure data and rendering: no environment, configuration, backend or connection reads. */
+import { DEFAULT_TIMEOUT_MS } from '@raphael/client';
+import { API_ERROR_CODES } from '@raphael/contracts';
 
-import { CREATE_TARGETS } from './modules/nodes/input.ts';
+import type { CommandDefinition, CommandExample } from './shared/command.ts';
 import { EXIT_CODES } from './shared/exit.ts';
+import { HELP_RULES } from './shared/help-rules.ts';
+import { TIMEOUT_MIN_SECONDS, TIMEOUT_MAX_SECONDS } from './shared/timeout.ts';
 
-/** The exit-code summary, rendered from the one table, so help cannot drift from behavior. */
+export interface HelpTopic {
+  readonly name: string;
+  readonly summary: string;
+  readonly body: readonly string[];
+  readonly examples: readonly CommandExample[];
+}
+
 const exitCodeLines = EXIT_CODES.map(
   ({ code, meaning }) => `  ${String(code).padEnd(4)} ${meaning}`,
 ).join('\n');
 
-export const ROOT_HELP = `raphael - an actionable second brain for agents
+export const ROOT_EXAMPLES: readonly CommandExample[] = [
+  { argv: ['login'], description: 'Connect using the server address and key.' },
+  {
+    argv: ['create', 'resource.note', '/work/first-note', '--body', 'My first note'],
+    description: 'Write a note in the initial work area.',
+  },
+  { argv: ['list', '/'], description: 'Read the top level.' },
+];
 
-Usage: raphael <command> [options]
+export const HELP_TOPICS: readonly HelpTopic[] = [
+  {
+    name: 'addressing',
+    summary: 'Paths, ids, slugs, containment and field limits.',
+    body: [
+      'Paths are absolute: /work/raphael/backend. The root is /. For commands that address one item, use a path or --id, never both. List and search may mix paths and repeated --id. The root can be listed and searched, but cannot be read or changed as an item. A path changes when an item or an ancestor moves or changes slug; its positive integer id stays the same. --id is repeatable only on list and search.',
+      HELP_RULES.types,
+      HELP_RULES.containment,
+      HELP_RULES.slug,
+      'Create with a full path, or with --parent-id and --slug. The final path segment is the new slug. Parent items must already exist. Renaming a title does not change the slug; use update --slug to change its address. Archive retains the item and reserves its slug. There is no delete command.',
+      HELP_RULES.fields,
+      HELP_RULES.paging,
+      `For list: ${HELP_RULES.ordering} Search orders by relevance and does not accept --order-by.`,
+      HELP_RULES.filter,
+    ],
+    examples: [
+      { argv: ['get', '/work/raphael'] },
+      { argv: ['get', '--id', '42'] },
+      {
+        argv: ['create', 'project', '--parent-id', '42', '--slug', 'raphael', '--title', 'Raphael'],
+      },
+    ],
+  },
+  {
+    name: 'content',
+    summary: 'Note bodies, files, stdin and Markdown conversion.',
+    body: [
+      'Create a note with create resource.note. Give --title, or let the first non-empty line of the body (then description) supply it. A title must still be available when the body is empty.',
+      "Body text is literal unless it starts with @: --body @draft.md reads a file, and --body @- reads stdin. Use --body-literal to keep a leading @ as text. Empty stdin is refused. To explicitly clear an existing body use update with --body '' and --revision. A pipe is read only when --body @- is given.",
+      'Metadata and filters accept inline JSON or @file, but not @-. Metadata is set once at create and cannot be updated. File and stdin reads are bounded, and invalid independent arguments are refused before reading body content.',
+      HELP_RULES.content,
+      'Markdown conversion can degrade unsupported constructs. Markdown output is a best-effort export of the stored document; use --json --return-format tiptap to read its structured body. --return-format requires --json; it controls the response, while --body-format controls submitted content.',
+    ],
+    examples: [
+      { argv: ['create', 'resource.note', '/work/idea', '--body', '# An idea'] },
+      { argv: ['get', '/work/idea', '--json', '--return-format', 'tiptap'] },
+      { argv: ['update', '/work/idea', '--body', '', '--revision', '3'] },
+    ],
+  },
+  {
+    name: 'revisions',
+    summary: 'Safe writes, conflicts, archives and uncertain outcomes.',
+    body: [
+      'A revision is a positive integer returned when an item is read. Update, move, archive and restore check it before changing anything. Pass --revision to apply a change only to the version you read. For changes other than body replacements, omitting --revision makes the CLI read the current revision first and pin the subsequent write to that same id. Body replacements require an explicit --revision.',
+      'Exit 4 means stored state prevented the change and nothing was applied. For a revision conflict, run get again, compare your intended change with the current item, then retry with its new revision. Do not blindly replace the revision and overwrite a concurrent edit. A slug conflict can also be caused by an archived item: choose another slug or restore the existing item.',
+      'Archiving an item hides it and its descendants from ordinary lists and search. --include-archived includes active and archived items. Archived items retain their slugs. Restoring removes your direct archive cause; an archived ancestor or another cause may keep the item archived. Read it again and restore the blocking ancestor when appropriate.',
+      'Exit 7 means a write was sent and its outcome is unknown. Read the item to reconcile before deciding whether to try again. For an uncertain create, read the intended path; retrying create may encounter your own slug collision. Exit 6 means retrying may work and the change was not applied.',
+    ],
+    examples: [
+      { argv: ['get', '/work/idea', '--json'] },
+      { argv: ['update', '/work/idea', '--title', 'Revised idea', '--revision', '3'] },
+      { argv: ['list', '/work', '--include-archived'] },
+    ],
+  },
+  {
+    name: 'output',
+    summary: 'Text results, JSON envelopes, paging and diagnostics.',
+    body: [
+      'Standard output holds results only. Without --json, lists print tab-separated rows; a header is printed only on a terminal. Rows include id, type, path, title, revision and updatedAt. List order defaults to slug ascending; use list --order-by updatedAt:desc for recent changes. Search orders by relevance and does not accept --order-by. Bodies are printed as Markdown by default.',
+      'With --json, a successful command prints exactly one document: {"ok":true,"command":"get",...data}. Full-item reads and writes use entity; move, archive and restore use node; lists and favorites use items; search uses items[].node. These are machine field names. Summaries include path and updatedAt. No createdAt field is exposed. Writes that can leave values unchanged include changed; false means success without a revision bump. Favorite commands report nodeId and isFavorite. Path reports path.',
+      'Paged results include page with skip, limit, hasMore and nextSkip. The result footer and runnable next-page command go to standard error, never standard output. Empty-result notes, warnings, hints, prompts and failures also go to standard error. Warnings appear in warnings[] on JSON successes. Closing a pipe early does not turn a completed command into a failure.',
+      'JSON failures leave stdout empty and print exactly one document to stderr: {"ok":false,"error":{"code":...,"category":...,"message":...,"hint":...,"exitCode":...,"applied":...,"retryable":...}}. Optional fields include status, field, target, serverMessage and details. applied is false when no change was applied, true when known applied, and null when unknown. Retry decisions must consider exitCode and applied; do not blindly retry an uncertain write. The JSON envelope and exit-code meanings are stable within a major version.',
+      'For text write failures, the state line distinguishes Nothing was changed., The change was not sent., and The change may or may not have been applied. Set RAPHAEL_DEBUG=1 to include diagnostic stacks. Keep stdout for results when scripting.',
+      HELP_RULES.paging,
+      `For list: ${HELP_RULES.ordering} Search orders by relevance and does not accept --order-by.`,
+    ],
+    examples: [
+      { argv: ['list', '/', '--json'] },
+      { argv: ['list', '/', '--json', '--order-by', 'updatedAt:desc'] },
+      { argv: ['get', '--id', '42', '--json', '--return-format', 'tiptap'] },
+    ],
+  },
+  {
+    name: 'connecting',
+    summary: 'Start a local server and connect a client.',
+    body: [
+      "To run a local server, put RAPHAEL_API_KEY=local-development-key-change-this in a .env file in the directory where you run raphael server serve. Keep that file private. The server reads the key from its environment or that .env file; an environment value wins. The default address is http://127.0.0.1:3000. An optional --config supplies a YAML configuration file; relative database paths resolve against that file's directory, or the current directory without one.",
+      'In another terminal run raphael login, enter http://127.0.0.1:3000 and the same key. Login verifies the connection before saving the address and key with owner-only permissions. Server commands never read your saved login. Keeping the server key in .env avoids exporting only half of the client environment pair.',
+      'For scripts set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together. Both or neither: a partial pair is refused. A complete environment pair overrides the saved login. Clients do not read .env. Saved login uses XDG_CONFIG_HOME/raphael when set to an absolute path, or ~/.config/raphael.',
+      `RAPHAEL_TIMEOUT sets the request timeout in whole seconds, from ${TIMEOUT_MIN_SECONDS} to ${TIMEOUT_MAX_SECONDS}; the default is ${DEFAULT_TIMEOUT_MS / 1000} seconds. Exit 5 means configuration or authorization needs attention: check the address, key and chosen configuration source, then run raphael login. Exit 6 means the request was not applied and retrying may work. Read help exit-codes before retrying a failed write.`,
+    ],
+    examples: [
+      { argv: ['server', 'serve'] },
+      { argv: ['login'] },
+      { argv: ['help', 'exit-codes'] },
+    ],
+  },
+  {
+    name: 'exit-codes',
+    summary: 'Choose recovery from the process exit code.',
+    body: [
+      exitCodeLines,
+      'For exit 7 reconcile by reading before retrying. SIGINT and SIGTERM retain their conventional codes; a write interrupted after sending may still have been applied. JSON failures also report applied and retryable.',
+      `Server error codes: ${API_ERROR_CODES.join(', ')}. Machine codes are stable identifiers; use exitCode to choose a recovery category.`,
+    ],
+    examples: [
+      { argv: ['get', '/work', '--json'] },
+      { argv: ['help', 'revisions'] },
+      { argv: ['help', 'output'] },
+    ],
+  },
+];
 
-Commands:
-  login             Connect this machine to a Raphael server.
-  create            Create an area or a project.
-  update            Change an area, a project, or a note.
-  move              Move an area, a project, or a note somewhere else.
-  archive           Hide an area, a project, or a note from lists and search.
-  restore           Bring back something you archived.
-  favorite          Add an area or a project to your favorites.
-  unfavorite        Remove something from your favorites.
-  favorites         List your favorites.
-  get               Read one area or project.
-  path              Print the current full path of an area or project.
-  list              List what is inside an area or project.
-  search            Find areas, projects and notes by their text.
-  server serve      Run a Raphael server on this machine.
-  help              Show this help.
+/** Shell-safe display that preserves every argv value, including an explicit empty string. */
+export const renderExample = (example: CommandExample): string =>
+  `raphael ${example.argv
+    .map((value) =>
+      /^[\w./:@=,+-]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`,
+    )
+    .join(' ')}`;
 
-Run "raphael <command> --help" for details of one command.
+const exampleLines = (examples: readonly CommandExample[]): string =>
+  examples
+    .map(
+      (example) =>
+        `  ${renderExample(example)}${example.description ? `\n    ${example.description}` : ''}`,
+    )
+    .join('\n');
 
-Addressing:
-  Paths are how people address things: /work/raphael/backend
-  Identifiers are how they stay addressable: --id 42
-  A path changes when something is renamed or moved. An identifier does not.
+export const renderCommandHelp = (definition: CommandDefinition): string => {
+  const options = definition.options.map((option) => {
+    const flag = `${option.short ? `-${option.short}, ` : '    '}--${option.name}${option.type === 'string' ? ` <${option.valueName ?? 'value'}>` : ''}`;
+    const details = [
+      option.description,
+      option.multiple ? 'Repeatable.' : undefined,
+      option.default === undefined ? undefined : `Default: ${String(option.default)}.`,
+      option.constraint,
+    ]
+      .filter(Boolean)
+      .join(' ');
+    return `  ${flag}\n      ${details}`;
+  });
+  return [
+    definition.usage
+      .map(
+        (line, index) =>
+          `${index === 0 ? 'Usage: ' : '       '}${line.startsWith('raphael ') ? line : `raphael ${line}`}`,
+      )
+      .join('\n'),
+    definition.summary,
+    ...definition.behavior,
+    ...(definition.constraints?.length
+      ? [`Rules:\n${definition.constraints.map((line) => `  ${line}`).join('\n')}`]
+      : []),
+    ...(options.length ? [`Options:\n${options.join('\n')}`] : []),
+    `Examples:\n${exampleLines(definition.examples)}`,
+    `Prints:\n  ${definition.prints}`,
+    `Next: ${definition.next}`,
+    ...(definition.seeAlso?.length
+      ? [`See also: ${definition.seeAlso.map((name) => `raphael help ${name}`).join('; ')}`]
+      : []),
+  ].join('\n\n');
+};
 
-Types: ${CREATE_TARGETS.join(', ')}
+export const renderRootHelp = (definitions: readonly CommandDefinition[]): string =>
+  [
+    'raphael - an actionable second brain for agents',
+    'Usage: raphael <command> [options]',
+    "Start here:\n  1. Put RAPHAEL_API_KEY=local-development-key-change-this in a private .env file in the current directory.\n  2. Run raphael server serve; keep that terminal open.\n  3. In another terminal run raphael login. Enter http://127.0.0.1:3000 and the same key.\n  4. Run raphael list /, then raphael create resource.note /work/first-note --body 'My first note'.\n  Already have a server? Start at step 3 with its address and key. See raphael help connecting.",
+    ...(['Read', 'Write', 'Setup'] as const).map(
+      (group) =>
+        `${group}:\n${definitions
+          .filter((definition) => definition.group === group)
+          .map((definition) => `  ${definition.name.padEnd(18)} ${definition.summary}`)
+          .join('\n')}`,
+    ),
+    `What things are:\n  An area holds ongoing work. A project holds work with an outcome. A note holds content.\n  ${HELP_RULES.types}\n${HELP_RULES.containment
+      .split('\n')
+      .map((line) => `  ${line}`)
+      .join(
+        '\n',
+      )}\n  Address an item by absolute path or stable id; a revision protects a write from concurrent edits.`,
+    `Topics:\n${HELP_TOPICS.map((topic) => `  ${topic.name.padEnd(18)} ${topic.summary}`).join('\n')}\n  reference          All command pages and topics in one stream.\n  Use raphael help <command-or-topic>, or raphael <command> --help.\n  raphael help --json prints machine-readable definitions.`,
+    `Examples:\n${exampleLines(ROOT_EXAMPLES)}`,
+    'Options:\n  -h, --help    Show help.\n      --version Show the version.',
+    `Exit codes:\n${exitCodeLines}`,
+  ].join('\n\n');
 
-Connecting:
-  "raphael login" saves an address and key with owner-only permissions.
-  For scripts, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together. Both or neither.
+export const renderTopicHelp = (name: string): string | undefined => {
+  const topic = HELP_TOPICS.find((candidate) => candidate.name === name);
+  return topic === undefined
+    ? undefined
+    : [
+        `raphael help ${topic.name} - ${topic.summary}`,
+        ...topic.body,
+        `Examples:\n${exampleLines(topic.examples)}`,
+        'Next: raphael help reference',
+      ].join('\n\n');
+};
 
-Options:
-  -h, --help        Show help.
-      --version     Show the version.
+export const renderReferenceHelp = (definitions: readonly CommandDefinition[]): string =>
+  [
+    renderRootHelp(definitions),
+    ...definitions.map(renderCommandHelp),
+    ...HELP_TOPICS.map((topic) => renderTopicHelp(topic.name)),
+  ].join('\n\n---\n\n');
 
-Exit codes:
-${exitCodeLines}`;
-
-export const SERVER_HELP = `Usage: raphael server <subcommand>
-
-Subcommands:
-  serve     Run a Raphael server on this machine.
-
-Run "raphael server serve --help" for details.`;
+export const renderJsonHelp = (
+  definitions: readonly CommandDefinition[],
+  command?: string,
+): object => {
+  if (command !== undefined && command !== 'reference') {
+    return (
+      definitions.find((definition) => definition.name === command) ??
+      HELP_TOPICS.find((topic) => topic.name === command) ??
+      {}
+    );
+  }
+  return {
+    commands: definitions,
+    topics: [
+      ...HELP_TOPICS,
+      { name: 'reference', summary: 'All command pages and topics in one stream.', examples: [] },
+    ],
+    examples: ROOT_EXAMPLES,
+    exitCodes: EXIT_CODES,
+  };
+};

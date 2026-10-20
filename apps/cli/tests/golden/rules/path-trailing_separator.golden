@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-scope "/work/": a path must not end with "/"
+path: A path must not end with "/".
 hint: Run "raphael list --help" for usage.

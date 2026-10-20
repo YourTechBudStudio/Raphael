@@ -1,0 +1,20 @@
+==== exit ====
+0
+==== stdout ====
+raphael help revisions - Safe writes, conflicts, archives and uncertain outcomes.
+
+A revision is a positive integer returned when an item is read. Update, move, archive and restore check it before changing anything. Pass --revision to apply a change only to the version you read. For changes other than body replacements, omitting --revision makes the CLI read the current revision first and pin the subsequent write to that same id. Body replacements require an explicit --revision.
+
+Exit 4 means stored state prevented the change and nothing was applied. For a revision conflict, run get again, compare your intended change with the current item, then retry with its new revision. Do not blindly replace the revision and overwrite a concurrent edit. A slug conflict can also be caused by an archived item: choose another slug or restore the existing item.
+
+Archiving an item hides it and its descendants from ordinary lists and search. --include-archived includes active and archived items. Archived items retain their slugs. Restoring removes your direct archive cause; an archived ancestor or another cause may keep the item archived. Read it again and restore the blocking ancestor when appropriate.
+
+Exit 7 means a write was sent and its outcome is unknown. Read the item to reconcile before deciding whether to try again. For an uncertain create, read the intended path; retrying create may encounter your own slug collision. Exit 6 means retrying may work and the change was not applied.
+
+Examples:
+  raphael get /work/idea --json
+  raphael update /work/idea --title 'Revised idea' --revision 3
+  raphael list /work --include-archived
+
+Next: raphael help reference
+==== stderr ====

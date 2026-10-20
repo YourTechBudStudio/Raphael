@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-"version" takes no arguments. Got "archive".
-hint: Run "raphael help" to see the commands.
+version takes no positional arguments.
+hint: Run "raphael version --help" for usage.

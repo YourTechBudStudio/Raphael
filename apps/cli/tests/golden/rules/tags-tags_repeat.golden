@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-tags must not repeat
+--tag must not repeat a tag.
 The change was not sent.
 hint: Run "raphael create --help" for usage.

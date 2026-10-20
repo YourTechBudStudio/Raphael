@@ -14,12 +14,17 @@
 
 import { createInterface } from 'node:readline';
 
-import { isEndpointRejection, parseEndpoint } from '@raphael/client';
+import { isEndpointRejection, parseEndpoint, type Transport } from '@raphael/client';
 import { verify } from '@raphael/client/connection';
 import { hasApiKey } from '@raphael/contracts/connection';
 
-import { UsageError, parseArgs, type OptionConfig } from '../../shared/args.ts';
-import { observedTransport, type Session } from '../../shared/command.ts';
+import { UsageError, parseArgs } from '../../shared/args.ts';
+import {
+  observedTransport,
+  optionsFor,
+  type CommandDefinition,
+  type Session,
+} from '../../shared/command.ts';
 import { EXIT_USAGE, type ExitCode } from '../../shared/exit.ts';
 import { describeClientFailure, renderFailure } from '../../shared/failure.ts';
 import { forTerminal, type Streams } from '../../shared/output.ts';
@@ -27,17 +32,28 @@ import { renderSuccess, type Warning } from '../../shared/success.ts';
 import { configLocation, saveConfig } from './config.ts';
 import { API_KEY_VARIABLE, ENDPOINT_VARIABLE, timeoutFrom, transportFor } from './remote.ts';
 
-export const LOGIN_HELP = `Usage: raphael login [--json]
-
-Connect this machine to a Raphael server. Prompts for the server address and an API key,
-verifies them, then saves them with owner-only permissions.
-
-The key is never taken as an argument, so it stays out of shell history and the process table.
-For scripts, set ${ENDPOINT_VARIABLE} and ${API_KEY_VARIABLE} instead of logging in.
-
-Options:
-  --json        Report the outcome as JSON on stdout. Prompts go to standard error.
-  -h, --help    Show this help.`;
+export const LOGIN_DEFINITION: CommandDefinition = {
+  name: 'login',
+  summary: 'Save a verified server address and API key on this machine.',
+  group: 'Setup',
+  writes: false,
+  usage: ['raphael login [--json]'],
+  behavior: [
+    'Prompts for the server address and an API key, verifies them, then saves them with owner-only permissions.',
+    'The key is never taken as an argument. For scripts, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together instead of logging in.',
+    'Prompts go to standard error. Cancelling exits 2 and saves nothing.',
+  ],
+  options: [
+    { name: 'json', type: 'boolean', description: 'Print the result as one JSON document.' },
+    { name: 'help', short: 'h', type: 'boolean', description: 'Show help.' },
+  ],
+  examples: [{ argv: ['login'] }, { argv: ['login', '--json'] }, { argv: ['login', '--help'] }],
+  prints:
+    'The verified address and saved configuration path; JSON also includes the protocol version.',
+  next: 'raphael list / -r',
+  seeAlso: ['connecting'],
+  fieldFlags: {},
+};
 
 export interface Prompter {
   readonly ask: (question: string) => Promise<string>;
@@ -160,21 +176,20 @@ export interface LoginDependencies {
   readonly session: Session;
   /** Writes the verified credential. The real one unless a test needs an outcome a disk cannot give. */
   readonly save?: typeof saveConfig;
+  readonly transport?: (
+    config: { readonly endpoint: string; readonly apiKey: string },
+    timeoutMs: number | undefined,
+  ) => Transport;
   readonly prompter: () => Prompter;
   readonly environment: Readonly<Record<string, string | undefined>>;
   readonly platform: string;
 }
 
-export const LOGIN_OPTIONS = {
-  json: { type: 'boolean' },
-  help: { type: 'boolean', short: 'h' },
-} as const satisfies OptionConfig;
-
 export const runLogin = async (
   argv: readonly string[],
   dependencies: LoginDependencies,
 ): Promise<ExitCode> => {
-  const parsed = parseArgs(argv, LOGIN_OPTIONS, 'login');
+  const parsed = parseArgs(argv, optionsFor(LOGIN_DEFINITION), 'login');
   const { streams } = dependencies;
 
   if (parsed.positionals.length > 0) {
@@ -221,7 +236,10 @@ export const runLogin = async (
 
   const config = { endpoint: endpoint.base, apiKey: key };
   const result = await verify(
-    observedTransport(dependencies.session, transportFor(config, timeoutMs)),
+    observedTransport(
+      dependencies.session,
+      (dependencies.transport ?? transportFor)(config, timeoutMs),
+    ),
   );
   if (!result.ok) {
     const failure = describeClientFailure(dependencies.session, result.failure);

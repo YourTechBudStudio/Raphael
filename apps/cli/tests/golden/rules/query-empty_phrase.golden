@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
--q: a quoted phrase must contain a letter or a digit
+-q: A quoted phrase must contain a letter or a digit.
 hint: Run "raphael search --help" for usage.
