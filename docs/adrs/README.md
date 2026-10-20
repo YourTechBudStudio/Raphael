@@ -12,5 +12,6 @@ ADRs preserve consequential architectural decisions, their context, and their co
 | [0006](./0006-ai-capability-ownership.md)         | Pi-backed AI capabilities and central provider routing                             | Accepted |
 | [0007](./0007-shared-node-storage.md)             | Shared node storage for areas, projects and resources with specialized data tables | Accepted |
 | [0008](./0008-file-resources-and-stored-bytes.md) | File resources, core-owned stored bytes, and collection as the only deleter        | Accepted |
+| [0009](./0009-command-line-agent-contract.md)     | Command line as an agent-facing contract                                           | Accepted |
 
 Read the [architecture overview](../architecture/README.md) for the connected model, or return to the [documentation guide](../README.md).

@@ -9,7 +9,9 @@ Use this lens when a change affects what people see, understand, trust, or can d
 - When work is interrupted or fails, is user input preserved where appropriate? Are retry, cancellation, and destructive actions understandable and consistent with their actual consequences?
 - Does the interaction remain responsive and usable under relevant loading, empty, error, and unavailable states? Does it avoid making users wait through decorative behavior?
 - Can people perceive and operate essential actions with the relevant platform accessibility settings and input methods? Does presentation follow the design-system skill without sacrificing usability?
-- Do mobile and web express the same product rules and outcome meanings where intended, while allowing platform-appropriate interaction? Would shared logic or components prevent actual drift without forcing identical implementations?
+- Do mobile, web, and command-line clients express the same product rules and outcome meanings where intended, while allowing platform-appropriate interaction? Would shared logic or components prevent actual drift without forcing identical implementations?
+- For command-line and agent-facing surfaces, is machine-readable output a stable, documented contract, kept separate from prompts and diagnostics?
+- Does a refusal name the input it concerns and offer a runnable next step?
 - Is copy accurate about limitations and recovery? Can users distinguish their own actions from automated or agent-driven changes when that distinction affects trust?
 
 These questions do not prescribe screens, workflows, offline support, or synchronization architecture. Apply them to behavior the change actually introduces or affects.

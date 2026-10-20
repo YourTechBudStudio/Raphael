@@ -10,6 +10,7 @@ Use this lens for capability boundaries, module structure, shared behavior, cont
 - Is there a clear owner for canonical data and business decisions? Do client projections and caches remain distinguishable from authoritative state?
 - Are request, response, failure, and persisted-data contracts explicit at real boundaries? Are implementation details leaking into callers or serialized interfaces?
 - Would sharing a component, function, or module prevent meaningful behavioral, visual, or logic drift? Would the proposed sharing instead couple different capabilities or platform needs?
+- Do user-facing descriptions of rules, such as help and error copy, come from the contract's constants, or restate them where they can drift?
 - Can an internal interface be replaced and its callers migrated cleanly, rather than retaining shims, obsolete paths, or dual systems? At real external or data boundaries, what compatibility obligation actually exists?
 - Does a boundary crossing validate untrusted input and preserve authorization responsibility? Does a new dependency introduce unnecessary privilege, coupling, or public-surface exposure?
 

@@ -11,6 +11,7 @@ Use this lens for state transitions, operational work, Effect primitive use, fai
 - Do Promise-style bridges, detached work, or exception-based paths lose Effect's failure or lifecycle guarantees? Are framework and third-party boundaries handled deliberately?
 - Would an appropriate Effect primitive clarify dependencies, lifecycle, or composition? Conversely, is machinery being introduced without a problem to solve? Organize around capabilities rather than allowing a global collection of services to become the architecture.
 - What happens after partial completion or a failed retry? Can recovery duplicate an operation, overwrite newer state, or turn uncertainty into apparent success?
+- Once a request has been sent, can a failure be told apart from not-sent and from refused, so a caller does not retry into a duplicate or a conflict?
 - Can a failure be understood from available errors, state, and targeted diagnostics? Is enough context retained to identify the failing operation and cause without indiscriminate logging?
 - Do logs and diagnostics avoid exposing note contents, credentials, or other sensitive information? Does a dependency's failure or degraded availability leave behavior bounded and understandable?
 
