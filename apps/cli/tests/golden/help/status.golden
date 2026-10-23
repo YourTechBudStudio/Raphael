@@ -1,0 +1,31 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael status [--json]
+
+Check the connection: which server, from where, and whether it accepts the key.
+
+Uses the connection every remote command uses: RAPHAEL_ENDPOINT and RAPHAEL_API_KEY when both are set, otherwise the saved login.
+
+Asks the server once whether the key is accepted and which protocol and release it runs. Changes nothing.
+
+Exit 0 means remote commands can work. Otherwise the exit code and error are the ones the next command would meet: 5 for no connection, a rejected key, a protocol mismatch or an address that is not a Raphael server, and 6 when the server could not be reached.
+
+Options:
+      --json
+      Print the result as one JSON document.
+  -h, --help
+      Show help.
+
+Examples:
+  raphael status
+  raphael status --json
+    The check an agent runs first.
+
+Prints:
+  The server address, its source, whether the key was accepted, and the protocol and release of each side. JSON has connection {endpoint, source, configFile}, protocolVersion, serverVersion (null when the server does not say) and cliVersion.
+
+Next: raphael list /
+
+See also: raphael help connecting
+==== stderr ====

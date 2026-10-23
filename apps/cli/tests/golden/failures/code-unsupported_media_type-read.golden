@@ -3,5 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 The server refused how the request was encoded.
-hint: Check that this CLI and the server are the same version with "raphael version".
+hint: Check that this CLI and the server are the same version with "raphael status".
 code: unsupported_media_type (415)

@@ -41,7 +41,7 @@ import {
 import { Either, Schema } from 'effect';
 
 import { UsageError } from '../../shared/args.ts';
-import { Interrupted, type InterruptSignal } from '../../shared/interrupt.ts';
+import { readStandardInput } from '../../shared/stdin.ts';
 
 /** What `raphael create <type>` was asked to make. */
 export type CreateTarget =
@@ -283,41 +283,16 @@ const decodeUtf8 = (bytes: Uint8Array, label: string, command: string): string =
  * its own explicit spelling, so the empty case can be refused without losing anything.
  */
 const readStdin = async (command: string, signal?: AbortSignal): Promise<string> => {
-  const chunks: Buffer[] = [];
-  let total = 0;
-  // A signal ends the wait: the input is abandoned, and the command ends as interrupted with nothing
-  // sent. Destroying the stream is what releases the loop below; a paused one would hold it forever.
-  const interrupted = (): Interrupted =>
-    new Interrupted((signal?.reason as InterruptSignal | undefined) ?? 'SIGINT');
-  // A function, not a property test: `aborted` flips while this code is suspended.
-  const aborted = (): boolean => signal?.aborted === true;
-  if (aborted()) throw interrupted();
-  const abandon = (): void => {
-    process.stdin.destroy();
-  };
-  signal?.addEventListener('abort', abandon, { once: true });
-  try {
-    for await (const chunk of process.stdin) {
-      const buffer = chunk as Buffer;
-      total += buffer.byteLength;
-      // Counted as it arrives. Reading all of standard input and measuring afterwards would be a
-      // bound that does not bound anything.
-      if (total > REQUEST_MAX_BYTES) {
-        throw new UsageError(
-          `The body on standard input is larger than the ${REQUEST_MAX_BYTES}-byte request limit.`,
-          command,
-        );
-      }
-      chunks.push(buffer);
-    }
-  } catch (error) {
-    if (aborted()) throw interrupted();
-    throw error;
-  } finally {
-    signal?.removeEventListener('abort', abandon);
-  }
-  if (aborted()) throw interrupted();
-  if (total === 0) {
+  const bytes = await readStandardInput({
+    limit: REQUEST_MAX_BYTES,
+    tooLarge: () =>
+      new UsageError(
+        `The body on standard input is larger than the ${REQUEST_MAX_BYTES}-byte request limit.`,
+        command,
+      ),
+    signal,
+  });
+  if (bytes.byteLength === 0) {
     throw new UsageError(
       `--body @- read nothing: standard input was empty. ${
         command === 'update'
@@ -327,7 +302,7 @@ const readStdin = async (command: string, signal?: AbortSignal): Promise<string>
       command,
     );
   }
-  return decodeUtf8(Buffer.concat(chunks), 'The body on standard input', command);
+  return decodeUtf8(bytes, 'The body on standard input', command);
 };
 
 /**

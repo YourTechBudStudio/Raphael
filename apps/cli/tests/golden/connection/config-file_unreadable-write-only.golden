@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-Cannot read "<tmp>/raphael/config.json": EACCES: permission denied, open '<tmp>/raphael/config.json'
+Cannot read "<tmp>/raphael/config.json": permission denied.
 hint: Check the permissions on that file, or run "raphael login" again.

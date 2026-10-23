@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import { CONNECTION_ROUTES, PROTOCOL_VERSION } from '@raphael/contracts/connection';
 import { NODE_ROUTES } from '@raphael/contracts/nodes';
 
+import { version } from '../src/distribution.ts';
 import { REMOTE_COMMAND_NAMES } from '../src/main.ts';
 import { errorResponse, runCli, stubServer, type Ran, type StubRequest } from './support/cli.ts';
 import { assertErrorDocument } from './support/golden.ts';
@@ -43,6 +45,7 @@ const page = (items: unknown[]) => ({ items, skip: 0, limit: 50, hasMore: false 
 
 /** A valid answer for each route, as the contract defines it. */
 const ANSWERS: Readonly<Record<string, unknown>> = {
+  [CONNECTION_ROUTES.verify.path]: { protocolVersion: PROTOCOL_VERSION, raphaelVersion: version() },
   [NODE_ROUTES.create.path]: { entity },
   [NODE_ROUTES.get.path]: { entity },
   [NODE_ROUTES.update.path]: { entity },
@@ -84,6 +87,7 @@ const INVOCATIONS: Readonly<Record<(typeof REMOTE_COMMAND_NAMES)[number], readon
   path: ['path', '--id', '7'],
   list: ['list', '/work'],
   search: ['search', '/work', '-q', 'item'],
+  status: ['status'],
 };
 
 /** Commands whose human output is a page of rows. */
@@ -146,7 +150,11 @@ describe('stdout on success', () => {
 });
 
 describe('stdout on failure', () => {
-  const refusing = () => stubServer(() => errorResponse(404, 'node_not_found', 'Not there.'));
+  // Every request refused, verification included, so `status` fails the same way as the rest.
+  const refusing = () =>
+    stubServer(() => errorResponse(404, 'node_not_found', 'Not there.'), undefined, {
+      answerVerify: false,
+    });
 
   for (const command of REMOTE_COMMAND_NAMES) {
     const argv = INVOCATIONS[command];
@@ -168,8 +176,9 @@ describe('stdout on failure', () => {
       ['get', '/work', '--nonsense', '--json'],
       ['lst', '/work', '--json'],
       ['create', '--json'],
-      // Entry points outside the remote table, which take no --json of their own yet.
-      ['version', '--json'],
+      // Entry points outside the remote table.
+      ['version', 'extra', '--json'],
+      ['logout', 'extra', '--json'],
       ['server', 'nope', '--json'],
       ['server', 'serve', '--port', '1', '--json'],
       // A flag missing its value: the lenient parser takes --json as that value, strict parsing fails.

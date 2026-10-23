@@ -1,0 +1,30 @@
+==== exit ====
+0
+==== stdout ====
+Usage: raphael logout [--json]
+
+Remove the saved login from this machine.
+
+Deletes the saved login file after checking that its directory is yours and private. Nothing on the server changes.
+
+With no saved login, says so and exits 0.
+
+RAPHAEL_ENDPOINT and RAPHAEL_API_KEY are not changed; when they are set, commands keep using them, and logout warns.
+
+Options:
+      --json
+      Print the result as one JSON document.
+  -h, --help
+      Show help.
+
+Examples:
+  raphael logout
+  raphael logout --json
+
+Prints:
+  What was removed, or that there was nothing to remove. JSON has removed, endpoint (null when unknown) and configFile.
+
+Next: raphael login
+
+See also: raphael help connecting
+==== stderr ====

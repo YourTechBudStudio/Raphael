@@ -6,10 +6,11 @@ raphael - an actionable second brain for agents
 Usage: raphael <command> [options]
 
 Start here:
-  1. Put RAPHAEL_API_KEY=local-development-key-change-this in a private .env file in the current directory.
-  2. Run raphael server serve; keep that terminal open.
-  3. In another terminal run raphael login. Enter http://127.0.0.1:3000 and the same key.
-  4. Run raphael list /, then raphael create resource.note /work/first-note --body 'My first note'.
+  1. Make a private key file: (umask 077 && touch .env && chmod 600 .env && echo "RAPHAEL_SERVER_API_KEY=$(openssl rand -hex 32)" > .env)
+  2. Run raphael server serve in that directory; keep that terminal open.
+  3. In another terminal run raphael login http://127.0.0.1:3000 and enter the key from .env.
+  4. Run raphael status, then raphael list /.
+  5. Run raphael create resource.note /work/first-note --body 'My first note'.
   Already have a server? Start at step 3 with its address and key. See raphael help connecting.
 
 Read:
@@ -30,10 +31,12 @@ Write:
   unfavorite         Remove an area or project from favorites.
 
 Setup:
+  status             Check the connection: which server, from where, and whether it accepts the key.
   login              Save a verified server address and API key on this machine.
+  logout             Remove the saved login from this machine.
   server             Manage the server on this machine.
   server serve       Run a Raphael server on this machine.
-  version            Print the installed Raphael version.
+  version            Print the installed Raphael release.
 
 What things are:
   An area holds ongoing work. A project holds work with an outcome. A note holds content.

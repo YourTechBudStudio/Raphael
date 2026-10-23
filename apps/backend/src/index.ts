@@ -23,6 +23,7 @@
  * the process entry point, not here.
  */
 export {
+  API_KEY_VARIABLE,
   ApiCredential,
   ConfigurationError,
   CONFIG_DEFAULTS,
@@ -34,6 +35,7 @@ export {
   type DatabaseSettings,
   type LoadConfigurationContext,
   type LoadedConfiguration,
+  type OptionOverrides,
   type ServerOptions,
 } from './infrastructure/config/index.ts';
 export {
@@ -84,4 +86,4 @@ export {
   type NodeType,
   type ResourceKind,
 } from './modules/nodes/index.ts';
-export { serve, type RunningServer, type ServeConfiguration } from './server.ts';
+export { StartupFailure, serve, type RunningServer, type ServeConfiguration } from './server.ts';

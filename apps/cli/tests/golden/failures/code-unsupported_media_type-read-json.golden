@@ -2,4 +2,4 @@
 2
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"get","error":{"code":"unsupported_media_type","category":"usage","message":"The server refused how the request was encoded.","hint":"Check that this CLI and the server are the same version with \"raphael version\".","exitCode":2,"status":415,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for unsupported_media_type.","details":{"reason":"unsupported_media_type"}}}
+{"ok":false,"command":"get","error":{"code":"unsupported_media_type","category":"usage","message":"The server refused how the request was encoded.","hint":"Check that this CLI and the server are the same version with \"raphael status\".","exitCode":2,"status":415,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for unsupported_media_type.","details":{"reason":"unsupported_media_type"},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

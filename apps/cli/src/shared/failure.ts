@@ -36,6 +36,7 @@ import {
 import { clientFailureWording } from './failure-wording.ts';
 import { exitCodeForSignal, type InterruptSignal } from './interrupt.ts';
 import { forTerminal, writeJson, writeLine, type Streams } from './output.ts';
+import type { Diagnosis } from './server-check.ts';
 
 /** How the caller named an item: by path, or by `--id`. */
 export type Subject = { readonly path: string } | { readonly id: number };
@@ -116,6 +117,9 @@ export const renderFailure = (streams: Streams, session: Session, failure: Failu
         retryable: failure.exitCode === EXIT_RETRYABLE,
         ...(failure.serverMessage === undefined ? {} : { serverMessage: failure.serverMessage }),
         ...(failure.details === undefined ? {} : { details: failure.details }),
+        // Which server and which source, once a connection was resolved: the same shape as
+        // `status --json`, so an agent can tell "fix the environment" from "log in again".
+        ...(session.connection === undefined ? {} : { connection: session.connection }),
       },
     });
     return failure.exitCode;
@@ -147,6 +151,20 @@ const classify = (
   failure: ClientFailure,
   context: RequestContext,
   signal: InterruptSignal | undefined,
+  diagnosis: Diagnosis | undefined,
+): { readonly exitCode: Exclude<ExitCode, 0>; readonly state: ChangeState } => {
+  const base = classifyAnswer(failure, context, signal);
+  // Once verification has shown the endpoint speaks another protocol or is not Raphael, a failure
+  // that left nothing uncertain is a setup problem. A write that may have landed stays unknown.
+  return diagnosis !== undefined && base.state !== 'unknown'
+    ? { exitCode: EXIT_NOT_CONFIGURED, state: base.state }
+    : base;
+};
+
+const classifyAnswer = (
+  failure: ClientFailure,
+  context: RequestContext,
+  signal: InterruptSignal | undefined,
 ): { readonly exitCode: Exclude<ExitCode, 0>; readonly state: ChangeState } => {
   const write = failure.effect === 'write' && context.beforeChange !== true;
   // Could the server have applied it? Only a write that may have arrived without an answer.
@@ -169,6 +187,15 @@ const classify = (
       };
     }
     case 'network':
+      // A TLS handshake that failed is an address problem - https to an http server, or a certificate
+      // this machine does not trust - and retrying will not change it.
+      if (failure.cause === 'tls') {
+        return failure.delivery === 'not_sent'
+          ? { exitCode: EXIT_NOT_CONFIGURED, state: 'not_sent' }
+          : unknownIfWrite(EXIT_NOT_CONFIGURED);
+      }
+      if (failure.delivery === 'not_sent') return { exitCode: EXIT_RETRYABLE, state: 'not_sent' };
+      return unknownIfWrite(EXIT_RETRYABLE);
     case 'timeout':
       if (failure.delivery === 'not_sent') return { exitCode: EXIT_RETRYABLE, state: 'not_sent' };
       return unknownIfWrite(EXIT_RETRYABLE);
@@ -200,10 +227,12 @@ export const describeClientFailure = (
   context: RequestContext = {},
 ): Failure => {
   const signal = session.interruption?.received();
-  const { exitCode, state } = classify(failure, context, signal);
+  const { exitCode, state } = classify(failure, context, signal, session.diagnosis);
   const worded = clientFailureWording(failure, {
     context: { ...context, flags: { ...session.invocation.fieldFlags, ...context.flags } },
     endpoint: session.endpoint,
+    connection: session.connection,
+    diagnosis: session.diagnosis,
     command: session.invocation.command,
     state,
     signal,

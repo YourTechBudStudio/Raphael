@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Could not connect to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json): the secure connection could not be set up.
+hint: If the server speaks http rather than https, run "raphael login" with the right address.

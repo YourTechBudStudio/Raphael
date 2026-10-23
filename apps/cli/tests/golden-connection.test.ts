@@ -1,5 +1,13 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -124,7 +132,25 @@ const CONFIG_CASES: Record<ConfigReason, Case> = {
   directory_unusable: {
     runs: async () => {
       const open = savedConfig(configFile('http://127.0.0.1:9'), { directory: 0o755 });
-      return [['group-readable', normalize(await getWith(open.environment), open.root)]];
+      // XDG_CONFIG_HOME itself cannot be searched, so the directory beneath cannot be inspected.
+      const sealed = temporary();
+      const xdg = join(sealed, 'xdg');
+      mkdirSync(xdg, { mode: 0o700 });
+      chmodSync(xdg, 0o000);
+      const unreadable = normalize(await getWith({ XDG_CONFIG_HOME: xdg }), sealed);
+      chmodSync(xdg, 0o700);
+      // A file where a directory on the way should be.
+      const blocked = temporary();
+      writeFileSync(join(blocked, 'file'), '');
+      const notDirectory = normalize(
+        await getWith({ XDG_CONFIG_HOME: join(blocked, 'file') }),
+        blocked,
+      );
+      return [
+        ['group-readable', normalize(await getWith(open.environment), open.root)],
+        ['unreadable-xdg', unreadable],
+        ['file-in-path', notDirectory],
+      ];
     },
   },
   directory_uncreatable: {
@@ -151,7 +177,15 @@ const CONFIG_CASES: Record<ConfigReason, Case> = {
   file_unusable: {
     runs: async () => {
       const open = savedConfig(configFile('http://127.0.0.1:9'), { file: 0o644 });
-      return [['group-readable', normalize(await getWith(open.environment), open.root)]];
+      // A dotfile manager's link, pointing at a private file.
+      const linked = savedConfig(undefined);
+      const target = join(linked.root, 'real-config.json');
+      writeFileSync(target, configFile('http://127.0.0.1:9'), { mode: 0o600 });
+      symlinkSync(target, join(linked.root, 'raphael', 'config.json'));
+      return [
+        ['group-readable', normalize(await getWith(open.environment), open.root)],
+        ['symlink', normalize(await getWith(linked.environment), linked.root)],
+      ];
     },
   },
   file_unreadable: {
@@ -181,9 +215,22 @@ const CONFIG_CASES: Record<ConfigReason, Case> = {
     runs: async () => {
       const noDirectory = temporary();
       const noFile = savedConfig(undefined);
+      const emptyPair = temporary();
       return [
         ['no-directory', normalize(await getWith({ XDG_CONFIG_HOME: noDirectory }), noDirectory)],
         ['no-file', normalize(await getWith(noFile.environment), noFile.root)],
+        // `RAPHAEL_ENDPOINT= RAPHAEL_API_KEY= raphael …` unsets both, so the saved login is used.
+        [
+          'both-variables-empty',
+          normalize(
+            await getWith({
+              XDG_CONFIG_HOME: emptyPair,
+              RAPHAEL_ENDPOINT: '',
+              RAPHAEL_API_KEY: '',
+            }),
+            emptyPair,
+          ),
+        ],
       ];
     },
   },
@@ -219,16 +266,31 @@ const CONNECTION_CASES: Record<ConnectionReason, Case> = {
     runs: async () => [
       ['key-without-endpoint', await getWith({ RAPHAEL_API_KEY: STUB_KEY })],
       ['endpoint-without-key', await getWith({ RAPHAEL_ENDPOINT: 'http://127.0.0.1:9' })],
+      // An empty variable counts as unset, so this is a key without an endpoint.
+      ['empty-endpoint', await getWith({ RAPHAEL_ENDPOINT: '', RAPHAEL_API_KEY: STUB_KEY })],
     ],
   },
   malformed: {
-    runs: async () => [
-      ['', await getWith({ RAPHAEL_ENDPOINT: 'not an address', RAPHAEL_API_KEY: STUB_KEY })],
-    ],
+    runs: async () => {
+      const saved = savedConfig(configFile('127.0.0.1:3105'));
+      return [
+        ['', await getWith({ RAPHAEL_ENDPOINT: 'not an address', RAPHAEL_API_KEY: STUB_KEY })],
+        [
+          'bare-ip-and-port',
+          await getWith({ RAPHAEL_ENDPOINT: '127.0.0.1:3105', RAPHAEL_API_KEY: STUB_KEY }),
+        ],
+        ['saved-bare-ip-and-port', normalize(await getWith(saved.environment), saved.root)],
+      ];
+    },
   },
   unsupported_scheme: {
     runs: async () => [
       ['', await getWith({ RAPHAEL_ENDPOINT: 'ftp://127.0.0.1', RAPHAEL_API_KEY: STUB_KEY })],
+      // `localhost:` parses as a scheme; the fix is the missing http://.
+      [
+        'bare-host-and-port',
+        await getWith({ RAPHAEL_ENDPOINT: 'localhost:3105', RAPHAEL_API_KEY: STUB_KEY }),
+      ],
     ],
   },
   credentials_in_url: {
@@ -254,6 +316,18 @@ const CONNECTION_CASES: Record<ConnectionReason, Case> = {
       // An empty key in the environment is an incomplete pair; a saved one reaches the transport.
       const saved = savedConfig(configFile('http://127.0.0.1:9', ''));
       return [['saved-empty-key', normalize(await getWith(saved.environment), saved.root)]];
+    },
+  },
+  api_key_unsendable: {
+    runs: async () => {
+      const saved = savedConfig(configFile('http://127.0.0.1:9', `${STUB_KEY} `));
+      return [
+        [
+          'environment',
+          await getWith({ RAPHAEL_ENDPOINT: 'http://127.0.0.1:9', RAPHAEL_API_KEY: 'ключ-key' }),
+        ],
+        ['saved', normalize(await getWith(saved.environment), saved.root)],
+      ];
     },
   },
   timeout_out_of_range: {

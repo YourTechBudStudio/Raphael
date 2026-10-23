@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--api-key-stdin reads the key from a pipe, and standard input is a terminal here, where the key would be shown. Leave out --api-key-stdin to be asked for it without it being shown.
+hint: Run "raphael login --help" for usage.

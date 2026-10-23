@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, test } from 'node:test';
@@ -7,7 +7,11 @@ import { describe, test } from 'node:test';
 import { Effect } from 'effect';
 
 import { ApiCredential } from '../src/infrastructure/config/credential.ts';
-import { API_KEY_VARIABLE, loadEnvironment } from '../src/infrastructure/config/env.ts';
+import {
+  API_KEY_VARIABLE,
+  CLIENT_API_KEY_VARIABLE,
+  loadEnvironment,
+} from '../src/infrastructure/config/env.ts';
 import { ConfigurationError } from '../src/infrastructure/config/errors.ts';
 import { loadConfiguration } from '../src/infrastructure/config/index.ts';
 import {
@@ -44,7 +48,7 @@ const writeConfig = (dir: string, yaml: string): string => {
   return path;
 };
 
-/** Load with an isolated environment, so a developer's own `RAPHAEL_API_KEY` cannot affect a test. */
+/** Load with an isolated environment, so a developer's own server key cannot affect a test. */
 const load = (context: {
   dir: string;
   configPath?: string;
@@ -243,7 +247,7 @@ describe('the environment and the credential', () => {
     withTempDir('env-precedence', (dir) => {
       writeFileSync(join(dir, '.env'), `${API_KEY_VARIABLE}=${'f'.repeat(40)}\n`, 'utf8');
       const environment = loadEnvironment({
-        cwd: dir,
+        directory: dir,
         processEnv: { [API_KEY_VARIABLE]: GOOD_KEY },
       });
       assert.equal(environment.get(API_KEY_VARIABLE), GOOD_KEY);
@@ -254,7 +258,10 @@ describe('the environment and the credential', () => {
   test('an explicitly empty process variable still wins, and then fails validation', () => {
     withTempDir('env-empty', (dir) => {
       writeFileSync(join(dir, '.env'), `${API_KEY_VARIABLE}=${GOOD_KEY}\n`, 'utf8');
-      const environment = loadEnvironment({ cwd: dir, processEnv: { [API_KEY_VARIABLE]: '' } });
+      const environment = loadEnvironment({
+        directory: dir,
+        processEnv: { [API_KEY_VARIABLE]: '' },
+      });
       // Setting a variable to the empty string is a statement. It is not the same as not setting it,
       // and it must not silently fall through to a file value the operator may have forgotten.
       assert.equal(environment.get(API_KEY_VARIABLE), '');
@@ -267,7 +274,7 @@ describe('the environment and the credential', () => {
   test('a .env supplies what the process environment does not define', () => {
     withTempDir('env-file', (dir) => {
       writeFileSync(join(dir, '.env'), `${API_KEY_VARIABLE}=${GOOD_KEY}\n`, 'utf8');
-      const environment = loadEnvironment({ cwd: dir, processEnv: {} });
+      const environment = loadEnvironment({ directory: dir, processEnv: {} });
       assert.equal(environment.get(API_KEY_VARIABLE), GOOD_KEY);
       assert.equal(environment.sourceOf(API_KEY_VARIABLE), 'file');
     });
@@ -276,14 +283,14 @@ describe('the environment and the credential', () => {
   test('loading never mutates the real process environment', () => {
     withTempDir('env-no-mutation', (dir) => {
       writeFileSync(join(dir, '.env'), 'RAPHAEL_TEST_MARKER=set-by-file\n', 'utf8');
-      loadEnvironment({ cwd: dir, processEnv: { [API_KEY_VARIABLE]: GOOD_KEY } });
+      loadEnvironment({ directory: dir, processEnv: { [API_KEY_VARIABLE]: GOOD_KEY } });
       assert.equal(process.env.RAPHAEL_TEST_MARKER, undefined);
     });
   });
 
   test('an absent .env is ordinary, an unreadable one is not', () => {
     withTempDir('env-unreadable', (dir) => {
-      assert.doesNotThrow(() => loadEnvironment({ cwd: dir, processEnv: {} }));
+      assert.doesNotThrow(() => loadEnvironment({ directory: dir, processEnv: {} }));
 
       const path = join(dir, '.env');
       writeFileSync(path, `${API_KEY_VARIABLE}=${GOOD_KEY}\n`, 'utf8');
@@ -303,7 +310,7 @@ describe('the environment and the credential', () => {
         `__proto__=polluted\n${API_KEY_VARIABLE}=${GOOD_KEY}\n`,
         'utf8',
       );
-      const environment = loadEnvironment({ cwd: dir, processEnv: {} });
+      const environment = loadEnvironment({ directory: dir, processEnv: {} });
       assert.equal(environment.get(API_KEY_VARIABLE), GOOD_KEY);
       assert.equal(({} as Record<string, unknown>).polluted, undefined);
     });
@@ -312,22 +319,17 @@ describe('the environment and the credential', () => {
   test('a missing key fails before anything is acquired', () => {
     withTempDir('key-missing', (dir) => {
       const error = refuses(() => load({ dir, env: {}, readEnvFile: false }), 'api_key_missing');
-      assert.match(error.message, /RAPHAEL_API_KEY/u);
+      assert.equal(
+        error.message,
+        'RAPHAEL_SERVER_API_KEY is not set in the environment. Raphael will not start without a key.',
+      );
     });
   });
 
-  test('a key is whatever the owner configured, of any length or alphabet', () => {
+  test('a key may be any length, in visible ASCII with no whitespace', () => {
     withTempDir('key-shapes', (dir) => {
-      // There is no length floor and no character set. Hex, base64, a passphrase with spaces, a
-      // single character: if it started the server, it is the key.
-      for (const key of [
-        'x',
-        'a3f9'.repeat(16),
-        'Zm9vYmFyLWJhei1xdXV4LWNvcmdlLWdyYXVsdA==',
-        'a key with spaces',
-        `${GOOD_KEY}\n`,
-        '\u{1F511}'.repeat(8),
-      ]) {
+      // There is no length floor. Hex, base64, a single character: if it can be sent, it is the key.
+      for (const key of ['x', 'a3f9'.repeat(16), 'Zm9vYmFyLWJhei1xdXV4LWNvcmdlLWdyYXVsdA==']) {
         assert.doesNotThrow(
           () => load({ dir, env: { [API_KEY_VARIABLE]: key }, readEnvFile: false }),
           JSON.stringify(key),
@@ -336,27 +338,43 @@ describe('the environment and the credential', () => {
     });
   });
 
-  test('a key is stored exactly as given, never trimmed', () => {
-    // Quietly trimming would make a server that accepts a key its owner did not set, and reject the
-    // one they did. Whatever surrounding whitespace they configured is part of the credential.
-    const padded = `  ${GOOD_KEY}  `;
-    const credential = ApiCredential.fromKey(padded);
-    assert.equal(credential.matches(padded), true);
-    assert.equal(credential.matches(GOOD_KEY), false);
+  test('a key no client could send is refused at startup, naming its source and not the key', () => {
+    withTempDir('key-unsendable', (dir) => {
+      // `fetch` strips surrounding whitespace from a header and refuses non-Latin-1; a Latin-1 key
+      // above U+007F arrives as a different string. Each would start a server every client fails.
+      for (const key of [
+        'a key with spaces',
+        `${GOOD_KEY}\n`,
+        `  ${GOOD_KEY}`,
+        '\u{1F511}'.repeat(8),
+        'café-key',
+      ]) {
+        const error = refuses(
+          () => load({ dir, env: { [API_KEY_VARIABLE]: key }, readEnvFile: false }),
+          'api_key_unsendable',
+        );
+        assert.equal(
+          error.message,
+          `${API_KEY_VARIABLE} in the environment has characters no client could send: a key must be visible ASCII characters with no spaces.`,
+        );
+        assert.equal(error.message.includes(key.trim()), false);
+        assert.match(error.hint ?? '', /openssl rand -hex 32/u);
+      }
+      const envFile = join(dir, '.env');
+      writeFileSync(envFile, `${API_KEY_VARIABLE}="two words"\n`, 'utf8');
+      const fromFile = refuses(() => load({ dir, env: {} }), 'api_key_unsendable');
+      assert.match(
+        fromFile.message,
+        new RegExp(`^${API_KEY_VARIABLE} in "${envFile}" has characters`, 'u'),
+      );
+    });
   });
 
-  test('a key that cannot travel in a header still starts the server', () => {
-    // Deliberate, and worth stating. An HTTP header carries bytes, and Node reads a received value
-    // back as Latin-1, so a key above U+007F can never match - `fetch` will not even send one. That
-    // is now a request-time transport failure rather than a startup refusal: the owner's key is the
-    // owner's business, and the cost is that this particular mistake surfaces later.
-    assert.doesNotThrow(() => ApiCredential.fromKey('\u{1F511}'.repeat(8)));
-  });
-
-  test('only the absence of a key stops a programmatic caller', () => {
-    // `serve` is importable, so the one rule there is has to live in the constructor rather than in
-    // the loader, or it would be a rule about configuration files rather than about this server.
+  test('a programmatic caller is held to the same key rule', () => {
+    // `serve` is importable, so the rule has to live in the constructor rather than in the loader, or
+    // it would be a rule about configuration files rather than about this server.
     assert.throws(() => ApiCredential.fromKey(''), ConfigurationError);
+    assert.throws(() => ApiCredential.fromKey(`  ${GOOD_KEY}  `), ConfigurationError);
     assert.doesNotThrow(() => ApiCredential.fromKey('x'));
   });
 
@@ -374,7 +392,8 @@ describe('the environment and the credential', () => {
   test('the loaded result separates non-secret options from the credential', () => {
     withTempDir('config-split', (dir) => {
       const loaded = load({ dir, readEnvFile: false });
-      assert.deepEqual(Object.keys(loaded).sort(), ['credential', 'options']);
+      assert.deepEqual(Object.keys(loaded).sort(), ['credential', 'keySource', 'options']);
+      assert.equal(JSON.stringify(loaded.keySource).includes(GOOD_KEY), false);
       // Serializing the options - a diagnostic, a debug dump - cannot reach a credential.
       assert.equal(JSON.stringify(loaded.options).includes(GOOD_KEY), false);
     });
@@ -464,6 +483,7 @@ describe('programmatic options', () => {
               database: { databasePath: 'relative.sqlite' },
             },
             credential: ApiCredential.fromKey(GOOD_KEY),
+            release: '0.0.0-test',
             logger: silentLogger,
           }),
         ),
@@ -503,6 +523,7 @@ describe('programmatic options', () => {
             serve({
               options,
               credential: ApiCredential.fromKey(GOOD_KEY),
+              release: '0.0.0-test',
               logger: silentLogger,
             }),
             (running) =>
@@ -521,5 +542,238 @@ describe('programmatic options', () => {
     } finally {
       temp.cleanup();
     }
+  });
+});
+
+describe('where the key is looked for, and what a missing key says', () => {
+  test("the server reads its own variable, not the clients'", () => {
+    assert.equal(API_KEY_VARIABLE, 'RAPHAEL_SERVER_API_KEY');
+    assert.equal(CLIENT_API_KEY_VARIABLE, 'RAPHAEL_API_KEY');
+  });
+
+  test('with --config, .env is read beside the file, not from the current directory', () => {
+    withTempDir('env-anchor', (dir) => {
+      const configDir = join(dir, 'srv');
+      const elsewhere = join(dir, 'elsewhere');
+      mkdirSync(configDir);
+      mkdirSync(elsewhere);
+      const configPath = writeConfig(configDir, 'server:\n  port: 3100\n');
+      writeFileSync(join(configDir, '.env'), `${API_KEY_VARIABLE}=${GOOD_KEY}\n`, 'utf8');
+      writeFileSync(join(elsewhere, '.env'), `${API_KEY_VARIABLE}=${'z'.repeat(40)}\n`, 'utf8');
+      const loaded = loadConfiguration({ cwd: elsewhere, processEnv: {}, configPath });
+      assert.equal(loaded.credential.matches(GOOD_KEY), true);
+      assert.deepEqual(loaded.keySource, {
+        variable: API_KEY_VARIABLE,
+        file: join(configDir, '.env'),
+      });
+    });
+  });
+
+  test('without --config, .env is read from the current directory', () => {
+    withTempDir('env-cwd', (dir) => {
+      writeFileSync(join(dir, '.env'), `${API_KEY_VARIABLE}=${GOOD_KEY}\n`, 'utf8');
+      const loaded = loadConfiguration({ cwd: dir, processEnv: {} });
+      assert.equal(loaded.credential.matches(GOOD_KEY), true);
+      assert.equal(loaded.keySource.file, join(dir, '.env'));
+    });
+  });
+
+  test('a missing key names the exact .env path checked and how to make a key', () => {
+    withTempDir('key-missing-path', (dir) => {
+      const error = refuses(() => load({ dir, env: {} }), 'api_key_missing');
+      const envFile = join(dir, '.env');
+      assert.equal(
+        error.message,
+        `${API_KEY_VARIABLE} is not set in the environment or in "${envFile}". Raphael will not start without a key.`,
+      );
+      assert.equal(
+        error.hint,
+        `Generate a key with "openssl rand -hex 32" and add ${API_KEY_VARIABLE}=<key> to "${envFile}".`,
+      );
+    });
+  });
+
+  test("a missing key says when the clients' variable was set instead, and where", () => {
+    withTempDir('key-old-variable', (dir) => {
+      const inProcess = refuses(
+        () => load({ dir, env: { [CLIENT_API_KEY_VARIABLE]: GOOD_KEY } }),
+        'api_key_missing',
+      );
+      assert.equal(
+        inProcess.hint,
+        `${CLIENT_API_KEY_VARIABLE} is set in the environment, but only clients read it. Set ${API_KEY_VARIABLE} instead.`,
+      );
+      const envFile = join(dir, '.env');
+      writeFileSync(envFile, `${CLIENT_API_KEY_VARIABLE}=${GOOD_KEY}\n`, 'utf8');
+      const inFile = refuses(() => load({ dir, env: {} }), 'api_key_missing');
+      assert.equal(
+        inFile.hint,
+        `"${envFile}" sets ${CLIENT_API_KEY_VARIABLE}, which only clients read. Rename it to ${API_KEY_VARIABLE}.`,
+      );
+      assert.equal(`${inProcess.message}${inFile.message}`.includes(GOOD_KEY), false);
+    });
+  });
+
+  test('an empty environment value that hides .env is described as exactly that', () => {
+    withTempDir('key-empty-shadow', (dir) => {
+      const envFile = join(dir, '.env');
+      writeFileSync(envFile, `${API_KEY_VARIABLE}=${GOOD_KEY}\n`, 'utf8');
+      const error = refuses(
+        () => load({ dir, env: { [API_KEY_VARIABLE]: '' } }),
+        'api_key_missing',
+      );
+      assert.equal(
+        error.message,
+        `${API_KEY_VARIABLE} is set to an empty value in the environment, which overrides "${envFile}".`,
+      );
+      assert.equal(error.hint, `Unset it with "unset ${API_KEY_VARIABLE}", or give it a value.`);
+    });
+  });
+});
+
+describe('configuration problems and flag overrides', () => {
+  test('every problem is one line, with no optional-branch noise, and an unknown key gets a suggestion', () => {
+    withTempDir('config-lines', (dir) => {
+      const path = writeConfig(
+        dir,
+        'foo: 1\nserver:\n  port: "3105"\n  hots: x\ndatabase:\n  pth: a\n',
+      );
+      const error = refuses(
+        () => load({ dir, configPath: path, readEnvFile: false }),
+        'config_invalid',
+      );
+      assert.equal(
+        error.message,
+        [
+          `"${path}" is not valid:`,
+          '  foo: unknown key. Allowed keys: server, database.',
+          '  server.hots: unknown key. Did you mean "host"?',
+          '  server.port: must be a number, got the string "3105". Remove the quotes.',
+          '  database.pth: unknown key. Did you mean "path"?',
+        ].join('\n'),
+      );
+    });
+  });
+
+  test('a YAML syntax error is one sentence with its position, without the source excerpt', () => {
+    withTempDir('config-syntax', (dir) => {
+      const path = writeConfig(dir, 'server:\n  port: [1\n');
+      const error = refuses(
+        () => load({ dir, configPath: path, readEnvFile: false }),
+        'config_malformed',
+      );
+      assert.equal(error.message.includes('\n'), false, error.message);
+      assert.match(
+        error.message,
+        /^".*raphael\.yaml" could not be read: .* at line \d+, column \d+\.$/u,
+      );
+    });
+  });
+
+  test('a bound is stated once per key', () => {
+    withTempDir('config-bound', (dir) => {
+      const path = writeConfig(dir, 'server:\n  port: 0\n');
+      const error = refuses(
+        () => load({ dir, configPath: path, readEnvFile: false }),
+        'config_invalid',
+      );
+      assert.equal(
+        error.message,
+        `"${path}" is not valid:\n  server.port: must be a whole number between 1 and 65535.`,
+      );
+    });
+  });
+
+  test('flags win over the file and are checked by the same rules, reported by flag name', () => {
+    withTempDir('config-overrides', (dir) => {
+      const path = writeConfig(
+        dir,
+        'server:\n  host: 0.0.0.0\n  port: 3100\ndatabase:\n  path: ./a.sqlite\n',
+      );
+      const elsewhere = join(dir, 'run');
+      mkdirSync(elsewhere);
+      const loaded = loadConfiguration({
+        cwd: elsewhere,
+        processEnv: { [API_KEY_VARIABLE]: GOOD_KEY },
+        configPath: path,
+        readEnvFile: false,
+        overrides: { host: '127.0.0.1', port: 3200, databasePath: 'b.sqlite' },
+      });
+      assert.deepEqual(loaded.options, {
+        server: { host: '127.0.0.1', port: 3200 },
+        // A typed path resolves against where it was typed.
+        database: { databasePath: join(elsewhere, 'b.sqlite') },
+      });
+
+      const error = refuses(
+        () =>
+          loadConfiguration({
+            cwd: dir,
+            processEnv: { [API_KEY_VARIABLE]: GOOD_KEY },
+            readEnvFile: false,
+            overrides: { host: 'a b', port: 0, databasePath: ' ' },
+          }),
+        'option_invalid',
+      );
+      assert.equal(
+        error.message,
+        [
+          'The server serve options are not valid:',
+          '  --host: must be a non-empty address with no spaces or control characters.',
+          '  --port: must be a whole number between 1 and 65535.',
+          '  --database: must be a non-empty path with no control characters.',
+        ].join('\n'),
+      );
+      const typed = refuses(
+        () =>
+          loadConfiguration({
+            cwd: dir,
+            processEnv: { [API_KEY_VARIABLE]: GOOD_KEY },
+            readEnvFile: false,
+            overrides: { port: 'abc' },
+          }),
+        'option_invalid',
+      );
+      assert.equal(
+        typed.message,
+        'The server serve options are not valid:\n  --port: must be a number, got "abc".',
+      );
+    });
+  });
+});
+
+describe('what is checked before the key', () => {
+  test('a configuration file that cannot be read is reported before a missing key', () => {
+    withTempDir('config-before-key', (dir) => {
+      const error = refuses(
+        () => load({ dir, env: {}, configPath: join(dir, 'nope', 'raphael.yaml') }),
+        'config_unreadable',
+      );
+      assert.match(error.message, /it does not exist\.$/u);
+    });
+  });
+
+  test('a flag value is refused before the file or the key', () => {
+    withTempDir('flags-before-key', (dir) => {
+      refuses(
+        () =>
+          loadConfiguration({
+            cwd: dir,
+            processEnv: {},
+            configPath: join(dir, 'nope.yaml'),
+            overrides: { port: 0 },
+          }),
+        'option_invalid',
+      );
+    });
+  });
+
+  test('a .env link to nothing is reported, not treated as absent', () => {
+    withTempDir('env-dangling', (dir) => {
+      symlinkSync(join(dir, 'missing'), join(dir, '.env'));
+      const error = refuses(() => load({ dir, env: {} }), 'env_unreadable');
+      assert.match(error.message, /is a link to a file that does not exist/u);
+      assert.match(error.hint ?? '', /remove/u);
+    });
   });
 });

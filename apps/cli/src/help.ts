@@ -1,11 +1,19 @@
 /** Help is pure data and rendering: no environment, configuration, backend or connection reads. */
 import { DEFAULT_TIMEOUT_MS } from '@raphael/client';
 import { API_ERROR_CODES } from '@raphael/contracts';
+import { SENDABLE_API_KEY_RULE } from '@raphael/contracts/connection';
 
 import type { CommandDefinition, CommandExample } from './shared/command.ts';
 import { EXIT_CODES } from './shared/exit.ts';
 import { HELP_RULES } from './shared/help-rules.ts';
 import { TIMEOUT_MIN_SECONDS, TIMEOUT_MAX_SECONDS } from './shared/timeout.ts';
+import {
+  CLIENT_API_KEY_VARIABLE,
+  CLIENT_ENDPOINT_VARIABLE,
+  SERVER_API_KEY_VARIABLE,
+  SERVER_KEY_FILE_RECIPE,
+  TIMEOUT_VARIABLE,
+} from './shared/variables.ts';
 
 export interface HelpTopic {
   readonly name: string;
@@ -88,7 +96,7 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
       'Standard output holds results only. Without --json, lists print tab-separated rows; a header is printed only on a terminal. Rows include id, type, path, title, revision and updatedAt. List order defaults to slug ascending; use list --order-by updatedAt:desc for recent changes. Search orders by relevance and does not accept --order-by. Bodies are printed as Markdown by default.',
       'With --json, a successful command prints exactly one document: {"ok":true,"command":"get",...data}. Full-item reads and writes use entity; move, archive and restore use node; lists and favorites use items; search uses items[].node. These are machine field names. Summaries include path and updatedAt. No createdAt field is exposed. Writes that can leave values unchanged include changed; false means success without a revision bump. Favorite commands report nodeId and isFavorite. Path reports path.',
       'Paged results include page with skip, limit, hasMore and nextSkip. The result footer and runnable next-page command go to standard error, never standard output. Empty-result notes, warnings, hints, prompts and failures also go to standard error. Warnings appear in warnings[] on JSON successes. Closing a pipe early does not turn a completed command into a failure.',
-      'JSON failures leave stdout empty and print exactly one document to stderr: {"ok":false,"error":{"code":...,"category":...,"message":...,"hint":...,"exitCode":...,"applied":...,"retryable":...}}. Optional fields include status, field, target, serverMessage and details. applied is false when no change was applied, true when known applied, and null when unknown. Retry decisions must consider exitCode and applied; do not blindly retry an uncertain write. The JSON envelope and exit-code meanings are stable within a major version.',
+      'JSON failures leave stdout empty and print exactly one document to stderr: {"ok":false,"error":{"code":...,"category":...,"message":...,"hint":...,"exitCode":...,"applied":...,"retryable":...}}. Optional fields include status, field, target, serverMessage, details, and connection {endpoint, source, configFile} once a connection was resolved. applied is false when no change was applied, true when known applied, and null when unknown. Retry decisions must consider exitCode and applied; do not blindly retry an uncertain write. The JSON envelope and exit-code meanings are stable within a major version.',
       'For text write failures, the state line distinguishes Nothing was changed., The change was not sent., and The change may or may not have been applied. Set RAPHAEL_DEBUG=1 to include diagnostic stacks. Keep stdout for results when scripting.',
       HELP_RULES.paging,
       `For list: ${HELP_RULES.ordering} Search orders by relevance and does not accept --order-by.`,
@@ -103,15 +111,16 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     name: 'connecting',
     summary: 'Start a local server and connect a client.',
     body: [
-      "To run a local server, put RAPHAEL_API_KEY=local-development-key-change-this in a .env file in the directory where you run raphael server serve. Keep that file private. The server reads the key from its environment or that .env file; an environment value wins. The default address is http://127.0.0.1:3000. An optional --config supplies a YAML configuration file; relative database paths resolve against that file's directory, or the current directory without one.",
-      'In another terminal run raphael login, enter http://127.0.0.1:3000 and the same key. Login verifies the connection before saving the address and key with owner-only permissions. Server commands never read your saved login. Keeping the server key in .env avoids exporting only half of the client environment pair.',
-      'For scripts set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together. Both or neither: a partial pair is refused. A complete environment pair overrides the saved login. Clients do not read .env. Saved login uses XDG_CONFIG_HOME/raphael when set to an absolute path, or ~/.config/raphael.',
-      `RAPHAEL_TIMEOUT sets the request timeout in whole seconds, from ${TIMEOUT_MIN_SECONDS} to ${TIMEOUT_MAX_SECONDS}; the default is ${DEFAULT_TIMEOUT_MS / 1000} seconds. Exit 5 means configuration or authorization needs attention: check the address, key and chosen configuration source, then run raphael login. Exit 6 means the request was not applied and retrying may work. Read help exit-codes before retrying a failed write.`,
+      `Run a server: put ${SERVER_API_KEY_VARIABLE}=<key> in an owner-only .env file, made with ${SERVER_KEY_FILE_RECIPE}, then run raphael server serve in that directory. With --config, the .env beside the configuration file is read instead. An environment value wins over .env, and an empty one is refused rather than ignored. The server listens on http://127.0.0.1:3000 unless --host, --port or the configuration file say otherwise, and prints the address and the login command when it starts. It never reads your saved login.`,
+      `Connect: in another terminal run raphael login http://127.0.0.1:3000 and enter the same key. Login verifies the address and key before saving them with owner-only permissions to $XDG_CONFIG_HOME/raphael/config.json, or ~/.config/raphael/config.json. Without a terminal, pipe the key: printf '%s\\n' "$KEY" | raphael login <address> --api-key-stdin. Logging in again replaces the saved login; raphael logout removes it.`,
+      `Check: raphael status reports the server, where its address and key came from, and the protocol and release of each side. Run it first in a script; exit 0 means remote commands can work.`,
+      `Without a saved login, set ${CLIENT_ENDPOINT_VARIABLE} and ${CLIENT_API_KEY_VARIABLE} together. Both or neither: a partial pair is refused, an empty variable counts as unset, and a complete pair overrides the saved login. ${CLIENT_API_KEY_VARIABLE} is the server's ${SERVER_API_KEY_VARIABLE}; clients do not read .env, and the server does not read ${CLIENT_API_KEY_VARIABLE}. A key must be ${SENDABLE_API_KEY_RULE}.`,
+      `${TIMEOUT_VARIABLE} sets the request timeout in whole seconds, from ${TIMEOUT_MIN_SECONDS} to ${TIMEOUT_MAX_SECONDS}; the default is ${DEFAULT_TIMEOUT_MS / 1000} seconds. Exit 5 means the connection needs attention: the error names the address and where it came from, and the hint says what to change. Exit 6 means the server could not be reached and nothing was applied. Read help exit-codes before retrying a failed write.`,
     ],
     examples: [
       { argv: ['server', 'serve'] },
-      { argv: ['login'] },
-      { argv: ['help', 'exit-codes'] },
+      { argv: ['login', 'http://127.0.0.1:3000'] },
+      { argv: ['status', '--json'] },
     ],
   },
   {
@@ -185,7 +194,15 @@ export const renderRootHelp = (definitions: readonly CommandDefinition[]): strin
   [
     'raphael - an actionable second brain for agents',
     'Usage: raphael <command> [options]',
-    "Start here:\n  1. Put RAPHAEL_API_KEY=local-development-key-change-this in a private .env file in the current directory.\n  2. Run raphael server serve; keep that terminal open.\n  3. In another terminal run raphael login. Enter http://127.0.0.1:3000 and the same key.\n  4. Run raphael list /, then raphael create resource.note /work/first-note --body 'My first note'.\n  Already have a server? Start at step 3 with its address and key. See raphael help connecting.",
+    [
+      'Start here:',
+      `  1. Make a private key file: ${SERVER_KEY_FILE_RECIPE}`,
+      '  2. Run raphael server serve in that directory; keep that terminal open.',
+      '  3. In another terminal run raphael login http://127.0.0.1:3000 and enter the key from .env.',
+      '  4. Run raphael status, then raphael list /.',
+      "  5. Run raphael create resource.note /work/first-note --body 'My first note'.",
+      '  Already have a server? Start at step 3 with its address and key. See raphael help connecting.',
+    ].join('\n'),
     ...(['Read', 'Write', 'Setup'] as const).map(
       (group) =>
         `${group}:\n${definitions

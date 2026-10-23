@@ -260,24 +260,44 @@ describe('the environment pair', () => {
     );
   });
 
-  it('treats an empty value as present but unusable, never as absent', () => {
+  it('treats an empty value as unset, so half a pair is still half a pair', () => {
+    // `RAPHAEL_ENDPOINT= raphael …` unsets the variable in a shell; reading it as present would
+    // describe an endpoint that is not there.
     const environment = { ...home(), RAPHAEL_ENDPOINT: '', RAPHAEL_API_KEY: KEY };
     assert.equal(
       reason(() => resolveConnection(environment, 'linux')),
       'incomplete_environment',
     );
+    assert.equal(
+      reason(() =>
+        resolveConnection({ ...home(), RAPHAEL_ENDPOINT: '', RAPHAEL_API_KEY: '' }, 'linux'),
+      ),
+      'not_configured',
+      'both empty falls back to the saved login, which is absent here',
+    );
   });
 
-  it('takes any key the environment supplies, whatever its shape', () => {
-    // There is no shape rule: whatever started the server is the key. A key that cannot travel in
-    // an HTTP header will fail at the first request instead, which is the cost of not policing it.
-    for (const key of ['x', 'a key with spaces', '\u{1F511}', `${'k'.repeat(40)} `]) {
+  it('takes any sendable key the environment supplies, and refuses one no header can carry', () => {
+    // No length floor and no alphabet beyond what an HTTP header carries unchanged.
+    for (const key of ['x', 'k'.repeat(40), 'Zm9v+/=_-~']) {
       const resolved = resolveConnection(
         { ...home(), RAPHAEL_ENDPOINT: 'https://x.example.com', RAPHAEL_API_KEY: key },
         'linux',
       );
       assert.equal(resolved.source, 'environment');
+      assert.equal(resolved.configFile, null);
       assert.equal(resolved.config.apiKey, key);
+    }
+    for (const key of ['a key with spaces', '\u{1F511}', `${'k'.repeat(40)} `]) {
+      assert.equal(
+        reason(() =>
+          resolveConnection(
+            { ...home(), RAPHAEL_ENDPOINT: 'https://x.example.com', RAPHAEL_API_KEY: key },
+            'linux',
+          ),
+        ),
+        'api_key_unsendable',
+      );
     }
   });
 
@@ -286,7 +306,8 @@ describe('the environment pair', () => {
     const location = configLocation(environment, 'linux');
     saveConfig(location, CONFIG);
     const connection = resolveConnection(environment, 'linux');
-    assert.equal(connection.source, 'configuration');
+    assert.equal(connection.source, 'saved_login');
+    assert.equal(connection.configFile, location.file);
     assert.deepEqual(connection.config, CONFIG);
   });
 });

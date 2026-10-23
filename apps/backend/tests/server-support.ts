@@ -64,6 +64,7 @@ export const withServer = async <T>(
         serve({
           options: backendOptions,
           credential: ApiCredential.fromKey(key),
+          release: '0.0.0-test',
           logger,
         }),
         scope,

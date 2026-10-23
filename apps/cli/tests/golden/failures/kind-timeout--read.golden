@@ -2,5 +2,5 @@
 6
 ==== stdout ====
 ==== stderr ====
-The server at http://raphael.invalid did not answer in time.
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) did not answer in time.
 hint: Run the command again, or allow longer by setting RAPHAEL_TIMEOUT in seconds.

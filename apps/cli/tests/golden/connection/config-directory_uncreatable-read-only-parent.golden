@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-Cannot create "<tmp>/read-only/raphael": EACCES: permission denied, mkdir '<tmp>/read-only/raphael'
+Cannot create "<tmp>/read-only/raphael": permission denied.
 hint: Check that you can create that directory, or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY in the environment instead.

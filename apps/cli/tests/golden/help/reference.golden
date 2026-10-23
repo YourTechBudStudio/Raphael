@@ -6,10 +6,11 @@ raphael - an actionable second brain for agents
 Usage: raphael <command> [options]
 
 Start here:
-  1. Put RAPHAEL_API_KEY=local-development-key-change-this in a private .env file in the current directory.
-  2. Run raphael server serve; keep that terminal open.
-  3. In another terminal run raphael login. Enter http://127.0.0.1:3000 and the same key.
-  4. Run raphael list /, then raphael create resource.note /work/first-note --body 'My first note'.
+  1. Make a private key file: (umask 077 && touch .env && chmod 600 .env && echo "RAPHAEL_SERVER_API_KEY=$(openssl rand -hex 32)" > .env)
+  2. Run raphael server serve in that directory; keep that terminal open.
+  3. In another terminal run raphael login http://127.0.0.1:3000 and enter the key from .env.
+  4. Run raphael status, then raphael list /.
+  5. Run raphael create resource.note /work/first-note --body 'My first note'.
   Already have a server? Start at step 3 with its address and key. See raphael help connecting.
 
 Read:
@@ -30,10 +31,12 @@ Write:
   unfavorite         Remove an area or project from favorites.
 
 Setup:
+  status             Check the connection: which server, from where, and whether it accepts the key.
   login              Save a verified server address and API key on this machine.
+  logout             Remove the saved login from this machine.
   server             Manage the server on this machine.
   server serve       Run a Raphael server on this machine.
-  version            Print the installed Raphael version.
+  version            Print the installed Raphael release.
 
 What things are:
   An area holds ongoing work. A project holds work with an outcome. A note holds content.
@@ -537,15 +540,15 @@ See also: raphael help addressing; raphael help output
 
 ---
 
-Usage: raphael login [--json]
+Usage: raphael status [--json]
 
-Save a verified server address and API key on this machine.
+Check the connection: which server, from where, and whether it accepts the key.
 
-Prompts for the server address and an API key, verifies them, then saves them with owner-only permissions.
+Uses the connection every remote command uses: RAPHAEL_ENDPOINT and RAPHAEL_API_KEY when both are set, otherwise the saved login.
 
-The key is never taken as an argument. For scripts, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together instead of logging in.
+Asks the server once whether the key is accepted and which protocol and release it runs. Changes nothing.
 
-Prompts go to standard error. Cancelling exits 2 and saves nothing.
+Exit 0 means remote commands can work. Otherwise the exit code and error are the ones the next command would meet: 5 for no connection, a rejected key, a protocol mismatch or an address that is not a Raphael server, and 6 when the server could not be reached.
 
 Options:
       --json
@@ -554,14 +557,88 @@ Options:
       Show help.
 
 Examples:
-  raphael login
-  raphael login --json
-  raphael login --help
+  raphael status
+  raphael status --json
+    The check an agent runs first.
 
 Prints:
-  The verified address and saved configuration path; JSON also includes the protocol version.
+  The server address, its source, whether the key was accepted, and the protocol and release of each side. JSON has connection {endpoint, source, configFile}, protocolVersion, serverVersion (null when the server does not say) and cliVersion.
 
-Next: raphael list / -r
+Next: raphael list /
+
+See also: raphael help connecting
+
+---
+
+Usage: raphael login [<address>] [--api-key-stdin] [--json]
+
+Save a verified server address and API key on this machine.
+
+Verifies the address and key with the server, then saves them with owner-only permissions. Nothing is saved unless the server accepted them.
+
+The address is the server's root, such as http://127.0.0.1:3000. The key is the server's RAPHAEL_SERVER_API_KEY.
+
+Without an address argument, prompts for it. The key is read from a prompt that does not show it, or with --api-key-stdin from standard input. It is never taken as an argument.
+
+Saved to $XDG_CONFIG_HOME/raphael/config.json, or ~/.config/raphael/config.json. Logging in again replaces it and says so.
+
+RAPHAEL_ENDPOINT and RAPHAEL_API_KEY, when both are set, override the saved login; login warns when they are set.
+
+Prompts go to standard error. Cancelling exits 2 and saves nothing.
+
+Rules:
+  --api-key-stdin needs the address as an argument, and standard input must not be a terminal.
+  The key on standard input is everything up to the end, with one trailing newline removed. It must be visible ASCII characters with no spaces, on one line.
+
+Options:
+      --api-key-stdin
+      Read the key from standard input instead of prompting.
+      --json
+      Print the result as one JSON document.
+  -h, --help
+      Show help.
+
+Examples:
+  raphael login
+    Prompt for the address and the key.
+  raphael login http://127.0.0.1:3000
+    Prompt for the key only.
+  raphael login http://127.0.0.1:3000 --api-key-stdin --json
+    Read the key from a pipe, as in: printf '%s\n' "$KEY" | raphael login http://127.0.0.1:3000 --api-key-stdin
+
+Prints:
+  The verified address and the saved file. JSON has endpoint, protocolVersion, configFile and replaced (the previous address, or null).
+
+Next: raphael status
+
+See also: raphael help connecting
+
+---
+
+Usage: raphael logout [--json]
+
+Remove the saved login from this machine.
+
+Deletes the saved login file after checking that its directory is yours and private. Nothing on the server changes.
+
+With no saved login, says so and exits 0.
+
+RAPHAEL_ENDPOINT and RAPHAEL_API_KEY are not changed; when they are set, commands keep using them, and logout warns.
+
+Options:
+      --json
+      Print the result as one JSON document.
+  -h, --help
+      Show help.
+
+Examples:
+  raphael logout
+  raphael logout --json
+
+Prints:
+  What was removed, or that there was nothing to remove. JSON has removed, endpoint (null when unknown) and configFile.
+
+Next: raphael login
 
 See also: raphael help connecting
 
@@ -589,57 +666,77 @@ Next: raphael server serve --help
 
 ---
 
-Usage: raphael server serve [--config <path>]
+Usage: raphael server serve [--config <path>] [--host <address>] [--port <n>] [--database <path>]
 
 Run a Raphael server on this machine.
 
-The API key comes from RAPHAEL_API_KEY in the environment or a .env file in the current directory.
+The API key comes from RAPHAEL_SERVER_API_KEY, in the environment or in a .env file. With --config, .env is read from that file's directory; without it, from the current directory.
 
-Put the key in .env to keep it out of client environment variables. Clients use RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together.
+Make an owner-only key file with: (umask 077 && touch .env && chmod 600 .env && echo "RAPHAEL_SERVER_API_KEY=$(openssl rand -hex 32)" > .env). Clients log in with the same key. It must be visible ASCII characters with no spaces.
 
-Configuration comes from an optional YAML file. Relative database paths resolve against that file’s directory, or the current directory when no file is given.
+Clients read RAPHAEL_API_KEY, not RAPHAEL_SERVER_API_KEY, so starting a server never changes which server client commands use.
 
-This command never reads your saved login. Press Ctrl-C to stop the server.
+Without --config, listens on 127.0.0.1:3000 with the database at ./data/raphael.sqlite, relative to the current directory.
+
+The YAML file may set server.host, server.port and database.path; every key is optional and unknown keys are refused. A relative database.path resolves against the file's directory.
+
+Flags override the file. A relative --database resolves against the current directory.
+
+The port is bound before the database is opened, so a port in use creates nothing.
+
+This command never reads your saved login. It prints only to standard error and runs until Ctrl-C.
 
 Options:
       --config <path>
       Read configuration from this YAML file.
+      --host <address>
+      Address to listen on. 0.0.0.0 listens on every interface. Default: 127.0.0.1.
+      --port <n>
+      Port to listen on, from 1 to 65535. Default: 3000.
+      --database <path>
+      SQLite database file. Created if it does not exist. Default: ./data/raphael.sqlite.
   -h, --help
       Show help.
 
 Examples:
   raphael server serve
+  raphael server serve --port 3100
   raphael server serve --config ./raphael.yaml
-  raphael server serve --help
+  raphael server serve --host 0.0.0.0 --database ./data/raphael.sqlite
 
 Prints:
-  Operator messages on standard error. Standard output is empty.
+  The address, the database, where the key came from, and the login command, on standard error. Standard output is empty.
 
-Next: raphael login
+Next: raphael login http://127.0.0.1:3000
 
 See also: raphael help connecting
 
 ---
 
-Usage: raphael version
+Usage: raphael version [--json]
+       raphael --version [--json]
 
-Print the installed Raphael version.
+Print the installed Raphael release.
 
-The version comes from the release manifest.
+Works offline: reads no configuration and contacts no server.
+
+To compare with a server, run raphael status, which reports both sides.
 
 Options:
+      --json
+      Also print the protocol version, as one JSON document.
   -h, --help
       Show help.
 
 Examples:
   raphael version
+  raphael version --json
   raphael --version
-  raphael version --help
 
 Prints:
-  The bare version number.
+  The bare release number. JSON has version and protocolVersion.
 
-Next: raphael help connecting
+Next: raphael status
 
 ---
 
@@ -749,7 +846,7 @@ With --json, a successful command prints exactly one document: {"ok":true,"comma
 
 Paged results include page with skip, limit, hasMore and nextSkip. The result footer and runnable next-page command go to standard error, never standard output. Empty-result notes, warnings, hints, prompts and failures also go to standard error. Warnings appear in warnings[] on JSON successes. Closing a pipe early does not turn a completed command into a failure.
 
-JSON failures leave stdout empty and print exactly one document to stderr: {"ok":false,"error":{"code":...,"category":...,"message":...,"hint":...,"exitCode":...,"applied":...,"retryable":...}}. Optional fields include status, field, target, serverMessage and details. applied is false when no change was applied, true when known applied, and null when unknown. Retry decisions must consider exitCode and applied; do not blindly retry an uncertain write. The JSON envelope and exit-code meanings are stable within a major version.
+JSON failures leave stdout empty and print exactly one document to stderr: {"ok":false,"error":{"code":...,"category":...,"message":...,"hint":...,"exitCode":...,"applied":...,"retryable":...}}. Optional fields include status, field, target, serverMessage, details, and connection {endpoint, source, configFile} once a connection was resolved. applied is false when no change was applied, true when known applied, and null when unknown. Retry decisions must consider exitCode and applied; do not blindly retry an uncertain write. The JSON envelope and exit-code meanings are stable within a major version.
 
 For text write failures, the state line distinguishes Nothing was changed., The change was not sent., and The change may or may not have been applied. Set RAPHAEL_DEBUG=1 to include diagnostic stacks. Keep stdout for results when scripting.
 
@@ -768,18 +865,20 @@ Next: raphael help reference
 
 raphael help connecting - Start a local server and connect a client.
 
-To run a local server, put RAPHAEL_API_KEY=local-development-key-change-this in a .env file in the directory where you run raphael server serve. Keep that file private. The server reads the key from its environment or that .env file; an environment value wins. The default address is http://127.0.0.1:3000. An optional --config supplies a YAML configuration file; relative database paths resolve against that file's directory, or the current directory without one.
+Run a server: put RAPHAEL_SERVER_API_KEY=<key> in an owner-only .env file, made with (umask 077 && touch .env && chmod 600 .env && echo "RAPHAEL_SERVER_API_KEY=$(openssl rand -hex 32)" > .env), then run raphael server serve in that directory. With --config, the .env beside the configuration file is read instead. An environment value wins over .env, and an empty one is refused rather than ignored. The server listens on http://127.0.0.1:3000 unless --host, --port or the configuration file say otherwise, and prints the address and the login command when it starts. It never reads your saved login.
 
-In another terminal run raphael login, enter http://127.0.0.1:3000 and the same key. Login verifies the connection before saving the address and key with owner-only permissions. Server commands never read your saved login. Keeping the server key in .env avoids exporting only half of the client environment pair.
+Connect: in another terminal run raphael login http://127.0.0.1:3000 and enter the same key. Login verifies the address and key before saving them with owner-only permissions to $XDG_CONFIG_HOME/raphael/config.json, or ~/.config/raphael/config.json. Without a terminal, pipe the key: printf '%s\n' "$KEY" | raphael login <address> --api-key-stdin. Logging in again replaces the saved login; raphael logout removes it.
 
-For scripts set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together. Both or neither: a partial pair is refused. A complete environment pair overrides the saved login. Clients do not read .env. Saved login uses XDG_CONFIG_HOME/raphael when set to an absolute path, or ~/.config/raphael.
+Check: raphael status reports the server, where its address and key came from, and the protocol and release of each side. Run it first in a script; exit 0 means remote commands can work.
 
-RAPHAEL_TIMEOUT sets the request timeout in whole seconds, from 1 to 120; the default is 15 seconds. Exit 5 means configuration or authorization needs attention: check the address, key and chosen configuration source, then run raphael login. Exit 6 means the request was not applied and retrying may work. Read help exit-codes before retrying a failed write.
+Without a saved login, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together. Both or neither: a partial pair is refused, an empty variable counts as unset, and a complete pair overrides the saved login. RAPHAEL_API_KEY is the server's RAPHAEL_SERVER_API_KEY; clients do not read .env, and the server does not read RAPHAEL_API_KEY. A key must be visible ASCII characters with no spaces.
+
+RAPHAEL_TIMEOUT sets the request timeout in whole seconds, from 1 to 120; the default is 15 seconds. Exit 5 means the connection needs attention: the error names the address and where it came from, and the hint says what to change. Exit 6 means the server could not be reached and nothing was applied. Read help exit-codes before retrying a failed write.
 
 Examples:
   raphael server serve
-  raphael login
-  raphael help exit-codes
+  raphael login http://127.0.0.1:3000
+  raphael status --json
 
 Next: raphael help reference
 

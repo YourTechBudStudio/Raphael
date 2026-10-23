@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-That is not a valid URL. Include the scheme, as in "https://raphael.example.com".
+RAPHAEL_ENDPOINT is not a usable address: it has no scheme.
 hint: Give the full address, such as http://127.0.0.1:3000.

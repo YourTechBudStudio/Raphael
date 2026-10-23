@@ -149,7 +149,9 @@ describe('structured help examples', () => {
             }),
             environment: { HOME: directory, XDG_CONFIG_HOME: join(directory, 'config') },
             platform: 'linux',
-            transport: server.connect,
+            transport: () => server.connect().transport,
+            // The piped example's key, as `printf '%s\n' "$KEY"` would supply it.
+            stdin: { isTTY: false, read: async () => Buffer.from(`${STUB_KEY}\n`) },
           });
           assert.equal(code, 0, output);
           assert.equal(server.requests.length, 1);

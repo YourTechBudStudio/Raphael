@@ -131,6 +131,7 @@ export const withServer = async (body, options = {}) => {
             database: { databasePath },
           },
           credential: ApiCredential.fromKey(options.key ?? KEY),
+          release: '0.0.0-test',
           logger: silentLogger,
         }),
         scope,

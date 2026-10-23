@@ -7,8 +7,11 @@
  */
 
 import { createTransport, isTransportRejection, type Transport } from '@raphael/client';
+import { CONNECTION_ROUTES, PROTOCOL_VERSION } from '@raphael/contracts/connection';
 
+import { version } from '../../src/distribution.ts';
 import { run } from '../../src/main.ts';
+import type { Connected, ConnectionInfo } from '../../src/shared/command.ts';
 
 export interface Ran {
   readonly code: number | null;
@@ -22,13 +25,20 @@ export interface StubRequest {
 }
 
 export interface StubServer {
-  readonly connect: () => Transport;
+  readonly connect: () => Connected;
   /** Every request that reached the fake `fetch`, in order. */
   readonly requests: StubRequest[];
 }
 
 /** A stand-in endpoint. Nothing listens there; the fake `fetch` answers instead. */
 export const STUB_ENDPOINT = 'http://raphael.invalid';
+
+/** Where the stub's connection says it came from: a saved login at a fixed, obviously fake path. */
+export const STUB_CONNECTION: ConnectionInfo = {
+  endpoint: STUB_ENDPOINT,
+  source: 'saved_login',
+  configFile: '/stub/raphael/config.json',
+};
 
 /** Long enough to satisfy the key policy, and obviously not a real credential. */
 export const STUB_KEY = 'stub-key-0123456789abcdef0123456789';
@@ -42,9 +52,29 @@ export const STUB_KEY = 'stub-key-0123456789abcdef0123456789';
 export const stubServer = (
   respond: (request: StubRequest) => Response | Promise<never>,
   timeoutMs?: number,
+  options: {
+    /**
+     * Answer verification as a compatible Raphael server would, whatever `respond` does. On by
+     * default, so a stubbed failure reads as that failure from a real server rather than as a server
+     * that is not Raphael at all; a case about what verification finds turns it off.
+     */
+    readonly answerVerify?: boolean;
+  } = {},
 ): StubServer => {
   const requests: StubRequest[] = [];
-  const connect = (): Transport => {
+  const answer = (request: StubRequest): Response | Promise<never> =>
+    options.answerVerify !== false &&
+    new URL(request.url).pathname === CONNECTION_ROUTES.verify.path
+      ? new Response(
+          JSON.stringify({ protocolVersion: PROTOCOL_VERSION, raphaelVersion: version() }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        )
+      : respond(request);
+  const connect = (): Connected => ({ transport: transport(), connection: STUB_CONNECTION });
+  const transport = (): Transport => {
     const built = createTransport({
       endpoint: STUB_ENDPOINT,
       apiKey: STUB_KEY,
@@ -55,13 +85,13 @@ export const stubServer = (
         if (init.signal !== null && init.signal !== undefined) {
           const { signal } = init;
           return Promise.race([
-            Promise.resolve().then(() => respond(request)),
+            Promise.resolve().then(() => answer(request)),
             new Promise<never>((_, reject) => {
               signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
             }),
           ]);
         }
-        return respond(request);
+        return answer(request);
       },
     });
     if (isTransportRejection(built)) throw new Error(built.message);
@@ -78,12 +108,12 @@ export const errorResponse = (status: number, code: string, message: string): Re
   });
 
 /** A `connect` for cases that must never reach a server. */
-export const neverConnect = (): Transport => {
+export const neverConnect = (): Connected => {
   throw new Error('This case must not connect.');
 };
 
 export interface RunOptions {
-  readonly connect?: () => Transport;
+  readonly connect?: () => Connected;
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly platform?: string;
   /** Receives the handlers a command registers, so a case can deliver a signal to it. */

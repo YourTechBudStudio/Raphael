@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
-import { connect } from 'node:net';
+import { existsSync } from 'node:fs';
+import { connect, createServer as createNetServer, type AddressInfo } from 'node:net';
+import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { Effect, Exit, Scope } from 'effect';
@@ -7,7 +9,7 @@ import { Effect, Exit, Scope } from 'effect';
 import { ApiCredential } from '../src/infrastructure/config/credential.ts';
 import { openDatabase } from '../src/infrastructure/database/connection.ts';
 import { recordingLogger, silentLogger } from '../src/infrastructure/http/log.ts';
-import { serve } from '../src/server.ts';
+import { StartupFailure, serve } from '../src/server.ts';
 import { call, testKey, testOptions, withServer } from './server-support.ts';
 import { tempDatabase } from './support.ts';
 
@@ -31,6 +33,8 @@ describe('acquisition', () => {
       assert.ok(server.port > 0, 'an ephemeral port must be reported back');
       const response = await call(server, '/api/connection/verify', { body: '{}' });
       assert.equal(response.status, 200);
+      // The release comes from the caller, which knows what it is running.
+      assert.equal((response.json as { raphaelVersion?: string }).raphaelVersion, '0.0.0-test');
     });
   });
 
@@ -49,14 +53,15 @@ describe('acquisition', () => {
     const temp = tempDatabase('lifecycle-acquire-fail');
     const holder = openDatabase({ databasePath: temp.file });
     try {
-      // The listener cannot be acquired because the database is already owned by `holder`, so
-      // startup fails at the first resource.
+      // The port binds, then storage cannot be acquired because `holder` owns the database, so startup
+      // fails at the second resource and the first is released with the scope.
       const scope = Effect.runSync(Scope.make());
       const outcome = await Effect.runPromiseExit(
         Scope.extend(
           serve({
             options: testOptions(temp.file),
             credential: ApiCredential.fromKey(testKey()),
+            release: '0.0.0-test',
             logger: silentLogger,
           }),
           scope,
@@ -81,6 +86,7 @@ describe('acquisition', () => {
             // Port 1 is privileged and cannot be bound by an ordinary user.
             options: testOptions(temp.file, { port: 1 }),
             credential: ApiCredential.fromKey(testKey()),
+            release: '0.0.0-test',
             logger: silentLogger,
           }),
           scope,
@@ -99,6 +105,91 @@ describe('acquisition', () => {
   });
 });
 
+/** The failure a startup exit carries, when it is a `StartupFailure`. */
+const startupFailureOf = (outcome: Exit.Exit<unknown, unknown>): StartupFailure | undefined => {
+  if (outcome._tag !== 'Failure') return undefined;
+  const failure = outcome.cause._tag === 'Fail' ? outcome.cause.error : undefined;
+  return failure instanceof StartupFailure ? failure : undefined;
+};
+
+/** Whether anything accepts a connection on the port. */
+const listening = (port: number): Promise<boolean> =>
+  new Promise((resolve) => {
+    const socket = connect({ host: '127.0.0.1', port });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', () => resolve(false));
+  });
+
+describe('startup order', () => {
+  test('a port in use fails before any database file is created', async () => {
+    const temp = tempDatabase('lifecycle-port-in-use');
+    const blocker = createNetServer();
+    await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+    const { port } = blocker.address() as AddressInfo;
+    // A directory that does not exist yet: creating the database would create it.
+    const databasePath = join(temp.dir, 'not-yet', 'raphael.sqlite');
+    const scope = Effect.runSync(Scope.make());
+    try {
+      const outcome = await Effect.runPromiseExit(
+        Scope.extend(
+          serve({
+            options: { server: { host: '127.0.0.1', port }, database: { databasePath } },
+            credential: ApiCredential.fromKey(testKey()),
+            release: '0.0.0-test',
+            logger: silentLogger,
+          }),
+          scope,
+        ),
+      );
+      const failure = startupFailureOf(outcome);
+      assert.equal(failure?.stage, 'listen');
+      assert.equal(failure?.code, 'EADDRINUSE');
+      await Effect.runPromise(Scope.close(scope, Exit.void));
+      assert.equal(
+        existsSync(join(temp.dir, 'not-yet')),
+        false,
+        'no database directory may be left',
+      );
+    } finally {
+      await new Promise<void>((resolve) => blocker.close(() => resolve()));
+      temp.cleanup();
+    }
+  });
+
+  test('a database that cannot be opened closes the listener that was already bound', async () => {
+    const temp = tempDatabase('lifecycle-db-fail');
+    const holder = openDatabase({ databasePath: temp.file });
+    const scope = Effect.runSync(Scope.make());
+    try {
+      const outcome = await Effect.runPromiseExit(
+        Scope.extend(
+          serve({
+            options: testOptions(temp.file),
+            credential: ApiCredential.fromKey(testKey()),
+            release: '0.0.0-test',
+            logger: silentLogger,
+          }),
+          scope,
+        ),
+      );
+      const failure = startupFailureOf(outcome);
+      assert.equal(failure?.stage, 'database');
+      assert.equal(failure?.code, 'database_in_use');
+      assert.ok((failure?.port ?? 0) > 0, 'the bound port is reported');
+      // Bound until the scope closes, and nothing listening after.
+      assert.equal(await listening(failure?.port ?? 0), true);
+      await Effect.runPromise(Scope.close(scope, Exit.void));
+      assert.equal(await listening(failure?.port ?? 0), false, 'nothing may be left listening');
+    } finally {
+      holder.close();
+      temp.cleanup();
+    }
+  });
+});
+
 describe('release', () => {
   test('closing the scope stops the listener and releases the database', async () => {
     const temp = tempDatabase('lifecycle-release');
@@ -110,6 +201,7 @@ describe('release', () => {
           serve({
             options: testOptions(temp.file),
             credential: ApiCredential.fromKey(key),
+            release: '0.0.0-test',
             logger: silentLogger,
           }),
           scope,
@@ -143,6 +235,7 @@ describe('release', () => {
           serve({
             options: testOptions(temp.file),
             credential: ApiCredential.fromKey(key),
+            release: '0.0.0-test',
             logger,
             drainMs: 2_000,
           }),
@@ -221,6 +314,7 @@ describe('release', () => {
           serve({
             options: testOptions(temp.file),
             credential: ApiCredential.fromKey(key),
+            release: '0.0.0-test',
             logger: silentLogger,
           }),
           scope,

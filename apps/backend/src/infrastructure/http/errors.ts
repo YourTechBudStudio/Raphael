@@ -100,10 +100,13 @@ export const incompleteRequest = (): TransportError => ({
   details: { reason: 'incomplete_body' },
 });
 
-/** Shutdown has begun. Nothing was applied, and a retry is the right recovery. */
-export const notAdmitting = (): TransportError => ({
+/** Storage is still opening, or shutdown has begun. Nothing was applied, and a retry is the right recovery. */
+export const notAdmitting = (admission: 'starting' | 'stopping'): TransportError => ({
   code: 'storage_busy',
-  message: 'The server is shutting down. Try again.',
+  message:
+    admission === 'starting'
+      ? 'The server is starting. Try again.'
+      : 'The server is shutting down. Try again.',
 });
 
 export const internalError = (): TransportError => ({

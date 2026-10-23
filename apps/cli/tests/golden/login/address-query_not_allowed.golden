@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-The server address must not carry a query string. Nothing was saved.
-hint: Run "raphael login" again and give the full address, such as https://raphael.example.com.
+That address is not usable: it includes a query string. Nothing was saved.
+hint: Remove the part of the address after "?", then run "raphael login" again.

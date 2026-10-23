@@ -22,6 +22,7 @@ export {
   type ClientFailure,
   type ClientResult,
   type FailureDelivery,
+  type NetworkCause,
   type OperationEffect,
 } from './shared/failure.ts';
 export {

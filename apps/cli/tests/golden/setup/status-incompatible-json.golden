@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"status","error":{"code":"incompatible_protocol","category":"not_configured","message":"Cannot use the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json). This server speaks protocol 2099-01-01; Raphael here understands 2026-09-24. Update Raphael here. This raphael is <version> (protocol 2026-09-24); the server is 9.0.0.","hint":"Update raphael on this machine, then check with \"raphael status\".","exitCode":5,"applied":false,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

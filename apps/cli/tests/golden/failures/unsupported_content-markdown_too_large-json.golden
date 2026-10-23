@@ -2,4 +2,4 @@
 2
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"update","error":{"code":"unsupported_content","category":"usage","message":"The Markdown body is larger than 1000000 bytes.","hint":"Run \"raphael update --help\" for the body formats Raphael accepts.","exitCode":2,"status":422,"field":"--body","target":{"path":"/work/note"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for unsupported_content.","details":{"field":"body","reason":"markdown_too_large","limit":1000000,"location":[1,0]}}}
+{"ok":false,"command":"update","error":{"code":"unsupported_content","category":"usage","message":"The Markdown body is larger than 1000000 bytes.","hint":"Run \"raphael update --help\" for the body formats Raphael accepts.","exitCode":2,"status":422,"field":"--body","target":{"path":"/work/note"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for unsupported_content.","details":{"field":"body","reason":"markdown_too_large","limit":1000000,"location":[1,0]},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

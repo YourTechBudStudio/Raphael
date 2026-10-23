@@ -2,4 +2,4 @@
 4
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"get","error":{"code":"node_archived","category":"conflict","message":"/work is archived, so it cannot be changed.","hint":"Run \"raphael restore --id 7\" first to bring it back.","exitCode":4,"status":409,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for node_archived.","details":{"field":"target","reason":"direct","blocking":{"id":7,"type":"project"}}}}
+{"ok":false,"command":"get","error":{"code":"node_archived","category":"conflict","message":"/work is archived, so it cannot be changed.","hint":"Run \"raphael restore --id 7\" first to bring it back.","exitCode":4,"status":409,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for node_archived.","details":{"field":"target","reason":"direct","blocking":{"id":7,"type":"project"}},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

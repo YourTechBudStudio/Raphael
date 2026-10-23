@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-The server at http://raphael.invalid answered 403 without a Raphael error.
-hint: Check that the address points at a Raphael server.
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) answered 403 without a Raphael error.
+hint: Run "raphael login" with the server's root address, such as http://127.0.0.1:3000.

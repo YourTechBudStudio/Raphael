@@ -2,4 +2,4 @@
 3
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"create","error":{"code":"node_not_found","category":"not_found","message":"Nothing has id 9999, so it cannot be the parent.","hint":"Run \"raphael list / -r\" to find the right id.","exitCode":3,"status":404,"field":"--parent-id","target":{"id":9999},"applied":false,"retryable":false,"serverMessage":"The server's sentence for node_not_found.","details":{"field":"parent"}}}
+{"ok":false,"command":"create","error":{"code":"node_not_found","category":"not_found","message":"Nothing has id 9999, so it cannot be the parent.","hint":"Run \"raphael list / -r\" to find the right id.","exitCode":3,"status":404,"field":"--parent-id","target":{"id":9999},"applied":false,"retryable":false,"serverMessage":"The server's sentence for node_not_found.","details":{"field":"parent"},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

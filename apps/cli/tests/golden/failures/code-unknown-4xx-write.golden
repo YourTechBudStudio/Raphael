@@ -2,7 +2,7 @@
 1
 ==== stdout ====
 ==== stderr ====
-The server's sentence for quota_exhausted.
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) refused the request with a code this CLI does not know (quota_exhausted).
 Nothing was changed.
-hint: Check that this CLI and the server are the same version with "raphael version".
+hint: Check that this CLI and the server are the same version with "raphael status".
 code: quota_exhausted (429)

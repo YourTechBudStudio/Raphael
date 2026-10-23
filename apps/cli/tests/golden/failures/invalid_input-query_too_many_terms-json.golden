@@ -2,4 +2,4 @@
 2
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"search","error":{"code":"invalid_input","category":"usage","message":"-q has more than 32 terms.","hint":"Run \"raphael search --help\" for usage.","exitCode":2,"status":400,"field":"-q","applied":false,"retryable":false,"serverMessage":"The server's sentence for invalid_input.","details":{"field":"queries","reason":"query_too_many_terms","limit":32}}}
+{"ok":false,"command":"search","error":{"code":"invalid_input","category":"usage","message":"-q has more than 32 terms.","hint":"Run \"raphael search --help\" for usage.","exitCode":2,"status":400,"field":"-q","applied":false,"retryable":false,"serverMessage":"The server's sentence for invalid_input.","details":{"field":"queries","reason":"query_too_many_terms","limit":32},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

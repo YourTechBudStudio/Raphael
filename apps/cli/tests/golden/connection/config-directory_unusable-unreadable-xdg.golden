@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Cannot inspect "<tmp>/xdg/raphael", where your saved login is kept: permission denied.
+hint: Make that path a directory you own and can open, or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY instead.

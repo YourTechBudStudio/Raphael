@@ -2,4 +2,4 @@
 6
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"get","error":{"code":"storage_busy","category":"retryable","message":"The server is shutting down and did not take the request.","hint":"Run the command again once the server is back.","exitCode":6,"status":503,"target":{"path":"/work"},"applied":false,"retryable":true,"serverMessage":"The server's sentence for storage_busy."}}
+{"ok":false,"command":"get","error":{"code":"storage_busy","category":"retryable","message":"The server is starting or shutting down, and did not take the request.","hint":"Run the command again in a moment.","exitCode":6,"status":503,"target":{"path":"/work"},"applied":false,"retryable":true,"serverMessage":"The server's sentence for storage_busy.","connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

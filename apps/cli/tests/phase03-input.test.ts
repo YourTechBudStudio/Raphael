@@ -84,7 +84,11 @@ const CASES: ReadonlyArray<readonly [string, readonly string[]]> = [
 ];
 
 describe('phase 03 invalid-input fuzz pass', () => {
-  const refuse = async (argv: readonly string[], subject?: string): Promise<void> => {
+  const refuse = async (
+    argv: readonly string[],
+    subject?: string,
+    next: RegExp = /raphael .*--help|raphael help/u,
+  ): Promise<void> => {
     let connections = 0;
     const ran = await runCli(argv, {
       environment: ENVIRONMENT,
@@ -98,7 +102,7 @@ describe('phase 03 invalid-input fuzz pass', () => {
     assert.equal(ran.stdout, '');
     if (subject !== undefined)
       assert.ok(ran.stderr.toLowerCase().includes(subject.toLowerCase()), ran.stderr);
-    assert.match(ran.stderr, /raphael .*--help|raphael help/u);
+    assert.match(ran.stderr, next);
     assert.doesNotMatch(ran.stderr, /Expected |actual |ERR_PARSE_ARGS_|ECONNREFUSED/u);
   };
 
@@ -118,11 +122,16 @@ describe('phase 03 invalid-input fuzz pass', () => {
 
   for (const definition of COMMAND_DEFINITIONS) {
     it(`rejects invalid positionals on ${definition.name}`, async () => {
-      await refuse([
-        ...definition.name.split(' '),
-        'not-an-absolute-path',
-        ...(definition.name === 'search' ? ['-q', 'work'] : []),
-      ]);
+      // Login's one positional is an address; its refusal names the fix and the login to run again.
+      await refuse(
+        [
+          ...definition.name.split(' '),
+          'not-an-absolute-path',
+          ...(definition.name === 'search' ? ['-q', 'work'] : []),
+        ],
+        undefined,
+        definition.name === 'login' ? /run "raphael login" again/u : undefined,
+      );
     });
     it(`rejects unknown options on ${definition.name}`, async () => {
       await refuse([...definition.name.split(' '), '--definitely-invalid'], '--definitely-invalid');

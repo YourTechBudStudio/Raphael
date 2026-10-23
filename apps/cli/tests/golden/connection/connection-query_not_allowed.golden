@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-The server address must not carry a query string.
+RAPHAEL_ENDPOINT is not a usable address: it includes a query string.
 hint: Remove the part of the address after "?".

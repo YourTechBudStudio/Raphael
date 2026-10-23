@@ -1,0 +1,5 @@
+==== exit ====
+0
+==== stdout ====
+{"ok":true,"command":"logout","removed":true,"endpoint":"http://127.0.0.1:3000","configFile":"<tmp>/raphael/config.json"}
+==== stderr ====

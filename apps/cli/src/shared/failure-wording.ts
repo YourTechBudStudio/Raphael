@@ -36,9 +36,22 @@ import {
   type NodeType,
 } from '@raphael/contracts/nodes';
 
+import { version } from '../distribution.ts';
+import type { ConnectionInfo } from './command.ts';
 import type { ChangeState, RequestContext, Subject } from './failure.ts';
 import type { InterruptSignal } from './interrupt.ts';
 import { forTerminal } from './output.ts';
+import {
+  PROTOCOL_VERSION,
+  describeProtocolMismatch,
+  serverIsAhead,
+  type Diagnosis,
+} from './server-check.ts';
+import {
+  CLIENT_API_KEY_VARIABLE,
+  CLIENT_ENDPOINT_VARIABLE,
+  SERVER_API_KEY_VARIABLE,
+} from './variables.ts';
 
 export interface Worded {
   readonly code: string;
@@ -51,6 +64,10 @@ export interface Worded {
 export interface WordingInput {
   readonly context: RequestContext;
   readonly endpoint: string | undefined;
+  /** Where the endpoint came from; absent for an address typed at `login`. */
+  readonly connection?: ConnectionInfo | undefined;
+  /** What one verification said about an answer that could not be read. */
+  readonly diagnosis?: Diagnosis | undefined;
   readonly command: string | null;
   readonly state: ChangeState;
   readonly signal: InterruptSignal | undefined;
@@ -137,12 +154,8 @@ const helpHint = (command: string | null): string =>
     ? `${run('raphael help')} to see the commands.`
     : `${run(`raphael ${command} --help`)} for usage.`;
 
-/** The next step when the address may not be the Raphael server's own. */
-const addressHint =
-  'Check that the address points at the Raphael server itself, then run "raphael login" again.';
-
 const versionHint =
-  'Check that this CLI and the server are the same version with "raphael version".';
+  'Check that this CLI and the server are the same version with "raphael status".';
 
 /** The next step after a write whose outcome is unknown: look before sending it again. */
 const checkHint = (context: RequestContext): string => {
@@ -183,14 +196,101 @@ const flagFor = (context: RequestContext, field: string | undefined): string | u
 
 // ---- Client failures ---------------------------------------------------------------------------
 
-const where = (endpoint: string | undefined): string =>
-  endpoint === undefined ? 'the server' : `the server at ${forTerminal(endpoint)}`;
+/** Where an endpoint came from, as a parenthetical. */
+const sourceOf = (connection: ConnectionInfo | undefined): string =>
+  connection === undefined
+    ? ''
+    : connection.source === 'environment'
+      ? ` (from ${CLIENT_ENDPOINT_VARIABLE})`
+      : ` (from the saved login at ${forTerminal(connection.configFile ?? '')})`;
+
+/** The server, by address and source: "the server at http://… (from RAPHAEL_ENDPOINT)". */
+const where = (endpoint: string | undefined, connection?: ConnectionInfo): string =>
+  endpoint === undefined
+    ? 'the server'
+    : `the server at ${forTerminal(endpoint)}${sourceOf(connection)}`;
+
+/** How to point at a different address, for the source the address came from. */
+const fixAddress = (connection: ConnectionInfo | undefined): string =>
+  connection === undefined
+    ? 'give the right address'
+    : connection.source === 'environment'
+      ? `fix ${CLIENT_ENDPOINT_VARIABLE}`
+      : 'run "raphael login" with the right address';
+
+/** The next step when the address does not lead to the Raphael API itself. */
+const addressHint = (connection: ConnectionInfo | undefined): string =>
+  connection === undefined
+    ? 'Give the server\'s root address, such as http://127.0.0.1:3000, and run "raphael login" again.'
+    : connection.source === 'environment'
+      ? `Point ${CLIENT_ENDPOINT_VARIABLE} at the server's root address, such as http://127.0.0.1:3000.`
+      : 'Run "raphael login" with the server\'s root address, such as http://127.0.0.1:3000.';
+
+const NETWORK_CAUSES: Readonly<Record<NonNullable<ClientFailure['cause']>, string>> = {
+  refused: 'nothing is listening there (connection refused)',
+  dns: 'the host name could not be resolved',
+  tls: 'the secure connection could not be set up',
+  reset: 'the connection was reset',
+  unreachable: 'the network has no route to it',
+};
+
+/** The next step for a connection that was never opened, by what the system said. */
+const unreachableHint = (
+  cause: ClientFailure['cause'],
+  connection: ConnectionInfo | undefined,
+): string => {
+  switch (cause) {
+    case 'refused':
+      return `Start the server with "raphael server serve", or ${fixAddress(connection)}.`;
+    case 'dns':
+      return `Check the host name, or ${fixAddress(connection)}.`;
+    case 'tls':
+      return `If the server speaks http rather than https, ${fixAddress(connection)}.`;
+    default:
+      return `Check that the server is running, or ${fixAddress(connection)}.`;
+  }
+};
+
+/**
+ * What verification found, as the sentence that replaces "could not read": the shared mismatch
+ * sentence with this CLI's release added, or that the endpoint is not a Raphael server.
+ */
+const diagnosed = (
+  diagnosis: Diagnosis,
+  server: string,
+  connection: ConnectionInfo | undefined,
+): { readonly code: string; readonly message: string; readonly hint: string } =>
+  diagnosis.kind === 'incompatible'
+    ? {
+        code: 'incompatible_protocol',
+        message:
+          `Cannot use ${server}. ` +
+          `${forTerminal(describeProtocolMismatch(diagnosis.protocolVersion))} This raphael is ` +
+          `${version()} (protocol ${PROTOCOL_VERSION}); the server is ` +
+          `${diagnosis.raphaelVersion === undefined ? 'an unknown release' : forTerminal(diagnosis.raphaelVersion)}.`,
+        hint: serverIsAhead(diagnosis.protocolVersion)
+          ? 'Update raphael on this machine, then check with "raphael status".'
+          : 'Update the server, then check with "raphael status".',
+      }
+    : {
+        code: 'not_raphael',
+        message: `${capitalized(server)} does not look like a Raphael server.`,
+        hint: addressHint(connection),
+      };
 
 /** Word one client failure. */
 export const clientFailureWording = (failure: ClientFailure, input: WordingInput): Worded => {
-  const { context, endpoint, command, state } = input;
-  const server = where(endpoint);
+  const { context, endpoint, command, state, connection, diagnosis } = input;
+  const server = where(endpoint, connection);
   const afterWrite = state === 'unknown';
+  // Once verification has explained an unreadable answer, that explanation is the message.
+  const explained =
+    diagnosis === undefined
+      ? undefined
+      : (() => {
+          const found = diagnosed(diagnosis, server, connection);
+          return afterWrite ? { ...found, hint: checkHint(context) } : found;
+        })();
 
   switch (failure.kind) {
     case 'invalid_request': {
@@ -213,17 +313,26 @@ export const clientFailureWording = (failure: ClientFailure, input: WordingInput
         hint: afterWrite ? checkHint(context) : 'Run the command again.',
       };
     case 'network':
-      return failure.delivery === 'not_sent'
-        ? {
-            code: 'unreachable',
-            message: `Could not connect to ${server}.`,
-            hint: 'Check that the server is running and the address is right, then run the command again.',
-          }
-        : {
-            code: 'connection_lost',
-            message: `The connection to ${server} was lost before an answer arrived.`,
-            hint: afterWrite ? checkHint(context) : 'Run the command again.',
-          };
+      if (failure.delivery === 'not_sent') {
+        const cause = failure.cause === undefined ? undefined : NETWORK_CAUSES[failure.cause];
+        return {
+          code: 'unreachable',
+          message: `Could not connect to ${server}${cause === undefined ? '' : `: ${cause}`}.`,
+          hint: unreachableHint(failure.cause, connection),
+        };
+      }
+      if (failure.cause === 'tls') {
+        return {
+          code: 'connection_lost',
+          message: `The secure connection to ${server} failed.`,
+          hint: afterWrite ? checkHint(context) : unreachableHint('tls', connection),
+        };
+      }
+      return {
+        code: 'connection_lost',
+        message: `The connection to ${server} was lost before an answer arrived.`,
+        hint: afterWrite ? checkHint(context) : 'Run the command again.',
+      };
     case 'timeout':
       return {
         code: 'timeout',
@@ -233,10 +342,11 @@ export const clientFailureWording = (failure: ClientFailure, input: WordingInput
           : 'Run the command again, or allow longer by setting RAPHAEL_TIMEOUT in seconds.',
       };
     case 'bad_response':
+      if (explained !== undefined) return explained;
       if (failure.code === 'incompatible_protocol') {
         return {
           code: 'incompatible_protocol',
-          message: forTerminal(failure.message),
+          message: `Cannot use ${server}. ${forTerminal(failure.message)}`,
           hint: 'Update this CLI or the server so their versions match.',
         };
       }
@@ -247,31 +357,58 @@ export const clientFailureWording = (failure: ClientFailure, input: WordingInput
           hint: afterWrite ? checkHint(context) : versionHint,
         };
       }
+      if (
+        failure.status !== undefined &&
+        failure.status >= 300 &&
+        failure.status < 400 &&
+        failure.status !== 304
+      ) {
+        const target =
+          failure.redirectOrigin === undefined ? '' : ` to ${forTerminal(failure.redirectOrigin)}`;
+        return {
+          code: 'bad_response',
+          message: `${capitalized(server)} redirected the request${target}.`,
+          hint:
+            failure.redirectOrigin === undefined
+              ? addressHint(connection)
+              : `Use the final address, such as ${forTerminal(failure.redirectOrigin)}: ${fixAddress(connection)}.`,
+        };
+      }
       return {
         code: 'bad_response',
-        message:
-          failure.status !== undefined &&
-          failure.status >= 300 &&
-          failure.status < 400 &&
-          failure.status !== 304
-            ? `${capitalized(server)} redirected the request.`
-            : `${capitalized(server)} answered ${failure.status ?? 'without a status'}, which this command does not expect.`,
-        hint: addressHint,
+        message: `${capitalized(server)} answered ${failure.status ?? 'without a status'}, which this command does not expect.`,
+        hint: addressHint(connection),
       };
     case 'http':
+      // A route the server lacks already says the address is wrong; verification refines that only
+      // when it found a protocol mismatch.
+      if (
+        explained !== undefined &&
+        (failure.code === undefined ||
+          (diagnosis?.kind === 'incompatible' &&
+            (failure.code === 'route_not_found' ||
+              failure.code === 'method_not_allowed' ||
+              !(API_ERROR_CODES as readonly string[]).includes(failure.code))))
+      ) {
+        return explained;
+      }
       if (failure.code === undefined) {
         return {
           code: 'not_raphael',
           message: `${capitalized(server)} answered ${failure.status ?? ''} without a Raphael error.`,
           hint: afterWrite
             ? checkHint(context)
-            : 'Check that the address points at a Raphael server.',
+            : (failure.status ?? 0) >= 500
+              ? // A gateway's page in front of the server, most often: the address may well be right.
+                "Run the command again; if it keeps failing, check the server's log and any proxy in front of it."
+              : addressHint(connection),
         };
       }
       if (!(API_ERROR_CODES as readonly string[]).includes(failure.code)) {
+        // A newer server's code: name it, and keep the server's sentence for JSON only.
         return {
           code: failure.code,
-          message: forTerminal(failure.message),
+          message: `${capitalized(server)} refused the request with a code this CLI does not know (${forTerminal(failure.code)}).`,
           hint: afterWrite ? checkHint(context) : versionHint,
         };
       }
@@ -480,24 +617,44 @@ const SERVER_CODES: Readonly<Record<ApiErrorCode, CodeWording>> = {
     hint: versionHint,
   }),
 
-  unauthorized: (_details, { endpoint }) => ({
-    code: 'unauthorized',
-    message: `${capitalized(where(endpoint))} refused the API key.`,
-    hint: 'Run "raphael login" with the server\'s key, or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY.',
-  }),
+  unauthorized: (_details, { endpoint, connection }) => {
+    const server = endpoint === undefined ? 'the server' : `the server at ${forTerminal(endpoint)}`;
+    if (connection === undefined) {
+      return {
+        code: 'unauthorized',
+        message: `${capitalized(server)} rejected the API key.`,
+        hint:
+          `Run "raphael login${endpoint === undefined ? '' : ` ${forTerminal(endpoint)}`}" again with the ` +
+          `server's ${SERVER_API_KEY_VARIABLE}, from its environment or .env. It is compared exactly.`,
+      };
+    }
+    return connection.source === 'environment'
+      ? {
+          code: 'unauthorized',
+          message: `${capitalized(server)} rejected the API key from ${CLIENT_API_KEY_VARIABLE}.`,
+          hint:
+            `Set ${CLIENT_API_KEY_VARIABLE} to the server's ${SERVER_API_KEY_VARIABLE}, or unset ` +
+            `${CLIENT_ENDPOINT_VARIABLE} and ${CLIENT_API_KEY_VARIABLE} to use your saved login.`,
+        }
+      : {
+          code: 'unauthorized',
+          message: `${capitalized(server)} rejected the API key saved in ${forTerminal(connection.configFile ?? '')}.`,
+          hint: `Run "raphael login" with the server's ${SERVER_API_KEY_VARIABLE} to replace it.`,
+        };
+  },
 
-  route_not_found: (_details, { endpoint }) => notRaphael(endpoint),
-  method_not_allowed: (_details, { endpoint }) => notRaphael(endpoint),
+  route_not_found: (_details, input) => notRaphael(input),
+  method_not_allowed: (_details, input) => notRaphael(input),
 
   storage_busy: () => ({
     code: 'storage_busy',
-    message: 'The server is shutting down and did not take the request.',
-    hint: 'Run the command again once the server is back.',
+    message: 'The server is starting or shutting down, and did not take the request.',
+    hint: 'Run the command again in a moment.',
   }),
 
-  internal_error: (_details, { endpoint, context, state }) => ({
+  internal_error: (_details, { endpoint, connection, context, state }) => ({
     code: 'internal_error',
-    message: `${capitalized(where(endpoint))} could not complete the request.`,
+    message: `${capitalized(where(endpoint, connection))} could not complete the request.`,
     hint:
       state === 'unknown'
         ? checkHint(context)
@@ -543,10 +700,10 @@ const notFound = (subject: Subject): Worded => ({
   target: subject,
 });
 
-const notRaphael = (endpoint: string | undefined): Worded => ({
+const notRaphael = ({ endpoint, connection }: WordingInput): Worded => ({
   code: 'not_raphael',
-  message: `${capitalized(where(endpoint))} does not offer this command; it may not be a Raphael server, or not this version.`,
-  hint: addressHint,
+  message: `${capitalized(where(endpoint, connection))} has no Raphael API at that address.`,
+  hint: addressHint(connection),
 });
 
 const holderOf = (details: ApiErrorDetails): string | undefined =>

@@ -1,33 +1,48 @@
 ==== exit ====
 0
 ==== stdout ====
-Usage: raphael server serve [--config <path>]
+Usage: raphael server serve [--config <path>] [--host <address>] [--port <n>] [--database <path>]
 
 Run a Raphael server on this machine.
 
-The API key comes from RAPHAEL_API_KEY in the environment or a .env file in the current directory.
+The API key comes from RAPHAEL_SERVER_API_KEY, in the environment or in a .env file. With --config, .env is read from that file's directory; without it, from the current directory.
 
-Put the key in .env to keep it out of client environment variables. Clients use RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together.
+Make an owner-only key file with: (umask 077 && touch .env && chmod 600 .env && echo "RAPHAEL_SERVER_API_KEY=$(openssl rand -hex 32)" > .env). Clients log in with the same key. It must be visible ASCII characters with no spaces.
 
-Configuration comes from an optional YAML file. Relative database paths resolve against that file’s directory, or the current directory when no file is given.
+Clients read RAPHAEL_API_KEY, not RAPHAEL_SERVER_API_KEY, so starting a server never changes which server client commands use.
 
-This command never reads your saved login. Press Ctrl-C to stop the server.
+Without --config, listens on 127.0.0.1:3000 with the database at ./data/raphael.sqlite, relative to the current directory.
+
+The YAML file may set server.host, server.port and database.path; every key is optional and unknown keys are refused. A relative database.path resolves against the file's directory.
+
+Flags override the file. A relative --database resolves against the current directory.
+
+The port is bound before the database is opened, so a port in use creates nothing.
+
+This command never reads your saved login. It prints only to standard error and runs until Ctrl-C.
 
 Options:
       --config <path>
       Read configuration from this YAML file.
+      --host <address>
+      Address to listen on. 0.0.0.0 listens on every interface. Default: 127.0.0.1.
+      --port <n>
+      Port to listen on, from 1 to 65535. Default: 3000.
+      --database <path>
+      SQLite database file. Created if it does not exist. Default: ./data/raphael.sqlite.
   -h, --help
       Show help.
 
 Examples:
   raphael server serve
+  raphael server serve --port 3100
   raphael server serve --config ./raphael.yaml
-  raphael server serve --help
+  raphael server serve --host 0.0.0.0 --database ./data/raphael.sqlite
 
 Prints:
-  Operator messages on standard error. Standard output is empty.
+  The address, the database, where the key came from, and the login command, on standard error. Standard output is empty.
 
-Next: raphael login
+Next: raphael login http://127.0.0.1:3000
 
 See also: raphael help connecting
 ==== stderr ====

@@ -55,6 +55,7 @@ const COMPOSITION = [
 
 /** Phase 05: starting a server, and working out what to start it with. */
 const RUNTIME = [
+  'API_KEY_VARIABLE',
   'ApiCredential',
   'CONFIG_DEFAULTS',
   'ConfigurationError',
@@ -63,6 +64,7 @@ const RUNTIME = [
   'resolveOptions',
   'serve',
   'silentLogger',
+  'StartupFailure',
   'validateOptions',
 ] as const;
 

@@ -2,6 +2,6 @@
 7
 ==== stdout ====
 ==== stderr ====
-The connection to the server at http://raphael.invalid was lost before an answer arrived.
+The connection to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) was lost before an answer arrived.
 The change may or may not have been applied.
 hint: Run "raphael get /work" to check whether it was applied before sending it again.

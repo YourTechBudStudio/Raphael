@@ -2,7 +2,7 @@
 5
 ==== stdout ====
 ==== stderr ====
-The server at http://raphael.invalid does not offer this command; it may not be a Raphael server, or not this version.
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) has no Raphael API at that address.
 Nothing was changed.
-hint: Check that the address points at the Raphael server itself, then run "raphael login" again.
+hint: Run "raphael login" with the server's root address, such as http://127.0.0.1:3000.
 code: route_not_found (404)

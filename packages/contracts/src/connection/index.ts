@@ -48,6 +48,14 @@ export type ReceivedProtocolVersion = Schema.Schema.Type<typeof ReceivedProtocol
 export const PROTOCOL_VERSION: DateProtocolVersion = '2026-09-24';
 
 /**
+ * Whether a release a server reported is one a client can print: 1 to 64 visible ASCII characters.
+ * The response decoder accepts any string, because a release is informational and an odd one must
+ * not make verification fail; a client that shows it applies this and treats anything else as
+ * unknown.
+ */
+export const isPrintableRelease = (value: string): boolean => /^[\x21-\x7E]{1,64}$/u.test(value);
+
+/**
  * Verification carries no input, and any property is refused.
  *
  * The explicit check is doing more work than it looks like. An empty struct on its own accepts almost
@@ -75,7 +83,15 @@ export const VerifyRequest = Schema.Struct({}).pipe(
  * a fraction, or nothing at all - is a decoding failure, because there is no honest sentence to say
  * about it.
  */
-export const VerifyResponse = Schema.Struct({ protocolVersion: ReceivedProtocolVersion });
+export const VerifyResponse = Schema.Struct({
+  protocolVersion: ReceivedProtocolVersion,
+  /**
+   * The server's release, such as `0.0.1`. Optional because the protocol rule above makes optional
+   * additions compatible: a server that predates it still verifies, and a client says it does not know.
+   * A release is informational. Compatibility is decided by the protocol version alone.
+   */
+  raphaelVersion: Schema.optional(Schema.String),
+});
 
 export type VerifyRequest = Schema.Schema.Type<typeof VerifyRequest>;
 export type VerifyResponse = Schema.Schema.Type<typeof VerifyResponse>;
@@ -119,23 +135,33 @@ export const AUTHORIZATION_SCHEME = 'Bearer';
 export const authorizationHeaderValue = (key: string): string => `${AUTHORIZATION_SCHEME} ${key}`;
 
 /**
- * The only thing Raphael asks of an API key: that there is one.
+ * Whether there is a key at all. This is the transport's own minimum, which mobile relies on.
  *
- * There is deliberately no length floor, no character set, and no shape. The key is whatever the
- * owner configured their server with, and this is a single-owner product where that is their call.
- *
- * One consequence is worth knowing rather than guarding against. An HTTP header carries bytes, and
- * Node exposes a received header value as Latin-1 text, so a key containing any character above
- * U+007F is hashed from its UTF-8 string, arrives as those bytes reinterpreted one per character,
- * and never matches - measured in phase 05 for both an emoji key and a Latin-1-range key. A
- * well-behaved client cannot even send one: `fetch` refuses a header value outside Latin-1
- * outright. Such a key will fail as a transport error at the first request rather than as a setup
- * refusal. That is the accepted cost of not policing the value.
+ * There is no length floor and no shape: the key is whatever the owner configured their server with.
+ * What a key can be sent as is a separate question, answered by `isSendableApiKey` below, which the
+ * server and the CLI apply so that an unsendable key is refused where it was configured rather than
+ * surfacing as a transport error at the first request.
  *
  * Empty is not a restriction on what a key may be - it is the absence of one, which every caller
  * has to handle anyway.
  */
 export const hasApiKey = (key: string): boolean => key !== '';
+
+/**
+ * Whether a key can travel in the authorization header and arrive as typed: one or more visible ASCII
+ * characters, with no whitespace anywhere.
+ *
+ * This is about sending, not strength. `fetch` strips leading and trailing whitespace from a header
+ * value and refuses characters outside Latin-1, and a Latin-1 character above U+007F arrives as a
+ * different string than the one hashed, so any key outside this set would let a server start and then
+ * refuse every client. The server applies it at startup and the CLI applies it before sending, so the
+ * failure names where the key came from instead of surfacing as a network error. Generated keys
+ * (`openssl rand -hex 32`) are always inside it.
+ */
+export const isSendableApiKey = (key: string): boolean => /^[\x21-\x7E]+$/u.test(key);
+
+/** `isSendableApiKey` in words, for help and refusals. */
+export const SENDABLE_API_KEY_RULE = 'visible ASCII characters with no spaces';
 
 export const CONNECTION_ROUTES = {
   verify: { method: 'POST', path: '/api/connection/verify' },

@@ -1,8 +1,8 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
-import { hasApiKey } from '@raphael/contracts/connection';
+import { SENDABLE_API_KEY_RULE, hasApiKey, isSendableApiKey } from '@raphael/contracts/connection';
 
-import { API_KEY_VARIABLE, type EnvironmentSnapshot } from './env.ts';
+import { API_KEY_VARIABLE, CLIENT_API_KEY_VARIABLE, type EnvironmentSnapshot } from './env.ts';
 import { configurationFailure } from './errors.ts';
 
 /**
@@ -33,10 +33,10 @@ export class ApiCredential {
   /**
    * The only way to build a credential.
    *
-   * A key's content is the owner's business: there is no length floor and no character set. The one
-   * thing this refuses is not having a key, and it refuses it here rather than trusting the loader,
-   * because `serve` is an importable boundary and a programmatic caller could otherwise start a
-   * server with no credential at all.
+   * A key's strength is the owner's business: there is no length floor. What this refuses is a key
+   * that is missing or that no client could send (`isSendableApiKey`), and it refuses here rather than
+   * trusting the loader, because `serve` is an importable boundary and a programmatic caller could
+   * otherwise start a server that every client fails against.
    *
    * `source` names where the key came from, so an operator reading the failure knows what to edit.
    */
@@ -45,6 +45,14 @@ export class ApiCredential {
       configurationFailure(
         'api_key_missing',
         `${source} is empty. Raphael will not start without one.`,
+        { hint: GENERATE_HINT },
+      );
+    }
+    if (!isSendableApiKey(key)) {
+      configurationFailure(
+        'api_key_unsendable',
+        `${source} has characters no client could send: a key must be ${SENDABLE_API_KEY_RULE}.`,
+        { hint: GENERATE_HINT },
       );
     }
     return new ApiCredential(digestOf(key));
@@ -69,6 +77,28 @@ export class ApiCredential {
   }
 }
 
+const GENERATE_HINT = `Generate a key with "openssl rand -hex 32" and set ${API_KEY_VARIABLE} to it.`;
+
+/** Where the key was looked for, as a sentence fragment. */
+const lookedIn = (environment: EnvironmentSnapshot): string =>
+  environment.envFile === undefined
+    ? 'the environment'
+    : `the environment or in "${environment.envFile}"`;
+
+/** The next step when the key is missing: the clients' variable was set instead, or make one. */
+const missingKeyHint = (environment: EnvironmentSnapshot): string => {
+  const clientSource = environment.sourceOf(CLIENT_API_KEY_VARIABLE);
+  if (clientSource === 'process') {
+    return `${CLIENT_API_KEY_VARIABLE} is set in the environment, but only clients read it. Set ${API_KEY_VARIABLE} instead.`;
+  }
+  if (clientSource === 'file') {
+    return `"${environment.envFile}" sets ${CLIENT_API_KEY_VARIABLE}, which only clients read. Rename it to ${API_KEY_VARIABLE}.`;
+  }
+  return environment.envFile === undefined
+    ? GENERATE_HINT
+    : `Generate a key with "openssl rand -hex 32" and add ${API_KEY_VARIABLE}=<key> to "${environment.envFile}".`;
+};
+
 /**
  * Resolve the credential from the environment, or fail closed.
  *
@@ -76,18 +106,35 @@ export class ApiCredential {
  * and leaves nothing to unwind. There is no fallback, no generated default, and no development
  * exception: a server with no configured key does not start. The policy itself lives in `fromKey`,
  * which is the only constructor, so it holds for a programmatic caller too.
+ *
+ * An empty value in the process environment wins over `.env` (see `env.ts`), and the message says so,
+ * because "not set" would point the operator at the file they already filled in.
  */
 export const resolveCredential = (environment: EnvironmentSnapshot): ApiCredential => {
   const key = environment.get(API_KEY_VARIABLE);
+  const source = environment.sourceOf(API_KEY_VARIABLE);
 
-  if (key === undefined || key.length === 0) {
+  if (key === undefined) {
     configurationFailure(
       'api_key_missing',
-      `${API_KEY_VARIABLE} is not set. Raphael's API requires a key and will not start without one. ` +
-        `Generate one with "openssl rand -hex 32" and set ${API_KEY_VARIABLE} in your environment or in a .env file ` +
-        `beside the command you run.`,
+      `${API_KEY_VARIABLE} is not set in ${lookedIn(environment)}. Raphael will not start without a key.`,
+      { hint: missingKeyHint(environment) },
+    );
+  }
+  if (key === '' && source === 'process') {
+    configurationFailure(
+      'api_key_missing',
+      environment.envFile === undefined
+        ? `${API_KEY_VARIABLE} is set to an empty value in the environment.`
+        : `${API_KEY_VARIABLE} is set to an empty value in the environment, which overrides "${environment.envFile}".`,
+      { hint: `Unset it with "unset ${API_KEY_VARIABLE}", or give it a value.` },
     );
   }
 
-  return ApiCredential.fromKey(key, API_KEY_VARIABLE);
+  return ApiCredential.fromKey(
+    key,
+    source === 'file'
+      ? `${API_KEY_VARIABLE} in "${environment.envFile}"`
+      : `${API_KEY_VARIABLE} in the environment`,
+  );
 };

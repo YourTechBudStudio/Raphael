@@ -1,0 +1,7 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) redirected the request to https://other.example:8443.
+Nothing was changed.
+hint: Use the final address, such as https://other.example:8443: run "raphael login" with the right address.

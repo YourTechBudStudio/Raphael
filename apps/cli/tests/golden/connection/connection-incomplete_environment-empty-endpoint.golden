@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+RAPHAEL_API_KEY is set but RAPHAEL_ENDPOINT is not. Raphael will not combine a key from the environment with a saved address.
+hint: Set RAPHAEL_ENDPOINT too, or unset RAPHAEL_API_KEY to use your saved login. A server reads its own key from RAPHAEL_SERVER_API_KEY.

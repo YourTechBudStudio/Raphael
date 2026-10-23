@@ -15,7 +15,9 @@ import {
   type ApiErrorDetails,
   type InvalidInputReason,
 } from '@raphael/contracts';
+import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
 
+import { version } from '../src/distribution.ts';
 import { runCli, stubServer, type Ran, type StubRequest } from './support/cli.ts';
 import { assertErrorDocument, caseName, goldenSurface } from './support/golden.ts';
 
@@ -470,6 +472,23 @@ const KINDS: Record<
         },
       },
     ],
+    [
+      // https to an http server: the handshake fails, and retrying will not change that.
+      'tls-wrong-version',
+      {
+        respond: () => {
+          throw socketError('ERR_SSL_WRONG_VERSION_NUMBER');
+        },
+      },
+    ],
+    [
+      'dns',
+      {
+        respond: () => {
+          throw socketError('ENOTFOUND');
+        },
+      },
+    ],
   ],
   // The shortest timeout the client accepts, and an answer that never comes.
   timeout: [['', { respond: () => new Promise<never>(() => {}), timeoutMs: 1_000 }]],
@@ -585,5 +604,116 @@ describe('server details are data, not terminal control', () => {
     )(['create', 'area', '/work/x', '--title', 'X']);
     assert.equal(holder.stderr.includes('\u001b'), false);
     assert.equal(/^FAKE/m.test(holder.stderr), false);
+  });
+});
+
+/**
+ * What one verification adds to an answer that could not be read. The stub answers verification as
+ * the case says, so each sentence is pinned with the server's own answer behind it.
+ */
+const verifyAnswer = (body: unknown, status = 200): Response =>
+  new Response(typeof body === 'string' ? body : JSON.stringify(body), {
+    status,
+    headers: { 'content-type': typeof body === 'string' ? 'text/html' : 'application/json' },
+  });
+
+const isVerify = (request: StubRequest): boolean => request.url.endsWith('/api/connection/verify');
+
+const unreadable = (): Response =>
+  new Response('not json', { status: 200, headers: { 'content-type': 'text/plain' } });
+
+const DIAGNOSES: ReadonlyArray<
+  readonly [
+    name: string,
+    respond: (request: StubRequest) => Response,
+    expectExit: { readonly read: number; readonly write: number },
+  ]
+> = [
+  [
+    'server-ahead',
+    (request) =>
+      isVerify(request)
+        ? verifyAnswer({ protocolVersion: '2099-01-01', raphaelVersion: '9.0.0' })
+        : unreadable(),
+    { read: 5, write: 7 },
+  ],
+  [
+    'server-behind',
+    (request) =>
+      isVerify(request) ? verifyAnswer({ protocolVersion: '2026-01-01' }) : unreadable(),
+    { read: 5, write: 7 },
+  ],
+  ['not-raphael', () => verifyAnswer('<html>Not Implemented</html>', 501), { read: 5, write: 7 }],
+  [
+    // A route the server does not have, from a server that is Raphael at that address: the base path.
+    'route-not-found-compatible',
+    (request) =>
+      isVerify(request)
+        ? verifyAnswer({ protocolVersion: PROTOCOL_VERSION })
+        : errorWith('route_not_found')(),
+    { read: 5, write: 5 },
+  ],
+  [
+    // A gateway outage in front of a real server says nothing about what is behind it.
+    'proxy-502',
+    () => verifyAnswer('<html>Bad gateway</html>', 502),
+    { read: 1, write: 7 },
+  ],
+  [
+    // A whole host that redirects (http to https): the redirect's target is the useful fact.
+    'redirect-everything',
+    () =>
+      new Response(null, {
+        status: 302,
+        headers: { location: 'https://other.example:8443/api/connection/verify?x=1' },
+      }),
+    { read: 5, write: 5 },
+  ],
+  [
+    // A code this release does not know, from a server that is ahead.
+    'unknown-code-newer-server',
+    (request) =>
+      isVerify(request)
+        ? verifyAnswer({ protocolVersion: '2099-01-01', raphaelVersion: '9.0.0' })
+        : verifyAnswer({ error: { code: 'weird_code', message: 'x' } }, 400),
+    { read: 5, write: 5 },
+  ],
+  [
+    // The verification itself was refused: it explains nothing, and the original failure stands.
+    'verification-refused',
+    (request) => (isVerify(request) ? errorWith('unauthorized')() : unreadable()),
+    { read: 1, write: 7 },
+  ],
+];
+
+describe('verification after an answer that could not be read', () => {
+  for (const [name, respond, expectExit] of DIAGNOSES) {
+    for (const [label, argv] of COMMANDS) {
+      it(`renders ${name} on a ${label}`, async () => {
+        const server = stubServer(respond, undefined, { answerVerify: false });
+        // The mismatch sentence names this release; a release bump should not rewrite the goldens.
+        const release = new RegExp(
+          `(?<![\\d.])${version().replaceAll('.', '\\.')}(?![\\d.])`,
+          'gu',
+        );
+        const text = await pinBoth(caseName('diagnosis', name, label), argv, async (args) => {
+          const ran = await runCli(args, { connect: server.connect });
+          return { ...ran, stderr: ran.stderr.replace(release, '<version>') };
+        });
+        assert.equal(text.code, label === 'read' ? expectExit.read : expectExit.write);
+        // Asked once per run, never more: two runs (text and JSON), each one operation then one check.
+        const verifications = server.requests.filter(isVerify).length;
+        assert.equal(verifications, 2);
+      });
+    }
+  }
+
+  it('never verifies again for a command that verifies the server itself', async () => {
+    const server = stubServer(() => verifyAnswer('<html>Not Implemented</html>', 501), undefined, {
+      answerVerify: false,
+    });
+    const ran = await runCli(['status'], { connect: server.connect });
+    assert.equal(ran.code, 5);
+    assert.equal(server.requests.length, 1);
   });
 });

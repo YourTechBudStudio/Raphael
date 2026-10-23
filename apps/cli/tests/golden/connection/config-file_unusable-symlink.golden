@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+"<tmp>/raphael/config.json" is a symbolic link. Raphael will not read a credential through a link.
+hint: Replace the link with a regular file by running "raphael login" again, or keep the key out of your dotfiles and set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY instead.

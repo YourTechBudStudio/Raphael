@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 XDG_CONFIG_HOME must be an absolute path. Got "relative/config". Raphael will not resolve a credential location against the current directory.
-hint: Set XDG_CONFIG_HOME to an absolute path, or unset it.
+hint: Set XDG_CONFIG_HOME to an absolute path, such as $HOME/.config, or unset it to use ~/.config.

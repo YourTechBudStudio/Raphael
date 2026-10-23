@@ -2,4 +2,4 @@
 1
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"get","error":{"code":"not_raphael","category":"failed","message":"The server at http://raphael.invalid answered 502 without a Raphael error.","hint":"Check that the address points at a Raphael server.","exitCode":1,"status":502,"target":{"path":"/work"},"applied":false,"retryable":false}}
+{"ok":false,"command":"get","error":{"code":"not_raphael","category":"failed","message":"The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) answered 502 without a Raphael error.","hint":"Run the command again; if it keeps failing, check the server's log and any proxy in front of it.","exitCode":1,"status":502,"target":{"path":"/work"},"applied":false,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

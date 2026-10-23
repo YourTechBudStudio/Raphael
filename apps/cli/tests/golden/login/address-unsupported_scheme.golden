@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-Raphael speaks HTTP and HTTPS. "ftp" is not supported. Nothing was saved.
-hint: Run "raphael login" again and give the full address, such as https://raphael.example.com.
+"ftp://127.0.0.1" is not a usable address: Raphael speaks only http and https. Nothing was saved.
+hint: Give an address that starts with http:// or https://, then run "raphael login" again.

@@ -1,0 +1,7 @@
+==== exit ====
+0
+==== stdout ====
+Connected to <endpoint>.
+Saved to <tmp>/raphael/config.json.
+==== stderr ====
+warning: RAPHAEL_ENDPOINT and RAPHAEL_API_KEY are set in this environment and take precedence over the saved login. Unset them to use <endpoint>.

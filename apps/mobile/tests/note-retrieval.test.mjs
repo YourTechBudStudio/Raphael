@@ -62,6 +62,7 @@ const withServer = async (body) => {
             },
           },
           credential: ApiCredential.fromKey(KEY),
+          release: '0.0.0-test',
           logger: silentLogger,
         }),
         scope,

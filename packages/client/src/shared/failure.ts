@@ -27,7 +27,20 @@ export interface ClientFailure {
   readonly details?: ApiErrorDetails;
   /** Safe structured problems for a locally refused request. */
   readonly issues?: readonly InvalidRequestIssue[];
+  /** For a `network` failure, what the system reported, when it said. */
+  readonly cause?: NetworkCause;
+  /**
+   * For a redirect, the origin it pointed at - scheme, host and port only, never a path or query,
+   * which can carry anything the redirecting server chose.
+   */
+  readonly redirectOrigin?: string;
 }
+
+/**
+ * Why a connection failed, as far as the system said: nothing listened, the name did not resolve, the
+ * TLS handshake failed, the connection was reset, or the network had no route.
+ */
+export type NetworkCause = 'refused' | 'dns' | 'tls' | 'reset' | 'unreachable';
 
 /** A capability declares this for each operation; the transport cannot tell from the route. */
 export type OperationEffect = 'read' | 'write';

@@ -2,6 +2,6 @@
 6
 ==== stdout ====
 ==== stderr ====
-The server is shutting down and did not take the request.
-hint: Run the command again once the server is back.
+The server is starting or shutting down, and did not take the request.
+hint: Run the command again in a moment.
 code: storage_busy (503)

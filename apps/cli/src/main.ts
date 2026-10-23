@@ -17,6 +17,7 @@ import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 import type { Transport } from '@raphael/client';
+import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
 
 import { version } from './distribution.ts';
 import {
@@ -29,7 +30,9 @@ import {
 import { ConfigError } from './modules/connection/config.ts';
 import { connectionFailure } from './modules/connection/failures.ts';
 import { LOGIN_DEFINITION, runLogin, terminalPrompter } from './modules/connection/login.ts';
+import { LOGOUT_DEFINITION, runLogout } from './modules/connection/logout.ts';
 import { ConnectionError, connectFrom } from './modules/connection/remote.ts';
+import { STATUS_DEFINITION, runStatus } from './modules/connection/status.ts';
 import { HELP_DEFINITION, VERSION_DEFINITION } from './modules/help.ts';
 import {
   ARCHIVE_DEFINITION,
@@ -69,6 +72,7 @@ import {
 import {
   optionsFor,
   type CommandDefinition,
+  type Connected,
   newSession,
   observedTransport,
   type CommandContext,
@@ -77,7 +81,7 @@ import {
 } from './shared/command.ts';
 import { EXIT_FAILURE, EXIT_OK, EXIT_UNKNOWN, EXIT_USAGE, type ExitCode } from './shared/exit.ts';
 import { renderFailure, type Failure } from './shared/failure.ts';
-import { Interrupted, exitCodeForSignal, watchSignals } from './shared/interrupt.ts';
+import { Cancelled, Interrupted, exitCodeForSignal, watchSignals } from './shared/interrupt.ts';
 import {
   forTerminal,
   guardedProcessStreams,
@@ -85,6 +89,7 @@ import {
   writeLine,
   type Streams,
 } from './shared/output.ts';
+import { renderSuccess } from './shared/success.ts';
 
 export interface CliEnvironment {
   readonly streams: Streams;
@@ -94,11 +99,11 @@ export interface CliEnvironment {
   readonly onSignal: (signal: 'SIGINT' | 'SIGTERM', handler: () => void) => () => void;
   readonly exit: (code: ExitCode) => void;
   /**
-   * The transport for a remote command. Called only once a command has parsed its arguments, so
-   * argument errors are reported before a credential is read. The entry point resolves the saved
-   * login or the environment pair; tests supply a stub.
+   * The transport for a remote command, with what it is connected to. Called only once a command has
+   * parsed its arguments, so argument errors are reported before a credential is read. The entry
+   * point resolves the saved login or the environment pair; tests supply a stub.
    */
-  readonly connect: () => Transport;
+  readonly connect: () => Connected;
 }
 
 /**
@@ -118,11 +123,13 @@ const REMOTE_COMMANDS = {
   path: { run: runPath, definition: PATH_DEFINITION },
   list: { run: runList, definition: LIST_DEFINITION },
   search: { run: runSearch, definition: SEARCH_DEFINITION },
+  status: { run: runStatus, definition: STATUS_DEFINITION },
 } as const;
 
 export const COMMAND_DEFINITIONS: readonly CommandDefinition[] = [
   ...Object.values(REMOTE_COMMANDS).map(({ definition }) => definition),
   LOGIN_DEFINITION,
+  LOGOUT_DEFINITION,
   SERVER_DEFINITION,
   SERVE_DEFINITION,
   VERSION_DEFINITION,
@@ -189,12 +196,21 @@ export const invocationOf = (argv: readonly string[]): Invocation => {
       json: asksForJson(rest, optionsFor(entry.definition)),
       writes: entry.definition.writes,
       fieldFlags: entry.definition.fieldFlags,
+      verifiesItself: entry.definition.verifiesServer === true,
     };
   }
   if (command === 'login') {
-    return { command, json: asksForJson(rest, optionsFor(LOGIN_DEFINITION)), writes: false };
+    return {
+      command,
+      json: asksForJson(rest, optionsFor(LOGIN_DEFINITION)),
+      writes: false,
+      verifiesItself: true,
+    };
   }
-  // These take no --json yet; one given anyway is still answered with a JSON error document.
+  if (command === 'logout') {
+    return { command, json: asksForJson(rest, optionsFor(LOGOUT_DEFINITION)), writes: false };
+  }
+  // Server commands take no --json; one given anyway is still answered with a JSON error document.
   if (command === 'server') {
     const [subcommand] = rest;
     return {
@@ -204,7 +220,11 @@ export const invocationOf = (argv: readonly string[]): Invocation => {
     };
   }
   if (command === 'version' || command === '--version') {
-    return { command: 'version', json: mentionsJson(rest), writes: false };
+    return {
+      command: 'version',
+      json: asksForJson(rest, optionsFor(VERSION_DEFINITION)),
+      writes: false,
+    };
   }
   return { command: null, json: mentionsJson(argv), writes: false };
 };
@@ -248,8 +268,11 @@ export const dispatch = async (
     const parsed = parseArgs(rest, optionsFor(VERSION_DEFINITION), 'version');
     if (parsed.positionals.length > 0)
       throw new UsageError('version takes no positional arguments.', 'version');
-    writeLine(streams.out, version());
-    return EXIT_OK;
+    // Offline: the release and the protocol this copy speaks, with no configuration read.
+    return renderSuccess(streams, session, {
+      data: { version: version(), protocolVersion: PROTOCOL_VERSION },
+      lines: () => [version()],
+    });
   }
 
   if (command === 'server') {
@@ -271,6 +294,7 @@ export const dispatch = async (
       onSignal: cli.onSignal,
       exit: cli.exit,
       cwd: cli.cwd,
+      debug: cli.environment.RAPHAEL_DEBUG === '1',
     });
   }
 
@@ -283,6 +307,19 @@ export const dispatch = async (
       streams,
       session,
       prompter: terminalPrompter,
+      environment: cli.environment,
+      platform: cli.platform,
+    });
+  }
+
+  if (command === 'logout') {
+    if (wantsHelp(rest, optionsFor(LOGOUT_DEFINITION))) {
+      writeLine(streams.out, helpPage('logout'));
+      return EXIT_OK;
+    }
+    return runLogout(rest, {
+      streams,
+      session,
       environment: cli.environment,
       platform: cli.platform,
     });
@@ -308,7 +345,13 @@ export const dispatch = async (
       streams,
       session,
       signal: interruption.signal,
-      transport: () => (transport ??= observedTransport(session, cli.connect())),
+      transport: () => {
+        if (transport === undefined) {
+          const connected = cli.connect();
+          transport = observedTransport(session, connected.transport, connected.connection);
+        }
+        return transport;
+      },
     };
     return entry.run(rest, context);
   }
@@ -331,6 +374,16 @@ export const failureFromThrown = (error: unknown, session: Session): Failure => 
         ? 'Check whether the change was applied before sending it again.'
         : 'Run the command again.',
       state: sent ? 'unknown' : 'not_sent',
+      fromServer: false,
+    };
+  }
+  if (error instanceof Cancelled) {
+    return {
+      code: 'cancelled',
+      exitCode: EXIT_USAGE,
+      message: forTerminal(error.message),
+      hint: `Run "${error.retry}" again when you are ready.`,
+      state: 'not_sent',
       fromServer: false,
     };
   }

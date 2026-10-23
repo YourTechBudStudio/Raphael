@@ -296,7 +296,9 @@ const refusesToStart = async (
     throw new PackagingError(`${label} kept running when it should have refused to start.`);
   }
   expect(ran.code !== 0 && ran.code !== null, describeRun(`${label} (expected a failure)`, ran));
-  expect(/The server could not start\./.test(ran.stderr), describeRun(label, ran));
+  // One failure in the shared layout - a sentence and a hint - and no stack without RAPHAEL_DEBUG.
+  expect(/^hint: /m.test(ran.stderr), describeRun(`${label} (expected a hint)`, ran));
+  expect(!/^\s+at /m.test(ran.stderr), describeRun(`${label} (expected no stack)`, ran));
   return ran;
 };
 
@@ -444,7 +446,7 @@ const verifyInstalled = async (
     const serve = (root: string, configPath: string): Server =>
       processes.start(bin(root), ['server', 'serve', '--config', configPath], elsewhere, {
         ...environment,
-        RAPHAEL_API_KEY: KEY,
+        RAPHAEL_SERVER_API_KEY: KEY,
       });
 
     log('starting the installed server');

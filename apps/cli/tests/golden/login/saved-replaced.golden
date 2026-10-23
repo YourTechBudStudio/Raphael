@@ -1,0 +1,7 @@
+==== exit ====
+0
+==== stdout ====
+Connected to <endpoint>.
+Saved to <tmp>/raphael/config.json.
+==== stderr ====
+Replaced the saved login for http://old.example.com.

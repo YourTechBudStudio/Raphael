@@ -2,4 +2,4 @@
 2
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"archive","error":{"code":"payload_too_large","category":"usage","message":"The request is larger than the 1048576 bytes the server accepts.","hint":"Send a smaller body, for example by splitting the note in two.","exitCode":2,"status":413,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for payload_too_large.","details":{"limit":1048576}}}
+{"ok":false,"command":"archive","error":{"code":"payload_too_large","category":"usage","message":"The request is larger than the 1048576 bytes the server accepts.","hint":"Send a smaller body, for example by splitting the note in two.","exitCode":2,"status":413,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for payload_too_large.","details":{"limit":1048576},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

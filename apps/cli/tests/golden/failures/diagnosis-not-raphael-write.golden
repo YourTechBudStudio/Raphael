@@ -1,0 +1,7 @@
+==== exit ====
+7
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) does not look like a Raphael server.
+The change may or may not have been applied.
+hint: Run "raphael get /work" to check whether it was applied before sending it again.

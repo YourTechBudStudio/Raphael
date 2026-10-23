@@ -2,4 +2,4 @@
 4
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"update","error":{"code":"node_archived","category":"conflict","message":"--id 8 is inside archived area 3, so it cannot be changed.","hint":"Run \"raphael restore --id 3\" first to bring it back.","exitCode":4,"status":409,"target":{"id":8},"applied":false,"retryable":false,"serverMessage":"The server's sentence for node_archived.","details":{"field":"target","reason":"inherited","blocking":{"id":3,"type":"area"}}}}
+{"ok":false,"command":"update","error":{"code":"node_archived","category":"conflict","message":"--id 8 is inside archived area 3, so it cannot be changed.","hint":"Run \"raphael restore --id 3\" first to bring it back.","exitCode":4,"status":409,"target":{"id":8},"applied":false,"retryable":false,"serverMessage":"The server's sentence for node_archived.","details":{"field":"target","reason":"inherited","blocking":{"id":3,"type":"area"}},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-The server at http://raphael.invalid answered 304, which this command does not expect.
-hint: Check that the address points at the Raphael server itself, then run "raphael login" again.
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) answered 304, which this command does not expect.
+hint: Run "raphael login" with the server's root address, such as http://127.0.0.1:3000.

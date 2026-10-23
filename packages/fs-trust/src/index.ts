@@ -134,3 +134,34 @@ export const inspectProtectedFile = (path: string, info: Stats): PathRejection |
 
 /** Permission bits as an operator would type them into `chmod`. */
 export const formatMode = (mode: number): string => (mode & 0o7777).toString(8);
+
+/**
+ * A system error as plain words, without the syscall, the path, or Node's own phrasing, which the
+ * sentence around it already supplies in the reader's terms. Shared so the server's startup messages
+ * and the CLI's saved-login messages describe the same condition the same way.
+ */
+export const describeSystemError = (cause: unknown): string => {
+  const code = (cause as { code?: unknown } | null)?.code;
+  switch (code) {
+    case 'EACCES':
+    case 'EPERM':
+      return 'permission denied';
+    case 'ENOENT':
+      return 'it does not exist';
+    case 'ENOTDIR':
+      return 'part of the path is not a directory';
+    case 'EISDIR':
+      return 'it is a directory';
+    case 'ELOOP':
+      return 'it has too many symbolic links';
+    case 'EROFS':
+      return 'the file system is read-only';
+    case 'ENOSPC':
+      return 'there is no space left on the device';
+    case 'EMFILE':
+    case 'ENFILE':
+      return 'too many files are open';
+    default:
+      return typeof code === 'string' ? `the system reported ${code}` : 'the system refused';
+  }
+};

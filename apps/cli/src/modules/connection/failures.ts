@@ -8,27 +8,29 @@
 import { EXIT_NOT_CONFIGURED } from '../../shared/exit.ts';
 import type { Failure } from '../../shared/failure.ts';
 import { forTerminal } from '../../shared/output.ts';
-import { ConfigError, type ConfigReason } from './config.ts';
 import {
-  API_KEY_VARIABLE,
-  ConnectionError,
-  ENDPOINT_VARIABLE,
-  type ConnectionReason,
-} from './remote.ts';
+  CLIENT_API_KEY_VARIABLE as API_KEY_VARIABLE,
+  CLIENT_ENDPOINT_VARIABLE as ENDPOINT_VARIABLE,
+  SERVER_API_KEY_VARIABLE,
+  TIMEOUT_VARIABLE,
+} from '../../shared/variables.ts';
+import { ConfigError, type ConfigReason } from './config.ts';
+import { ConnectionError, type ConnectionReason } from './remote.ts';
 
 const USE_ENVIRONMENT = `set ${ENDPOINT_VARIABLE} and ${API_KEY_VARIABLE} in the environment`;
 
 const CONFIG_HINTS: Readonly<Record<ConfigReason, string>> = {
   unsupported_platform: `On this platform, ${USE_ENVIRONMENT} instead.`,
   no_home: `Set HOME, or ${USE_ENVIRONMENT}.`,
-  relative_xdg_config_home: 'Set XDG_CONFIG_HOME to an absolute path, or unset it.',
+  relative_xdg_config_home:
+    'Set XDG_CONFIG_HOME to an absolute path, such as $HOME/.config, or unset it to use ~/.config.',
   directory_unusable: `Fix the permissions on that directory, or ${USE_ENVIRONMENT} instead.`,
   directory_uncreatable: `Check that you can create that directory, or ${USE_ENVIRONMENT} instead.`,
   file_unusable: 'Run "raphael login" again to replace it.',
   file_unreadable: 'Check the permissions on that file, or run "raphael login" again.',
   file_too_large: 'Run "raphael login" again to replace it.',
   file_malformed: 'Run "raphael login" again to replace it.',
-  not_configured: `Run "raphael login", or ${USE_ENVIRONMENT}.`,
+  not_configured: `Run "raphael login", or set ${ENDPOINT_VARIABLE} and ${API_KEY_VARIABLE}.`,
   write_failed: 'Check that you can write to that directory, then run "raphael login" again.',
   durability_unconfirmed: 'If this machine loses power soon, run "raphael login" again.',
 };
@@ -41,7 +43,8 @@ const CONNECTION_HINTS: Readonly<Record<ConnectionReason, string>> = {
   query_not_allowed: 'Remove the part of the address after "?".',
   fragment_not_allowed: 'Remove the part of the address after "#".',
   api_key_missing: `Run "raphael login" again, or ${USE_ENVIRONMENT}.`,
-  timeout_out_of_range: 'Set RAPHAEL_TIMEOUT to a whole number of seconds, or unset it.',
+  api_key_unsendable: `Use the server's ${SERVER_API_KEY_VARIABLE} exactly.`,
+  timeout_out_of_range: `Set ${TIMEOUT_VARIABLE} to a whole number of seconds, or unset it.`,
 };
 
 /** A connection that could not be set up: nothing was sent. */

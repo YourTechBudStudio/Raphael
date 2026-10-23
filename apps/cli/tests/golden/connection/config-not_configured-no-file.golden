@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-No saved login was found.
-hint: Run "raphael login", or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY in the environment.
+Not connected to a Raphael server: there is no saved login at <tmp>/raphael/config.json, and RAPHAEL_ENDPOINT and RAPHAEL_API_KEY are not set.
+hint: Run "raphael login", or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY.

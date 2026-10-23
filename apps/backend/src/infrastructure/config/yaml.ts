@@ -1,5 +1,6 @@
 import { readFileSync, statSync } from 'node:fs';
 
+import { describeSystemError } from '@raphael/fs-trust';
 import * as YAML from 'yaml';
 
 import { configurationFailure } from './errors.ts';
@@ -70,6 +71,15 @@ const rejectUnsafeConstructs = (document: YAML.Document.Parsed, path: string): v
 };
 
 /**
+ * The parser's sentence without the source excerpt it appends: the position is already in the
+ * sentence, and the excerpt is several lines of the operator's own file with a caret under it.
+ */
+const firstLine = (message: string): string => {
+  const line = (message.split('\n')[0] ?? '').trim().replace(/:$/u, '');
+  return /[.!?]$/u.test(line) ? line : `${line}.`;
+};
+
+/**
  * Read and parse a configuration file into plain data.
  *
  * An explicitly supplied path that cannot be read is a failure, never a silent fallback to defaults:
@@ -82,14 +92,14 @@ export const readConfigFile = (path: string): unknown => {
   } catch (cause) {
     configurationFailure(
       'config_unreadable',
-      `cannot read the configuration file "${path}": ${(cause as Error).message}`,
+      `Cannot read the configuration file "${path}": ${describeSystemError(cause)}.`,
       { cause },
     );
   }
   if (size > CONFIG_MAX_BYTES) {
     configurationFailure(
       'config_too_large',
-      `the configuration file "${path}" is ${size} bytes, larger than the ${CONFIG_MAX_BYTES}-byte limit. ` +
+      `The configuration file "${path}" is ${size} bytes, larger than the ${CONFIG_MAX_BYTES}-byte limit. ` +
         `A Raphael configuration file is a short document; check that the path points at the right file.`,
     );
   }
@@ -100,7 +110,7 @@ export const readConfigFile = (path: string): unknown => {
   } catch (cause) {
     configurationFailure(
       'config_unreadable',
-      `cannot read the configuration file "${path}": ${(cause as Error).message}`,
+      `Cannot read the configuration file "${path}": ${describeSystemError(cause)}.`,
       { cause },
     );
   }
@@ -111,7 +121,7 @@ export const readConfigFile = (path: string): unknown => {
   } catch (cause) {
     configurationFailure(
       'config_malformed',
-      `"${path}" is not valid YAML: ${(cause as Error).message}`,
+      `"${path}" is not valid YAML: ${firstLine((cause as Error).message)}`,
       { cause },
     );
   }
@@ -141,7 +151,7 @@ export const readConfigFile = (path: string): unknown => {
         : first.code === 'TAG_RESOLVE_FAILED'
           ? 'config_unsafe'
           : 'config_malformed';
-    configurationFailure(reason, `"${path}" could not be read: ${first.message}`);
+    configurationFailure(reason, `"${path}" could not be read: ${firstLine(first.message)}`);
   }
 
   rejectUnsafeConstructs(document, path);

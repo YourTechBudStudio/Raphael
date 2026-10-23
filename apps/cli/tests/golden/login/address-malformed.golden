@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-That is not a valid URL. Include the scheme, as in "https://raphael.example.com". Nothing was saved.
-hint: Run "raphael login" again and give the full address, such as https://raphael.example.com.
+"not an address" is not a usable address: it has no scheme. Nothing was saved.
+hint: Give the full address, such as http://127.0.0.1:3000, then run "raphael login" again.

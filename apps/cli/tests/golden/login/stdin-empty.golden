@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Standard input had no key. Nothing was saved.
+hint: Give the server's RAPHAEL_SERVER_API_KEY, then run "raphael login" again.

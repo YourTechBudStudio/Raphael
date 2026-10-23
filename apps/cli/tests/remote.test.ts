@@ -19,6 +19,7 @@ import {
 } from '@raphael/contracts/nodes';
 import { Effect, Either, Exit, Scope } from 'effect';
 
+import { version } from '../src/distribution.ts';
 import { invocationOf, run as runCli } from '../src/main.ts';
 import { runLogin } from '../src/modules/connection/login.ts';
 import { connectFrom } from '../src/modules/connection/remote.ts';
@@ -71,6 +72,7 @@ before(async () => {
           },
         },
         credential: ApiCredential.fromKey(KEY),
+        release: version(),
         logger: silentLogger,
       }),
       scope,
@@ -678,7 +680,10 @@ describe('connecting', () => {
       env: { RAPHAEL_ENDPOINT: 'http://user:secret@raphael.example.com' },
     });
     assert.equal(ran.code, 5);
-    assert.match(ran.stderr, /username and password/);
+    assert.match(
+      ran.stderr,
+      /^RAPHAEL_ENDPOINT is not a usable address: it includes a user name or password/m,
+    );
     assert.equal(ran.stderr.includes('secret'), false);
   });
 
@@ -690,9 +695,9 @@ describe('connecting', () => {
     assert.equal(ran.code, 6);
     assert.equal(
       ran.stderr,
-      'Could not connect to the server at http://127.0.0.1:1.\n' +
+      'Could not connect to the server at http://127.0.0.1:1 (from RAPHAEL_ENDPOINT).\n' +
         'The change was not sent.\n' +
-        'hint: Check that the server is running and the address is right, then run the command again.\n',
+        'hint: Check that the server is running, or fix RAPHAEL_ENDPOINT.\n',
     );
   });
 

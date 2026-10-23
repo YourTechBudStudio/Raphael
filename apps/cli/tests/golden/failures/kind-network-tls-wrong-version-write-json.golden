@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"archive","error":{"code":"unreachable","category":"not_configured","message":"Could not connect to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json): the secure connection could not be set up.","hint":"If the server speaks http rather than https, run \"raphael login\" with the right address.","exitCode":5,"target":{"path":"/work"},"applied":false,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

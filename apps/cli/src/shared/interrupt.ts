@@ -68,3 +68,17 @@ export const throwIfInterrupted = (interruption: Pick<Interruption, 'received'>)
   const signal = interruption.received();
   if (signal !== undefined) throw new Interrupted(signal);
 };
+
+/**
+ * Someone stopped answering a prompt: Ctrl-C or Ctrl-D at a question. Nothing was sent. Not a usage
+ * mistake, so it carries no pointer to help; it exits 2 like any request that was not applied.
+ */
+export class Cancelled extends Error {
+  /** The command to run to start again. */
+  readonly retry: string;
+  constructor(message: string, retry: string) {
+    super(message);
+    this.name = 'Cancelled';
+    this.retry = retry;
+  }
+}

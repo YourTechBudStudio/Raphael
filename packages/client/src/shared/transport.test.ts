@@ -213,6 +213,8 @@ describe('redirects', () => {
     if (!result.ok) {
       assert.equal(result.failure.kind, 'bad_response');
       assert.equal(result.failure.status, 302);
+      // A relative target resolves against the request; only its origin is kept.
+      assert.equal(result.failure.redirectOrigin, new URL(endpoint).origin);
     }
     // The decisive assertion: the server was contacted exactly once. A followed redirect would be two.
     assert.equal(hops, 1);
@@ -226,8 +228,21 @@ describe('redirects', () => {
       });
       const result = await call(transportFor(endpoint));
       assert.equal(result.ok, false, `${status}`);
-      if (!result.ok) assert.equal(result.failure.kind, 'bad_response', `${status}`);
+      if (!result.ok) {
+        assert.equal(result.failure.kind, 'bad_response', `${status}`);
+        // The path and anything after it are the redirecting server's text and are never kept.
+        assert.equal(result.failure.redirectOrigin, 'https://attacker.example.com', `${status}`);
+      }
     }
+  });
+
+  it('keeps no origin for a target that is not an HTTP address', async () => {
+    const endpoint = await listen((_request, response) => {
+      response.writeHead(302, { location: 'javascript:alert(1)' });
+      response.end();
+    });
+    const result = await call(transportFor(endpoint));
+    assert.equal(!result.ok && result.failure.redirectOrigin, undefined);
   });
 });
 
@@ -405,6 +420,10 @@ describe('an unreachable server', () => {
         ),
         'not_sent',
       ],
+      [
+        withCause(Object.assign(new Error('tls'), { code: 'ERR_SSL_WRONG_VERSION_NUMBER' })),
+        'not_sent',
+      ],
       [withCause(Object.assign(new Error('reset'), { code: 'ECONNRESET' })), 'unknown'],
       [withCause(Object.assign(new Error('socket'), { code: 'UND_ERR_SOCKET' })), 'unknown'],
       [withCause(new Error('no code')), 'unknown'],
@@ -419,6 +438,61 @@ describe('an unreachable server', () => {
       assert.equal(result.ok, false);
       if (!result.ok) assert.equal(result.failure.delivery, delivery, String(error));
     }
+  });
+
+  it('names the cause the system reported, and nothing when it did not say', async () => {
+    const failing = (error: unknown) =>
+      transportFor('http://127.0.0.1:9', {
+        fetch: (async () => {
+          throw error;
+        }) as FetchLike,
+      });
+    const withCode = (code: string) =>
+      new TypeError('fetch failed', { cause: Object.assign(new Error(code), { code }) });
+    const cases: ReadonlyArray<readonly [unknown, string | undefined]> = [
+      [withCode('ECONNREFUSED'), 'refused'],
+      [withCode('ENOTFOUND'), 'dns'],
+      [withCode('EAI_AGAIN'), 'dns'],
+      [withCode('ECONNRESET'), 'reset'],
+      [withCode('UND_ERR_SOCKET'), 'reset'],
+      [withCode('EHOSTUNREACH'), 'unreachable'],
+      [withCode('ERR_SSL_WRONG_VERSION_NUMBER'), 'tls'],
+      [withCode('CERT_HAS_EXPIRED'), 'tls'],
+      [withCode('DEPTH_ZERO_SELF_SIGNED_CERT'), 'tls'],
+      [
+        new TypeError('fetch failed', {
+          cause: Object.assign(new AggregateError([], 'both'), {
+            errors: [{ code: 'ECONNREFUSED' }, { code: 'ECONNREFUSED' }],
+          }),
+        }),
+        'refused',
+      ],
+      [
+        new TypeError('fetch failed', {
+          cause: Object.assign(new AggregateError([], 'mixed'), {
+            errors: [{ code: 'ECONNREFUSED' }, { code: 'EHOSTUNREACH' }],
+          }),
+        }),
+        undefined,
+      ],
+      [withCode('EWHATEVER'), undefined],
+      [new TypeError('Network request failed'), undefined],
+    ];
+    for (const [error, cause] of cases) {
+      const result = await call(failing(error));
+      assert.equal(!result.ok && result.failure.cause, cause, String(error));
+    }
+  });
+
+  it('reports a refused connection to a real closed port as refused and not sent', async () => {
+    // Bind a port, then close it, so nothing listens there during the request.
+    const probe = createServer();
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', () => resolve()));
+    const { port } = probe.address() as AddressInfo;
+    await new Promise<void>((resolve) => probe.close(() => resolve()));
+    const result = await call(transportFor(`http://127.0.0.1:${port}`));
+    assert.equal(!result.ok && result.failure.cause, 'refused');
+    assert.equal(!result.ok && result.failure.delivery, 'not_sent');
   });
 });
 

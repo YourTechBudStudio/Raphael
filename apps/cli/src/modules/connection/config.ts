@@ -26,18 +26,22 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 
 import {
+  describeSystemError,
   formatMode,
   inspectAncestors,
   inspectProtectedFile,
   isGroupOrWorldAccessible,
   supportsPosixModes,
 } from '@raphael/fs-trust';
+
+import { CLIENT_API_KEY_VARIABLE, CLIENT_ENDPOINT_VARIABLE } from '../../shared/variables.ts';
 
 const CONFIG_DIR_MODE = 0o700;
 const CONFIG_FILE_MODE = 0o600;
@@ -138,7 +142,33 @@ export const configLocation = (
  * read and write goes through that resolved path. Checking one path and writing through another is
  * exactly the substitution the check exists to prevent.
  */
-const verifiedDirectory = (directory: string, create: boolean): string => {
+/** The one message for having no saved login, whichever part of the path was missing. */
+const notConfigured = (file: string): ConfigError =>
+  new ConfigError(
+    'not_configured',
+    `Not connected to a Raphael server: there is no saved login at ${file}, and ` +
+      `${CLIENT_ENDPOINT_VARIABLE} and ${CLIENT_API_KEY_VARIABLE} are not set.`,
+  );
+
+/**
+ * A filesystem call on the way to the credential, with its failure described rather than thrown raw:
+ * a permission problem or a file where a directory should be is a setup problem with a next step.
+ */
+const inspected = <T>(path: string, look: () => T): T => {
+  try {
+    return look();
+  } catch (error) {
+    throw new ConfigError(
+      'directory_unusable',
+      `Cannot inspect "${path}", where your saved login is kept: ${describeSystemError(error)}.`,
+      `Make that path a directory you own and can open, or set ${CLIENT_ENDPOINT_VARIABLE} and ` +
+        `${CLIENT_API_KEY_VARIABLE} instead.`,
+    );
+  }
+};
+
+const verifiedDirectory = (location: ConfigLocation, create: boolean): string => {
+  const { directory } = location;
   if (!supportsPosixModes()) {
     throw new ConfigError(
       'unsupported_platform',
@@ -146,21 +176,26 @@ const verifiedDirectory = (directory: string, create: boolean): string => {
     );
   }
 
-  const existing = lstatSync(directory, { throwIfNoEntry: false });
+  const existing = inspected(directory, () => lstatSync(directory, { throwIfNoEntry: false }));
   if (existing === undefined) {
-    if (!create) throw new ConfigError('not_configured', 'No saved login was found.');
+    if (!create) throw notConfigured(location.file);
     try {
       mkdirSync(directory, { recursive: true, mode: CONFIG_DIR_MODE });
     } catch (error) {
       throw new ConfigError(
         'directory_uncreatable',
-        `Cannot create "${directory}": ${(error as Error).message}`,
+        `Cannot create "${directory}": ${describeSystemError(error)}.`,
       );
     }
   }
 
-  const resolved = realpathSync(directory);
-  const info = lstatSync(resolved);
+  return verifiedExisting(directory);
+};
+
+/** The trust checks on a directory that exists, returning its resolved path. */
+const verifiedExisting = (directory: string): string => {
+  const resolved = inspected(directory, () => realpathSync(directory));
+  const info = inspected(resolved, () => lstatSync(resolved));
   if (!info.isDirectory()) {
     throw new ConfigError('directory_unusable', `"${resolved}" is not a directory.`);
   }
@@ -182,31 +217,30 @@ const verifiedDirectory = (directory: string, create: boolean): string => {
   }
 
   const ancestor = inspectAncestors(resolved);
-  if (ancestor !== undefined) {
-    throw new ConfigError(
-      'directory_unusable',
-      ancestor.reason === 'ancestor_untrusted_owner'
-        ? `"${ancestor.path}" is owned by uid ${ancestor.uid}, who could change its permissions at any ` +
-            'time, so nothing beneath it can be protected.'
-        : ancestor.reason === 'ancestor_writable'
-          ? `"${ancestor.path}" is writable by other users (mode ${formatMode(ancestor.mode ?? 0)}), so ` +
-            'another user could replace the directories leading to your credential.'
-          : `"${ancestor.path}" could not be inspected while verifying where your credential is stored.`,
-    );
-  }
+  if (ancestor !== undefined) throw ancestorRefusal(ancestor);
 
   return resolved;
 };
 
+const ancestorRefusal = (ancestor: NonNullable<ReturnType<typeof inspectAncestors>>): ConfigError =>
+  new ConfigError(
+    'directory_unusable',
+    ancestor.reason === 'ancestor_untrusted_owner'
+      ? `"${ancestor.path}" is owned by uid ${ancestor.uid}, who could change its permissions at any ` +
+          'time, so nothing beneath it can be protected.'
+      : ancestor.reason === 'ancestor_writable'
+        ? `"${ancestor.path}" is writable by other users (mode ${formatMode(ancestor.mode ?? 0)}), so ` +
+          'another user could replace the directories leading to your credential.'
+        : `"${ancestor.path}" could not be inspected while verifying where your credential is stored.`,
+  );
+
 /** Read the saved configuration, verifying protection before trusting what is in it. */
 export const loadConfig = (location: ConfigLocation): StoredConfig => {
-  const directory = verifiedDirectory(location.directory, false);
+  const directory = verifiedDirectory(location, false);
   const file = join(directory, CONFIG_FILE_NAME);
 
-  const info = lstatSync(file, { throwIfNoEntry: false });
-  if (info === undefined) {
-    throw new ConfigError('not_configured', 'No saved login was found.');
-  }
+  const info = inspected(file, () => lstatSync(file, { throwIfNoEntry: false }));
+  if (info === undefined) throw notConfigured(location.file);
 
   const rejection = inspectProtectedFile(file, info);
   if (rejection !== undefined) {
@@ -221,7 +255,12 @@ export const loadConfig = (location: ConfigLocation): StoredConfig => {
             : `"${file}" is not a regular file.`,
       rejection.reason === 'permissive_mode'
         ? `Run "chmod 600 ${file}", or run "raphael login" again.`
-        : undefined,
+        : rejection.reason === 'not_regular_file'
+          ? `Move "${file}" out of the way, then run "raphael login".`
+          : rejection.reason === 'symlink_rejected'
+            ? 'Replace the link with a regular file by running "raphael login" again, or keep the key ' +
+              `out of your dotfiles and set ${CLIENT_ENDPOINT_VARIABLE} and ${CLIENT_API_KEY_VARIABLE} instead.`
+            : undefined,
     );
   }
 
@@ -233,7 +272,10 @@ export const loadConfig = (location: ConfigLocation): StoredConfig => {
   try {
     raw = readFileSync(file, 'utf8');
   } catch (error) {
-    throw new ConfigError('file_unreadable', `Cannot read "${file}": ${(error as Error).message}`);
+    throw new ConfigError(
+      'file_unreadable',
+      `Cannot read "${file}": ${describeSystemError(error)}.`,
+    );
   }
 
   let parsed: unknown;
@@ -280,7 +322,7 @@ export interface SaveOutcome {
  * on the caller's behalf.
  */
 export const saveConfig = (location: ConfigLocation, config: StoredConfig): SaveOutcome => {
-  const directory = verifiedDirectory(location.directory, true);
+  const directory = verifiedDirectory(location, true);
   const file = join(directory, CONFIG_FILE_NAME);
   const temporary = join(directory, `.${CONFIG_FILE_NAME}.${process.pid}.tmp`);
 
@@ -302,7 +344,7 @@ export const saveConfig = (location: ConfigLocation, config: StoredConfig): Save
     rmSync(temporary, { force: true });
     throw new ConfigError(
       'write_failed',
-      `Could not write the new configuration: ${(error as Error).message}. Your existing configuration is unchanged.`,
+      `Could not write the new configuration in "${directory}": ${describeSystemError(error)}. Your existing configuration is unchanged.`,
     );
   }
 
@@ -312,7 +354,7 @@ export const saveConfig = (location: ConfigLocation, config: StoredConfig): Save
     rmSync(temporary, { force: true });
     throw new ConfigError(
       'write_failed',
-      `Could not replace the configuration: ${(error as Error).message}. Your existing configuration is unchanged.`,
+      `Could not replace "${file}": ${describeSystemError(error)}. Your existing configuration is unchanged.`,
     );
   }
 
@@ -332,3 +374,95 @@ export const saveConfig = (location: ConfigLocation, config: StoredConfig): Save
 };
 
 export const configDirectoryOf = (file: string): string => dirname(file);
+
+/**
+ * Check, before anyone types a key, that `saveConfig` will be able to keep it: the directory passes
+ * every trust check if it exists, and otherwise the nearest existing ancestor is a directory whose
+ * chain no other user can replace. Nothing is created.
+ */
+export const checkConfigDestination = (location: ConfigLocation): void => {
+  if (!supportsPosixModes()) {
+    throw new ConfigError(
+      'unsupported_platform',
+      'Raphael cannot verify file permissions on this platform.',
+    );
+  }
+  let current = location.directory;
+  for (;;) {
+    const path = current;
+    const info = inspected(path, () => lstatSync(path, { throwIfNoEntry: false }));
+    if (info !== undefined) break;
+    const parent = dirname(current);
+    if (parent === current) return;
+    current = parent;
+  }
+  if (current === location.directory) {
+    verifiedExisting(current);
+    return;
+  }
+  const resolved = inspected(current, () => realpathSync(current));
+  const info = inspected(resolved, () => lstatSync(resolved));
+  if (!info.isDirectory()) {
+    throw new ConfigError(
+      'directory_uncreatable',
+      `Cannot create "${location.directory}": "${resolved}" is not a directory.`,
+    );
+  }
+  const ancestor = inspectAncestors(resolved);
+  if (ancestor !== undefined) throw ancestorRefusal(ancestor);
+};
+
+/** The endpoint of the saved login, if there is a readable one; never a reason to fail. */
+export const savedEndpoint = (location: ConfigLocation): string | undefined => {
+  try {
+    return loadConfig(location).endpoint;
+  } catch {
+    return undefined;
+  }
+};
+
+export interface RemoveOutcome {
+  readonly removed: boolean;
+  /** The endpoint the removed login pointed at, when it could be read. */
+  readonly endpoint: string | undefined;
+  readonly file: string;
+}
+
+/**
+ * Remove the saved login, after the same directory checks a save makes.
+ *
+ * A link is removed as a link - `unlink` never follows it - and a file with loose permissions is still
+ * removed, since removing it is the fix. Anything that is not a file or a link is refused.
+ */
+export const removeConfig = (location: ConfigLocation): RemoveOutcome => {
+  let directory: string;
+  try {
+    directory = verifiedDirectory(location, false);
+  } catch (error) {
+    if (error instanceof ConfigError && error.reason === 'not_configured') {
+      return { removed: false, endpoint: undefined, file: location.file };
+    }
+    throw error;
+  }
+  const file = join(directory, CONFIG_FILE_NAME);
+  const info = inspected(file, () => lstatSync(file, { throwIfNoEntry: false }));
+  if (info === undefined) return { removed: false, endpoint: undefined, file };
+  if (!info.isFile() && !info.isSymbolicLink()) {
+    throw new ConfigError(
+      'file_unusable',
+      `"${file}" is not a regular file, so it is not a saved login.`,
+      'Move it out of the way, then run the command again.',
+    );
+  }
+  const endpoint = info.isFile() ? savedEndpoint(location) : undefined;
+  try {
+    unlinkSync(file);
+  } catch (error) {
+    throw new ConfigError(
+      'write_failed',
+      `Could not remove "${file}": ${describeSystemError(error)}. The saved login is unchanged.`,
+      'Check that you can write to that directory, then run "raphael logout" again.',
+    );
+  }
+  return { removed: true, endpoint, file };
+};

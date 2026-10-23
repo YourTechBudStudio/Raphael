@@ -123,6 +123,7 @@ const main = async (): Promise<void> => {
             database: { databasePath: file },
           },
           credential: ApiCredential.fromKey(key),
+          release: '0.0.0-test',
           logger: silentLogger,
         }),
         scope,

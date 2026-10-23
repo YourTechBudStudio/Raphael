@@ -21,6 +21,7 @@ import {
   isGroupOrWorldWritable,
   isTrustedOwner,
   supportsPosixModes,
+  describeSystemError,
 } from './index.ts';
 
 /**
@@ -199,5 +200,17 @@ describe('protected artifacts', () => {
     const path = fileIn(root, 'untouched.json', 0o644);
     inspectProtectedFile(path, lstatSync(path));
     assert.equal(formatMode(lstatSync(path).mode), '644');
+  });
+});
+
+describe('describing a system error', () => {
+  it('uses plain words, never the syscall or the path', () => {
+    const error = (code: string): Error =>
+      Object.assign(new Error(`${code}: open '/secret/path'`), { code });
+    assert.equal(describeSystemError(error('EACCES')), 'permission denied');
+    assert.equal(describeSystemError(error('ENOTDIR')), 'part of the path is not a directory');
+    assert.equal(describeSystemError(error('EISDIR')), 'it is a directory');
+    assert.equal(describeSystemError(error('EWEIRD')), 'the system reported EWEIRD');
+    assert.equal(describeSystemError('not an error'), 'the system refused');
   });
 });

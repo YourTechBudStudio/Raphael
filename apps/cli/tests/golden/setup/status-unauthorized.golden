@@ -1,0 +1,7 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid rejected the API key saved in /stub/raphael/config.json.
+hint: Run "raphael login" with the server's RAPHAEL_SERVER_API_KEY to replace it.
+code: unauthorized (401)

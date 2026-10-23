@@ -2,4 +2,4 @@
 3
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"move","error":{"code":"node_not_found","category":"not_found","message":"Nothing exists at /nope, so /nope/x cannot be the destination.","hint":"Run \"raphael list /\" to see what is there.","exitCode":3,"status":404,"field":"<destination>","target":{"path":"/work/a"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for node_not_found.","details":{"field":"destination"}}}
+{"ok":false,"command":"move","error":{"code":"node_not_found","category":"not_found","message":"Nothing exists at /nope, so /nope/x cannot be the destination.","hint":"Run \"raphael list /\" to see what is there.","exitCode":3,"status":404,"field":"<destination>","target":{"path":"/work/a"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for node_not_found.","details":{"field":"destination"},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

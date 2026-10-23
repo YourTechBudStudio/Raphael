@@ -47,10 +47,10 @@ describe('what a caller is told', () => {
     });
   });
 
-  test('a verification response reports the protocol and nothing about the installation', async () => {
+  test('a verification response reports the protocol and release, and nothing about the installation', async () => {
     await withServer('diag-verify', async (server) => {
       const response = await call(server, '/api/connection/verify', { body: '{}' });
-      assert.deepEqual(Object.keys(response.json as object), ['protocolVersion']);
+      assert.deepEqual(Object.keys(response.json as object), ['protocolVersion', 'raphaelVersion']);
       assert.equal(response.text.includes(server.temp.dir), false);
     });
   });
@@ -76,7 +76,12 @@ describe('what an operator is told', () => {
     await withServer('diag-startup', async (server) => {
       const listening = server.logger.lines.find((line) => line.event === 'server.listening');
       assert.ok(listening !== undefined);
-      assert.deepEqual(Object.keys(listening.fields).sort(), ['databasePath', 'host', 'port']);
+      assert.deepEqual(Object.keys(listening.fields).sort(), [
+        'databasePath',
+        'host',
+        'port',
+        'release',
+      ]);
       const rendered = JSON.stringify(server.logger.lines);
       assert.equal(rendered.includes(server.key), false);
     });

@@ -1,17 +1,29 @@
 ==== exit ====
 0
 ==== stdout ====
-Usage: raphael login [--json]
+Usage: raphael login [<address>] [--api-key-stdin] [--json]
 
 Save a verified server address and API key on this machine.
 
-Prompts for the server address and an API key, verifies them, then saves them with owner-only permissions.
+Verifies the address and key with the server, then saves them with owner-only permissions. Nothing is saved unless the server accepted them.
 
-The key is never taken as an argument. For scripts, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together instead of logging in.
+The address is the server's root, such as http://127.0.0.1:3000. The key is the server's RAPHAEL_SERVER_API_KEY.
+
+Without an address argument, prompts for it. The key is read from a prompt that does not show it, or with --api-key-stdin from standard input. It is never taken as an argument.
+
+Saved to $XDG_CONFIG_HOME/raphael/config.json, or ~/.config/raphael/config.json. Logging in again replaces it and says so.
+
+RAPHAEL_ENDPOINT and RAPHAEL_API_KEY, when both are set, override the saved login; login warns when they are set.
 
 Prompts go to standard error. Cancelling exits 2 and saves nothing.
 
+Rules:
+  --api-key-stdin needs the address as an argument, and standard input must not be a terminal.
+  The key on standard input is everything up to the end, with one trailing newline removed. It must be visible ASCII characters with no spaces, on one line.
+
 Options:
+      --api-key-stdin
+      Read the key from standard input instead of prompting.
       --json
       Print the result as one JSON document.
   -h, --help
@@ -19,13 +31,16 @@ Options:
 
 Examples:
   raphael login
-  raphael login --json
-  raphael login --help
+    Prompt for the address and the key.
+  raphael login http://127.0.0.1:3000
+    Prompt for the key only.
+  raphael login http://127.0.0.1:3000 --api-key-stdin --json
+    Read the key from a pipe, as in: printf '%s\n' "$KEY" | raphael login http://127.0.0.1:3000 --api-key-stdin
 
 Prints:
-  The verified address and saved configuration path; JSON also includes the protocol version.
+  The verified address and the saved file. JSON has endpoint, protocolVersion, configFile and replaced (the previous address, or null).
 
-Next: raphael list / -r
+Next: raphael status
 
 See also: raphael help connecting
 ==== stderr ====

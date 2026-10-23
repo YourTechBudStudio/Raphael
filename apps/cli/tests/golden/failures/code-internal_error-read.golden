@@ -2,6 +2,6 @@
 1
 ==== stdout ====
 ==== stderr ====
-The server at http://raphael.invalid could not complete the request.
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) could not complete the request.
 hint: Check the server's log for what failed, then run the command again.
 code: internal_error (500)

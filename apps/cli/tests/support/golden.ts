@@ -86,6 +86,7 @@ const ERROR_KEYS = [
   'retryable',
   'serverMessage',
   'details',
+  'connection',
 ] as const;
 const REQUIRED_ERROR_KEYS = [
   'code',
@@ -131,6 +132,18 @@ export const assertErrorDocument = (
     assert.notEqual(error[key as 'code'], '', `${key} is not empty`);
   }
   assert.ok([true, false, null].includes(error.applied as boolean | null));
+  if (error.connection !== undefined) {
+    // The same shape `status --json` reports on success.
+    const connection = error.connection as Record<string, unknown>;
+    assert.deepEqual(Object.keys(connection).sort(), ['configFile', 'endpoint', 'source']);
+    assert.equal(typeof connection.endpoint, 'string');
+    assert.ok(connection.source === 'environment' || connection.source === 'saved_login');
+    assert.equal(
+      connection.configFile === null,
+      connection.source === 'environment',
+      'configFile is null exactly for the environment',
+    );
+  }
   assert.equal(
     error.retryable,
     expected.exit === 6,

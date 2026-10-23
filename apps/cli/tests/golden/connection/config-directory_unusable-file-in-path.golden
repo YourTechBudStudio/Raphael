@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Cannot inspect "<tmp>/file/raphael", where your saved login is kept: part of the path is not a directory.
+hint: Make that path a directory you own and can open, or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY instead.

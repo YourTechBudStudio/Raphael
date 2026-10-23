@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+RAPHAEL_ENDPOINT is not a usable address: it has no scheme.
+hint: Add the scheme, as in "http://127.0.0.1:3105".

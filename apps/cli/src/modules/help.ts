@@ -2,15 +2,25 @@ import type { CommandDefinition } from '../shared/command.ts';
 
 export const VERSION_DEFINITION: CommandDefinition = {
   name: 'version',
-  summary: 'Print the installed Raphael version.',
+  summary: 'Print the installed Raphael release.',
   group: 'Setup',
   writes: false,
-  usage: ['raphael version'],
-  behavior: ['The version comes from the release manifest.'],
-  options: [{ name: 'help', short: 'h', type: 'boolean', description: 'Show help.' }],
-  examples: [{ argv: ['version'] }, { argv: ['--version'] }, { argv: ['version', '--help'] }],
-  prints: 'The bare version number.',
-  next: 'raphael help connecting',
+  usage: ['raphael version [--json]', 'raphael --version [--json]'],
+  behavior: [
+    'Works offline: reads no configuration and contacts no server.',
+    'To compare with a server, run raphael status, which reports both sides.',
+  ],
+  options: [
+    {
+      name: 'json',
+      type: 'boolean',
+      description: 'Also print the protocol version, as one JSON document.',
+    },
+    { name: 'help', short: 'h', type: 'boolean', description: 'Show help.' },
+  ],
+  examples: [{ argv: ['version'] }, { argv: ['version', '--json'] }, { argv: ['--version'] }],
+  prints: 'The bare release number. JSON has version and protocolVersion.',
+  next: 'raphael status',
   fieldFlags: {},
 };
 

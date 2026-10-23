@@ -1,23 +1,28 @@
 ==== exit ====
 0
 ==== stdout ====
-Usage: raphael version
+Usage: raphael version [--json]
+       raphael --version [--json]
 
-Print the installed Raphael version.
+Print the installed Raphael release.
 
-The version comes from the release manifest.
+Works offline: reads no configuration and contacts no server.
+
+To compare with a server, run raphael status, which reports both sides.
 
 Options:
+      --json
+      Also print the protocol version, as one JSON document.
   -h, --help
       Show help.
 
 Examples:
   raphael version
+  raphael version --json
   raphael --version
-  raphael version --help
 
 Prints:
-  The bare version number.
+  The bare release number. JSON has version and protocolVersion.
 
-Next: raphael help connecting
+Next: raphael status
 ==== stderr ====

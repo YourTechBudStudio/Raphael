@@ -1,0 +1,6 @@
+==== exit ====
+0
+==== stdout ====
+Removed the saved login for http://127.0.0.1:3000.
+==== stderr ====
+warning: RAPHAEL_ENDPOINT and RAPHAEL_API_KEY are still set in this environment and will keep being used.

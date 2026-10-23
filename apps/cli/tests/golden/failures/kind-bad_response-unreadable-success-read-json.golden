@@ -2,4 +2,4 @@
 1
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"get","error":{"code":"bad_response","category":"failed","message":"The server at http://raphael.invalid answered in a form this version of the CLI cannot read.","hint":"Check that this CLI and the server are the same version with \"raphael version\".","exitCode":1,"status":200,"target":{"path":"/work"},"applied":false,"retryable":false}}
+{"ok":false,"command":"get","error":{"code":"bad_response","category":"failed","message":"The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) answered in a form this version of the CLI cannot read.","hint":"Check that this CLI and the server are the same version with \"raphael status\".","exitCode":1,"status":200,"target":{"path":"/work"},"applied":false,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

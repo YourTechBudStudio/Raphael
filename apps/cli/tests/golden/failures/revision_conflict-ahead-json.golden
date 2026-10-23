@@ -2,4 +2,4 @@
 4
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"update","error":{"code":"revision_conflict","category":"conflict","message":"Revision 99 of /work/raphael does not exist yet: it is now at revision 4.","hint":"Pass --revision 4, or leave out --revision to use the current one.","exitCode":4,"status":409,"field":"--revision","target":{"path":"/work/raphael"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for revision_conflict.","details":{"currentRevision":4}}}
+{"ok":false,"command":"update","error":{"code":"revision_conflict","category":"conflict","message":"Revision 99 of /work/raphael does not exist yet: it is now at revision 4.","hint":"Pass --revision 4, or leave out --revision to use the current one.","exitCode":4,"status":409,"field":"--revision","target":{"path":"/work/raphael"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for revision_conflict.","details":{"currentRevision":4},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

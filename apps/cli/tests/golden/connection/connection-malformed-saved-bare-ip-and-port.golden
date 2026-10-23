@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The address saved in <tmp>/raphael/config.json is not a usable address: it has no scheme.
+hint: Run "raphael login" again with the right address. Add the scheme, as in "http://127.0.0.1:3105".

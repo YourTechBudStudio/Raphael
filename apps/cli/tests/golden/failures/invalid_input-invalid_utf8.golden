@@ -3,5 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 The server could not read the request: it was not valid UTF-8.
-hint: Check that this CLI and the server are the same version with "raphael version".
+hint: Check that this CLI and the server are the same version with "raphael status".
 code: invalid_input (400)

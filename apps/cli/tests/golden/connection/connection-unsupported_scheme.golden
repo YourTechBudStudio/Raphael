@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-Raphael speaks HTTP and HTTPS. "ftp" is not supported.
+RAPHAEL_ENDPOINT is not a usable address: Raphael speaks only http and https.
 hint: Give an address that starts with http:// or https://.

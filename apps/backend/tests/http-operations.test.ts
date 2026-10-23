@@ -15,11 +15,14 @@ import { call, envelope, withServer } from './server-support.ts';
  */
 
 describe('operations over HTTP', () => {
-  test('verification answers a protocol version and nothing else', async () => {
+  test('verification answers the protocol version and the release, and nothing else', async () => {
     await withServer('http-verify', async (server) => {
       const response = await call(server, '/api/connection/verify', { body: '{}' });
       assert.equal(response.status, 200);
-      assert.deepEqual(response.json, { protocolVersion: PROTOCOL_VERSION });
+      assert.deepEqual(response.json, {
+        protocolVersion: PROTOCOL_VERSION,
+        raphaelVersion: '0.0.0-test',
+      });
     });
   });
 

@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -13,6 +21,7 @@ import type { EndpointRejectionReason } from '@raphael/client';
 import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
 import { Effect, Exit, Scope } from 'effect';
 
+import { version } from '../src/distribution.ts';
 import { invocationOf, toExitCode } from '../src/main.ts';
 import { saveConfig } from '../src/modules/connection/config.ts';
 import {
@@ -67,6 +76,7 @@ before(async () => {
           database: { databasePath: join(temporary(), 'raphael.sqlite') },
         },
         credential: ApiCredential.fromKey(KEY),
+        release: version(),
         logger: silentLogger,
       }),
       scope,
@@ -98,8 +108,14 @@ const loginWith = async (
   address: string,
   key: string,
   save?: LoginDependencies['save'],
+  options: {
+    readonly environment?: Readonly<Record<string, string>>;
+    readonly prompter?: () => Prompter;
+    readonly stdin?: LoginDependencies['stdin'];
+    readonly root?: string;
+  } = {},
 ): Promise<Ran> => {
-  const root = temporary();
+  const root = options.root ?? temporary();
   let stdout = '';
   let stderr = '';
   const streams = {
@@ -116,10 +132,11 @@ const loginWith = async (
     code = await runLogin(argv, {
       streams,
       session,
-      prompter: scripted(address, key),
-      environment: { XDG_CONFIG_HOME: root },
+      prompter: options.prompter ?? scripted(address, key),
+      environment: { XDG_CONFIG_HOME: root, ...options.environment },
       platform: process.platform,
       ...(save === undefined ? {} : { save }),
+      ...(options.stdin === undefined ? {} : { stdin: options.stdin }),
     });
   } catch (error) {
     code = toExitCode(error, streams, session);
@@ -149,8 +166,118 @@ describe('login with a scripted prompt', () => {
     login.expectRun('empty-key', await loginWith([], endpoint, ''));
   });
 
-  it('refuses an argument', async () => {
-    login.expectRun('argument', await loginWith(['https://example.com'], endpoint, KEY));
+  it('refuses more than one argument', async () => {
+    login.expectRun(
+      'two-arguments',
+      await loginWith(['https://example.com', 'extra'], endpoint, KEY),
+    );
+  });
+
+  it('never prints a password or token from a rejected address, as text or JSON', async () => {
+    const secret = 'example-secret';
+    for (const address of [
+      `http://user:${secret}@localhost:3000`,
+      `user:${secret}@localhost:3000`,
+      `ftp://me:${secret}@127.0.0.1`,
+      `http://127.0.0.1:3000/?token=${secret}`,
+      `http://127.0.0.1:3000/#${secret}`,
+      `localhost:3000/x?token=${secret}`,
+      `//user:${secret}@localhost:3000`,
+      `http:////user:${secret}@localhost:3000`,
+      `http:/user:${secret}@localhost:3000`,
+      `localhost:3000/@user:${secret}`,
+      `user@${secret}:3000`,
+    ]) {
+      for (const argv of [[], ['--json']]) {
+        const prompted = await loginWith(argv, address, KEY);
+        const argument = await loginWith([address, ...argv], 'unused', KEY);
+        for (const ran of [prompted, argument]) {
+          assert.equal(ran.code, 2, address);
+          assert.equal(
+            `${ran.stdout}${ran.stderr}`.includes(secret),
+            false,
+            `${address}: ${ran.stderr}`,
+          );
+        }
+      }
+    }
+  });
+
+  it('refuses a bare host and port with the fix spelled out', async () => {
+    login.expectRun('address-bare-host-and-port', await loginWith([], 'localhost:3105', KEY));
+  });
+
+  it('refuses a typed key no header can carry, without showing it', async () => {
+    const ran = await loginWith([], endpoint, `${KEY} with spaces`);
+    assert.equal(ran.code, 2);
+    assert.equal(ran.stderr.includes(KEY), false);
+    login.expectRun('unsendable-key', ran);
+  });
+
+  it('takes the address as an argument and asks only for the key', async () => {
+    const asked: string[] = [];
+    const ran = await loginWith([endpoint], 'unused', KEY, undefined, {
+      prompter: () => ({
+        ask: async (question) => {
+          asked.push(question);
+          throw new Error('the address was given; it must not be asked for');
+        },
+        askHidden: async (question) => {
+          asked.push(question);
+          return KEY;
+        },
+        close: () => {},
+      }),
+    });
+    assert.deepEqual(asked, ['API key: ']);
+    login.expectRun('address-argument', ran);
+  });
+
+  it('refuses a configuration directory it could not keep a key in, before asking for one', async () => {
+    const root = temporary();
+    mkdirSync(join(root, 'raphael'), { mode: 0o700 });
+    chmodSync(join(root, 'raphael'), 0o755);
+    const ran = await loginWith([], endpoint, KEY, undefined, {
+      root,
+      prompter: () => {
+        throw new Error('no prompt may appear before the destination is checked');
+      },
+    });
+    assert.equal(ran.code, 5);
+    login.expectRun('directory-checked-before-prompt', ran);
+  });
+
+  it('warns when the environment pair will override what it saved', async () => {
+    const ran = await loginWith([], endpoint, KEY, undefined, {
+      environment: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:9', RAPHAEL_API_KEY: 'other-key' },
+    });
+    assert.equal(ran.code, 0);
+    login.expectRun('saved-environment-overrides', ran);
+    const json = await loginWith(['--json'], endpoint, KEY, undefined, {
+      environment: { RAPHAEL_API_KEY: 'other-key' },
+    });
+    const document = JSON.parse(json.stdout) as { warnings: { code: string }[] };
+    assert.deepEqual(
+      document.warnings.map((warning) => warning.code),
+      ['environment_overrides'],
+    );
+  });
+
+  it('says when it replaced a saved login for a different server', async () => {
+    const root = temporary();
+    saveConfig(
+      { directory: join(root, 'raphael'), file: join(root, 'raphael', 'config.json') },
+      {
+        endpoint: 'http://old.example.com',
+        apiKey: KEY,
+      },
+    );
+    const ran = await loginWith([], endpoint, KEY, undefined, { root });
+    assert.equal(ran.code, 0);
+    login.expectRun('saved-replaced', ran);
+    // The same server again is not a replacement worth mentioning.
+    const again = await loginWith(['--json'], endpoint, KEY, undefined, { root });
+    assert.equal((JSON.parse(again.stdout) as { replaced: unknown }).replaced, null);
   });
 
   it('refuses a key the server does not accept, saving nothing', async () => {
@@ -192,6 +319,88 @@ describe('login with a scripted prompt', () => {
       ['durability_unconfirmed'],
     );
     login.expectRun('saved-durability-unconfirmed-json', ran);
+  });
+});
+
+/** Standard input that is a pipe holding these bytes. */
+const piped = (text: string | Buffer): LoginDependencies['stdin'] => ({
+  isTTY: false,
+  read: async () => (typeof text === 'string' ? Buffer.from(text, 'utf8') : text),
+});
+
+describe('login --api-key-stdin', () => {
+  it('reads the key from a pipe, with one trailing newline removed', async () => {
+    for (const [label, input] of [
+      ['newline', `${KEY}\n`],
+      ['crlf', `${KEY}\r\n`],
+      ['no-newline', KEY],
+    ] as const) {
+      const root = temporary();
+      const ran = await loginWith(
+        [endpoint, '--api-key-stdin', '--json'],
+        'unused',
+        'unused',
+        undefined,
+        {
+          root,
+          stdin: piped(input),
+          prompter: () => {
+            throw new Error('no prompt when the key is piped');
+          },
+        },
+      );
+      assert.equal(ran.code, 0, `${label}: ${ran.stderr}`);
+      const saved = JSON.parse(readFileSync(join(root, 'raphael', 'config.json'), 'utf8')) as {
+        apiKey: string;
+      };
+      assert.equal(saved.apiKey, KEY, label);
+    }
+  });
+
+  it('refuses an empty pipe, more than one line, or anything after the line, saving nothing', async () => {
+    for (const [label, input] of [
+      ['empty', ''],
+      ['only-newline', '\n'],
+      ['two-lines', `${KEY}\nsecond\n`],
+      ['two-newlines', `${KEY}\n\n`],
+      ['trailing-space', `${KEY} \n`],
+      ['not-ascii', `${KEY}é\n`],
+    ] as const) {
+      const root = temporary();
+      const ran = await loginWith([endpoint, '--api-key-stdin'], 'unused', 'unused', undefined, {
+        root,
+        stdin: piped(input),
+      });
+      assert.equal(ran.code, 2, label);
+      assert.equal(ran.stderr.includes(KEY), false, `${label}: the key was echoed`);
+      assert.equal(existsSync(join(root, 'raphael', 'config.json')), false, label);
+      if (label === 'empty' || label === 'two-lines') {
+        login.expectRun(caseName('stdin', label), ran);
+      }
+    }
+  });
+
+  it('needs the address as an argument, and refuses a terminal on standard input', async () => {
+    login.expectRun(
+      'stdin-without-address',
+      await loginWith(['--api-key-stdin'], endpoint, KEY, undefined, { stdin: piped(KEY) }),
+    );
+    login.expectRun(
+      'stdin-is-terminal',
+      await loginWith([endpoint, '--api-key-stdin'], endpoint, KEY, undefined, {
+        stdin: { isTTY: true, read: async () => Buffer.from(KEY) },
+      }),
+    );
+  });
+
+  it('bounds what it reads from standard input', async () => {
+    const { Readable } = await import('node:stream');
+    const { readStandardInput } = await import('../src/shared/stdin.ts');
+    const huge = Readable.from([Buffer.alloc(64 * 1024 + 1, 0x61)]);
+    await assert.rejects(
+      readStandardInput({ limit: 64 * 1024, tooLarge: () => new Error('too large'), input: huge }),
+      /too large/,
+    );
   });
 });
 
@@ -239,13 +448,25 @@ describe('login and RAPHAEL_TIMEOUT', () => {
  */
 const underTerminal = (
   answers: ReadonlyArray<readonly [prompt: string, answer: string]>,
+  options: {
+    readonly command?: readonly string[];
+    readonly root?: string;
+    readonly environment?: Readonly<Record<string, string>>;
+  } = {},
 ): Promise<{ readonly code: number | null; readonly screen: string }> =>
   new Promise((resolveRun, rejectRun) => {
-    const root = temporary();
-    const child = spawn('python3', ['-I', relay, process.execPath, main, 'login'], {
+    const root = options.root ?? temporary();
+    const command = options.command ?? [process.execPath, main, 'login'];
+    const child = spawn('python3', ['-I', relay, ...command], {
       // `dumb` on purpose: other terminals follow a prompt with cursor movement, which would stop
       // `endsWith(prompt)` from matching. The fix does not depend on it; it held under xterm by hand.
-      env: { PATH: process.env.PATH ?? '', HOME: root, XDG_CONFIG_HOME: root, TERM: 'dumb' },
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: root,
+        XDG_CONFIG_HOME: root,
+        TERM: 'dumb',
+        ...options.environment,
+      },
       timeout: 15_000,
       killSignal: 'SIGKILL',
     });
@@ -288,12 +509,76 @@ describe(
     it('cancels on Ctrl-C at the address prompt', async () => {
       const ran = await underTerminal([['Server address: ', 'http\u0003']]);
       assert.match(ran.screen, /Cancelled\. Nothing was saved\./);
+      assert.doesNotMatch(ran.screen, /--help|unsettled/, 'a cancellation is not a usage mistake');
       assert.equal(ran.code, 2);
     });
 
     it('cancels on Ctrl-D at an empty address prompt', async () => {
       const ran = await underTerminal([['Server address: ', '\u0004']]);
       assert.match(ran.screen, /Cancelled\. Nothing was saved\./);
+      assert.doesNotMatch(ran.screen, /--help|unsettled/);
+      assert.equal(ran.code, 2);
+    });
+
+    it('cancels on Ctrl-D at an empty key prompt', async () => {
+      const ran = await underTerminal([
+        ['Server address: ', `${REFUSED}\r`],
+        ['API key: ', '\u0004'],
+      ]);
+      assert.match(ran.screen, /No key was entered\. Nothing was saved\./);
+      assert.doesNotMatch(ran.screen, /--help/);
+      assert.equal(ran.code, 2);
+    });
+
+    it('prompts on standard error, so standard output holds only the result', async () => {
+      const root = temporary();
+      const out = join(root, 'result.json');
+      const ran = await underTerminal(
+        [
+          ['Server address: ', `${endpoint}\r`],
+          ['API key: ', `${KEY}\r`],
+        ],
+        {
+          // stdout goes to a file; anything the terminal shows came through stderr.
+          command: [
+            '/bin/sh',
+            '-c',
+            `exec "$0" "$1" login --json > "$2"`,
+            process.execPath,
+            main,
+            out,
+          ],
+          root,
+        },
+      );
+      assert.equal(ran.code, 0, ran.screen);
+      assert.match(ran.screen, /Server address: /);
+      assert.match(ran.screen, /API key: /);
+      assert.equal(ran.screen.includes(KEY.slice(0, 4)), false);
+      const document = JSON.parse(readFileSync(out, 'utf8')) as { ok: boolean; endpoint: string };
+      assert.equal(document.ok, true);
+      assert.equal(document.endpoint, endpoint);
+    });
+
+    it('shows the override warning at the terminal', async () => {
+      const ran = await underTerminal(
+        [
+          ['Server address: ', `${endpoint}\r`],
+          ['API key: ', `${KEY}\r`],
+        ],
+        { environment: { RAPHAEL_ENDPOINT: REFUSED, RAPHAEL_API_KEY: 'other-key' } },
+      );
+      assert.equal(ran.code, 0, ran.screen);
+      assert.match(
+        ran.screen,
+        /warning: RAPHAEL_ENDPOINT and RAPHAEL_API_KEY are set in this environment/,
+      );
+    });
+
+    it('refuses a bad address before asking for the key', async () => {
+      const ran = await underTerminal([['Server address: ', 'localhost:3000\r']]);
+      assert.match(ran.screen, /"localhost:3000" is not a usable address: it has no scheme/);
+      assert.doesNotMatch(ran.screen, /API key: /, 'no key is asked for after a bad address');
       assert.equal(ran.code, 2);
     });
 

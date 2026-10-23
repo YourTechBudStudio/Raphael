@@ -1,0 +1,7 @@
+==== exit ====
+7
+==== stdout ====
+==== stderr ====
+Cannot use the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json). This server speaks protocol 2026-01-01; Raphael here understands 2026-09-24. Update the server. This raphael is <version> (protocol 2026-09-24); the server is an unknown release.
+The change may or may not have been applied.
+hint: Run "raphael get /work" to check whether it was applied before sending it again.

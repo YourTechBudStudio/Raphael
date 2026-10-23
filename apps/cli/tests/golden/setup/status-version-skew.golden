@@ -1,0 +1,10 @@
+==== exit ====
+0
+==== stdout ====
+Server:   http://raphael.invalid
+Source:   saved login (/stub/raphael/config.json)
+Key:      accepted
+Protocol: 2026-09-24 (both sides)
+Releases: server 9.9.9, this CLI <version>
+==== stderr ====
+warning: The server runs raphael 9.9.9 and this CLI is 0.0.1. They speak the same protocol, so commands work; update one side to match.

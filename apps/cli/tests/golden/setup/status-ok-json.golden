@@ -1,0 +1,5 @@
+==== exit ====
+0
+==== stdout ====
+{"ok":true,"command":"status","connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"},"protocolVersion":"2026-09-24","serverVersion":"<version>","cliVersion":"<version>"}
+==== stderr ====

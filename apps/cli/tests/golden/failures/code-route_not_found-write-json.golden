@@ -2,4 +2,4 @@
 5
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"archive","error":{"code":"route_not_found","category":"not_configured","message":"The server at http://raphael.invalid does not offer this command; it may not be a Raphael server, or not this version.","hint":"Check that the address points at the Raphael server itself, then run \"raphael login\" again.","exitCode":5,"status":404,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for route_not_found."}}
+{"ok":false,"command":"archive","error":{"code":"route_not_found","category":"not_configured","message":"The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) has no Raphael API at that address.","hint":"Run \"raphael login\" with the server's root address, such as http://127.0.0.1:3000.","exitCode":5,"status":404,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for route_not_found.","connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

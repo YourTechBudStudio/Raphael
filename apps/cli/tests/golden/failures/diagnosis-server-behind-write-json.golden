@@ -1,0 +1,5 @@
+==== exit ====
+7
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"archive","error":{"code":"incompatible_protocol","category":"outcome_unknown","message":"Cannot use the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json). This server speaks protocol 2026-01-01; Raphael here understands 2026-09-24. Update the server. This raphael is <version> (protocol 2026-09-24); the server is an unknown release.","hint":"Run \"raphael get /work\" to check whether it was applied before sending it again.","exitCode":7,"status":200,"target":{"path":"/work"},"applied":null,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

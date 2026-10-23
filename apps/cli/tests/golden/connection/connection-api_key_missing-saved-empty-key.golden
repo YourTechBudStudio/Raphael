@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-An API key is required to talk to a server.
-hint: Run "raphael login" again, or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY in the environment.
+The saved login at <tmp>/raphael/config.json has no API key.
+hint: Run "raphael login" again to replace it.

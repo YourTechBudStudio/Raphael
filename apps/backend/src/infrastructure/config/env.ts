@@ -1,6 +1,8 @@
-import { readFileSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseEnv } from 'node:util';
+
+import { describeSystemError } from '@raphael/fs-trust';
 
 import { configurationFailure } from './errors.ts';
 
@@ -31,10 +33,24 @@ export const ENV_MAX_BYTES = 64 * 1024;
 
 export const ENV_FILE_NAME = '.env';
 
-/** The only variable the server consults. Everything else in the snapshot is ignored. */
-export const API_KEY_VARIABLE = 'RAPHAEL_API_KEY';
+/**
+ * The only variable the server consults. Everything else in the snapshot is ignored.
+ *
+ * It is not the clients' `RAPHAEL_API_KEY`. A shell that starts a server and then runs client
+ * commands would otherwise hold half of the clients' environment pair, and every client command in it
+ * would refuse to run until the variable was unset.
+ */
+export const API_KEY_VARIABLE = 'RAPHAEL_SERVER_API_KEY';
+
+/**
+ * The clients' variable. The server never reads it; it is named only so a missing server key can say
+ * that this one was set instead.
+ */
+export const CLIENT_API_KEY_VARIABLE = 'RAPHAEL_API_KEY';
 
 export interface EnvironmentSnapshot {
+  /** The `.env` that was checked, whether or not it existed. Absent when file reading was skipped. */
+  readonly envFile: string | undefined;
   /** The value, or `undefined` when no source defined the variable at all. */
   readonly get: (name: string) => string | undefined;
   /** Where the effective value came from. Used for diagnostics; never reports a value. */
@@ -62,12 +78,21 @@ const readEnvFile = (path: string): Record<string, unknown> | undefined => {
     // An absent `.env` is the ordinary case and says nothing. Any other stat failure - a permission
     // problem, a broken link - is a real condition an operator needs told about, because it is
     // exactly the case where a present file is silently not being used.
-    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    if ((cause as NodeJS.ErrnoException).code === 'ENOENT') {
+      // A link that points nowhere is a present file that is not being used, not an absent one.
+      if (lstatSync(path, { throwIfNoEntry: false }) === undefined) return undefined;
+      configurationFailure(
+        'env_unreadable',
+        `"${path}" is a link to a file that does not exist. Raphael will not start while a ` +
+          `${ENV_FILE_NAME} it cannot read is present.`,
+        { cause, hint: `Point the link at the right file, or remove "${path}".` },
+      );
+    }
     configurationFailure(
       'env_unreadable',
-      `cannot read "${path}": ${(cause as Error).message}. ` +
-        `Remove the file or fix its permissions; Raphael will not start while a ${ENV_FILE_NAME} it cannot read is present.`,
-      { cause },
+      `Cannot read "${path}": ${describeSystemError(cause)}. Raphael will not start while a ` +
+        `${ENV_FILE_NAME} it cannot read is present.`,
+      { cause, hint: `Fix the permissions on "${path}", or remove it.` },
     );
   }
   if (size > ENV_MAX_BYTES) {
@@ -80,25 +105,33 @@ const readEnvFile = (path: string): Record<string, unknown> | undefined => {
   try {
     return parseEnv(readFileSync(path, 'utf8')) as Record<string, unknown>;
   } catch (cause) {
-    configurationFailure('env_unreadable', `cannot read "${path}": ${(cause as Error).message}`, {
-      cause,
-    });
+    configurationFailure(
+      'env_unreadable',
+      `Cannot read "${path}": ${describeSystemError(cause)}.`,
+      {
+        cause,
+      },
+    );
   }
 };
 
 /**
- * Build the snapshot: the process environment, with an optional `.env` from the invocation directory
- * supplying only what the process environment does not define.
+ * Build the snapshot: the process environment, with an optional `.env` from `directory` supplying only
+ * what the process environment does not define.
+ *
+ * `directory` is the configuration file's directory when one was given, and the invocation directory
+ * otherwise, so a `.env` and the file that configures the same server sit together.
  */
 export const loadEnvironment = (context: {
-  readonly cwd: string;
+  readonly directory: string;
   readonly processEnv?: NodeJS.ProcessEnv;
   /** Skip the file entirely. Tests that are asserting precedence use this. */
   readonly readEnvFile?: boolean;
 }): EnvironmentSnapshot => {
   const processEnv = context.processEnv ?? process.env;
-  const fromFile =
-    context.readEnvFile === false ? undefined : readEnvFile(resolve(context.cwd, ENV_FILE_NAME));
+  const envFile =
+    context.readEnvFile === false ? undefined : resolve(context.directory, ENV_FILE_NAME);
+  const fromFile = envFile === undefined ? undefined : readEnvFile(envFile);
 
   const sourceOf = (name: string): 'process' | 'file' | 'absent' => {
     if (ownValue(processEnv, name) !== undefined) return 'process';
@@ -107,6 +140,7 @@ export const loadEnvironment = (context: {
   };
 
   return {
+    envFile,
     sourceOf,
     get: (name) => {
       const fromProcess = ownValue(processEnv, name);

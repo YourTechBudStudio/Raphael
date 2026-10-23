@@ -12,7 +12,7 @@ import { configurationFailure } from './errors.ts';
  * unbounded timer, an unbounded batch, or an unbounded wait later, and a mistyped number should be
  * refused at startup rather than discovered as strange runtime behavior.
  *
- * There is no secret field. `RAPHAEL_API_KEY` is the only credential input and it never appears in
+ * There is no secret field. `RAPHAEL_SERVER_API_KEY` is the only credential input and it never appears in
  * this file's vocabulary, so a configuration file committed to a repository cannot carry one.
  *
  * The result is deliberately *not* the shape of the file. `databasePath` is resolved to an absolute
@@ -58,19 +58,26 @@ const DatabasePath = Schema.String.pipe(
  */
 const ConfiguredPort = boundedInteger('port', 1, 65_535);
 
-const FileShape = Schema.Struct({
-  server: Schema.optional(
-    Schema.Struct({
-      host: Schema.optional(Host),
-      port: Schema.optional(ConfiguredPort),
-    }),
-  ),
-  database: Schema.optional(
-    Schema.Struct({
-      path: Schema.optional(DatabasePath),
-    }),
-  ),
+const ServerShape = Schema.Struct({
+  host: Schema.optional(Host),
+  port: Schema.optional(ConfiguredPort),
 });
+
+const DatabaseShape = Schema.Struct({
+  path: Schema.optional(DatabasePath),
+});
+
+const FileShape = Schema.Struct({
+  server: Schema.optional(ServerShape),
+  database: Schema.optional(DatabaseShape),
+});
+
+/** The keys each mapping accepts, from the schemas themselves, for "unknown key" suggestions. */
+const KNOWN_KEYS: Readonly<Record<string, readonly string[]>> = {
+  '': Object.keys(FileShape.fields),
+  server: Object.keys(ServerShape.fields),
+  database: Object.keys(DatabaseShape.fields),
+};
 
 export const CONFIG_DEFAULTS = {
   host: '127.0.0.1',
@@ -111,31 +118,163 @@ const decodeFileShape = Schema.decodeUnknownEither(FileShape, {
  */
 export const resolveOptions = (
   value: unknown,
-  context: { readonly baseDirectory: string; readonly label: string },
+  context: {
+    readonly baseDirectory: string;
+    readonly label: string;
+    /** Values given as `server serve` flags. They win over the file and are checked by the same schemas. */
+    readonly overrides?: OptionOverrides;
+    /** Where a relative `databasePath` override resolves: the directory the command was run in. */
+    readonly overrideDirectory?: string;
+  },
 ): BackendOptions => {
+  const overrides = context.overrides ?? {};
+  checkOverrides(overrides);
   const decoded = decodeFileShape(value ?? {});
   if (Either.isLeft(decoded)) {
-    // Every issue is reported, not just the first, so an operator fixes one file rather than
+    // Every problem is reported, one per line, so an operator fixes everything in one pass rather than
     // restarting once per mistake. Paths are option names; the values are the operator's own.
-    const described = ParseResult.ArrayFormatter.formatErrorSync(decoded.left)
-      .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
-      .join('; ');
-    configurationFailure('config_invalid', `${context.label} is not valid. ${described}`);
+    configurationFailure(
+      'config_invalid',
+      `${capitalized(context.label)} is not valid:\n${describeIssues(decoded.left)
+        .map((line) => `  ${line}`)
+        .join('\n')}`,
+    );
   }
 
   const file = decoded.right;
-  const databasePath = file.database?.path ?? CONFIG_DEFAULTS.databasePath;
+  const fromFile = file.database?.path ?? CONFIG_DEFAULTS.databasePath;
+  const [databasePath, databaseBase] =
+    overrides.databasePath === undefined
+      ? [fromFile, context.baseDirectory]
+      : [overrides.databasePath, context.overrideDirectory ?? context.baseDirectory];
   return {
     server: {
-      host: file.server?.host ?? CONFIG_DEFAULTS.host,
-      port: file.server?.port ?? CONFIG_DEFAULTS.port,
+      host: overrides.host ?? file.server?.host ?? CONFIG_DEFAULTS.host,
+      port: (overrides.port as number | undefined) ?? file.server?.port ?? CONFIG_DEFAULTS.port,
     },
     database: {
       databasePath: isAbsolute(databasePath)
         ? resolve(databasePath)
-        : resolve(context.baseDirectory, databasePath),
+        : resolve(databaseBase, databasePath),
     },
   };
+};
+
+/** Options given on the command line. `port` arrives as typed when it is not a number. */
+export interface OptionOverrides {
+  readonly host?: string;
+  readonly port?: number | string;
+  readonly databasePath?: string;
+}
+
+/** Each override is checked by the schema of the file key it replaces, and reported by its flag. */
+const OVERRIDE_FLAGS = [
+  { key: 'host', flag: '--host', schema: Host },
+  { key: 'port', flag: '--port', schema: ConfiguredPort },
+  { key: 'databasePath', flag: '--database', schema: DatabasePath },
+] as const;
+
+/**
+ * Refuse flag values the file's own schemas would refuse, by flag name. A mistake in the command, so
+ * it has its own reason: the command as typed cannot succeed, whatever the configuration says.
+ */
+export const checkOverrides = (overrides: OptionOverrides): void => {
+  const problems = overrideProblems(overrides);
+  if (problems.length > 0) {
+    configurationFailure(
+      'option_invalid',
+      `The server serve options are not valid:\n${problems.map((line) => `  ${line}`).join('\n')}`,
+    );
+  }
+};
+
+const overrideProblems = (overrides: OptionOverrides): string[] =>
+  OVERRIDE_FLAGS.flatMap(({ key, flag, schema }) => {
+    const given = overrides[key];
+    if (given === undefined) return [];
+    const decoded = Schema.decodeUnknownEither(schema as Schema.Schema<unknown>)(given);
+    return Either.isLeft(decoded)
+      ? describeIssues(decoded.left).map((line) => line.replace(/^\(root\)/u, flag))
+      : [];
+  });
+
+const capitalized = (text: string): string => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+
+/**
+ * One line per real problem.
+ *
+ * The schema reports each optional key's failure once per union branch, and the `undefined` branch
+ * ("Expected undefined, actual ...") is never what the operator got wrong, so those are dropped. The
+ * rest is reworded: an unknown key suggests the nearest known one, and a type mismatch says what the
+ * key takes rather than the schema's internal spelling of it.
+ */
+const describeIssues = (error: ParseResult.ParseError): string[] => {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const issue of ParseResult.ArrayFormatter.formatErrorSync(error)) {
+    if (issue.message.startsWith('Expected undefined')) continue;
+    const path = issue.path.map(String);
+    const name = path.join('.') || '(root)';
+    if (seen.has(name)) continue;
+    seen.add(name);
+    lines.push(`${name}: ${describeIssue(issue, path)}`);
+  }
+  return lines;
+};
+
+const describeIssue = (issue: ParseResult.ArrayFormatterIssue, path: readonly string[]): string => {
+  if (issue._tag === 'Unexpected') {
+    const parent = path.slice(0, -1).join('.');
+    const known = KNOWN_KEYS[parent] ?? [];
+    const key = path.at(-1) ?? '';
+    const nearest = nearestKey(key, known);
+    return nearest === undefined
+      ? `unknown key. Allowed keys: ${known.join(', ')}.`
+      : `unknown key. Did you mean "${nearest}"?`;
+  }
+  const actual = /actual (.*)$/su.exec(issue.message)?.[1];
+  if (issue.message.startsWith('Expected {')) return 'must be a mapping of keys.';
+  if (issue.message.startsWith('Expected number')) {
+    return actual !== undefined && /^"\d+"$/u.test(actual)
+      ? `must be a number, got the string ${actual}. Remove the quotes.`
+      : `must be a number${actual === undefined ? '' : `, got ${actual}`}.`;
+  }
+  if (issue.message.startsWith('Expected an integer')) {
+    return `must be a whole number${actual === undefined ? '' : `, got ${actual}`}.`;
+  }
+  if (issue.message.startsWith('Expected string')) {
+    return `must be text${actual === undefined ? '' : `, got ${actual}`}.`;
+  }
+  // The schemas' own refinement sentences ("port must be a whole number between 1 and 65535").
+  return `${issue.message.replace(/^[a-z ]+ must/u, 'must')}.`;
+};
+
+/** The closest known key within two edits, when there is exactly one sensible guess. */
+const nearestKey = (key: string, known: readonly string[]): string | undefined => {
+  let best: { readonly key: string; readonly distance: number } | undefined;
+  for (const candidate of known) {
+    const distance = editDistance(key.toLowerCase(), candidate);
+    if (distance <= 2 && (best === undefined || distance < best.distance)) {
+      best = { key: candidate, distance };
+    }
+  }
+  return best?.key;
+};
+
+const editDistance = (a: string, b: string): number => {
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(
+        (previous[j] ?? 0) + 1,
+        (current[j - 1] ?? 0) + 1,
+        (previous[j - 1] ?? 0) + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[b.length] ?? 0;
 };
 
 /**
@@ -171,24 +310,23 @@ export const validateOptions = (options: BackendOptions): BackendOptions => {
     database: { path: supplied.databasePath },
   });
   if (Either.isLeft(decoded)) {
-    const described = ParseResult.ArrayFormatter.formatErrorSync(decoded.left)
-      .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
-      .join('; ');
     configurationFailure(
       'config_invalid',
-      `the supplied server options are not valid. ${described}`,
+      `The supplied server options are not valid:\n${describeIssues(decoded.left)
+        .map((line) => `  ${line}`)
+        .join('\n')}`,
     );
   }
   if (!Number.isSafeInteger(supplied.port) || supplied.port < 0) {
     configurationFailure(
       'config_invalid',
-      'the supplied server options are not valid. server.port must be 0 or a whole number between 1 and 65535',
+      'The supplied server options are not valid: server.port must be 0 or a whole number between 1 and 65535.',
     );
   }
   if (!isAbsolute(supplied.databasePath)) {
     configurationFailure(
       'config_invalid',
-      'the supplied server options are not valid. database.path must already be resolved to an absolute path',
+      'The supplied server options are not valid: database.path must already be resolved to an absolute path.',
     );
   }
 

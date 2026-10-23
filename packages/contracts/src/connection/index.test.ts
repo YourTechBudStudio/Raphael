@@ -11,6 +11,8 @@ import {
   describeProtocolMismatch,
   hasApiKey,
   isCompatibleProtocolVersion,
+  isPrintableRelease,
+  isSendableApiKey,
 } from './index.ts';
 
 /** A server one protocol revision behind, one ahead, and one predating the date-based scheme. */
@@ -139,4 +141,47 @@ test('a key is never trimmed or re-encoded on its way through', () => {
   const padded = '  spaced key  ';
   assert.equal(hasApiKey(padded), true);
   assert.equal(padded.trim() === padded, false);
+});
+
+test('a sendable key is visible ASCII with no whitespace anywhere', () => {
+  for (const key of ['a', 'zq9x-0123456789abcdef', '!~', 'a'.repeat(4096)]) {
+    assert.equal(isSendableApiKey(key), true, `${JSON.stringify(key)} is sendable`);
+  }
+  for (const key of [
+    '',
+    ' key',
+    'key ',
+    'a b',
+    'a\tb',
+    'a\nb',
+    'key\r',
+    'ключ',
+    'café',
+    '\u007f',
+  ]) {
+    assert.equal(isSendableApiKey(key), false, `${JSON.stringify(key)} is not sendable`);
+  }
+});
+
+test('the server release is optional in a verification answer, and any string decodes', () => {
+  const withRelease = decodeVerifyResponse({
+    protocolVersion: PROTOCOL_VERSION,
+    raphaelVersion: '0.0.1',
+  });
+  assert.equal(Either.isRight(withRelease) && withRelease.right.raphaelVersion, '0.0.1');
+  const without = decodeVerifyResponse({ protocolVersion: PROTOCOL_VERSION });
+  assert.equal(Either.isRight(without) && without.right.raphaelVersion, undefined);
+  // An odd release is informational; it must not make verification fail.
+  for (const raphaelVersion of ['', 'a b', 'x'.repeat(70), '\u001b[2J']) {
+    assert.equal(
+      Either.isRight(decodeVerifyResponse({ protocolVersion: PROTOCOL_VERSION, raphaelVersion })),
+      true,
+    );
+    assert.equal(isPrintableRelease(raphaelVersion), false);
+  }
+  assert.equal(isPrintableRelease('1.2.3-rc.1+build.5'), true);
+  assert.equal(
+    Either.isLeft(decodeVerifyResponse({ protocolVersion: PROTOCOL_VERSION, raphaelVersion: 7 })),
+    true,
+  );
 });

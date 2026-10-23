@@ -26,6 +26,7 @@ import {
   succeed,
   type ClientFailure,
   type ClientResult,
+  type NetworkCause,
   type OperationEffect,
 } from './failure.ts';
 
@@ -124,8 +125,8 @@ const badResponse = (effect: OperationEffect, message: string, status: number): 
 
 /**
  * Failure codes that mean the connection was never established, so not a byte of the request reached
- * the server: the name did not resolve, nothing listened, the network had no route, or the server's
- * certificate was refused before anything was sent over it. Everything else that can fail during an
+ * the server: the name did not resolve, nothing listened, the network had no route, the TLS handshake
+ * failed, or the server's certificate was refused before anything was sent over it. Everything else that can fail during an
  * exchange might have happened after the request went out.
  */
 const NOT_CONNECTED_CODES: ReadonlySet<string> = new Set([
@@ -148,6 +149,13 @@ const NOT_CONNECTED_CODES: ReadonlySet<string> = new Set([
   'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
   'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
   'ERR_TLS_CERT_ALTNAME_INVALID',
+  // The handshake failed before it completed: https spoken to an http server, or no shared protocol.
+  // Nothing of the request can be written before a handshake completes.
+  'ERR_SSL_WRONG_VERSION_NUMBER',
+  'ERR_SSL_PACKET_LENGTH_TOO_LONG',
+  'ERR_SSL_UNSUPPORTED_PROTOCOL',
+  'ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION',
+  'ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE',
 ]);
 
 /**
@@ -182,6 +190,59 @@ const neverSent = (error: unknown): boolean => {
     attempts.length > 0 &&
     attempts.every((attempt) => NOT_CONNECTED_CODES.has(codeOf(attempt) ?? ''))
   );
+};
+
+const CAUSES: ReadonlyMap<string, NetworkCause> = new Map([
+  ['ECONNREFUSED', 'refused'],
+  ['ENOTFOUND', 'dns'],
+  ['EAI_AGAIN', 'dns'],
+  ['EAI_FAIL', 'dns'],
+  ['EAI_NONAME', 'dns'],
+  ['EHOSTUNREACH', 'unreachable'],
+  ['ENETUNREACH', 'unreachable'],
+  ['EHOSTDOWN', 'unreachable'],
+  ['ENETDOWN', 'unreachable'],
+  ['EADDRNOTAVAIL', 'unreachable'],
+  ['ECONNRESET', 'reset'],
+  ['EPIPE', 'reset'],
+  ['UND_ERR_SOCKET', 'reset'],
+  ['UND_ERR_CLOSED', 'reset'],
+  ['EPROTO', 'tls'],
+]);
+
+/**
+ * What a failed `fetch` says about why, read from its cause's code. Certificate and TLS codes are
+ * recognized by their families; a multi-address attempt counts only when every attempt agrees.
+ */
+const causeOf = (error: unknown): NetworkCause | undefined => {
+  if (!(error instanceof Error)) return undefined;
+  const classify = (code: string | undefined): NetworkCause | undefined => {
+    if (code === undefined) return undefined;
+    const known = CAUSES.get(code);
+    if (known !== undefined) return known;
+    return /^(ERR_TLS_|ERR_SSL_|CERT_|UNABLE_TO_|DEPTH_ZERO_|SELF_SIGNED_)/u.test(code)
+      ? 'tls'
+      : undefined;
+  };
+  const cause: unknown = error.cause;
+  const direct = classify(codeOf(cause));
+  if (direct !== undefined) return direct;
+  const attempts = (cause as { errors?: unknown } | null)?.errors;
+  if (!Array.isArray(attempts) || attempts.length === 0) return undefined;
+  const causes = new Set(attempts.map((attempt) => classify(codeOf(attempt))));
+  return causes.size === 1 ? [...causes][0] : undefined;
+};
+
+/** The origin of a redirect's target, when it names an HTTP or HTTPS one. */
+const redirectOriginOf = (response: Response, requestUrl: string): string | undefined => {
+  const location = response.headers.get('location');
+  if (location === null) return undefined;
+  try {
+    const target = new URL(location, requestUrl);
+    return target.protocol === 'http:' || target.protocol === 'https:' ? target.origin : undefined;
+  } catch {
+    return undefined;
+  }
 };
 
 const dispatch = async <A>(
@@ -244,19 +305,22 @@ const dispatch = async <A>(
         message: 'The request was cancelled.',
       });
     }
+    const cause = causeOf(error);
     return fail({
       kind: 'network',
       effect,
       delivery: !answerStarted && neverSent(error) ? 'not_sent' : 'unknown',
       message: 'The server could not be reached.',
+      ...(cause === undefined ? {} : { cause }),
     });
   };
 
   try {
     let response: Response;
     let text: string;
+    const url = routeUrl(endpoint, call.route.path);
     try {
-      response = await fetchImpl(routeUrl(endpoint, call.route.path), {
+      response = await fetchImpl(url, {
         method: call.route.method,
         headers: {
           [AUTHORIZATION_HEADER]: authorization,
@@ -273,13 +337,15 @@ const dispatch = async <A>(
       return exchangeFailed(error, false);
     }
     if (isRedirect(response)) {
-      return fail(
-        badResponse(
+      const redirectOrigin = redirectOriginOf(response, url);
+      return fail({
+        ...badResponse(
           effect,
           'The server redirected the request. Point the endpoint at the final address.',
           response.status,
         ),
-      );
+        ...(redirectOrigin === undefined ? {} : { redirectOrigin }),
+      });
     }
     try {
       text = await response.text();

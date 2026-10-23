@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-The server at http://raphael.invalid redirected the request.
-hint: Check that the address points at the Raphael server itself, then run "raphael login" again.
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) redirected the request to http://raphael.invalid.
+hint: Use the final address, such as http://raphael.invalid: run "raphael login" with the right address.

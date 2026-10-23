@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Not connected to a Raphael server: there is no saved login at <tmp>/raphael/config.json, and RAPHAEL_ENDPOINT and RAPHAEL_API_KEY are not set.
+hint: Run "raphael login", or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY.

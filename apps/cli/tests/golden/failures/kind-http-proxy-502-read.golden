@@ -2,5 +2,5 @@
 1
 ==== stdout ====
 ==== stderr ====
-The server at http://raphael.invalid answered 502 without a Raphael error.
-hint: Check that the address points at a Raphael server.
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) answered 502 without a Raphael error.
+hint: Run the command again; if it keeps failing, check the server's log and any proxy in front of it.

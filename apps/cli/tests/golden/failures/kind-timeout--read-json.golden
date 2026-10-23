@@ -2,4 +2,4 @@
 6
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"get","error":{"code":"timeout","category":"retryable","message":"The server at http://raphael.invalid did not answer in time.","hint":"Run the command again, or allow longer by setting RAPHAEL_TIMEOUT in seconds.","exitCode":6,"target":{"path":"/work"},"applied":false,"retryable":true}}
+{"ok":false,"command":"get","error":{"code":"timeout","category":"retryable","message":"The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) did not answer in time.","hint":"Run the command again, or allow longer by setting RAPHAEL_TIMEOUT in seconds.","exitCode":6,"target":{"path":"/work"},"applied":false,"retryable":true,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

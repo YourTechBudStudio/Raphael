@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+"localhost:3105" is not a usable address: it has no scheme. Nothing was saved.
+hint: Add the scheme, as in "http://localhost:3105", then run "raphael login" again.

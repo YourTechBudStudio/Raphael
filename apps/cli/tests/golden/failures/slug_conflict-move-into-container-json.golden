@@ -2,4 +2,4 @@
 4
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"move","error":{"code":"slug_conflict","category":"conflict","message":"The slug this item would have at /personal is already taken by project 11.","hint":"Run \"raphael get --id 11\" to see what holds it, or choose another slug.","exitCode":4,"status":409,"target":{"path":"/work/p4"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for slug_conflict.","details":{"field":"slug","reason":"sibling","blocking":{"id":11,"type":"project"}}}}
+{"ok":false,"command":"move","error":{"code":"slug_conflict","category":"conflict","message":"The slug this item would have at /personal is already taken by project 11.","hint":"Run \"raphael get --id 11\" to see what holds it, or choose another slug.","exitCode":4,"status":409,"target":{"path":"/work/p4"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for slug_conflict.","details":{"field":"slug","reason":"sibling","blocking":{"id":11,"type":"project"}},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

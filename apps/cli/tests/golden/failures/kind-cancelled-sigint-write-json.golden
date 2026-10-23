@@ -2,4 +2,4 @@
 130
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"archive","error":{"code":"interrupted","category":"interrupted","message":"Interrupted by SIGINT.","hint":"Run \"raphael get /work\" to check whether it was applied before sending it again.","exitCode":130,"target":{"path":"/work"},"applied":null,"retryable":false}}
+{"ok":false,"command":"archive","error":{"code":"interrupted","category":"interrupted","message":"Interrupted by SIGINT.","hint":"Run \"raphael get /work\" to check whether it was applied before sending it again.","exitCode":130,"target":{"path":"/work"},"applied":null,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

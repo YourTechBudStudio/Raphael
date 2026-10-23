@@ -1,0 +1,7 @@
+==== exit ====
+6
+==== stdout ====
+==== stderr ====
+Could not connect to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json): the host name could not be resolved.
+The change was not sent.
+hint: Check the host name, or run "raphael login" with the right address.

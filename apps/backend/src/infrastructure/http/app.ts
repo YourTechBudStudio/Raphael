@@ -64,8 +64,11 @@ export interface AppDependencies {
   readonly logger: Logger;
   /** Called when an operation starts and finishes, so shutdown can wait for real work. */
   readonly track: <T>(work: Promise<T>) => Promise<T>;
-  /** Whether new work is still being admitted. False once shutdown has begun. */
-  readonly admitting: () => boolean;
+  /**
+   * Whether new work is admitted: not yet while storage is opening, and not once shutdown has begun.
+   * Either refusal is `storage_busy`, which tells a client nothing was applied and to try again.
+   */
+  readonly admission: () => 'starting' | 'open' | 'stopping';
 }
 
 const STATE = new WeakMap<Request, RequestState>();
@@ -179,10 +182,11 @@ export const buildApp = (dependencies: AppDependencies): Express => {
       return;
     }
 
-    if (!dependencies.admitting()) {
-      // Shutdown began between matching and here. Refusing is more honest than starting work the
-      // drain is about to wait for.
-      rejectWith(res, notAdmitting(), { closeConnection: true });
+    const admission = dependencies.admission();
+    if (admission !== 'open') {
+      // Storage is still opening, or shutdown began between matching and here. Refusing is more honest
+      // than starting work that cannot run yet or that the drain is about to wait for.
+      rejectWith(res, notAdmitting(admission), { closeConnection: admission === 'stopping' });
       return;
     }
 

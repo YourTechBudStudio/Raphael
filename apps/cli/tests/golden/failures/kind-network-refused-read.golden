@@ -2,5 +2,5 @@
 6
 ==== stdout ====
 ==== stderr ====
-Could not connect to the server at http://raphael.invalid.
-hint: Check that the server is running and the address is right, then run the command again.
+Could not connect to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json): nothing is listening there (connection refused).
+hint: Start the server with "raphael server serve", or run "raphael login" with the right address.

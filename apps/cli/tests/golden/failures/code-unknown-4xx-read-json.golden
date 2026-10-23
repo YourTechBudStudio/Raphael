@@ -2,4 +2,4 @@
 1
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"get","error":{"code":"quota_exhausted","category":"failed","message":"The server's sentence for quota_exhausted.","hint":"Check that this CLI and the server are the same version with \"raphael version\".","exitCode":1,"status":429,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for quota_exhausted."}}
+{"ok":false,"command":"get","error":{"code":"quota_exhausted","category":"failed","message":"The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) refused the request with a code this CLI does not know (quota_exhausted).","hint":"Check that this CLI and the server are the same version with \"raphael status\".","exitCode":1,"status":429,"target":{"path":"/work"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for quota_exhausted.","connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

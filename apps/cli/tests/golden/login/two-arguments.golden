@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-"login" takes no arguments. Got "https://example.com".
+"login" takes one address. Got 2 arguments.
 hint: Run "raphael login --help" for usage.

@@ -2,4 +2,4 @@
 7
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"archive","error":{"code":"internal_error","category":"outcome_unknown","message":"The server at http://raphael.invalid could not complete the request.","hint":"Run \"raphael get /work\" to check whether it was applied before sending it again.","exitCode":7,"status":500,"target":{"path":"/work"},"applied":null,"retryable":false,"serverMessage":"The server's sentence for internal_error."}}
+{"ok":false,"command":"archive","error":{"code":"internal_error","category":"outcome_unknown","message":"The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) could not complete the request.","hint":"Run \"raphael get /work\" to check whether it was applied before sending it again.","exitCode":7,"status":500,"target":{"path":"/work"},"applied":null,"retryable":false,"serverMessage":"The server's sentence for internal_error.","connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}
