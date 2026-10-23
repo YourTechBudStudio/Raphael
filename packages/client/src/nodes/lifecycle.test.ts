@@ -54,6 +54,7 @@ const node = (archived: boolean) => ({
   active: true,
   archived,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
 });
 
 const inherited = {
@@ -67,15 +68,23 @@ describe('archive and restore', () => {
     const archived = answering(200, {
       node: node(true),
       archiveCauses: [{ ...inherited, origin: { id: 7, type: 'project', title: 'Backend' } }],
+      changed: true,
     });
     const result = await archive(archived.transport, { target: { id: 7 }, revision: 9 });
     assert.equal(result.ok, true);
     assert.deepEqual(archived.sent, [
-      { url: 'http://127.0.0.1:1/api/nodes/archive', body: { target: { id: 7 }, revision: 9 } },
+      {
+        url: 'http://127.0.0.1:1/api/nodes/archive',
+        body: { target: { id: 7 }, revision: 9, includePaths: false },
+      },
     ]);
 
     // A restore that leaves the node archived through its area is a success that says so.
-    const still = answering(200, { node: node(true), archiveCauses: [inherited] });
+    const still = answering(200, {
+      node: node(true),
+      archiveCauses: [inherited],
+      changed: true,
+    });
     const restored = await restore(still.transport, { target: { id: 7 }, revision: 10 });
     assert.equal(restored.ok, true);
     if (restored.ok) {
@@ -86,7 +95,11 @@ describe('archive and restore', () => {
   });
 
   it('refuse a response whose status contradicts its causes', async () => {
-    const { transport } = answering(200, { node: node(false), archiveCauses: [inherited] });
+    const { transport } = answering(200, {
+      node: node(false),
+      archiveCauses: [inherited],
+      changed: true,
+    });
     const result = await restore(transport, { target: { id: 7 }, revision: 10 });
     assert.equal(result.ok, false);
     if (!result.ok) assert.equal(result.failure.kind, 'bad_response');

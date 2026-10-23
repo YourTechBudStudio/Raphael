@@ -3,7 +3,7 @@
  * from `@raphael/content/schema`.
  */
 
-export { fromMarkdown } from './import.ts';
+export { fromMarkdown, importMarkdown, type MarkdownImport } from './import.ts';
 export { toMarkdown } from './export.ts';
 export {
   MARKDOWN_MAX_BYTES,

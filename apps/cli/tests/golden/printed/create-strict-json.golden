@@ -1,0 +1,5 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"create","error":{"code":"usage","category":"usage","message":"--strict: the body has a table, which Raphael cannot store as written. Change the body, or leave out --strict to store it anyway.","hint":"Run \"raphael create --help\" for usage.","exitCode":2,"applied":false,"retryable":false}}

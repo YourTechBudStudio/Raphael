@@ -759,7 +759,10 @@ describe('a favorite, across the two clients', () => {
       );
 
       const answer = unwrap(await removeFavorite(transport, { target: { id: project.id } }));
-      assert.deepEqual(answer, { nodeId: project.id, isFavorite: false });
+      assert.deepEqual(
+        [answer.nodeId, answer.isFavorite, answer.changed, answer.node?.title],
+        [project.id, false, true, 'Starred'],
+      );
 
       const atTerminal = await cliJson(['favorites'], { endpoint });
       assert.deepEqual(atTerminal.items, [], 'the terminal no longer lists it');

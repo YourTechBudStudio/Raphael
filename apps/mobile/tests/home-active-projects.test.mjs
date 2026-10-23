@@ -88,7 +88,7 @@ const ONE_EMPTY_AREA = [summary(1, 'area', null, 'Alpha', 'alpha')];
 
 const listed = (items) => ({
   ok: true,
-  value: { items, skip: 0, limit: 200, hasMore: false },
+  value: { items, skip: 0, limit: 200, hasMore: false, archivedLeftOut: false },
 });
 
 /**

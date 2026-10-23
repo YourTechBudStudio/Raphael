@@ -17,6 +17,7 @@ import {
   SUPPORTED_HEADING_LEVELS,
   SUPPORTED_MARKS,
   SUPPORTED_NODES,
+  type ContentFailure,
   type ContentFailureReason,
 } from '@raphael/content';
 import {
@@ -807,4 +808,16 @@ const CONTENT_SENTENCES: Readonly<
   document_too_complex: () => 'The body is too complex for Raphael to store.',
   markdown_too_large: (_at, { limit }) =>
     `The Markdown body is larger than ${limit === undefined ? 'Raphael accepts' : `${limit} bytes`}.`,
+};
+
+/**
+ * A body the CLI converted before sending and could not, in the sentence the server's refusal of the
+ * same body would get. Used where the CLI must convert first: taking a note's title from its body.
+ */
+export const bodyFailureSentence = (failure: ContentFailure): string => {
+  const block = failure.path[0];
+  return CONTENT_SENTENCES[failure.reason](block === undefined ? '' : ` (block ${block + 1})`, {
+    ...(failure.element === undefined ? {} : { element: failure.element }),
+    ...(failure.limit === undefined ? {} : { limit: failure.limit }),
+  });
 };

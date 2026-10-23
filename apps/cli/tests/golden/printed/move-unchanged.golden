@@ -1,0 +1,8 @@
+==== exit ====
+0
+==== stdout ====
+Unchanged project 12: Item 12
+  path:     /engineering/raphael
+  revision: 4
+==== stderr ====
+Nothing changed: it is already at /engineering/raphael.

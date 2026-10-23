@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--strict checks a body; give --body or --body-literal.
+The change was not sent.
+hint: Run "raphael update --help" for usage.

@@ -1,0 +1,8 @@
+==== exit ====
+0
+==== stdout ====
+Unchanged resource.note 305: Item 305
+  path:     /work/platform/raphael/output-contract
+  revision: 1
+==== stderr ====
+Nothing changed: every value given matches what is stored.

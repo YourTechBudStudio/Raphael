@@ -17,7 +17,7 @@ import {
 
 /** A server one protocol revision behind, one ahead, and one predating the date-based scheme. */
 const OLDER_DATE = '2026-09-10';
-const NEWER_DATE = '2026-10-01';
+const NEWER_DATE = '2026-11-01';
 const LEGACY_NUMERIC = 1;
 
 test('verification is published where the clients expect it', () => {

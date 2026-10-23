@@ -2,6 +2,7 @@ import { deriveText } from '@raphael/content/schema';
 import type { JsonObject } from '@raphael/contracts';
 import {
   decodeCreateRequest,
+  formatUpdatedAt,
   type CreateRequest,
   type CreateResponse,
 } from '@raphael/contracts/nodes';
@@ -13,6 +14,7 @@ import { convertBody, type PreparedBody } from './content.ts';
 import { invalidInputFrom } from './diagnostics.ts';
 import type { NodeError } from './errors.ts';
 import { requireActive } from './lifecycle.ts';
+import { pathOf } from './paths.ts';
 import { bodyProjection } from './projection.ts';
 import { resolveScope, validateParentage, withSlugHolder } from './resolve.ts';
 import { nodes } from './schema.ts';
@@ -91,6 +93,7 @@ const prepareCreate = (request: CreateRequest) => {
     metadata:
       request.metadata === undefined ? {} : (structuredClone(request.metadata) as JsonObject),
     format: request.format,
+    includePaths: request.includePaths,
   };
 };
 
@@ -149,6 +152,9 @@ const commit = (
   }
 
   const id = safeRowId(inserted.lastInsertRowid, OPERATION);
+  const path = prepared.includePaths
+    ? pathOf(handle, { id, type: prepared.type, parentId, slug: prepared.slug }, OPERATION)
+    : undefined;
   return {
     entity: {
       id,
@@ -165,6 +171,8 @@ const commit = (
       active: false,
       archived: false,
       isFavorite: false,
+      updatedAt: formatUpdatedAt(now),
+      ...(path === undefined ? {} : { path }),
       body,
       metadata: prepared.metadata,
       archiveCauses: [],

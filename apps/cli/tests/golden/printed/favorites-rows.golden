@@ -1,0 +1,7 @@
+==== exit ====
+0
+==== stdout ====
+4   area     -       /work/platform          Platform
+12  project  active  /work/platform/raphael  Raphael
+==== stderr ====
+Showing 1-2. No more.

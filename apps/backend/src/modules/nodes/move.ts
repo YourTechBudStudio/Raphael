@@ -21,6 +21,7 @@ import {
   type NodeError,
 } from './errors.ts';
 import { requireActive, requireMovable } from './lifecycle.ts';
+import { pathOf } from './paths.ts';
 import { summaryProjection } from './projection.ts';
 import {
   ancestorChain,
@@ -45,7 +46,7 @@ const OPERATION = 'nodes.move';
  * Order is the contract: a stale revision first, then a cycle before a taken address or a type
  * mismatch, then lifecycle.
  * A target archived by its own cause must be restored first; one archived only through an ancestor may
- * move out. An unchanged location answers without writing.
+ * move out. An unchanged location answers `changed: false` without writing.
  */
 export const moveNode = (input: unknown): Effect.Effect<MoveResponse, NodeError, Db> =>
   Effect.clockWith((clock) =>
@@ -80,6 +81,7 @@ interface PreparedMove {
   readonly target: Selector;
   readonly revision: number;
   readonly destination: PreparedDestination;
+  readonly includePaths: boolean;
 }
 
 /** Detaches every pass-through value, so what is validated is what is used. */
@@ -94,6 +96,7 @@ const prepareMove = (request: MoveRequest): PreparedMove => {
       'path' in destination
         ? { kind: 'path', path: destination.path }
         : { kind: 'parent', parent: selector(destination.parent), slug: destination.slug },
+    includePaths: request.includePaths,
   };
 };
 
@@ -202,16 +205,24 @@ const commit = (
   requireActive(handle, nextParent, 'destination', OPERATION);
 
   const nextParentId = nextParent?.id ?? null;
-  const unchanged = nextParentId === target.parentId && slug === target.slug;
-  const revision = unchanged ? target.revision : target.revision + 1;
+  const changed = nextParentId !== target.parentId || slug !== target.slug;
+  const revision = changed ? target.revision + 1 : target.revision;
+  const updatedAt = changed ? sampleNow(clock, OPERATION) : target.updatedAt;
+  const previousPath = prepared.includePaths ? pathOf(handle, target, OPERATION) : undefined;
+  const moved = { ...target, parentId: nextParentId, slug, revision, updatedAt };
 
   // Not archived: the target has no cause of its own and its new parent is active.
-  const response = {
-    node: summaryProjection({ ...target, parentId: nextParentId, slug, revision }, false),
-  };
-  if (unchanged) return response;
+  const response = (): MoveResponse => ({
+    node: summaryProjection(
+      moved,
+      false,
+      prepared.includePaths ? pathOf(handle, moved, OPERATION) : undefined,
+    ),
+    changed,
+    ...(previousPath === undefined ? {} : { previousPath }),
+  });
+  if (!changed) return response();
 
-  const now = sampleNow(clock, OPERATION);
   try {
     handle
       .update(nodes)
@@ -220,7 +231,7 @@ const commit = (
         parentType: nextParent?.type ?? null,
         slug,
         revision,
-        updatedAt: now,
+        updatedAt,
       })
       .where(and(eq(nodes.id, target.id), eq(nodes.revision, prepared.revision)))
       .run();
@@ -233,5 +244,5 @@ const commit = (
       ),
     );
   }
-  return response;
+  return response();
 };

@@ -41,7 +41,7 @@ Examples:
   raphael list /work /personal --filter '{"tags":{"$in":["urgent"]}}'
 
 Prints:
-  One row per item. JSON carries `items` and `page`; paging notes go to stderr.
+  One row per item: id, type, state, path, title. JSON carries `items` and `page`; paging notes go to stderr.
 
 Next: raphael get --id 42
 

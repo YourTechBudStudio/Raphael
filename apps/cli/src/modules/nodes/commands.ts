@@ -74,13 +74,16 @@ import {
   type CommandOption,
 } from '../../shared/command.ts';
 import type { ExitCode } from '../../shared/exit.ts';
+import { bodyFailureSentence } from '../../shared/failure-wording.ts';
 import { reportClientFailure, type RequestContext, type Subject } from '../../shared/failure.ts';
 import { HELP_RULES } from '../../shared/help-rules.ts';
-import { forTerminal, forTerminalBlock } from '../../shared/output.ts';
+import { forTerminal, forTerminalBlock, writeLine } from '../../shared/output.ts';
 import { renderSuccess, type Success } from '../../shared/success.ts';
 import {
   CREATE_TARGETS,
   checkRequestSize,
+  degradedConstructs,
+  degradedWarning,
   validateTitle,
   validateSlug,
   validateDescription,
@@ -100,6 +103,7 @@ import {
   selectorFrom,
   splitCreatePath,
   titleFromContent,
+  type BodyReading,
   type Selector,
 } from './input.ts';
 
@@ -170,6 +174,10 @@ const bodyOptions: readonly CommandOption[] = [
   textOption('body-format', 'format', `Submitted body: ${BODY_FORMATS.join(' or ')}.`, {
     default: BODY_FORMATS[0],
   }),
+  flagOption(
+    'strict',
+    'Refuse a Markdown body that has constructs Raphael keeps only as text. See help content.',
+  ),
 ];
 const pageOptions: readonly CommandOption[] = [
   textOption('id', 'id', 'Include this id alongside positional paths.', {
@@ -256,7 +264,8 @@ export const CREATE_DEFINITION: CommandDefinition = {
       'reviewed',
     ),
   ],
-  prints: 'The created item with its id and revision. JSON carries `entity`.',
+  prints:
+    'The created item with its id, path and revision. A warning on stderr names Markdown kept only as text. JSON carries `entity`.',
   next: 'raphael list / -r',
   seeAlso: ['addressing', 'content', 'update'],
   fieldFlags,
@@ -297,7 +306,8 @@ export const UPDATE_DEFINITION: CommandDefinition = {
     example('update', '/work/raphael', '--tag', 'reviewed', '--tag', 'contracts'),
     example('update', '--id', '42', '--title', 'Contract review', '--description', ''),
   ],
-  prints: 'The updated item and revision. JSON carries `entity`.',
+  prints:
+    'The item with its path and revision. When every value given matches what is stored it reads Unchanged and the revision is kept. JSON carries `entity` and `changed`.',
   next: 'raphael get --id 42',
   seeAlso: ['revisions', 'content'],
   fieldFlags,
@@ -321,8 +331,9 @@ export const MOVE_DEFINITION: CommandDefinition = {
     example('move', '/work/raphael', '/engineering/platform'),
     example('move', '--id', '42', '/'),
   ],
-  prints: 'The moved item, id and revision. JSON carries `node`.',
-  next: 'raphael path --id 42',
+  prints:
+    'The item with its new path, the path it had, and its revision; Unchanged when it was already there. JSON carries `node`, `changed` and `previousPath`.',
+  next: 'raphael get --id 42',
   seeAlso: ['addressing', 'revisions'],
   fieldFlags,
 };
@@ -342,7 +353,8 @@ export const ARCHIVE_DEFINITION: CommandDefinition = {
     example('archive', '--id', '42'),
     example('archive', '--id', '42', '--revision', '8', '--json'),
   ],
-  prints: 'The item and remaining archive causes. JSON carries `node` and `archiveCauses`.',
+  prints:
+    'The item with its path, revision and archive causes; Unchanged when it was already archived. JSON carries `node`, `archiveCauses` and `changed`.',
   next: 'raphael restore --id 42',
   seeAlso: ['restore', 'revisions'],
   fieldFlags,
@@ -363,7 +375,8 @@ export const RESTORE_DEFINITION: CommandDefinition = {
     example('restore', '--id', '42'),
     example('restore', '--id', '42', '--revision', '8', '--json'),
   ],
-  prints: 'The item and remaining archive causes. JSON carries `node` and `archiveCauses`.',
+  prints:
+    'The item with its path, revision and remaining archive causes. Still archived, with the restore command for the container, when a container keeps it archived; Unchanged when nothing was removed. JSON carries `node`, `archiveCauses` and `changed`.',
   next: 'raphael get --id 42',
   seeAlso: ['archive', 'revisions'],
   fieldFlags,
@@ -375,7 +388,7 @@ export const FAVORITE_DEFINITION: CommandDefinition = {
   writes: true,
   usage: ['raphael favorite <path> [options]', 'raphael favorite --id <id> [options]'],
   behavior: [
-    'Already a favorite succeeds. Favorites keep their state while archived, but archived items are omitted from the favorites list.',
+    'Already a favorite succeeds without a change. Favorites keep their state while archived; favorites leaves archived items out unless --include-archived is given.',
   ],
   options: [idOption, ...commonOptions],
   examples: [
@@ -383,7 +396,8 @@ export const FAVORITE_DEFINITION: CommandDefinition = {
     example('favorite', '--id', '42'),
     example('favorite', '/work/raphael', '--json'),
   ],
-  prints: 'The id and favorite state. JSON carries `nodeId` and `isFavorite`.',
+  prints:
+    'The item with its path and favorite state; Unchanged when it already was in that state. JSON carries `nodeId`, `isFavorite`, `changed` and `node`.',
   next: 'raphael favorites',
   seeAlso: ['unfavorite'],
   fieldFlags,
@@ -394,14 +408,17 @@ export const UNFAVORITE_DEFINITION: CommandDefinition = {
   group: 'Write',
   writes: true,
   usage: ['raphael unfavorite <path> [options]', 'raphael unfavorite --id <id> [options]'],
-  behavior: ['An item that is not a favorite succeeds without a change.'],
+  behavior: [
+    'An item that is not a favorite succeeds without a change, and so does an id that names nothing.',
+  ],
   options: [idOption, ...commonOptions],
   examples: [
     example('unfavorite', '/work'),
     example('unfavorite', '--id', '42'),
     example('unfavorite', '/work/raphael', '--json'),
   ],
-  prints: 'The id and favorite state. JSON carries `nodeId` and `isFavorite`.',
+  prints:
+    'The item with its path and favorite state; Unchanged when it already was in that state, and a plain sentence when the id names nothing. JSON carries `nodeId`, `isFavorite`, `changed` and `node`.',
   next: 'raphael favorites',
   seeAlso: ['favorite'],
   fieldFlags,
@@ -413,10 +430,10 @@ export const FAVORITES_DEFINITION: CommandDefinition = {
   writes: false,
   usage: ['raphael favorites [options]'],
   behavior: [
-    'List favorite areas and projects by title. Archived favorites are left out and stay favorites.',
+    'List favorite areas and projects by title. Archived favorites stay favorites and are left out unless --include-archived is given; a note under the list says when any were.',
   ],
   options: [
-    ...pageOptions.filter((option) => ['skip', 'limit'].includes(option.name)),
+    ...pageOptions.filter((option) => ['skip', 'limit', 'include-archived'].includes(option.name)),
     ...commonOptions,
   ],
   examples: [
@@ -424,7 +441,8 @@ export const FAVORITES_DEFINITION: CommandDefinition = {
     example('favorites', '--limit', '20'),
     example('favorites', '--skip', '20', '--limit', '20', '--json'),
   ],
-  prints: 'A page of items. JSON carries `items` and `page`; paging notes go to stderr.',
+  prints:
+    'One row per item: id, type, state, path, title. JSON carries `items` and `page`; paging notes go to stderr.',
   next: 'raphael get --id 42',
   seeAlso: ['output'],
   fieldFlags,
@@ -444,7 +462,8 @@ export const GET_DEFINITION: CommandDefinition = {
     example('get', '--id', '42'),
     example('get', '--id', '42', '--return-format', 'tiptap', '--json'),
   ],
-  prints: 'Fields and body. JSON carries `entity`.',
+  prints:
+    'Every field, including path, revision and update time, then the body. JSON carries `entity`.',
   next: 'raphael update --id 42 --title "Reviewed design"',
   seeAlso: ['content', 'revisions'],
   fieldFlags,
@@ -507,7 +526,8 @@ export const LIST_DEFINITION: CommandDefinition = {
     ),
     example('list', '/work', '/personal', '--filter', '{"tags":{"$in":["urgent"]}}'),
   ],
-  prints: 'One row per item. JSON carries `items` and `page`; paging notes go to stderr.',
+  prints:
+    'One row per item: id, type, state, path, title. JSON carries `items` and `page`; paging notes go to stderr.',
   next: 'raphael get --id 42',
   seeAlso: ['addressing', 'output'],
   fieldFlags: { ...fieldFlags, recursive: '--recursive' } satisfies Partial<
@@ -548,7 +568,8 @@ export const SEARCH_DEFINITION: CommandDefinition = {
       '{"type":"resource","kind":"note"}',
     ),
   ],
-  prints: 'One row per match, with closest matches first. JSON carries `items[].node` and `page`.',
+  prints:
+    'One row per match, closest first: id, type, state, path, title. JSON carries `items[].node` and `page`.',
   next: 'raphael get --id 42',
   seeAlso: ['addressing', 'output'],
   fieldFlags: { ...fieldFlags, recursive: '--direct' } satisfies Partial<
@@ -660,6 +681,31 @@ const stateLabel = (item: Pick<NodeSummary, 'active' | 'archived'>): string =>
         ? 'archived'
         : '-';
 
+/** An item's path as the server computed it. The CLI always asks; `-` only if a server did not say. */
+const pathLabel = (item: Pick<NodeSummary, 'path'>): string =>
+  item.path === undefined ? '-' : forTerminal(item.path);
+
+/** The header of a page of rows, printed only on a terminal so piped output is one item per line. */
+const ROW_HEADER = ['ID', 'TYPE', 'STATE', 'PATH', 'TITLE'] as const;
+
+/**
+ * A page of items as rows: id, type, state, path, title. The fixed state word comes before any free
+ * text, and the title is last, so nothing a title says can be read as another column.
+ */
+const itemRows = (items: readonly NodeSummary[], context: CommandContext): string[] =>
+  items.length === 0
+    ? []
+    : table([
+        ...(context.terminal.stdout ? [ROW_HEADER] : []),
+        ...items.map((item) => [
+          String(item.id),
+          qualifiedType(item),
+          stateLabel(item),
+          pathLabel(item),
+          forTerminal(item.title),
+        ]),
+      ]);
+
 /**
  * Rows of a page, columns padded to the widest value on this page. The last column is free text and
  * is never padded, so it can hold anything without shifting the others.
@@ -683,6 +729,7 @@ interface Page {
   readonly skip: number;
   readonly limit: number;
   readonly hasMore: boolean;
+  readonly archivedLeftOut: boolean;
 }
 
 /** The page window as the JSON envelope carries it. */
@@ -691,21 +738,154 @@ const pageData = (page: Page): Record<string, unknown> => ({
   limit: page.limit,
   hasMore: page.hasMore,
   nextSkip: page.hasMore ? page.skip + page.limit : null,
+  archivedLeftOut: page.archivedLeftOut,
 });
 
 /**
- * The note under a page, for a person. It goes to stderr: it describes the page, it is not one of
- * its rows, and `raphael list / | wc -l` must count rows.
+ * One argument as a POSIX shell reads it back: bare when that is safe, otherwise single-quoted. A
+ * leading `=` is quoted too, because zsh expands `=name` to a command's path.
+ */
+const shellWord = (word: string): string =>
+  /^[A-Za-z0-9_@%+:,./-][A-Za-z0-9_@%+=:,./-]*$/u.test(word)
+    ? word
+    : `'${word.replaceAll("'", `'\\''`)}'`;
+
+/** What a footer changes about the command that was run. */
+interface Rerun {
+  readonly skip?: number;
+  readonly add?: string;
+  readonly drop?: string;
+}
+
+/**
+ * The command that was run, changed only as a footer needs: `--skip` replaced, a flag added or left
+ * out. Everything else - page size, order, places, filter, queries - is kept as typed, so following a
+ * footer literally asks for the same listing. Arguments after `--` stay after it.
+ *
+ * `undefined` when an argument holds a character terminal output must escape, such as a newline: the
+ * escaped form would run a different command, so none is offered as if it were runnable.
+ */
+const rerun = (command: string, argv: readonly string[], change: Rerun): string | undefined => {
+  if (argv.some((word) => forTerminal(word) !== word)) return undefined;
+  const separator = argv.indexOf('--');
+  const options = separator === -1 ? argv : argv.slice(0, separator);
+  const kept: string[] = [];
+  for (let index = 0; index < options.length; index += 1) {
+    const token = options[index] ?? '';
+    if (change.skip !== undefined && token === '--skip') {
+      index += 1;
+      continue;
+    }
+    if (change.skip !== undefined && token.startsWith('--skip=')) continue;
+    if (token === change.drop) continue;
+    kept.push(token);
+  }
+  if (change.add !== undefined && !kept.includes(change.add)) kept.push(change.add);
+  if (change.skip !== undefined && change.skip > 0) kept.push('--skip', String(change.skip));
+  const rest = separator === -1 ? [] : argv.slice(separator);
+  return ['raphael', command, ...kept, ...rest].map(shellWord).join(' ');
+};
+
+/** The same change in words, for when the command cannot be printed runnably. */
+const rerunInWords = (change: Rerun): string =>
+  [
+    ...(change.add === undefined ? [] : [`with ${change.add}`]),
+    ...(change.drop === undefined ? [] : [`without ${change.drop}`]),
+    ...(change.skip === undefined
+      ? []
+      : [change.skip > 0 ? `with --skip ${change.skip}` : 'without --skip']),
+  ].join(' and ');
+
+/** What a page was asked about, for its notes. */
+interface PageScene {
+  readonly command: 'list' | 'search' | 'favorites';
+  readonly argv: readonly string[];
+  /** The places as typed, for list and search. */
+  readonly scopes?: readonly ScopeSelector[];
+  readonly filtered?: boolean;
+  /** Search with --direct. */
+  readonly direct?: boolean;
+  /** A listing without -r. */
+  readonly directList?: boolean;
+}
+
+const placesLabel = (scopes: readonly ScopeSelector[]): string =>
+  scopes
+    .map((scope) => ('id' in scope ? `item ${scope.id}` : forTerminal(scope.path)))
+    .join(' or in ');
+
+/**
+ * The one line for a page with nothing on it, worded for why it is empty. When archived items were
+ * left out it says "that is not archived", so it never calls a place empty when it is not.
+ */
+const emptyLine = (scene: PageScene, archivedLeftOut: boolean): string => {
+  if (scene.command === 'favorites') {
+    return archivedLeftOut ? 'No favorites that are not archived.' : 'No favorites.';
+  }
+  const active = archivedLeftOut ? ' that is not archived' : '';
+  const where = placesLabel(scene.scopes ?? []);
+  const what =
+    scene.command === 'search'
+      ? scene.filtered === true
+        ? ' matches the queries and the filter'
+        : ' matches the queries'
+      : scene.filtered === true
+        ? ' matches the filter'
+        : '';
+  return `Nothing in ${where}${active}${what}.`;
+};
+
+/**
+ * The notes under a page, for a person. They go to stderr: they describe the page, they are not its
+ * rows, and `raphael list / | wc -l` must count rows.
  *
  * Never implies completeness. A page that ends is not the same as a hierarchy that ends, and the
- * difference is what tells someone whether to ask for more.
+ * difference is what tells someone whether to ask for more. Every note that suggests something more
+ * gives the whole command to run.
  */
-const pageNote = (page: Page): string =>
-  page.items.length === 0
-    ? `Nothing here (skip ${page.skip}, limit ${page.limit}).`
-    : `${page.items.length} shown, skip ${page.skip}, limit ${page.limit}${
-        page.hasMore ? `. More available: --skip ${page.skip + page.limit}` : '. No more.'
-      }`;
+const pageNotes = (page: Page, scene: PageScene): string[] => {
+  const step = (lead: string, change: Rerun): string => {
+    const command = rerun(scene.command, scene.argv, change);
+    return command === undefined
+      ? `${lead} run the same command ${rerunInWords(change)}.`
+      : `${lead} ${command}`;
+  };
+  const notes: string[] = [];
+  if (page.items.length > 0) {
+    const first = page.skip + 1;
+    const last = page.skip + page.items.length;
+    const range = `Showing ${first === last ? first : `${first}-${last}`}.`;
+    notes.push(
+      page.hasMore ? step(`${range} More:`, { skip: page.skip + page.limit }) : `${range} No more.`,
+    );
+  } else if (page.skip > 0) {
+    notes.push(step(`Nothing at --skip ${page.skip}. Start again:`, { skip: 0 }));
+  } else {
+    notes.push(emptyLine(scene, page.archivedLeftOut));
+    if (scene.direct === true) {
+      notes.push(
+        step('Only direct children were searched. To search everything underneath:', {
+          drop: '--direct',
+        }),
+      );
+    }
+    // Notes usually sit inside projects, so a filter over direct children alone often finds nothing.
+    if (scene.directList === true && scene.filtered === true) {
+      notes.push(
+        step('Only direct children were listed. To list everything underneath:', { add: '-r' }),
+      );
+    }
+  }
+  if (page.archivedLeftOut) {
+    const which =
+      scene.command !== 'search' ? 'were left out' : page.items.length > 0 ? 'also match' : 'match';
+    // From the first page: including archived items changes which items each page holds.
+    notes.push(
+      step(`Archived items ${which}. To include them:`, { add: '--include-archived', skip: 0 }),
+    );
+  }
+  return notes;
+};
 
 /**
  * The options every scope page accepts, declared once.
@@ -732,6 +912,7 @@ const scopePageFrom = (
   readonly skip?: number;
   readonly limit?: number;
   readonly includeArchived?: boolean;
+  readonly includePaths: true;
 } => {
   // Every positional is a scope. There is no "unexpected argument" case, because a second path is a
   // second place to look rather than a mistake.
@@ -754,6 +935,7 @@ const scopePageFrom = (
     ...(skip === undefined ? {} : { skip }),
     ...(limit === undefined ? {} : { limit }),
     ...(includeArchived ? { includeArchived } : {}),
+    includePaths: true,
   };
 };
 
@@ -767,6 +949,46 @@ const scopeRequest = (scopes: readonly ScopeSelector[]): RequestContext => ({
   scopes: scopes.map((scope): Subject => ('id' in scope ? { id: scope.id } : { path: scope.path })),
   flags: { scopes: '<path>' },
 });
+
+/** How create and update read a body: interrupted by a signal, and saying so when stdin is a terminal. */
+const bodyReading = (context: CommandContext): BodyReading => ({
+  signal: context.signal,
+  stdinIsTerminal: context.terminal.stdin,
+  notice: (line) => writeLine(context.streams.err, line),
+});
+
+/**
+ * The sentence for a refusal that a piped body would have avoided. Standard input is never read to
+ * find out whether anything is there, and "not a terminal" also covers `/dev/null` and a closed
+ * descriptor, so it is worded as a condition rather than as a claim that something was piped.
+ */
+const pipedStdinNote = (context: CommandContext): string =>
+  context.terminal.stdin
+    ? ''
+    : ' Standard input is not a terminal; to read the body from it, pass --body @-.';
+
+/**
+ * `--strict`, refused where it cannot apply: it checks a Markdown body, so it needs one. Decided from
+ * flags alone, before any body is read.
+ */
+const strictOption = (
+  parsed: ParsedArgs,
+  bodyFormat: string | undefined,
+  command: string,
+): boolean => {
+  const strict = booleanOption(parsed, 'strict');
+  if (!strict) return false;
+  if (!wasGiven(parsed, 'body') && !wasGiven(parsed, 'body-literal')) {
+    throw new UsageError('--strict checks a body; give --body or --body-literal.', command);
+  }
+  if (bodyFormat === 'tiptap') {
+    throw new UsageError(
+      '--strict checks a Markdown body; leave it out with --body-format tiptap.',
+      command,
+    );
+  }
+  return true;
+};
 
 export const runCreate = async (
   argv: readonly string[],
@@ -827,14 +1049,16 @@ export const runCreate = async (
   if (description !== undefined) validateDescription(description, 'create');
   validateTags(tags, 'create', '--tag');
   prevalidateMetadata(stringOption(parsed, 'metadata'), 'create');
+  const strict = strictOption(parsed, bodyFormat, 'create');
   const body = await resolveBody(
     stringOption(parsed, 'body'),
     stringOption(parsed, 'body-literal'),
     bodyFormat,
     'create',
-    context.signal,
+    bodyReading(context),
   );
   const metadata = resolveMetadata(stringOption(parsed, 'metadata'), 'create');
+  const degraded = degradedConstructs(body, strict, 'create');
 
   // Every creation is named by the caller. A container must be named here; a note may be named from
   // what it already says, the same way every client does it.
@@ -843,13 +1067,22 @@ export const runCreate = async (
     if (target.type !== 'resource') {
       throw new UsageError('--title is required. Every container has a name.', 'create');
     }
-    title = titleFromContent(body, description ?? '');
-    if (title === undefined) {
+    const derived = titleFromContent(body, description ?? '');
+    if ('failure' in derived) {
       throw new UsageError(
-        '--title is required: nothing in the body or description can name this note.',
+        `--body could not be read as ${body?.format === 'tiptap' ? 'a TipTap document' : 'Markdown'}, so no title can be taken from it. ${bodyFailureSentence(derived.failure)}`,
         'create',
       );
     }
+    if (derived.title === undefined) {
+      throw new UsageError(
+        body === undefined
+          ? `--title is required: no body was given to take a title from, and no description.${pipedStdinNote(context)}`
+          : '--title is required: the body and description have no text to take a title from.',
+        'create',
+      );
+    }
+    title = derived.title;
   }
 
   validateTitle(title, 'create');
@@ -863,6 +1096,7 @@ export const runCreate = async (
     ...(metadata === undefined ? {} : { metadata }),
     ...(body === undefined ? {} : { body }),
     ...(format === undefined ? {} : { format }),
+    includePaths: true,
   };
 
   // A container request cannot carry a kind, so the two are assembled separately.
@@ -896,11 +1130,12 @@ export const runCreate = async (
     lines: () => [
       `Created ${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
       ...fields([
+        ['path', pathLabel(entity)],
         ['revision', String(entity.revision)],
-        ['slug', forTerminal(entity.slug)],
-        ['parent', parentLabel(entity.parentId)],
       ]),
     ],
+    warnings:
+      degraded.length === 0 ? [] : [degradedWarning(degraded, `raphael get --id ${entity.id}`)],
   });
 };
 
@@ -976,7 +1211,7 @@ export const runUpdate = async (
   // being told the command was wrong.
   if (!CHANGE_FLAGS.some((flag) => wasGiven(parsed, flag))) {
     throw new UsageError(
-      `Give at least one change: ${CHANGE_FLAGS.map((flag) => `--${flag}`).join(', ')}.`,
+      `Give at least one change: ${CHANGE_FLAGS.map((flag) => `--${flag}`).join(', ')}.${pipedStdinNote(context)}`,
       'update',
     );
   }
@@ -1025,13 +1260,16 @@ export const runUpdate = async (
   if (description !== undefined) validateDescription(description, 'update');
   if (slug !== undefined) validateSlug(slug, 'update');
   if (tags !== undefined) validateTags(tags, 'update', '--tag');
+  const bodyFormat = choiceOption(parsed, 'body-format', 'update', BODY_FORMATS);
+  const strict = strictOption(parsed, bodyFormat, 'update');
   const body = await resolveBody(
     stringOption(parsed, 'body'),
     stringOption(parsed, 'body-literal'),
-    choiceOption(parsed, 'body-format', 'update', BODY_FORMATS),
+    bodyFormat,
     'update',
-    context.signal,
+    bodyReading(context),
   );
+  const degraded = degradedConstructs(body, strict, 'update');
   const changes = {
     ...(title === undefined ? {} : { title }),
     ...(description === undefined ? {} : { description }),
@@ -1040,6 +1278,7 @@ export const runUpdate = async (
     ...(tags === undefined ? {} : { tags }),
     ...(active === undefined ? {} : { active }),
     ...(format === undefined ? {} : { format }),
+    includePaths: true,
   };
   if (revisionFlag !== undefined)
     checkRequestSize({ target, revision: revisionFlag, ...changes }, 'update', decodeUpdateRequest);
@@ -1071,16 +1310,22 @@ export const runUpdate = async (
     });
   }
 
-  const { entity } = result.value;
+  const { entity, changed } = result.value;
   return succeeded(context, {
-    data: { entity },
+    data: { entity, changed },
     lines: () => [
-      `Updated ${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
+      `${changed ? 'Updated' : 'Unchanged'} ${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
       ...fields([
+        ['path', pathLabel(entity)],
         ['revision', String(entity.revision)],
-        ['slug', forTerminal(entity.slug)],
       ]),
     ],
+    notes: changed ? [] : ['Nothing changed: every value given matches what is stored.'],
+    // Only a write stores a body; an unchanged one was stored as it is by an earlier write.
+    warnings:
+      changed && degraded.length > 0
+        ? [degradedWarning(degraded, `raphael get --id ${entity.id}`)]
+        : [],
   });
 };
 
@@ -1132,6 +1377,7 @@ export const runMove = async (
     target: pinned.sendTo,
     revision: pinned.revision,
     destination: { path: destinationPath },
+    includePaths: true,
   };
   checkRequestSize(writeRequest, 'move', decodeMoveRequest);
   const result = await move(transport, writeRequest, context.signal);
@@ -1145,20 +1391,21 @@ export const runMove = async (
     });
   }
 
-  // A move to where it already is reads the same, with the revision unchanged: the server reported
-  // a success, not a separate outcome. The new full path is one `raphael path` away, not a second
-  // request made here.
-  const { node } = result.value;
+  // A move to where it already is succeeds without a change, and says so; the revision is kept.
+  const { node, changed, previousPath } = result.value;
   return succeeded(context, {
-    data: { node },
+    data: { node, changed, ...(previousPath === undefined ? {} : { previousPath }) },
     lines: () => [
-      `Moved ${qualifiedType(node)} ${node.id}: ${forTerminal(node.title)}`,
+      `${changed ? 'Moved' : 'Unchanged'} ${qualifiedType(node)} ${node.id}: ${forTerminal(node.title)}`,
       ...fields([
+        ['path', pathLabel(node)],
+        ...(changed && previousPath !== undefined
+          ? ([['was', forTerminal(previousPath)]] as const)
+          : []),
         ['revision', String(node.revision)],
-        ['slug', forTerminal(node.slug)],
-        ['parent', parentLabel(node.parentId)],
       ]),
     ],
+    notes: changed ? [] : [`Nothing changed: it is already at ${pathLabel(node)}.`],
   });
 };
 
@@ -1208,7 +1455,7 @@ const runLifecycle = async (
   if ('exit' in pinned) return pinned.exit;
 
   const send = verb === 'archive' ? archive : restore;
-  const writeRequest = { target: pinned.sendTo, revision: pinned.revision };
+  const writeRequest = { target: pinned.sendTo, revision: pinned.revision, includePaths: true };
   checkRequestSize(writeRequest, verb, decodeLifecycleRequest);
   const result = await send(transport, writeRequest, context.signal);
   if (!result.ok) {
@@ -1219,27 +1466,40 @@ const runLifecycle = async (
     });
   }
 
-  const { node, archiveCauses } = result.value;
+  const { node, archiveCauses, changed } = result.value;
   // Archive always ends archived; restore ends either active or still archived by something else.
-  const headline = node.archived
-    ? verb === 'archive'
-      ? 'Archived'
-      : 'Still archived'
-    : 'Restored';
+  // Nothing to add or remove reads "Unchanged", except a restore that leaves the item archived,
+  // which says "Still archived" whatever it removed, so nobody assumes it is back in their lists.
+  const headline =
+    verb === 'restore' && node.archived
+      ? 'Still archived'
+      : !changed
+        ? 'Unchanged'
+        : verb === 'archive'
+          ? 'Archived'
+          : 'Restored';
   // A restore that leaves it archived names the next step: restoring the container it is archived
   // through, which is the nearest cause that is not its own.
   const through = archiveCauses.find((cause) => cause.origin.id !== node.id);
   const notes =
     verb === 'restore' && node.archived && through !== undefined
       ? [
-          `hint: Run "raphael restore --id ${through.origin.id}" to restore ${through.origin.type} ${through.origin.id} too.`,
+          ...(changed ? [] : ['Nothing changed: it was not archived directly.']),
+          `hint: It is archived through ${through.origin.type} ${through.origin.id}. Run "raphael restore --id ${through.origin.id}" to restore that ${through.origin.type}.`,
         ]
-      : [];
+      : changed
+        ? []
+        : [
+            verb === 'archive'
+              ? 'Nothing changed: it was already archived.'
+              : 'Nothing changed: it was not archived.',
+          ];
   return succeeded(context, {
-    data: { node, archiveCauses },
+    data: { node, archiveCauses, changed },
     lines: () => [
       `${headline} ${qualifiedType(node)} ${node.id}: ${forTerminal(node.title)}`,
       ...fields([
+        ['path', pathLabel(node)],
         ['revision', String(node.revision)],
         ['archived', node.archived ? 'yes' : 'no'],
       ]),
@@ -1282,9 +1542,10 @@ const runFavoriteChange = async (
   if (extra.length > 0) throw new UsageError(`${verb} takes one path, or --id.`, verb);
 
   const target = selectorFrom(path, stringOption(parsed, 'id'), verb);
-  checkRequestSize({ target }, verb, decodeFavoriteRequest);
+  const request = { target, includePaths: true };
+  checkRequestSize(request, verb, decodeFavoriteRequest);
   const send = wanted ? addFavorite : removeFavorite;
-  const result = await send(context.transport(), { target }, context.signal);
+  const result = await send(context.transport(), request, context.signal);
   if (!result.ok) {
     return failed(context, result.failure, {
       subject: target,
@@ -1293,10 +1554,42 @@ const runFavoriteChange = async (
     });
   }
 
-  const { nodeId, isFavorite } = result.value;
+  const { nodeId, isFavorite, changed, node } = result.value;
+  const data = { nodeId, isFavorite, changed, node };
+  // Removing an id that names nothing succeeds, as absence was asked for; it still says so plainly,
+  // so a mistyped id is noticed.
+  if (node === null) {
+    return succeeded(context, {
+      data,
+      lines: () => [`No item has id ${nodeId}, so nothing changed.`],
+      notes: ['To see your favorites: raphael favorites'],
+    });
+  }
+  const headline = !changed ? 'Unchanged' : wanted ? 'Favorited' : 'Unfavorited';
+  const notes = [
+    ...(changed
+      ? []
+      : [
+          wanted
+            ? 'Nothing changed: it was already a favorite.'
+            : 'Nothing changed: it was not a favorite.',
+        ]),
+    ...(wanted && node.archived
+      ? [
+          'It is archived, so raphael favorites leaves it out. To see it: raphael favorites --include-archived',
+        ]
+      : []),
+  ];
   return succeeded(context, {
-    data: { nodeId, isFavorite },
-    lines: () => [`Item ${nodeId} is ${isFavorite ? 'a favorite' : 'not a favorite'}.`],
+    data,
+    lines: () => [
+      `${headline} ${qualifiedType(node)} ${node.id}: ${forTerminal(node.title)}`,
+      ...fields([
+        ['path', pathLabel(node)],
+        ['favorite', isFavorite ? 'yes' : 'no'],
+      ]),
+    ],
+    notes,
   });
 };
 
@@ -1317,35 +1610,23 @@ export const runFavorites = async (
     min: LIST_LIMIT_MIN,
     max: LIST_LIMIT_MAX,
   });
+  const includeArchived = booleanOption(parsed, 'include-archived');
 
-  checkRequestSize(
-    { ...(skip === undefined ? {} : { skip }), ...(limit === undefined ? {} : { limit }) },
-    'favorites',
-    decodeFavoriteListRequest,
-  );
-  const result = await listFavorites(
-    context.transport(),
-    {
-      ...(skip === undefined ? {} : { skip }),
-      ...(limit === undefined ? {} : { limit }),
-    },
-    context.signal,
-  );
+  const request = {
+    ...(skip === undefined ? {} : { skip }),
+    ...(limit === undefined ? {} : { limit }),
+    ...(includeArchived ? { includeArchived } : {}),
+    includePaths: true,
+  };
+  checkRequestSize(request, 'favorites', decodeFavoriteListRequest);
+  const result = await listFavorites(context.transport(), request, context.signal);
   if (!result.ok) return failed(context, result.failure);
 
   const page = result.value;
   return succeeded(context, {
     data: { items: page.items, page: pageData(page) },
-    lines: () =>
-      table(
-        page.items.map((item) => [
-          String(item.id),
-          qualifiedType(item),
-          stateLabel(item),
-          forTerminal(item.title),
-        ]),
-      ),
-    notes: [pageNote(page)],
+    lines: () => itemRows(page.items, context),
+    notes: pageNotes(page, { command: 'favorites', argv }),
   });
 };
 
@@ -1360,16 +1641,9 @@ export const runGet = async (
   const target = selectorFrom(path, stringOption(parsed, 'id'), 'get');
   const format = returnedFormat(parsed, 'get');
 
-  checkRequestSize(
-    { target, ...(format === undefined ? {} : { format }) },
-    'get',
-    decodeGetRequest,
-  );
-  const result = await get(
-    context.transport(),
-    { target, ...(format === undefined ? {} : { format }) },
-    context.signal,
-  );
+  const request = { target, ...(format === undefined ? {} : { format }), includePaths: true };
+  checkRequestSize(request, 'get', decodeGetRequest);
+  const result = await get(context.transport(), request, context.signal);
   if (!result.ok) {
     return failed(context, result.failure, { subject: target, flags: selectorFlags(target) });
   }
@@ -1385,10 +1659,12 @@ export const runGet = async (
       // Every field, in one order, whatever the type: a field that does not apply reads `-` rather
       // than being left out, so a reader never infers a value from a missing line. `active` applies
       // only to a project.
-      const labelled = fields([
+      const entries = [
+        ['path', pathLabel(entity)],
         ['slug', forTerminal(entity.slug)],
         ['parent', parentLabel(entity.parentId)],
         ['revision', String(entity.revision)],
+        ['updated', entity.updatedAt],
         ['active', entity.type === 'project' ? (entity.active ? 'yes' : 'no') : '-'],
         ['archived', entity.archived ? 'yes' : 'no'],
         // A note is never a favorite, and `no` is the truthful answer for it.
@@ -1396,13 +1672,15 @@ export const runGet = async (
         ['tags', entity.tags.map(tagLabel).join(', ')],
         ['description', forTerminal(entity.description)],
         ['metadata', forTerminal(JSON.stringify(entity.metadata))],
-      ]);
-      // The causes sit under `archived`, the fifth field.
+      ] as const;
+      const labelled = fields(entries);
+      // The causes sit directly under `archived`.
+      const afterArchived = entries.findIndex(([name]) => name === 'archived') + 1;
       const lines = [
         `${qualifiedType(entity)} ${entity.id}: ${forTerminal(entity.title)}`,
-        ...labelled.slice(0, 5),
+        ...labelled.slice(0, afterArchived),
         ...causeLines(entity.id, entity.archiveCauses, '    '),
-        ...labelled.slice(5),
+        ...labelled.slice(afterArchived),
       ];
       // An empty body prints nothing, not a blank region that reads like a body of blank lines.
       const empty = entity.body.format === 'markdown' && entity.body.value === '';
@@ -1456,16 +1734,14 @@ export const runList = async (
   const page = result.value;
   return succeeded(context, {
     data: { items: page.items, page: pageData(page) },
-    lines: () =>
-      table(
-        page.items.map((item) => [
-          String(item.id),
-          qualifiedType(item),
-          stateLabel(item),
-          forTerminal(item.slug),
-        ]),
-      ),
-    notes: [pageNote(page)],
+    lines: () => itemRows(page.items, context),
+    notes: pageNotes(page, {
+      command: 'list',
+      argv,
+      scopes: scopePage.scopes,
+      filtered: scopePage.filter !== undefined,
+      directList: scopePage.recursive !== true,
+    }),
   });
 };
 
@@ -1485,22 +1761,19 @@ export const runSearch = async (
   const page = result.value;
   return succeeded(context, {
     // A hit stays wrapped as `{ node }`: the wrapper is where a hit will later say what matched.
-    data: {
-      items: page.items,
-      page: { ...pageData(page), archivedLeftOut: page.archivedLeftOut },
-    },
-    // The title comes after the slug, because a hit's title is usually the thing that matched, and a
-    // slug alone does not tell someone which of two similarly addressed notes they found.
+    data: { items: page.items, page: pageData(page) },
+    // The same rows as a listing: a hit's title is usually what matched, and its path is where it is.
     lines: () =>
-      table(
-        page.items.map(({ node }) => [
-          String(node.id),
-          qualifiedType(node),
-          stateLabel(node),
-          forTerminal(node.slug),
-          forTerminal(node.title),
-        ]),
+      itemRows(
+        page.items.map(({ node }) => node),
+        context,
       ),
-    notes: [pageNote(page)],
+    notes: pageNotes(page, {
+      command: 'search',
+      argv,
+      scopes: scopePage.scopes,
+      filtered: scopePage.filter !== undefined,
+      direct: scopePage.recursive === false,
+    }),
   });
 };

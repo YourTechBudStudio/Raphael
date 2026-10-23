@@ -5,13 +5,15 @@ Usage: raphael favorites [options]
 
 List favorites by title.
 
-List favorite areas and projects by title. Archived favorites are left out and stay favorites.
+List favorite areas and projects by title. Archived favorites stay favorites and are left out unless --include-archived is given; a note under the list says when any were.
 
 Options:
       --skip <n>
       Number of results to skip. Default: 0.
       --limit <n>
       Page size, 1 to 500. Default: 50.
+      --include-archived
+      Include archived items.
       --json
       Print one JSON result.
   -h, --help
@@ -23,7 +25,7 @@ Examples:
   raphael favorites --skip 20 --limit 20 --json
 
 Prints:
-  A page of items. JSON carries `items` and `page`; paging notes go to stderr.
+  One row per item: id, type, state, path, title. JSON carries `items` and `page`; paging notes go to stderr.
 
 Next: raphael get --id 42
 

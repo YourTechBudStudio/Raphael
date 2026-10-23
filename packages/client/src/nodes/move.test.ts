@@ -56,11 +56,12 @@ const node = {
   active: false,
   archived: false,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
 };
 
 describe('move', () => {
   it('posts the destination verbatim to the move route and reads the summary back', async () => {
-    const { transport, sent } = answering(200, { node });
+    const { transport, sent } = answering(200, { node, changed: true });
 
     const result = await move(transport, {
       target: { id: 7 },
@@ -80,11 +81,12 @@ describe('move', () => {
       target: { id: 7 },
       revision: 8,
       destination: { path: '/engineering/platform' },
+      includePaths: false,
     });
   });
 
   it('sends an explicit parent and new slug as given', async () => {
-    const { transport, sent } = answering(200, { node });
+    const { transport, sent } = answering(200, { node, changed: true });
 
     const result = await move(transport, {
       target: { path: '/work/backend' },
@@ -97,11 +99,12 @@ describe('move', () => {
       target: { path: '/work/backend' },
       revision: 8,
       destination: { parent: { id: 3 }, slug: 'platform' },
+      includePaths: false,
     });
   });
 
   it('refuses a malformed destination before anything is sent', async () => {
-    const { transport, sent } = answering(200, { node });
+    const { transport, sent } = answering(200, { node, changed: true });
 
     const result = await move(transport, {
       target: { id: 7 },

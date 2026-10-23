@@ -4,6 +4,6 @@
 Server:   http://raphael.invalid
 Source:   saved login (/stub/raphael/config.json)
 Key:      accepted
-Protocol: 2026-09-24 (both sides)
+Protocol: 2026-10-23 (both sides)
 Releases: server <version>, this CLI <version>
 ==== stderr ====

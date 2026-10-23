@@ -1,11 +1,12 @@
 import { type CanonicalDocument } from '@raphael/content';
 import { toMarkdown } from '@raphael/content/conversion';
-import type {
-  ArchiveCause,
-  BodyFormat,
-  NodeEntity,
-  NodeSummary,
-  ResourceKind,
+import {
+  formatUpdatedAt,
+  type ArchiveCause,
+  type BodyFormat,
+  type NodeEntity,
+  type NodeSummary,
+  type ResourceKind,
 } from '@raphael/contracts/nodes';
 import { sql, type SQL, type SQLWrapper } from 'drizzle-orm';
 
@@ -13,7 +14,8 @@ import type { EffectiveCause, StoredEntity, StoredSummary } from './types.ts';
 
 /**
  * Building responses. Public fields are listed one by one, never spread from a row, so internal
- * columns such as `body_text` and `updated_at` never reach the wire.
+ * columns such as `body_text` and `created_at` never reach the wire. `updated_at` is published as
+ * `updatedAt` in its one wire spelling.
  */
 
 export const bodyProjection = (
@@ -36,11 +38,18 @@ export const favoriteExpression = (nodeId: SQLWrapper): SQL<number> =>
 /** The columns a summary is read from, aliased as `StoredSummary` names them. */
 export const SUMMARY_COLUMNS: SQL = sql`n.id AS id, n.type AS type, n.kind AS kind,
   n.parent_id AS parentId, n.slug AS slug, n.revision AS revision, n.title AS title,
-  n.description AS description, n.tags AS tags, n.active AS active,
+  n.description AS description, n.tags AS tags, n.active AS active, n.updated_at AS updatedAt,
   ${favoriteExpression(sql`n.id`)} AS isFavorite`;
 
-/** `archived` has no default, so every caller states it. */
-export const summaryProjection = (row: StoredSummary, archived: boolean): NodeSummary => ({
+/**
+ * `archived` has no default, so every caller states it. `path` is passed only when the request asked
+ * for paths; it is computed on request and never stored (ADR 0004).
+ */
+export const summaryProjection = (
+  row: StoredSummary,
+  archived: boolean,
+  path?: string,
+): NodeSummary => ({
   id: row.id,
   type: row.type,
   // The table's CHECK constraints tie a kind to resources and `active` to projects.
@@ -54,6 +63,8 @@ export const summaryProjection = (row: StoredSummary, archived: boolean): NodeSu
   active: row.active === 1,
   archived,
   isFavorite: row.isFavorite === 1,
+  updatedAt: formatUpdatedAt(row.updatedAt),
+  ...(path === undefined ? {} : { path }),
 });
 
 /** Archive causes as the wire names them, nearest origin first. */
@@ -68,8 +79,9 @@ export const entityProjection = (
   row: StoredEntity,
   body: NodeEntity['body'],
   causes: readonly EffectiveCause[],
+  path?: string,
 ): NodeEntity => ({
-  ...summaryProjection(row, causes.length > 0),
+  ...summaryProjection(row, causes.length > 0, path),
   body,
   metadata: JSON.parse(row.metadata) as NodeEntity['metadata'],
   archiveCauses: causeProjection(causes),

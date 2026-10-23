@@ -1,0 +1,8 @@
+==== exit ====
+0
+==== stdout ====
+Unchanged area 4: Platform
+  path:     /work/platform
+  favorite: yes
+==== stderr ====
+Nothing changed: it was already a favorite.

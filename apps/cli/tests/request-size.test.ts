@@ -21,8 +21,14 @@ for (const command of ['create', 'update'] as const) {
           slug: 'sized',
           title: 'Sized',
           body: { format: 'markdown', value },
+          includePaths: true,
         }
-      : { target: { id: 42 }, revision: 1, body: { format: 'markdown', value } };
+      : {
+          target: { id: 42 },
+          revision: 1,
+          body: { format: 'markdown', value },
+          includePaths: true,
+        };
   const decode = command === 'create' ? decodeCreateRequest : decodeUpdateRequest;
   const decoded = decode(requestWith(''));
   assert.equal(decoded._tag, 'Right');

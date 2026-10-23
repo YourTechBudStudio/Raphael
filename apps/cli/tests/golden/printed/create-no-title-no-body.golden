@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--title is required: no body was given to take a title from, and no description. Standard input is not a terminal; to read the body from it, pass --body @-.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

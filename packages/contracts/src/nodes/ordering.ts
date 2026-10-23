@@ -9,9 +9,9 @@ import { compareSlugBinary } from './slug.ts';
  *
  * It is a default, not the only order a listing can have. `ListRequest.orderBy` lets a caller replace
  * it with up to three clauses over slug, update time and ID, and **this comparator does not implement
- * that**: it is the default alone. Storage compiles requested clauses into SQL, and update time is not
- * a field any response carries, so an arbitrary requested ordering is not reproducible outside the
- * query that produced it. Anything holding a page ordered by something other than the default must
+ * that**: it is the default alone. Storage compiles requested clauses into SQL, including ties on update
+ * time that only the trailing ID settles, so a requested ordering is the server's to state, not one to
+ * re-derive outside the query that produced it. Anything holding a page ordered by something other than the default must
  * keep the server's sequence rather than re-deriving it here.
  *
  * What this exists for is agreement with SQL on the default, so nothing outside the database reaches

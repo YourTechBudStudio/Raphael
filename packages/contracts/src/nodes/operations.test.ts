@@ -15,6 +15,7 @@ import {
   TAGS_MAX_COUNT,
   TAG_MAX_CODE_POINTS,
   TITLE_MAX_CODE_POINTS,
+  formatUpdatedAt,
 } from './fields.ts';
 import {
   CreateRequest,
@@ -73,6 +74,7 @@ const entity = (overrides: Record<string, unknown> = {}): Record<string, unknown
   active: false,
   archived: false,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
   body: { format: 'markdown', value: '' },
   metadata: {},
   archiveCauses: [],
@@ -125,8 +127,17 @@ test('list defaults are materialized, and an omitted filter restricts nothing', 
     skip: 0,
     limit: 50,
     includeArchived: false,
+    includePaths: false,
   });
   assert.equal('filter' in decoded, false);
+  assert.equal(
+    right(decodeListRequest({ scopes: [{ id: 1 }], includePaths: true })).includePaths,
+    true,
+  );
+  assert.equal(
+    Either.isLeft(decodeListRequest({ scopes: [{ id: 1 }], includePaths: 'yes' })),
+    true,
+  );
 });
 
 test('search is the same page with queries instead of an ordering', () => {
@@ -138,6 +149,7 @@ test('search is the same page with queries instead of an ordering', () => {
     skip: 0,
     limit: 50,
     includeArchived: false,
+    includePaths: false,
   });
 
   // Each operation refuses the other's own field, rather than accepting and ignoring it.
@@ -308,10 +320,25 @@ test('a move request requires target, revision and destination', () => {
   assert.equal(Either.isLeft(decodeMoveRequest({ ...complete, format: 'markdown' })), true);
 });
 
-test('a move response is a summary under node', () => {
+test('a move response is a summary under node, and says whether it changed anything', () => {
   const { body: _body, metadata: _metadata, ...summary } = entity();
-  assert.equal(right(decodeMoveResponse({ node: summary })).node.id, 42);
-  assert.equal(Either.isLeft(decodeMoveResponse({ entity: summary })), true);
+  assert.equal(right(decodeMoveResponse({ node: summary, changed: true })).node.id, 42);
+  assert.equal(Either.isLeft(decodeMoveResponse({ entity: summary, changed: true })), true);
+  assert.equal(Either.isLeft(decodeMoveResponse({ node: summary })), true);
+
+  const withPaths = right(
+    decodeMoveResponse({
+      node: { ...summary, path: '/work/backend' },
+      changed: true,
+      previousPath: '/old/backend',
+    }),
+  );
+  assert.equal(withPaths.node.path, '/work/backend');
+  assert.equal(withPaths.previousPath, '/old/backend');
+  assert.equal(
+    Either.isLeft(decodeMoveResponse({ node: summary, changed: true, previousPath: '/' })),
+    true,
+  );
 });
 
 test('pagination rejects values outside the agreed range instead of clamping them', () => {
@@ -545,6 +572,7 @@ test('every node response says whether it is a favorite, as a boolean', () => {
     skip: 0,
     limit: 50,
     hasMore: false,
+    archivedLeftOut: false,
   });
   assert.equal(Either.isRight(decodeListResponse(page(summary))), true);
   assert.equal(Either.isLeft(decodeListResponse(page(summaryWithoutFavorite))), true);
@@ -621,7 +649,7 @@ test('a response whose kind contradicts its type is refused, not believed', () =
   // The same rule holds for a summary inside a page, which is where a hierarchy consumer would meet
   // it. One bad item refuses the page rather than being silently carried or dropped.
   const page = (items: unknown[]) =>
-    decodeListResponse({ items, skip: 0, limit: 10, hasMore: false });
+    decodeListResponse({ items, skip: 0, limit: 10, hasMore: false, archivedLeftOut: false });
   assert.equal(Either.isLeft(page([entity({ type: 'area', kind: 'note' })])), true);
   assert.equal(Either.isLeft(page([entity(), entity({ type: 'resource', kind: null })])), true);
   assert.equal(Either.isRight(page([entity(), entity({ type: 'resource', kind: 'note' })])), true);
@@ -675,19 +703,26 @@ test('a response that marks a non-project active is refused, not believed', () =
 
   // And the same rule holds for a summary inside a page, which is where Home meets it.
   const page = (items: unknown[]) =>
-    decodeListResponse({ items, skip: 0, limit: 10, hasMore: false });
+    decodeListResponse({ items, skip: 0, limit: 10, hasMore: false, archivedLeftOut: false });
   assert.equal(Either.isLeft(page([entity({ type: 'area', active: true })])), true);
   assert.equal(Either.isRight(page([entity({ active: true }), entity({ type: 'area' })])), true);
 });
 
 test('selection carries no count, ordinal, timestamp or expiry on the wire either', () => {
   // Criterion 4 of story #5 is an absence - no cap, no ordering position, no timestamp, no expiry -
-  // so it is held by enumeration rather than by a behavioural test. `apps/backend/tests/schema.test.ts`
+  // so it is held by enumeration rather than by a behavioural test. `updatedAt` is the node's own
+  // update time, not a time the selection was made, and `path` is present only on request. `apps/backend/tests/schema.test.ts`
   // pins the complete `nodes` column list for the storage half; this is the response half, and it is
   // both projections rather than one because a field added to only the entity would still reach a
   // consumer. Any future addition has to change a list here to get in.
   const summary = right(
-    decodeListResponse({ items: [entity()], skip: 0, limit: 10, hasMore: false }),
+    decodeListResponse({
+      items: [entity()],
+      skip: 0,
+      limit: 10,
+      hasMore: false,
+      archivedLeftOut: false,
+    }),
   ).items[0] as unknown as Record<string, unknown>;
   assert.deepEqual(Object.keys(summary).sort(), [
     'active',
@@ -702,6 +737,7 @@ test('selection carries no count, ordinal, timestamp or expiry on the wire eithe
     'tags',
     'title',
     'type',
+    'updatedAt',
   ]);
 
   // The entity is the summary plus a body, metadata, and its archive causes, and nothing else.
@@ -732,6 +768,7 @@ test('a list page reports its own window and says whether more remain', () => {
       skip: 0,
       limit: 50,
       hasMore: true,
+      archivedLeftOut: false,
     }),
   );
   assert.equal(decoded.items.length, 2);
@@ -816,7 +853,10 @@ test('a decoded response survives encoding and decoding again', () => {
       { entity: entity({ body: { format: 'tiptap', value: { type: 'doc', content: [] } } }) },
       GetResponse,
     ],
-    [{ items: [entity()], skip: 0, limit: 50, hasMore: false }, ListResponse],
+    [
+      { items: [entity()], skip: 0, limit: 50, hasMore: false, archivedLeftOut: false },
+      ListResponse,
+    ],
     [{ id: 4, path: '/work/backend' }, GetPathResponse],
   ];
   for (const [payload, schema] of payloads) {
@@ -981,14 +1021,20 @@ test('adding ordering left pagination and the response shapes alone', () => {
     true,
   );
 
-  // Ordering by a timestamp does not put a timestamp in a response. Nothing downstream may start
-  // depending on a clock reading it was never given.
+  // Ordering by update time is matched by that time on every item, and by no creation time.
   const decoded = right(
-    decodeListResponse({ items: [entity()], skip: 0, limit: 10, hasMore: false }),
+    decodeListResponse({
+      items: [entity()],
+      skip: 0,
+      limit: 10,
+      hasMore: false,
+      archivedLeftOut: false,
+    }),
   );
   const item = decoded.items[0] as unknown as Record<string, unknown>;
-  assert.equal('updatedAt' in item, false);
+  assert.equal(item['updatedAt'], '2026-10-19T10:42:07.123Z');
   assert.equal('createdAt' in item, false);
+  assert.equal('path' in item, false);
 });
 
 const update = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
@@ -1005,7 +1051,13 @@ const issuesOf = (result: Either.Either<unknown, DecodeFailure>) => {
 
 test('an update carries only what it supplied, and supplying nothing is refused', () => {
   const decoded = right(decodeUpdateRequest(update({ title: 'Backend' })));
-  assert.deepEqual(Object.keys(decoded).sort(), ['format', 'revision', 'target', 'title']);
+  assert.deepEqual(Object.keys(decoded).sort(), [
+    'format',
+    'includePaths',
+    'revision',
+    'target',
+    'title',
+  ]);
 
   // An omitted optional leaves no own property; an explicitly empty body leaves one. That difference
   // is the whole of "an omitted field stays unchanged, an empty body clears it".
@@ -1032,6 +1084,7 @@ test('an update carries only what it supplied, and supplying nothing is refused'
     'body',
     'description',
     'format',
+    'includePaths',
     'revision',
     'slug',
     'tags',
@@ -1044,7 +1097,7 @@ test('every field named a change is one, and every other field is not', () => {
   // The drift guard. `UPDATE_CHANGE_FIELDS` is a second statement of the envelope's shape, and a
   // missing entry fails in the worst direction: a caller who supplied a real change would be told
   // they supplied none. Inverting the allowlist makes a future non-change field an explicit decision.
-  const notChanges = ['target', 'revision', 'format'];
+  const notChanges = ['target', 'revision', 'format', 'includePaths'];
   assert.deepEqual(
     Object.keys(UpdateRequestFields.fields)
       .filter((field) => !notChanges.includes(field))
@@ -1126,9 +1179,15 @@ test('exactness refuses an explicit undefined, so presence means supplied in pro
   assert.deepEqual(issuesOf(decodeUpdateRequest(update({ title: undefined })))[0]?.path, ['title']);
 });
 
-test('an update answers with the resulting entity', () => {
-  const decoded = right(decodeUpdateResponse({ entity: entity({ revision: 8 }) }));
+test('an update answers with the resulting entity and whether it changed anything', () => {
+  const decoded = right(decodeUpdateResponse({ entity: entity({ revision: 8 }), changed: true }));
   assert.equal(decoded.entity.revision, 8);
+  assert.equal(decoded.changed, true);
+  assert.equal(
+    right(decodeUpdateResponse({ entity: entity({ revision: 7 }), changed: false })).changed,
+    false,
+  );
+  assert.equal(Either.isLeft(decodeUpdateResponse({ entity: entity() })), true);
 });
 
 const directCause = {
@@ -1190,19 +1249,35 @@ test('a lifecycle response whose summary contradicts its causes is refused', () 
     return { ...rest, archived };
   };
   assert.equal(
-    Either.isRight(decodeLifecycleResponse({ node: summary(true), archiveCauses: [directCause] })),
+    Either.isRight(
+      decodeLifecycleResponse({ node: summary(true), archiveCauses: [directCause], changed: true }),
+    ),
     true,
   );
   assert.equal(
-    Either.isRight(decodeLifecycleResponse({ node: summary(false), archiveCauses: [] })),
+    Either.isRight(
+      decodeLifecycleResponse({ node: summary(false), archiveCauses: [], changed: false }),
+    ),
     true,
   );
   assert.equal(
-    Either.isLeft(decodeLifecycleResponse({ node: summary(false), archiveCauses: [directCause] })),
+    Either.isLeft(
+      decodeLifecycleResponse({
+        node: summary(false),
+        archiveCauses: [directCause],
+        changed: true,
+      }),
+    ),
     true,
   );
   assert.equal(
-    Either.isLeft(decodeLifecycleResponse({ node: summary(true), archiveCauses: [] })),
+    Either.isLeft(
+      decodeLifecycleResponse({ node: summary(true), archiveCauses: [], changed: true }),
+    ),
+    true,
+  );
+  assert.equal(
+    Either.isLeft(decodeLifecycleResponse({ node: summary(false), archiveCauses: [] })),
     true,
   );
 });
@@ -1211,6 +1286,7 @@ test('a lifecycle request is a selector and a revision, and nothing else', () =>
   assert.deepEqual(right(decodeLifecycleRequest({ target: { id: 4 }, revision: 2 })), {
     target: { id: 4 },
     revision: 2,
+    includePaths: false,
   });
   assert.equal(Either.isLeft(decodeLifecycleRequest({ target: { path: '/' }, revision: 2 })), true);
   assert.equal(Either.isLeft(decodeLifecycleRequest({ target: { id: 4 } })), true);
@@ -1244,17 +1320,56 @@ test('archived nodes are left out of a page unless it asks for them', () => {
   }
 });
 
-test('a search says whether archived matches were left out, and a list does not', () => {
+test('a search and a list both say whether archived items were left out', () => {
   const page = { items: [], skip: 0, limit: 10, hasMore: false };
+  for (const decode of [decodeSearchResponse, decodeListResponse]) {
+    assert.equal(right(decode({ ...page, archivedLeftOut: true })).archivedLeftOut, true);
+    assert.equal(right(decode({ ...page, archivedLeftOut: false })).archivedLeftOut, false);
+    assert.equal(Either.isLeft(decode(page)), true);
+    assert.equal(Either.isLeft(decode({ ...page, archivedLeftOut: 'yes' })), true);
+  }
+});
+
+test('an update time is one exact ISO 8601 UTC spelling', () => {
+  const { body: _body, metadata: _metadata, archiveCauses: _causes, ...summary } = entity();
+  const page = (updatedAt: unknown) => ({
+    items: [{ ...summary, updatedAt }],
+    skip: 0,
+    limit: 10,
+    hasMore: false,
+    archivedLeftOut: false,
+  });
+  assert.equal(Either.isRight(decodeListResponse(page('1970-01-01T00:00:00.000Z'))), true);
+  for (const value of [
+    '2026-10-19T10:42:07Z',
+    '2026-10-19T10:42:07.123+00:00',
+    '2026-02-30T10:42:07.123Z',
+    '2026-10-19 10:42:07.123Z',
+    1760870527123,
+    '',
+  ]) {
+    assert.equal(Either.isLeft(decodeListResponse(page(value))), true, String(value));
+  }
+  const { updatedAt: _updatedAt, ...withoutTime } = summary;
+  assert.equal(Either.isLeft(decodeListResponse({ ...page(''), items: [withoutTime] })), true);
+  assert.equal(formatUpdatedAt(1760870527123), '2025-10-19T10:42:07.123Z');
+});
+
+test('a path appears only as a usable entity path', () => {
+  const { body: _body, metadata: _metadata, archiveCauses: _causes, ...summary } = entity();
+  const page = (path: unknown) => ({
+    items: [{ ...summary, path }],
+    skip: 0,
+    limit: 10,
+    hasMore: false,
+    archivedLeftOut: false,
+  });
+  assert.equal(right(decodeListResponse(page('/work/backend'))).items[0]?.path, '/work/backend');
+  for (const path of ['/', 'work', '/Work', '/work/', null]) {
+    assert.equal(Either.isLeft(decodeListResponse(page(path))), true, String(path));
+  }
   assert.equal(
-    right(decodeSearchResponse({ ...page, archivedLeftOut: true })).archivedLeftOut,
-    true,
-  );
-  assert.equal(Either.isLeft(decodeSearchResponse(page)), true);
-  assert.equal(Either.isLeft(decodeSearchResponse({ ...page, archivedLeftOut: 'yes' })), true);
-  assert.equal('archivedLeftOut' in right(decodeListResponse(page)), false);
-  assert.equal(
-    'archivedLeftOut' in right(decodeListResponse({ ...page, archivedLeftOut: true })),
-    false,
+    right(decodeGetResponse({ entity: entity({ path: '/work/backend' }) })).entity.path,
+    '/work/backend',
   );
 });

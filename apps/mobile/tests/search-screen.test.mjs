@@ -65,6 +65,7 @@ const summary = (id, type, parentId, title, archived = false) => ({
   active: false,
   archived,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
 });
 
 const WORK = summary(1, 'area', null, 'Work');

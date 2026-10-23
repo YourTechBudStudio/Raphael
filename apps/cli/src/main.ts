@@ -73,6 +73,7 @@ import {
   optionsFor,
   type CommandDefinition,
   type Connected,
+  type Terminal,
   newSession,
   observedTransport,
   type CommandContext,
@@ -104,6 +105,7 @@ export interface CliEnvironment {
    * point resolves the saved login or the environment pair; tests supply a stub.
    */
   readonly connect: () => Connected;
+  readonly terminal: Terminal;
 }
 
 /**
@@ -345,6 +347,7 @@ export const dispatch = async (
       streams,
       session,
       signal: interruption.signal,
+      terminal: cli.terminal,
       transport: () => {
         if (transport === undefined) {
           const connected = cli.connect();
@@ -475,6 +478,7 @@ if (isEntryPoint()) {
     },
     exit: (value) => process.exit(value),
     connect: () => connectFrom(process.env, process.platform),
+    terminal: { stdin: process.stdin.isTTY === true, stdout: process.stdout.isTTY === true },
   });
   process.exitCode = code;
 }

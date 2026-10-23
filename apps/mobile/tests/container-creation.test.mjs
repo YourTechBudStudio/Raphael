@@ -54,6 +54,7 @@ const entity = (over = {}) => ({
   active: false,
   archived: false,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
   archiveCauses: [],
   body: { format: 'tiptap', value: { type: 'doc', content: [{ type: 'paragraph' }] } },
   metadata: {},
@@ -72,10 +73,19 @@ const open = ({
     apiKey: `test-${'k'.repeat(40)}`,
     fetch: async (url, init) => {
       if (String(url).endsWith('/list')) {
-        return new Response(JSON.stringify({ items: [], skip: 0, limit: 500, hasMore: false }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
+        return new Response(
+          JSON.stringify({
+            items: [],
+            skip: 0,
+            limit: 500,
+            hasMore: false,
+            archivedLeftOut: false,
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        );
       }
       sent.push(JSON.parse(init.body));
 

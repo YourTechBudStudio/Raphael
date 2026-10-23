@@ -76,13 +76,20 @@ const fakeServer = (pages, hierarchy = [WORK, HOME, AUTH, BIKE]) => {
       skip: body.skip,
       limit: body.limit,
       hasMore: index < pages.length - 1,
+      archivedLeftOut: false,
     });
   };
 
   const answer = (path, body) =>
     path === LIST
       ? favoritesPage(body)
-      : ok({ items: hierarchy, skip: 0, limit: body.limit ?? 200, hasMore: false });
+      : ok({
+          items: hierarchy,
+          skip: 0,
+          limit: body.limit ?? 200,
+          hasMore: false,
+          archivedLeftOut: false,
+        });
 
   return {
     asked,
@@ -100,7 +107,14 @@ const fakeServer = (pages, hierarchy = [WORK, HOME, AUTH, BIKE]) => {
         const wanted = path === ADD;
         const id = call.body.target.id;
         if (!wanted) pages.forEach((p, i) => (pages[i] = p.filter((node) => node.id !== id)));
-        call.resolve(ok({ nodeId: id, isFavorite: wanted }));
+        call.resolve(
+          ok({
+            nodeId: id,
+            isFavorite: wanted,
+            changed: true,
+            node: summary(id, { isFavorite: wanted }),
+          }),
+        );
 
         return;
       }
@@ -349,7 +363,12 @@ describe('the list', () => {
 
     await tab.pressText('Retry');
 
-    assert.deepEqual(server.of(LIST).at(-1).body, { skip: PAGE, limit: PAGE });
+    assert.deepEqual(server.of(LIST).at(-1).body, {
+      skip: PAGE,
+      limit: PAGE,
+      includeArchived: false,
+      includePaths: false,
+    });
     assert.deepEqual(tab.rows(), ['Auth rework, Project, in Work', 'Garden, Area']);
     assert.ok(!tab.has('[data-testid="favorites-show-more"]'), 'and ends when the list does');
   });
@@ -443,7 +462,7 @@ describe('the row star', () => {
     const star = tab.starOf('Garden');
     assert.equal(star.getAttribute('aria-busy'), 'true');
     assert.equal(star.getAttribute('aria-label'), 'Add Garden to favorites', 'shows the intent');
-    assert.deepEqual(server.of(REMOVE).at(-1).body, { target: { id: 3 } });
+    assert.deepEqual(server.of(REMOVE).at(-1).body, { target: { id: 3 }, includePaths: false });
 
     await flush(() => {
       server.release(REMOVE, 'accept');

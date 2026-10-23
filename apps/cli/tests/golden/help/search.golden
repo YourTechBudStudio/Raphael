@@ -41,7 +41,7 @@ Examples:
   raphael search /work --direct -q auth --filter '{"type":"resource","kind":"note"}'
 
 Prints:
-  One row per match, with closest matches first. JSON carries `items[].node` and `page`.
+  One row per match, closest first: id, type, state, path, title. JSON carries `items[].node` and `page`.
 
 Next: raphael get --id 42
 

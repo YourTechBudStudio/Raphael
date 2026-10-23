@@ -239,7 +239,17 @@ describe('operations over HTTP', () => {
         body: JSON.stringify({ target: { path: '/work/ship-it' } }),
       });
       assert.equal(added.status, 200);
-      assert.deepEqual(added.json, { nodeId: entity.id, isFavorite: true });
+      const addedAnswer = added.json as {
+        nodeId: number;
+        isFavorite: boolean;
+        changed: boolean;
+        node: { id: number; title: string };
+      };
+      assert.deepEqual(
+        [addedAnswer.nodeId, addedAnswer.isFavorite, addedAnswer.changed],
+        [entity.id, true, true],
+      );
+      assert.deepEqual([addedAnswer.node.id, addedAnswer.node.title], [entity.id, 'Ship it']);
 
       const listed = await call(server, '/api/favorites/list', { body: JSON.stringify({}) });
       assert.equal(listed.status, 200);
@@ -254,7 +264,17 @@ describe('operations over HTTP', () => {
         body: JSON.stringify({ target: { id: entity.id } }),
       });
       assert.equal(removed.status, 200);
-      assert.deepEqual(removed.json, { nodeId: entity.id, isFavorite: false });
+      const removedAnswer = removed.json as {
+        nodeId: number;
+        isFavorite: boolean;
+        changed: boolean;
+        node: { id: number } | null;
+      };
+      assert.deepEqual(
+        [removedAnswer.nodeId, removedAnswer.isFavorite, removedAnswer.changed],
+        [entity.id, false, true],
+      );
+      assert.equal(removedAnswer.node?.id, entity.id);
     });
   });
 
@@ -445,11 +465,13 @@ describe('operations over HTTP', () => {
       const entity = (read.json as { entity: Record<string, unknown> }).entity;
       assert.equal(entity['kind'], 'note');
 
-      // The response surface is exactly what the contract publishes: `kind` joined it, and the
-      // derived-text column did not.
+      // The response surface is exactly what the contract publishes: `kind` and `updatedAt` joined
+      // it, and the derived-text and creation-time columns did not.
       assert.equal('body_text' in entity, false);
       assert.equal('bodyText' in entity, false);
-      assert.equal('updatedAt' in entity, false);
+      assert.equal('createdAt' in entity, false);
+      assert.equal(typeof entity['updatedAt'], 'string');
+      assert.equal('path' in entity, false);
 
       const containerRead = await call(server, '/api/nodes/get', {
         body: JSON.stringify({ target: { path: '/work' } }),

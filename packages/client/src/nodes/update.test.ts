@@ -51,6 +51,7 @@ const entity = {
   active: false,
   archived: false,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
   body: { format: 'markdown', value: '# Contracts\n' },
   metadata: {},
   archiveCauses: [],
@@ -58,7 +59,7 @@ const entity = {
 
 describe('update', () => {
   it('posts the decoded envelope to the update route and reads a 200 back', async () => {
-    const { transport, sent } = answering(200, { entity });
+    const { transport, sent } = answering(200, { entity, changed: true });
 
     const result = await update(transport, {
       target: { id: 7 },
@@ -84,6 +85,7 @@ describe('update', () => {
       title: 'Contracts',
       tags: ['reviewed'],
       format: 'markdown',
+      includePaths: false,
     });
   });
 

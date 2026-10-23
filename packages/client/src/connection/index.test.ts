@@ -72,7 +72,7 @@ describe('verifying a connection', () => {
     // the case the mismatch wording exists for: a numeric identifier decodes purely so that this
     // sentence can be said about it.
     for (const [protocolVersion, guidance] of [
-      ['2026-10-01', /Update Raphael here\./u],
+      ['2026-11-01', /Update Raphael here\./u],
       [1, /Update the server\./u],
     ] as const) {
       const result = await verify(answering({ protocolVersion }));

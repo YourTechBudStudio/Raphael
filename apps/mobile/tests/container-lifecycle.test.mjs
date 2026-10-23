@@ -97,6 +97,7 @@ function node(id, type, parentId, title, over = {}) {
     active: false,
     archived: false,
     isFavorite: false,
+    updatedAt: '2026-10-19T10:42:07.123Z',
     archiveCauses: [],
     body: { format: 'markdown', value: '' },
     metadata: {},
@@ -130,7 +131,7 @@ const summaryOf = ({ body: _body, metadata: _metadata, archiveCauses: _causes, .
 
 const ok = (value) => ({ ok: true, value });
 const page = (items, over = {}) =>
-  ok({ items, skip: 0, limit: PAGE_LIMIT, hasMore: false, ...over });
+  ok({ items, skip: 0, limit: PAGE_LIMIT, hasMore: false, archivedLeftOut: false, ...over });
 
 const refusal = (code, message) => ({
   ok: false,
@@ -196,11 +197,21 @@ const fakeServer = () => {
       case '/api/favorites/add':
         tree[body.target.id] = { ...tree[body.target.id], isFavorite: true };
 
-        return ok({ nodeId: body.target.id, isFavorite: true });
+        return ok({
+          nodeId: body.target.id,
+          isFavorite: true,
+          changed: true,
+          node: summaryOf(tree[body.target.id]),
+        });
       case '/api/favorites/remove':
         tree[body.target.id] = { ...tree[body.target.id], isFavorite: false };
 
-        return ok({ nodeId: body.target.id, isFavorite: false });
+        return ok({
+          nodeId: body.target.id,
+          isFavorite: false,
+          changed: true,
+          node: summaryOf(tree[body.target.id]),
+        });
       default:
         throw new Error(`the fake server has no answer for ${what}`);
     }
@@ -390,7 +401,11 @@ describe('the project header', () => {
       });
       await screen.press(screen.archiveToggle());
 
-      assert.deepEqual(server.of('archive')[0].body, { target: { id: PROJECT }, revision: 3 });
+      assert.deepEqual(server.of('archive')[0].body, {
+        target: { id: PROJECT },
+        revision: 3,
+        includePaths: false,
+      });
       assert.ok(busy(screen.archiveToggle()));
 
       archiveIn(server.tree, PROJECT);
@@ -443,11 +458,18 @@ describe('the project header', () => {
       assert.equal(server.of('notes').at(-1).body.includeArchived, true);
 
       await screen.press(favorite);
-      assert.deepEqual(server.of('/api/favorites/add')[0].body, { target: { id: PROJECT } });
+      assert.deepEqual(server.of('/api/favorites/add')[0].body, {
+        target: { id: PROJECT },
+        includePaths: false,
+      });
       assert.ok(selected(screen.byLabel('Remove Auth rework from favorites')));
 
       await screen.press(screen.archiveToggle());
-      assert.deepEqual(server.of('restore')[0].body, { target: { id: PROJECT }, revision: 4 });
+      assert.deepEqual(server.of('restore')[0].body, {
+        target: { id: PROJECT },
+        revision: 4,
+        includePaths: false,
+      });
     } finally {
       screen.unmount();
     }
@@ -560,7 +582,11 @@ describe('a project archived with the area above it', () => {
     try {
       assert.ok(selected(area.archiveToggle()));
       await area.press(area.archiveToggle());
-      assert.deepEqual(server.of('restore')[0].body, { target: { id: WORK }, revision: 4 });
+      assert.deepEqual(server.of('restore')[0].body, {
+        target: { id: WORK },
+        revision: 4,
+        includePaths: false,
+      });
 
       // The server removes only Work's own cause. The project keeps the one it was given.
       const restored = freshTree()[WORK];
@@ -632,7 +658,10 @@ describe('the area header', () => {
 
       await screen.press(favorite);
 
-      assert.deepEqual(server.of('/api/favorites/add')[0].body, { target: { id: WORK } });
+      assert.deepEqual(server.of('/api/favorites/add')[0].body, {
+        target: { id: WORK },
+        includePaths: false,
+      });
       // The star shows the stored change, and is no longer busy.
       const starred = screen.byLabel('Remove Work from favorites');
       assert.ok(selected(starred));

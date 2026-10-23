@@ -6,7 +6,7 @@ Usage: raphael favorite <path> [options]
 
 Add an area or project to favorites.
 
-Already a favorite succeeds. Favorites keep their state while archived, but archived items are omitted from the favorites list.
+Already a favorite succeeds without a change. Favorites keep their state while archived; favorites leaves archived items out unless --include-archived is given.
 
 Options:
       --id <id>
@@ -22,7 +22,7 @@ Examples:
   raphael favorite /work/raphael --json
 
 Prints:
-  The id and favorite state. JSON carries `nodeId` and `isFavorite`.
+  The item with its path and favorite state; Unchanged when it already was in that state. JSON carries `nodeId`, `isFavorite`, `changed` and `node`.
 
 Next: raphael favorites
 

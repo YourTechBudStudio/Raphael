@@ -25,6 +25,8 @@ export interface StoredSummary extends StoredNode {
   readonly active: number;
   /** `0` or `1`, from `projection.ts::favoriteExpression`. */
   readonly isFavorite: number;
+  /** Milliseconds since the epoch. */
+  readonly updatedAt: number;
 }
 
 /** A page row, with the `archived` flag only the page statement can compute. */

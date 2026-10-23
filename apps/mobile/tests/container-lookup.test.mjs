@@ -34,6 +34,7 @@ const node = (id, type, parentId, title) => ({
   active: false,
   archived: false,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
 });
 
 const hierarchy = await fetchHierarchy((request) =>
@@ -44,6 +45,7 @@ const hierarchy = await fetchHierarchy((request) =>
       skip: request.skip,
       limit: request.limit,
       hasMore: false,
+      archivedLeftOut: false,
     },
   }),
 );

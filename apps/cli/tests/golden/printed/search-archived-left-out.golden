@@ -1,0 +1,6 @@
+==== exit ====
+0
+==== stdout ====
+==== stderr ====
+Nothing in /work that is not archived matches the queries and the filter.
+Archived items match. To include them: raphael search /work -q 'legacy word' --filter '{"type":"project"}' --include-archived

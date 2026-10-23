@@ -121,6 +121,9 @@ afterEach(async () => {
   client.clear();
 });
 
+/** The decoded request is what travels, so the read flags' defaults are on the wire too. */
+const READ_DEFAULTS = { includeArchived: false, includePaths: false };
+
 /** Answers the next list request with `ids`, saying whether more follow. */
 const answerPage = (ids, hasMore) =>
   flush(() => {
@@ -138,7 +141,7 @@ describe('reading the list', () => {
     list.render(false);
     await flush();
 
-    assert.deepEqual(server.pending(LIST), { skip: 0, limit: PAGE });
+    assert.deepEqual(server.pending(LIST), { skip: 0, limit: PAGE, ...READ_DEFAULTS });
     await answerPage([1, 2], true);
 
     assert.deepEqual(list.ids(), [1, 2]);
@@ -151,9 +154,9 @@ describe('reading the list', () => {
     await flush();
     await answerPage([1], true);
 
-    assert.deepEqual(server.pending(LIST), { skip: PAGE, limit: PAGE });
+    assert.deepEqual(server.pending(LIST), { skip: PAGE, limit: PAGE, ...READ_DEFAULTS });
     await answerPage([2], true);
-    assert.deepEqual(server.pending(LIST), { skip: 2 * PAGE, limit: PAGE });
+    assert.deepEqual(server.pending(LIST), { skip: 2 * PAGE, limit: PAGE, ...READ_DEFAULTS });
     await answerPage([3], false);
 
     assert.deepEqual(list.ids(), [1, 2, 3]);
@@ -171,7 +174,7 @@ describe('reading the list', () => {
       void invalidateActivation(client, 1);
     });
     assert.equal(server.inFlight(LIST), 1);
-    assert.deepEqual(server.pending(LIST), { skip: 0, limit: PAGE });
+    assert.deepEqual(server.pending(LIST), { skip: 0, limit: PAGE, ...READ_DEFAULTS });
 
     list.render(true);
     await flush();
@@ -180,7 +183,11 @@ describe('reading the list', () => {
 
     await answerPage([1, 5], true);
     assert.deepEqual(list.ids(), [1, 5], 'the refresh is what the list holds');
-    assert.deepEqual(server.pending(LIST), { skip: PAGE, limit: PAGE }, 'then page 2');
+    assert.deepEqual(
+      server.pending(LIST),
+      { skip: PAGE, limit: PAGE, ...READ_DEFAULTS },
+      'then page 2',
+    );
     await answerPage([6], false);
 
     assert.deepEqual(list.ids(), [1, 5, 6]);
@@ -209,7 +216,7 @@ describe('reading the list', () => {
       list.pages().retry();
     });
     await flush();
-    assert.deepEqual(server.pending(LIST), { skip: PAGE, limit: PAGE });
+    assert.deepEqual(server.pending(LIST), { skip: PAGE, limit: PAGE, ...READ_DEFAULTS });
     await answerPage([2], false);
 
     assert.equal(list.pages().isMoreError, false);
@@ -247,9 +254,17 @@ describe('reading the list', () => {
       list.pages().retry();
     });
     await flush();
-    assert.deepEqual(server.pending(LIST), { skip: 0, limit: PAGE }, 'Retry rereads page 1');
+    assert.deepEqual(
+      server.pending(LIST),
+      { skip: 0, limit: PAGE, ...READ_DEFAULTS },
+      'Retry rereads page 1',
+    );
     await answerPage([1, 7], true);
-    assert.deepEqual(server.pending(LIST), { skip: PAGE, limit: PAGE }, 'then loading resumes');
+    assert.deepEqual(
+      server.pending(LIST),
+      { skip: PAGE, limit: PAGE, ...READ_DEFAULTS },
+      'then loading resumes',
+    );
     await answerPage([8], false);
 
     assert.deepEqual(list.ids(), [1, 7, 8]);
@@ -293,6 +308,7 @@ describe('flattenFavoritePages', () => {
       skip: 0,
       limit: PAGE,
       hasMore: false,
+      archivedLeftOut: false,
     },
   });
 

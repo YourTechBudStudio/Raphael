@@ -43,6 +43,7 @@ const entity = (over = {}) => ({
   active: false,
   archived: false,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
   archiveCauses: [],
   body: { format: 'tiptap', value: createEmptyDocument() },
   metadata: {},

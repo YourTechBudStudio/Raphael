@@ -1,11 +1,13 @@
 /** Help is pure data and rendering: no environment, configuration, backend or connection reads. */
 import { DEFAULT_TIMEOUT_MS } from '@raphael/client';
+import { DEGRADED_CONSTRUCTS, DEGRADED_CONSTRUCT_DESCRIPTIONS } from '@raphael/content';
 import { API_ERROR_CODES } from '@raphael/contracts';
 import { SENDABLE_API_KEY_RULE } from '@raphael/contracts/connection';
 
 import type { CommandDefinition, CommandExample } from './shared/command.ts';
 import { EXIT_CODES } from './shared/exit.ts';
 import { HELP_RULES } from './shared/help-rules.ts';
+import { WARNING_CODES } from './shared/success.ts';
 import { TIMEOUT_MIN_SECONDS, TIMEOUT_MAX_SECONDS } from './shared/timeout.ts';
 import {
   CLIENT_API_KEY_VARIABLE,
@@ -63,10 +65,11 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     summary: 'Note bodies, files, stdin and Markdown conversion.',
     body: [
       'Create a note with create resource.note. Give --title, or let the first non-empty line of the body (then description) supply it. A title must still be available when the body is empty.',
-      "Body text is literal unless it starts with @: --body @draft.md reads a file, and --body @- reads stdin. Use --body-literal to keep a leading @ as text. Empty stdin is refused. To explicitly clear an existing body use update with --body '' and --revision. A pipe is read only when --body @- is given.",
+      "Body text is literal unless it starts with @: --body @draft.md reads a file, and --body @- reads stdin. Use --body-literal to keep a leading @ as text. Empty stdin is refused. To explicitly clear an existing body use update with --body '' and --revision. A pipe is read only when --body @- is given; on a terminal, @- says how to finish typing.",
       'Metadata and filters accept inline JSON or @file, but not @-. Metadata is set once at create and cannot be updated. File and stdin reads are bounded, and invalid independent arguments are refused before reading body content.',
       HELP_RULES.content,
-      'Markdown conversion can degrade unsupported constructs. Markdown output is a best-effort export of the stored document; use --json --return-format tiptap to read its structured body. --return-format requires --json; it controls the response, while --body-format controls submitted content.',
+      `Markdown the stored document cannot represent is kept as text: ${DEGRADED_CONSTRUCTS.map((construct) => `${DEGRADED_CONSTRUCT_DESCRIPTIONS[construct].name} is kept as ${DEGRADED_CONSTRUCT_DESCRIPTIONS[construct].kept}`).join('; ')}. When that happens, create and update warn on standard error and in warnings[]; --strict refuses the body instead, with exit 2. Escaping, joined lines and other rewrites that keep the meaning are not reported. Text such as List<String> is an HTML tag by CommonMark's rules; put it in backticks to keep it as code.`,
+      'A body that is a TipTap JSON document must be sent with --body-format tiptap; sent as Markdown it is refused. To keep JSON as note text, put it in a fenced code block. Markdown output is a best-effort export of the stored document; use --json --return-format tiptap to read its structured body. --return-format requires --json; it controls the response, while --body-format controls submitted content.',
     ],
     examples: [
       { argv: ['create', 'resource.note', '/work/idea', '--body', '# An idea'] },
@@ -93,9 +96,13 @@ export const HELP_TOPICS: readonly HelpTopic[] = [
     name: 'output',
     summary: 'Text results, JSON envelopes, paging and diagnostics.',
     body: [
-      'Standard output holds results only. Without --json, lists print tab-separated rows; a header is printed only on a terminal. Rows include id, type, path, title, revision and updatedAt. List order defaults to slug ascending; use list --order-by updatedAt:desc for recent changes. Search orders by relevance and does not accept --order-by. Bodies are printed as Markdown by default.',
-      'With --json, a successful command prints exactly one document: {"ok":true,"command":"get",...data}. Full-item reads and writes use entity; move, archive and restore use node; lists and favorites use items; search uses items[].node. These are machine field names. Summaries include path and updatedAt. No createdAt field is exposed. Writes that can leave values unchanged include changed; false means success without a revision bump. Favorite commands report nodeId and isFavorite. Path reports path.',
-      'Paged results include page with skip, limit, hasMore and nextSkip. The result footer and runnable next-page command go to standard error, never standard output. Empty-result notes, warnings, hints, prompts and failures also go to standard error. Warnings appear in warnings[] on JSON successes. Closing a pipe early does not turn a completed command into a failure.',
+      'Standard output holds results only. Without --json, lists, search and favorites print one row per item: id, type, state, path and title, in columns padded to the widest value on the page. State is -, active, archived or active,archived, and comes before the title, which is always last. A header line is printed only on a terminal. A write prints a line naming the item, then its path, and its revision when it has one; a write that changed nothing says Unchanged; get prints every field, including the update time. List order defaults to slug ascending; use list --order-by updatedAt:desc for recent changes. Search orders by relevance and does not accept --order-by. Bodies are printed as Markdown by default.',
+      'With --json, a successful command prints exactly one document: {"ok":true,"command":"get",...data}. Full-item reads and writes use entity; move, archive and restore use node; lists and favorites use items; search uses items[].node. These are machine field names. Items include path and updatedAt, an ISO 8601 UTC time such as 2026-10-19T10:42:07.123Z; text output prints the same string. No createdAt field is exposed. Update, move, archive, restore, favorite and unfavorite include changed; false means success without a change and without a revision bump. Move also reports previousPath. Favorite commands report `nodeId`, `isFavorite` and `node`, which is null when unfavorite names an id that does not exist. Path reports path.',
+      `Paged results include page with skip, limit, hasMore, nextSkip and archivedLeftOut, which is true when archived items were left out of the answer. The result footer and runnable next-page command go to standard error, never standard output. Empty-result notes, warnings, hints, prompts and failures also go to standard error. Warnings appear in warnings[] on JSON successes as {code, message}, plus constructs for markdown_degraded. Codes: ${Object.entries(
+        WARNING_CODES,
+      )
+        .map(([code, meaning]) => `${code}: ${meaning}`)
+        .join(' ')} Closing a pipe early does not turn a completed command into a failure.`,
       'JSON failures leave stdout empty and print exactly one document to stderr: {"ok":false,"error":{"code":...,"category":...,"message":...,"hint":...,"exitCode":...,"applied":...,"retryable":...}}. Optional fields include status, field, target, serverMessage, details, and connection {endpoint, source, configFile} once a connection was resolved. applied is false when no change was applied, true when known applied, and null when unknown. Retry decisions must consider exitCode and applied; do not blindly retry an uncertain write. The JSON envelope and exit-code meanings are stable within a major version.',
       'For text write failures, the state line distinguishes Nothing was changed., The change was not sent., and The change may or may not have been applied. Set RAPHAEL_DEBUG=1 to include diagnostic stacks. Keep stdout for results when scripting.',
       HELP_RULES.paging,

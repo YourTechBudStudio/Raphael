@@ -118,6 +118,8 @@ export interface RunOptions {
   readonly platform?: string;
   /** Receives the handlers a command registers, so a case can deliver a signal to it. */
   readonly onSignal?: (signal: 'SIGINT' | 'SIGTERM', handler: () => void) => () => void;
+  /** Which streams count as terminals. Neither, unless a case says otherwise, as under a harness. */
+  readonly terminal?: { readonly stdin?: boolean; readonly stdout?: boolean };
 }
 
 /** Run the CLI's entry function with captured streams. */
@@ -142,6 +144,10 @@ export const runCli = async (argv: readonly string[], options: RunOptions = {}):
       throw new Error('Remote commands must return their exit code');
     },
     connect: options.connect ?? neverConnect,
+    terminal: {
+      stdin: options.terminal?.stdin ?? false,
+      stdout: options.terminal?.stdout ?? false,
+    },
   });
   return { code, stdout, stderr };
 };

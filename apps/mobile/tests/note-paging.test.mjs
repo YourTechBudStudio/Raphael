@@ -44,6 +44,7 @@ const summary = (id, over = {}) => ({
   active: false,
   archived: false,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
   ...over,
 });
 
@@ -87,6 +88,7 @@ const listAnswer = (ids, over = {}) => ({
   skip: 0,
   limit: 50,
   hasMore: false,
+  archivedLeftOut: false,
   ...over,
 });
 
@@ -150,6 +152,7 @@ describe('paging a container list', () => {
         skip: 0,
         limit: 50,
         hasMore: true,
+        archivedLeftOut: false,
       },
       listAnswer([3], { skip: 50, limit: 50 }),
     ]);
@@ -329,8 +332,9 @@ describe('the request that actually goes out', () => {
       orderBy: [{ field: 'updatedAt', direction: 'desc' }],
       skip: 0,
       limit: 50,
-      // The decoded request is what travels, so the read flag's default is spelled out on the wire.
+      // The decoded request is what travels, so the read flags' defaults are spelled out on the wire.
       includeArchived: false,
+      includePaths: false,
     });
     handle.stop();
   });

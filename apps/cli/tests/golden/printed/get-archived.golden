@@ -1,0 +1,21 @@
+==== exit ====
+0
+==== stdout ====
+resource.note 305: Item 305
+  path:        /work/platform/raphael/output-contract
+  slug:        output-contract
+  parent:      12
+  revision:    3
+  updated:     2026-10-19T10:42:07.123Z
+  active:      -
+  archived:    yes
+    through area 4 "Platform" (user)
+  favorite:    no
+  tags:        -
+  description: -
+  metadata:    {}
+
+# Heading
+
+Some text.
+==== stderr ====

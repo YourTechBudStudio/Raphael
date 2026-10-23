@@ -59,6 +59,18 @@ const parser = new MarkdownIt('default', {
  */
 parser.normalizeLink = (url: string): string => url;
 
+/**
+ * Every written link and image reaches the converter, whatever its destination.
+ *
+ * The parser's default `validateLink` silently turns a `javascript:`, `vbscript:`, `file:` or
+ * non-image `data:` destination into plain text before import sees it, so import could not tell the
+ * author their link was not kept. Accepting all of them here is safe for the same reason as identity
+ * normalization: `isAllowedHref` decides what becomes a link, and a refused link or any image is kept
+ * as inert text and reported as degraded. The destination import sees is the parser's decoded one,
+ * so an entity-encoded scheme is judged as what it spells.
+ */
+parser.validateLink = (): boolean => true;
+
 const utf8Bytes = (value: string): number => {
   let bytes = 0;
   for (const codePoint of value) {

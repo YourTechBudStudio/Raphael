@@ -118,8 +118,9 @@ export const ContainerTypeSchema = Schema.Literal(...CONTAINER_TYPES);
  *
  * Closed on purpose. Ordering compiles to SQL, so an open vocabulary would be an open question about
  * what a caller can ask storage to do; these three are the ones with an index-backed or otherwise
- * bounded meaning. `updatedAt` orders by a server-owned timestamp that is deliberately not part of any
- * response: a caller may ask for recency without being handed a clock reading to reason about.
+ * bounded meaning. `updatedAt` orders by the server-owned time of the last change, and summaries and
+ * entities carry the same value as `UpdatedAt`, so a caller ordering by recency can see how recent each
+ * item is and check the order it was given.
  */
 export const NODE_ORDER_FIELDS = ['slug', 'updatedAt', 'id'] as const;
 export type NodeOrderField = (typeof NODE_ORDER_FIELDS)[number];
@@ -417,3 +418,24 @@ export const BodyOutput = Schema.Union(
 
 export const ListSkipInput = NonNegativeSafeInt;
 export const ListLimitInput = PositiveSafeInt.pipe(Schema.between(LIST_LIMIT_MIN, LIST_LIMIT_MAX));
+
+/**
+ * When an item last changed, as the server recorded it: an ISO 8601 UTC instant with milliseconds,
+ * exactly as `Date.prototype.toISOString` writes it (`2026-10-19T10:42:07.123Z`). One spelling, so a
+ * client can compare two values as strings and print one without converting it.
+ *
+ * A write that changes nothing leaves it alone, as it leaves the revision alone. There is no creation
+ * time on the wire.
+ */
+export const UpdatedAt = Schema.String.pipe(
+  Schema.filter(
+    (value) =>
+      (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u.test(value) &&
+        !Number.isNaN(Date.parse(value)) &&
+        new Date(value).toISOString() === value) ||
+      'an update time is an ISO 8601 UTC instant with milliseconds',
+  ),
+);
+
+/** The wire form of a stored update time, in milliseconds since the epoch. */
+export const formatUpdatedAt = (epochMillis: number): string => new Date(epochMillis).toISOString();

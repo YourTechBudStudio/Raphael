@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--body looks like a TipTap document, but it would be stored as Markdown text. Add --body-format tiptap to send it as a document. To keep JSON as note text, put it in a fenced code block.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

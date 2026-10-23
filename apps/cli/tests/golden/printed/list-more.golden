@@ -1,0 +1,7 @@
+==== exit ====
+0
+==== stdout ====
+12   project        active  /work/platform/raphael                  Raphael
+305  resource.note  -       /work/platform/raphael/output-contract  Output contract  archived
+==== stderr ====
+Showing 3-4. More: raphael list / -r --filter '{"type":"resource"}' --order-by updatedAt:desc --limit 2 --skip 4

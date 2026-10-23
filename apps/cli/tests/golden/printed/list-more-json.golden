@@ -1,0 +1,5 @@
+==== exit ====
+0
+==== stdout ====
+{"ok":true,"command":"list","items":[{"id":12,"type":"project","kind":null,"parentId":1,"slug":"raphael","revision":3,"title":"Raphael","description":"","tags":[],"active":true,"archived":false,"isFavorite":false,"updatedAt":"2026-10-19T10:42:07.123Z","path":"/work/platform/raphael"},{"id":305,"type":"resource","kind":"note","parentId":12,"slug":"output-contract","revision":3,"title":"Output contract  archived","description":"","tags":[],"active":false,"archived":false,"isFavorite":false,"updatedAt":"2026-10-19T10:42:07.123Z","path":"/work/platform/raphael/output-contract"}],"page":{"skip":0,"limit":2,"hasMore":true,"nextSkip":2,"archivedLeftOut":true}}
+==== stderr ====

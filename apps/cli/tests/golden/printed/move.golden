@@ -1,0 +1,8 @@
+==== exit ====
+0
+==== stdout ====
+Moved project 12: Item 12
+  path:     /engineering/raphael
+  was:      /work/platform/raphael
+  revision: 4
+==== stderr ====

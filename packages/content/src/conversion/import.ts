@@ -1,11 +1,14 @@
 import { Either } from 'effect';
 import type { Token } from 'markdown-it';
 
+import { DEGRADED_CONSTRUCTS, type DegradedConstruct } from '../degraded.ts';
 import { contentFailure, type ContentFailure } from '../failures.ts';
+import { SUPPORTED_HEADING_LEVELS } from '../headings.ts';
 import type { CanonicalDocument } from '../index.ts';
 import { canonicalizeDocument } from '../schema/canonicalize.ts';
 import { CODE_LANGUAGE, isAllowedHref } from '../validation/index.ts';
 import { linkDestination } from './escape.ts';
+import { containsRawHtml } from './html.ts';
 import { tokenizeMarkdown } from './parser.ts';
 
 /**
@@ -18,7 +21,16 @@ import { tokenizeMarkdown } from './parser.ts';
  *
  * Preservation uses the parser's own source spans (`token.map`), never a second Markdown grammar.
  * The promise is the source the parser captured, not byte-for-byte recovery of arbitrary Markdown.
+ *
+ * Every construct kept as source rather than as itself is recorded as it is met (`Degraded`), so a
+ * client can tell the author what changed without a second pass over the document.
  */
+
+/** What one import degraded, collected while converting. */
+type Degraded = Set<DegradedConstruct>;
+
+/** A task list item starts with a checkbox: `[ ]`, `[x]` or `[X]`, then space or the end. */
+const TASK_MARKER = /^\[[ xX]\](?:[ \t]|$)/u;
 
 interface MutableNode {
   type: string;
@@ -81,8 +93,10 @@ const REJECTED_LINK = '__rejected_link';
  * whose destination fails policy degrades to its literal Markdown source instead of becoming a
  * clickable mark or rejecting the whole import.
  */
-const convertInline = (token: Token): MutableNode[] => {
+const convertInline = (token: Token, degraded: Degraded): MutableNode[] => {
   const out: MutableNode[] = [];
+  // Plain text runs, code spans excluded, for the raw HTML check after the loop.
+  let plain = '';
   const marks: { type: string; attrs?: Record<string, unknown> }[] = [];
   const push = (
     text: string,
@@ -92,11 +106,14 @@ const convertInline = (token: Token): MutableNode[] => {
   };
 
   for (const child of token.children ?? []) {
+    if (child.type !== 'text' && child.type !== 'code_inline') plain += '\n';
     switch (child.type) {
       case 'text':
+        plain += child.content;
         push(child.content);
         break;
       case 'code_inline':
+        plain += '\n';
         push(child.content, [...marks, { type: 'code' }]);
         break;
       case 'strong_open':
@@ -115,16 +132,23 @@ const convertInline = (token: Token): MutableNode[] => {
         break;
       case 'link_open': {
         const href = child.attrGet('href');
-        marks.push(
-          isAllowedHref(href)
-            ? { type: 'link', attrs: { href } }
-            : { type: REJECTED_LINK, attrs: { href: href ?? '' } },
-        );
+        if (isAllowedHref(href)) {
+          marks.push({ type: 'link', attrs: { href } });
+          break;
+        }
+        // Reported when met, not when its text is: a link with no label has none.
+        degraded.add('disallowed_link');
+        marks.push({ type: REJECTED_LINK, attrs: { href: href ?? '', emittedAt: out.length } });
         break;
       }
-      case 'link_close':
-        marks.pop();
+      case 'link_close': {
+        const closed = marks.pop();
+        // A refused link with no label left no text to carry its source, so it is kept here.
+        if (closed?.type === REJECTED_LINK && closed.attrs?.['emittedAt'] === out.length) {
+          push(`[](${String(closed.attrs['href'] ?? '')})`);
+        }
         break;
+      }
       case 'softbreak':
         push(' ');
         break;
@@ -137,6 +161,7 @@ const convertInline = (token: Token): MutableNode[] => {
       // a title is not quietly dropped; reference-style syntax is normalized by the parser before we
       // see it and is recorded as known loss rather than reconstructed.
       case 'image': {
+        degraded.add('image');
         const source = String(child.attrGet('src') ?? '');
         const title = String(child.attrGet('title') ?? '');
         const destination = linkDestination(source);
@@ -153,6 +178,8 @@ const convertInline = (token: Token): MutableNode[] => {
     }
   }
 
+  if (containsRawHtml(plain, token.content)) degraded.add('raw_html');
+
   return out.map((node) => {
     if (node.type !== 'text' || node.marks === undefined) return node;
     const rejected = node.marks.find((mark) => mark.type === REJECTED_LINK);
@@ -162,9 +189,13 @@ const convertInline = (token: Token): MutableNode[] => {
   });
 };
 
-const HEADING_LEVELS = new Set([1, 2, 3]);
+const HEADING_LEVELS: ReadonlySet<number> = new Set(SUPPORTED_HEADING_LEVELS);
 
-const convertTokens = (tokens: readonly Token[], source: string): MutableNode => {
+const convertTokens = (
+  tokens: readonly Token[],
+  source: string,
+  degraded: Degraded,
+): MutableNode => {
   const lines = source.split('\n');
   const root: MutableNode = { type: 'doc', content: [] };
   const stack: MutableNode[] = [root];
@@ -173,6 +204,8 @@ const convertTokens = (tokens: readonly Token[], source: string): MutableNode =>
     (top().content ??= []).push(node);
   };
   let skipUntil: string | null = null;
+  // Set by a list item and cleared by its first inline run, which is where a checkbox would be.
+  let itemStart = false;
 
   for (const token of tokens) {
     if (skipUntil !== null) {
@@ -183,6 +216,7 @@ const convertTokens = (tokens: readonly Token[], source: string): MutableNode =>
       case 'heading_open': {
         const level = Number(token.tag.slice(1));
         if (!HEADING_LEVELS.has(level)) {
+          degraded.add('deep_heading');
           add(preservedBlock(sourceOf(lines, token))); // h4-h6 keep their source
           skipUntil = 'heading_close';
           break;
@@ -219,6 +253,7 @@ const convertTokens = (tokens: readonly Token[], source: string): MutableNode =>
         break;
       }
       case 'list_item_open': {
+        itemStart = true;
         const node: MutableNode = { type: 'listItem', content: [] };
         add(node);
         stack.push(node);
@@ -253,14 +288,17 @@ const convertTokens = (tokens: readonly Token[], source: string): MutableNode =>
         break;
       }
       case 'inline': {
+        if (itemStart && TASK_MARKER.test(token.content)) degraded.add('task_list');
+        itemStart = false;
         const parent = top();
         const content = (parent.content ??= []);
         // Never spread: an inline run can hold hundreds of thousands of nodes.
-        for (const node of convertInline(token)) content.push(node);
+        for (const node of convertInline(token, degraded)) content.push(node);
         break;
       }
       default: {
         if (PRESERVED_BLOCKS.has(token.type)) {
+          degraded.add(token.type === 'table_open' ? 'table' : 'raw_html');
           add(preservedBlock(sourceOf(lines, token)));
           if (token.type === 'table_open') skipUntil = 'table_close';
           break;
@@ -280,19 +318,31 @@ const convertTokens = (tokens: readonly Token[], source: string): MutableNode =>
   return root;
 };
 
+/** A converted document and the constructs it kept as source, in `DEGRADED_CONSTRUCTS` order. */
+export interface MarkdownImport {
+  readonly document: CanonicalDocument;
+  readonly degraded: readonly DegradedConstruct[];
+}
+
 /**
- * Converts Markdown to a canonical document. Markdown input is best effort in the sense that
- * unsupported *structure* is preserved as source where the parser gives us the source to preserve —
- * not in the sense that conversion always succeeds.
+ * Converts Markdown to a canonical document and reports what it degraded. Markdown input is best
+ * effort in the sense that unsupported *structure* is preserved as source where the parser gives us
+ * the source to preserve — not in the sense that conversion always succeeds.
  */
-export const fromMarkdown = (
-  markdown: string,
-): Either.Either<CanonicalDocument, ContentFailure> => {
+export const importMarkdown = (markdown: string): Either.Either<MarkdownImport, ContentFailure> => {
   const parsed = tokenizeMarkdown(markdown);
   if (Either.isLeft(parsed)) return Either.left(parsed.left);
 
-  const document = convertTokens(parsed.right.tokens, parsed.right.source);
+  const degraded: Degraded = new Set();
+  const document = convertTokens(parsed.right.tokens, parsed.right.source, degraded);
   if (document.type === '__unsupported') return Either.left(contentFailure('unsupported_node'));
 
-  return canonicalizeDocument(document);
+  return Either.map(canonicalizeDocument(document), (canonical) => ({
+    document: canonical,
+    degraded: DEGRADED_CONSTRUCTS.filter((construct) => degraded.has(construct)),
+  }));
 };
+
+/** `importMarkdown` for a caller that needs only the document, as the server does. */
+export const fromMarkdown = (markdown: string): Either.Either<CanonicalDocument, ContentFailure> =>
+  Either.map(importMarkdown(markdown), (result) => result.document);

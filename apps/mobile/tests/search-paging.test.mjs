@@ -36,6 +36,7 @@ const summary = (id) => ({
   active: false,
   archived: false,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
 });
 
 const answer = (ids, { skip = 0, limit = 50, hasMore = false } = {}) => ({

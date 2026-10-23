@@ -85,6 +85,7 @@ const entity = (over = {}) => ({
   active: false,
   archived: false,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
   archiveCauses: [],
   body: { format: 'markdown', value: '' },
   metadata: {},
@@ -127,10 +128,19 @@ const open = (options = {}) => {
        * happened to schedule.
        */
       if (String(url).endsWith('/list')) {
-        return new Response(JSON.stringify({ items: [], skip: 0, limit: 500, hasMore: false }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        });
+        return new Response(
+          JSON.stringify({
+            items: [],
+            skip: 0,
+            limit: 500,
+            hasMore: false,
+            archivedLeftOut: false,
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          },
+        );
       }
 
       sent.push(body);

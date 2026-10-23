@@ -10,6 +10,7 @@ import { Effect, Either } from 'effect';
 import { Db } from '../../infrastructure/database/index.ts';
 import { invalidInputFrom } from './diagnostics.ts';
 import { InternalFailure, type NodeError } from './errors.ts';
+import { pathsOf } from './paths.ts';
 import { SUMMARY_COLUMNS, summaryProjection } from './projection.ts';
 import { resolveScopes } from './resolve.ts';
 import {
@@ -42,7 +43,8 @@ export const searchNodes = (input: unknown): Effect.Effect<SearchResponse, NodeE
         if (Either.isLeft(request)) {
           return raise(invalidInputFrom(request.left, input));
         }
-        const { scopes, recursive, filter, queries, skip, limit, includeArchived } = request.right;
+        const { scopes, recursive, filter, queries, skip, limit, includeArchived, includePaths } =
+          request.right;
 
         // The decoder already accepted each query, so a parse failure here is our bug.
         const parsed: SearchQuery[] = [];
@@ -80,15 +82,24 @@ export const searchNodes = (input: unknown): Effect.Effect<SearchResponse, NodeE
           const archivedLeftOut =
             !includeArchived &&
             archivedMatchExists(handle, fragments, [matchCondition, ...filterConditions]);
-          return { rows, archivedLeftOut };
+          const visible = rows.slice(0, limit);
+          const paths = includePaths
+            ? pathsOf(
+                handle,
+                visible.map((row) => row.id),
+                OPERATION,
+              )
+            : undefined;
+          return { visible, hasMore: rows.length > limit, archivedLeftOut, paths };
         });
 
-        const visible = page.rows.slice(0, limit);
         return {
-          items: visible.map((row) => ({ node: summaryProjection(row, row.archived === 1) })),
+          items: page.visible.map((row) => ({
+            node: summaryProjection(row, row.archived === 1, page.paths?.get(row.id)),
+          })),
           skip,
           limit,
-          hasMore: page.rows.length > limit,
+          hasMore: page.hasMore,
           archivedLeftOut: page.archivedLeftOut,
         };
       },

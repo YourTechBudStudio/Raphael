@@ -107,7 +107,8 @@ test('archiving what the user already archived succeeds without writing', () => 
       archive(connection, { target: { id: target.id }, revision: first.node.revision }, LATER),
     );
 
-    assert.deepEqual(again, first);
+    assert.equal(first.changed, true);
+    assert.deepEqual(again, { ...first, changed: false });
     assert.deepEqual(row(connection, target.id), before, 'no revision or timestamp change');
     assert.equal(causeRows(connection).length, 1, 'no duplicate cause');
   });
@@ -134,7 +135,8 @@ test('restore removes the direct cause, and a restore with none present writes n
     const again = expectRight(
       restore(connection, { target: { id: target.id }, revision: restored.node.revision }),
     );
-    assert.deepEqual(again, restored);
+    assert.equal(restored.changed, true);
+    assert.deepEqual(again, { ...restored, changed: false });
     assert.deepEqual(row(connection, target.id), {
       revision: first.node.revision + 1,
       updatedAt: LATER,

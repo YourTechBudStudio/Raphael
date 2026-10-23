@@ -31,6 +31,8 @@ const summary = (id: number, extra: Record<string, unknown> = {}) => ({
   active: false,
   archived: false,
   isFavorite: false,
+  updatedAt: '2026-10-19T10:42:07.123Z',
+  path: `/work/item-${id}`,
   ...extra,
 });
 
@@ -41,26 +43,42 @@ const entity = {
   archiveCauses: [],
 };
 
-const page = (items: unknown[]) => ({ items, skip: 0, limit: 50, hasMore: false });
+const page = (items: unknown[]) => ({
+  items,
+  skip: 0,
+  limit: 50,
+  hasMore: false,
+  archivedLeftOut: false,
+});
 
 /** A valid answer for each route, as the contract defines it. */
 const ANSWERS: Readonly<Record<string, unknown>> = {
   [CONNECTION_ROUTES.verify.path]: { protocolVersion: PROTOCOL_VERSION, raphaelVersion: version() },
   [NODE_ROUTES.create.path]: { entity },
   [NODE_ROUTES.get.path]: { entity },
-  [NODE_ROUTES.update.path]: { entity },
-  [NODE_ROUTES.move.path]: { node: summary(7) },
-  [NODE_ROUTES.archive.path]: { node: summary(7), archiveCauses: [] },
-  [NODE_ROUTES.restore.path]: { node: summary(7), archiveCauses: [] },
-  [NODE_ROUTES.addFavorite.path]: { nodeId: 7, isFavorite: true },
-  [NODE_ROUTES.removeFavorite.path]: { nodeId: 7, isFavorite: false },
+  [NODE_ROUTES.update.path]: { entity, changed: true },
+  [NODE_ROUTES.move.path]: { node: summary(7), changed: true, previousPath: '/old/item-7' },
+  [NODE_ROUTES.archive.path]: { node: summary(7), archiveCauses: [], changed: true },
+  [NODE_ROUTES.restore.path]: { node: summary(7), archiveCauses: [], changed: true },
+  [NODE_ROUTES.addFavorite.path]: {
+    nodeId: 7,
+    isFavorite: true,
+    changed: true,
+    node: summary(7, { isFavorite: true }),
+  },
+  [NODE_ROUTES.removeFavorite.path]: {
+    nodeId: 7,
+    isFavorite: false,
+    changed: true,
+    node: summary(7),
+  },
   [NODE_ROUTES.listFavorites.path]: page([summary(7), summary(8, { active: true })]),
   [NODE_ROUTES.getPath.path]: { id: 7, path: '/work/item-7' },
   [NODE_ROUTES.list.path]: page([summary(7), summary(8, { archived: true })]),
-  [NODE_ROUTES.search.path]: {
-    ...page([{ node: summary(7) }, { node: summary(8, { title: 'Spoof  archived' }) }]),
-    archivedLeftOut: false,
-  },
+  [NODE_ROUTES.search.path]: page([
+    { node: summary(7) },
+    { node: summary(8, { title: 'Spoof  archived' }) },
+  ]),
 };
 
 const answer = (request: StubRequest): Response => {
@@ -120,7 +138,7 @@ describe('stdout on success', () => {
       assert.notEqual(ran.stdout, '');
       if (PAGES.has(command)) {
         for (const line of ran.stdout.trimEnd().split('\n')) assert.match(line, ROW);
-        assert.match(ran.stderr, /shown, skip 0, limit 50/, 'the page note is on stderr');
+        assert.match(ran.stderr, /^Showing 1-2\. No more\.$/m, 'the page note is on stderr');
       } else {
         assert.equal(ran.stderr, '');
       }
@@ -138,14 +156,14 @@ describe('stdout on success', () => {
     const ran = await runCli(['list', '/work'], { connect: empty.connect });
     assert.equal(ran.code, 0);
     assert.equal(ran.stdout, '');
-    assert.match(ran.stderr, /^Nothing here/);
+    assert.equal(ran.stderr, 'Nothing in /work.\n');
   });
 
   it('keeps a state word out of the free text, so a title cannot imitate one', async () => {
     const ran = await succeed(INVOCATIONS.search);
     const spoof = ran.stdout.split('\n').find((line) => line.includes('Spoof'));
     // The real state column says "-"; "archived" only appears inside the title, after it.
-    assert.match(spoof ?? '', /^8 +project +- {2}item-8 {2}Spoof {2}archived$/);
+    assert.match(spoof ?? '', /^8 +project +- {2}\/work\/item-8 {2}Spoof {2}archived$/);
   });
 });
 

@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--title is required: the body and description have no text to take a title from.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

@@ -11,6 +11,7 @@ import { Db } from '../../infrastructure/database/index.ts';
 import { invalidInputFrom } from './diagnostics.ts';
 import { RevisionConflict, type NodeError } from './errors.ts';
 import { addDirectUserCause, effectiveCauses, removeDirectUserCause } from './lifecycle.ts';
+import { pathOf } from './paths.ts';
 import { causeProjection, summaryProjection } from './projection.ts';
 import { loadSummary, type Selector } from './resolve.ts';
 import { nodes } from './schema.ts';
@@ -39,6 +40,7 @@ const OPERATIONS: Readonly<Record<Direction, string>> = {
 interface PreparedLifecycle {
   readonly target: Selector;
   readonly revision: number;
+  readonly includePaths: boolean;
 }
 
 const lifecycleOperation = (
@@ -72,6 +74,7 @@ const lifecycleOperation = (
 const prepareLifecycle = (request: LifecycleRequest): PreparedLifecycle => ({
   target: 'id' in request.target ? { id: request.target.id } : { path: request.target.path },
   revision: request.revision,
+  includePaths: request.includePaths,
 });
 
 const commit = (
@@ -95,10 +98,11 @@ const commit = (
       : removeDirectUserCause(handle, target.id);
   const revision = changed ? target.revision + 1 : target.revision;
 
+  const updatedAt = changed ? now : target.updatedAt;
   if (changed) {
     handle
       .update(nodes)
-      .set({ revision, updatedAt: now })
+      .set({ revision, updatedAt })
       .where(and(eq(nodes.id, target.id), eq(nodes.revision, prepared.revision)))
       .run();
   }
@@ -106,7 +110,12 @@ const commit = (
   // After the change, so the answer is the resulting state.
   const causes = effectiveCauses(handle, target, operation);
   return {
-    node: summaryProjection({ ...target, revision }, causes.length > 0),
+    node: summaryProjection(
+      { ...target, revision, updatedAt },
+      causes.length > 0,
+      prepared.includePaths ? pathOf(handle, target, operation) : undefined,
+    ),
     archiveCauses: causeProjection(causes),
+    changed,
   };
 };

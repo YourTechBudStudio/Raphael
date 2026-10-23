@@ -3,8 +3,13 @@
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { createEmptyDocument } from '@raphael/content';
-import { fromMarkdown } from '@raphael/content/conversion';
+import {
+  DEGRADED_CONSTRUCT_DESCRIPTIONS,
+  createEmptyDocument,
+  type ContentFailure,
+  type DegradedConstruct,
+} from '@raphael/content';
+import { fromMarkdown, importMarkdown } from '@raphael/content/conversion';
 import { canonicalizeDocument, deriveTitle } from '@raphael/content/schema';
 import { REQUEST_MAX_BYTES, isJsonObject, type Decoder, type JsonObject } from '@raphael/contracts';
 import {
@@ -42,6 +47,7 @@ import { Either, Schema } from 'effect';
 
 import { UsageError } from '../../shared/args.ts';
 import { readStandardInput } from '../../shared/stdin.ts';
+import type { Warning } from '../../shared/success.ts';
 
 /** What `raphael create <type>` was asked to make. */
 export type CreateTarget =
@@ -282,7 +288,14 @@ const decodeUtf8 = (bytes: Uint8Array, label: string, command: string): string =
  * it would replace a note's body with nothing under a successful exit. Clearing a body on purpose has
  * its own explicit spelling, so the empty case can be refused without losing anything.
  */
-const readStdin = async (command: string, signal?: AbortSignal): Promise<string> => {
+const readStdin = async (command: string, reading: BodyReading): Promise<string> => {
+  const { signal } = reading;
+  // A terminal gives no sign that anything is waiting; a pipe needs no instructions.
+  if (reading.stdinIsTerminal === true) {
+    reading.notice?.(
+      'Reading the body from standard input. Finish with Ctrl-D, or Ctrl-C to cancel.',
+    );
+  }
   const bytes = await readStandardInput({
     limit: REQUEST_MAX_BYTES,
     tooLarge: () =>
@@ -365,12 +378,38 @@ export const readLocalFile = (path: string, label: string, command: string): str
   }
 };
 
+/** How a body is read: what interrupts the wait, and where a note for the person goes. */
+export interface BodyReading {
+  readonly signal?: AbortSignal | undefined;
+  /** Whether standard input is a terminal, from `isTTY` alone. */
+  readonly stdinIsTerminal?: boolean;
+  /** A line for the person, on standard error. */
+  readonly notice?: (line: string) => void;
+}
+
+/**
+ * Whether Markdown text is really a TipTap document: a JSON object whose `type` is `doc`.
+ *
+ * Sent as Markdown it would be stored as a paragraph of JSON, and the command would succeed. The
+ * check is the same whichever way the text arrived, because the mistake is the format, not the source.
+ */
+const looksLikeTipTapDocument = (text: string): boolean => {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return false;
+  try {
+    const value: unknown = JSON.parse(trimmed);
+    return isJsonObject(value) && value['type'] === 'doc';
+  } catch {
+    return false;
+  }
+};
+
 export const resolveBody = async (
   body: string | undefined,
   bodyLiteral: string | undefined,
   format: 'markdown' | 'tiptap' | undefined,
   command: string,
-  signal?: AbortSignal,
+  reading: BodyReading = {},
 ): Promise<BodySource | undefined> => {
   if (body !== undefined && bodyLiteral !== undefined) {
     throw new UsageError('Give either --body or --body-literal, not both.', command);
@@ -382,14 +421,22 @@ export const resolveBody = async (
   if (bodyLiteral !== undefined) {
     text = bodyLiteral;
   } else if (body !== undefined) {
-    if (body === '@-') text = await readStdin(command, signal);
+    if (body === '@-') text = await readStdin(command, reading);
     else if (body.startsWith('@')) text = readLocalFile(body.slice(1), 'the body file', command);
     else text = body;
   }
 
   if (text === undefined) return undefined;
 
-  if (chosen === 'markdown') return { format: 'markdown', value: text };
+  if (chosen === 'markdown') {
+    if (looksLikeTipTapDocument(text)) {
+      throw new UsageError(
+        `${bodyLiteral === undefined ? '--body' : '--body-literal'} looks like a TipTap document, but it would be stored as Markdown text. Add --body-format tiptap to send it as a document. To keep JSON as note text, put it in a fenced code block.`,
+        command,
+      );
+    }
+    return { format: 'markdown', value: text };
+  }
 
   // Parsed here, and the *parsed value* is what travels. Verifying the syntax and then sending the
   // original string would produce a request the shared contract can never accept, since a TipTap body
@@ -531,20 +578,79 @@ export const parseQueries = (values: readonly string[], command: string): readon
 
 /**
  * A title from what a note already says, derived exactly as every client derives it: the body's
- * first line, then the description's. `undefined` when there is nothing to name it by, or when the
- * body cannot be read - the server reports what is wrong with a body once the note is named.
+ * first line, then the description's. A body that cannot be converted is reported as that, not as a
+ * body with nothing to name the note by: the two need different fixes.
  */
 export const titleFromContent = (
   body: BodySource | undefined,
   description: string,
-): string | undefined => {
+):
+  | { readonly title: string }
+  | { readonly failure: ContentFailure }
+  | { readonly title?: undefined } => {
   const document =
     body === undefined
       ? Either.right(createEmptyDocument())
       : body.format === 'markdown'
         ? fromMarkdown(body.value)
         : canonicalizeDocument(body.value);
-  return Either.isRight(document) ? deriveTitle(document.right, description) : undefined;
+  if (Either.isLeft(document)) return { failure: document.left };
+  const title = deriveTitle(document.right, description);
+  return title === undefined ? {} : { title };
+};
+
+/** `a`, `a and b`, `a, b and c`. */
+const listed = (items: readonly string[]): string =>
+  items.length <= 1
+    ? (items[0] ?? '')
+    : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1] ?? ''}`;
+
+/**
+ * The Markdown constructs this body would be stored without, as `@raphael/content` converts it - the
+ * same conversion the server runs. With `strict` they are a refusal; otherwise they are returned for a
+ * warning once the write succeeds. A body that does not convert at all is left to the server, which
+ * refuses it with its own reason.
+ */
+export const degradedConstructs = (
+  body: BodySource | undefined,
+  strict: boolean,
+  command: string,
+): readonly DegradedConstruct[] => {
+  if (body?.format !== 'markdown') return [];
+  const converted = importMarkdown(body.value);
+  if (Either.isLeft(converted)) return [];
+  const { degraded } = converted.right;
+  if (strict && degraded.length > 0) {
+    throw new UsageError(
+      `--strict: the body has ${listed(degraded.map((construct) => DEGRADED_CONSTRUCT_DESCRIPTIONS[construct].name))}, which Raphael cannot store as written. Change the body, or leave out --strict to store it anyway.`,
+      command,
+    );
+  }
+  return degraded;
+};
+
+/** The warning for a stored body that lost constructs, naming what each became and where to look. */
+export const degradedWarning = (
+  degraded: readonly DegradedConstruct[],
+  readCommand: string,
+): Warning => ({
+  code: 'markdown_degraded',
+  constructs: degraded,
+  message: `The body was stored with changes: ${keptAs(degraded)}. Run "${readCommand}" to see the stored body, or use --strict to refuse such a body.`,
+});
+
+/** `a table was kept as …; an image and raw HTML were kept as plain text`, grouped by what was kept. */
+const keptAs = (degraded: readonly DegradedConstruct[]): string => {
+  const groups = new Map<string, string[]>();
+  for (const construct of degraded) {
+    const { name, kept } = DEGRADED_CONSTRUCT_DESCRIPTIONS[construct];
+    groups.set(kept, [...(groups.get(kept) ?? []), name]);
+  }
+  return [...groups]
+    .map(
+      ([kept, names]) => `${listed(names)} ${names.length === 1 ? 'was' : 'were'} kept as ${kept}`,
+    )
+    .join('; ');
 };
 
 const sentence = (text: string): string =>

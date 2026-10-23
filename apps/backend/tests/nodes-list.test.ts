@@ -692,7 +692,7 @@ test('invalid ordering is refused with a bounded error that names the field and 
   });
 });
 
-test('ordering by a timestamp does not put a timestamp in the response', () => {
+test('ordering by update time shows that time on every item, and never a creation time', () => {
   withMigrated('order-no-timestamps', (connection) => {
     orderedFixture(connection);
     const response = expectRight(
@@ -702,10 +702,15 @@ test('ordering by a timestamp does not put a timestamp in the response', () => {
         orderBy: [{ field: 'updatedAt', direction: 'desc' }],
       }),
     );
+    const times = response.items.map((item) => item.updatedAt);
+    assert.deepEqual(
+      times,
+      [...times].sort().reverse(),
+      'the order can be checked from the answer',
+    );
     for (const item of response.items) {
-      const keys = Object.keys(item);
-      assert.equal(keys.includes('updatedAt'), false);
-      assert.equal(keys.includes('createdAt'), false);
+      assert.equal(Object.keys(item).includes('createdAt'), false);
+      assert.equal(Object.keys(item).includes('path'), false);
     }
   });
 });

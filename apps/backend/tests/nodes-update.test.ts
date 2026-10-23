@@ -128,7 +128,7 @@ test('an omitted field is left alone and a supplied empty one clears', () => {
   });
 });
 
-test('a slug change moves the address, and re-submitting the current one is accepted', () => {
+test('a slug change moves the address, and re-submitting the current one changes nothing', () => {
   withMigrated('update-slug', (connection) => {
     const created = note(connection, 'Draft');
 
@@ -155,7 +155,8 @@ test('a slug change moves the address, and re-submitting the current one is acce
       }),
     );
     assert.equal(same.entity.slug, 'final-draft');
-    assert.equal(same.entity.revision, 3, 'a value equal to the stored one is still a write');
+    assert.equal(same.entity.revision, 2, 'a value equal to the stored one is not a write');
+    assert.equal(same.changed, false);
   });
 });
 
@@ -434,7 +435,7 @@ test('a project is selected and deselected through the ordinary update envelope'
   });
 });
 
-test('selecting a project that is already selected is an ordinary write, not a no-op', () => {
+test('selecting a project that is already selected changes nothing and keeps the revision', () => {
   withMigrated('update-active-again', (connection) => {
     const created = project(connection, 'Migration');
     const first = expectRight(
@@ -446,22 +447,24 @@ test('selecting a project that is already selected is an ordinary write, not a n
     ).entity;
     const afterFirst = stored(connection, created.id);
 
-    // The same desired state, submitted again. The server never compares submitted content to stored
-    // content - doing so would make it a second content-equality authority - so this is a write, and
-    // the revision and the timestamp both move. A toggled project therefore moves in an
-    // `updatedAt`-ordered listing, which is a chosen cost rather than a discovered one.
-    const again = expectRight(
+    // The same desired state, submitted again. Nothing differs, so nothing is written: the revision
+    // and the update time stay, and a caller holding the revision it read is not handed a needless
+    // conflict on its next write.
+    const answer = expectRight(
       update(
         connection,
         { target: { id: created.id }, revision: first.revision, active: true },
         clockAt(AT + 1_000),
       ),
-    ).entity;
+    );
+    const again = answer.entity;
 
     const afterSecond = stored(connection, created.id);
+    assert.equal(answer.changed, false);
     assert.equal(again.active, true);
-    assert.equal(afterSecond.revision, afterFirst.revision + 1);
-    assert.ok(afterSecond.updatedAt > afterFirst.updatedAt);
+    assert.deepEqual(afterSecond, afterFirst);
+    assert.equal(again.revision, first.revision);
+    assert.equal(again.updatedAt, first.updatedAt);
 
     // And what the write answered is what a later read answers, so nothing was published that the
     // row does not hold.
@@ -704,5 +707,103 @@ test('an update succeeds again once what archived it is restored, and answers ac
     ).entity;
     assert.equal(updated.archived, false);
     assert.deepEqual(updated.archiveCauses, []);
+  });
+});
+
+test('an update whose values all equal the stored ones writes nothing and says so', () => {
+  withMigrated('update-no-op', (connection) => {
+    const created = note(connection, 'Draft', {
+      description: 'A note',
+      tags: ['b', 'a'],
+      body: { value: '# Heading\n\nSome *text* here.' },
+    });
+    const before = stored(connection, created.id);
+
+    // Every field at once, each equal to what is stored. The body is different Markdown that converts
+    // to the stored document (another emphasis spelling, and a trailing newline), which is no change.
+    const answer = expectRight(
+      update(
+        connection,
+        {
+          target: { id: created.id },
+          revision: created.revision,
+          title: '  Draft ',
+          description: 'A note',
+          slug: created.slug,
+          tags: ['b', 'a'],
+          body: { value: '# Heading\n\nSome _text_ here.\n' },
+        },
+        clockAt(AT + 5_000),
+      ),
+    );
+    assert.equal(answer.changed, false);
+    assert.deepEqual(stored(connection, created.id), before, 'nothing was written');
+    assert.equal(answer.entity.revision, created.revision);
+    assert.equal(answer.entity.updatedAt, created.updatedAt);
+    const fetched = expectRight(runNodes(connection, getNode({ target: { id: created.id } })));
+    assert.deepEqual(answer.entity, fetched.entity);
+
+    // One real difference among equal values is a change, and only then does the revision move.
+    const changed = expectRight(
+      update(
+        connection,
+        {
+          target: { id: created.id },
+          revision: created.revision,
+          title: 'Draft',
+          tags: ['a', 'b'],
+        },
+        clockAt(AT + 6_000),
+      ),
+    );
+    assert.equal(changed.changed, true);
+    assert.equal(changed.entity.revision, created.revision + 1);
+    assert.equal(changed.entity.updatedAt, new Date(AT + 6_000).toISOString());
+  });
+});
+
+test('a no-op is still checked against the revision first', () => {
+  withMigrated('update-no-op-stale', (connection) => {
+    const created = note(connection, 'Draft');
+    expectRight(
+      update(connection, { target: { id: created.id }, revision: created.revision, title: 'X' }),
+    );
+    const before = stored(connection, created.id);
+    const error = expectLeft(
+      update(connection, { target: { id: created.id }, revision: created.revision, title: 'X' }),
+    );
+    assert.equal(toPublicError(error).code, 'revision_conflict');
+    assert.deepEqual(stored(connection, created.id), before);
+  });
+});
+
+test('an update answers the path only when asked, whether or not it changed anything', () => {
+  withMigrated('update-paths', (connection) => {
+    const created = note(connection, 'Draft');
+    const plain = expectRight(
+      update(connection, { target: { id: created.id }, revision: created.revision, slug: 'kept' }),
+    );
+    assert.equal('path' in plain.entity, false);
+
+    const renamed = expectRight(
+      update(connection, {
+        target: { id: created.id },
+        revision: plain.entity.revision,
+        slug: 'renamed',
+        includePaths: true,
+      }),
+    );
+    assert.equal(renamed.entity.path, '/work/renamed');
+
+    const same = expectRight(
+      update(connection, {
+        target: { path: '/work/renamed' },
+        revision: renamed.entity.revision,
+        slug: 'renamed',
+        includePaths: true,
+      }),
+    );
+    assert.equal(same.changed, false);
+    assert.equal(same.entity.path, '/work/renamed');
   });
 });

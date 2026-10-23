@@ -29,6 +29,7 @@ import {
   SlugInput,
   TagsInput,
   TitleInput,
+  UpdatedAt,
 } from './fields.ts';
 import { NodeFilter } from './filter.ts';
 import { ROOT_PATH, isCanonicalPath, isEntityPath } from './path.ts';
@@ -98,6 +99,17 @@ export const Scopes = Schema.Array(ScopeSelector).pipe(
 );
 
 /**
+ * Whether the answer carries each item's computed path. Off by default: a path is computed from the
+ * item's current ancestors on request and never stored (ADR 0004), so a caller that does not need one
+ * does not pay for the walk. With it on, every item the answer describes carries `path`, and a move
+ * also carries `previousPath`.
+ */
+export const IncludePathsField = Schema.optionalWith(Schema.Boolean, {
+  default: () => false,
+  exact: true,
+});
+
+/**
  * Everything both members of the creation union accept, spelled once. The caller names the node: a
  * retry after a lost reply resubmits the same slug and meets its own first attempt as a slug conflict.
  */
@@ -114,6 +126,7 @@ const CreateCommon = {
     default: () => 'markdown' as const,
     exact: true,
   }),
+  includePaths: IncludePathsField,
 };
 
 /** A container has no kind: a kind says what a leaf is. */
@@ -140,6 +153,7 @@ export const GetRequest = Schema.Struct({
     default: () => 'markdown' as const,
     exact: true,
   }),
+  includePaths: IncludePathsField,
 });
 
 /**
@@ -197,6 +211,7 @@ const ScopePageFields = {
    * whether it is archived.
    */
   includeArchived: Schema.optionalWith(Schema.Boolean, { default: () => false, exact: true }),
+  includePaths: IncludePathsField,
 };
 
 export const ListRequest = Schema.Struct({
@@ -260,9 +275,10 @@ export const UpdateRequestFields = Schema.Struct({
   tags: Schema.optionalWith(TagsInput, { exact: true }),
   /**
    * Desired state, never a toggle: `true` means "the resulting state is active". Submitting the state
-   * already stored is an ordinary successful write, which is what makes the revision guard meaningful -
-   * two clients both sending `true` from revision 7 are harmless, while one sending `false` from a
-   * stale revision 7 is told the project moved rather than silently undoing a decision it never saw.
+   * already stored succeeds with `changed: false` and keeps the revision, which is what makes the
+   * revision guard meaningful - two clients both sending `true` from revision 7 are harmless, while one
+   * sending `false` from a stale revision 7 is told the project moved rather than silently undoing a
+   * decision it never saw.
    *
    * Only a project may be marked active. That is not expressible here, because this envelope never
    * reads the target: core refuses it, and the response contract refuses to publish the pairing.
@@ -273,6 +289,7 @@ export const UpdateRequestFields = Schema.Struct({
     default: () => 'markdown' as const,
     exact: true,
   }),
+  includePaths: IncludePathsField,
 });
 
 /**
@@ -310,6 +327,7 @@ export const MoveRequest = Schema.Struct({
   target: EntitySelector,
   revision: NodeRevision,
   destination: MoveDestination,
+  includePaths: IncludePathsField,
 });
 
 /**
@@ -319,6 +337,7 @@ export const MoveRequest = Schema.Struct({
 export const LifecycleRequest = Schema.Struct({
   target: EntitySelector,
   revision: NodeRevision,
+  includePaths: IncludePathsField,
 });
 
 export type ContainerCreateRequest = Schema.Schema.Type<typeof ContainerCreateRequest>;
@@ -332,6 +351,14 @@ export type UpdateRequest = Schema.Schema.Type<typeof UpdateRequest>;
 export type MoveDestination = Schema.Schema.Type<typeof MoveDestination>;
 export type MoveRequest = Schema.Schema.Type<typeof MoveRequest>;
 export type LifecycleRequest = Schema.Schema.Type<typeof LifecycleRequest>;
+
+/**
+ * A computed path in an answer: one that can be handed straight back as a selector. Present only when
+ * the request asked for paths, and then on every item the answer describes.
+ */
+const AnsweredPath = Schema.String.pipe(
+  Schema.filter((value) => isEntityPath(value) || 'a path must be a canonical entity path'),
+);
 
 /**
  * Response projections. Every field is always present: `parentId` is a positive ID or `null` for a
@@ -382,6 +409,10 @@ const NodeSummaryFields = {
    * because it is derived, unlike the authored `active`.
    */
   isFavorite: Schema.Boolean,
+  /** When the item last changed. A write that changes nothing leaves it, and the revision, alone. */
+  updatedAt: UpdatedAt,
+  /** The item's current path, computed on request (`includePaths`) and never stored (ADR 0004). */
+  path: Schema.optionalWith(AnsweredPath, { exact: true }),
 };
 
 /**
@@ -457,7 +488,12 @@ export type NodeEntity = Schema.Schema.Type<typeof NodeEntity>;
 
 export const CreateResponse = Schema.Struct({ entity: NodeEntity });
 export const GetResponse = Schema.Struct({ entity: NodeEntity });
-export const UpdateResponse = Schema.Struct({ entity: NodeEntity });
+/**
+ * `changed` is false when every submitted value equals the stored one (the body compared in its stored
+ * canonical form). Nothing is written then: the revision and update time stay as they were, and the
+ * entity is the current one.
+ */
+export const UpdateResponse = Schema.Struct({ entity: NodeEntity, changed: Schema.Boolean });
 
 /**
  * A move publishes a summary, not an entity: everything it changes - `parentId`, `slug`, `revision` -
@@ -465,7 +501,13 @@ export const UpdateResponse = Schema.Struct({ entity: NodeEntity });
  * `node` rather than `entity` so the shape difference from `UpdateResponse` is visible at the call
  * site, as `SearchHit.node` is.
  */
-export const MoveResponse = Schema.Struct({ node: NodeSummary });
+export const MoveResponse = Schema.Struct({
+  node: NodeSummary,
+  /** False for a move to where the item already is: nothing is written and the revision is kept. */
+  changed: Schema.Boolean,
+  /** Where the item was before the move, present exactly when `node.path` is (`includePaths`). */
+  previousPath: Schema.optionalWith(AnsweredPath, { exact: true }),
+});
 
 /**
  * What archive and restore answer: the target's summary and the causes that apply *after* the change,
@@ -475,17 +517,25 @@ export const MoveResponse = Schema.Struct({ node: NodeSummary });
 export const LifecycleResponse = Schema.Struct({
   node: NodeSummary,
   archiveCauses: Schema.Array(ArchiveCause),
+  /** False when the user's direct cause was already there (archive) or already absent (restore). */
+  changed: Schema.Boolean,
 }).pipe(
   Schema.filter((value) =>
     archivedMatchesCauses({ archived: value.node.archived, archiveCauses: value.archiveCauses }),
   ),
 );
 
+/**
+ * One page of summaries, for a listing and for favorites. `archivedLeftOut` means what it means on
+ * `SearchResponse`: archived items were excluded and at least one of them belongs to the same answer,
+ * anywhere in it, not only in this window. Always false when archived items were included.
+ */
 export const ListResponse = Schema.Struct({
   items: Schema.Array(NodeSummary),
   skip: NonNegativeSafeInt,
   limit: PositiveSafeInt,
   hasMore: Schema.Boolean,
+  archivedLeftOut: Schema.Boolean,
 });
 
 /**
@@ -521,12 +571,7 @@ export const SearchResponse = Schema.Struct({
  * A computed path must be one that can be handed straight back as a selector. The root is therefore
  * refused here as well: it addresses no entity, so it cannot be the path of the entity asked about.
  */
-export const GetPathResponse = Schema.Struct({
-  id: NodeId,
-  path: Schema.String.pipe(
-    Schema.filter((value) => isEntityPath(value) || 'a path must be a canonical entity path'),
-  ),
-});
+export const GetPathResponse = Schema.Struct({ id: NodeId, path: AnsweredPath });
 
 export type CreateResponse = Schema.Schema.Type<typeof CreateResponse>;
 export type UpdateResponse = Schema.Schema.Type<typeof UpdateResponse>;

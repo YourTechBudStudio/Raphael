@@ -26,9 +26,9 @@ Examples:
   raphael move --id 42 /
 
 Prints:
-  The moved item, id and revision. JSON carries `node`.
+  The item with its new path, the path it had, and its revision; Unchanged when it was already there. JSON carries `node`, `changed` and `previousPath`.
 
-Next: raphael path --id 42
+Next: raphael get --id 42
 
 See also: raphael help addressing; raphael help revisions
 ==== stderr ====

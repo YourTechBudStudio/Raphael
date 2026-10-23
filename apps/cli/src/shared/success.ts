@@ -18,10 +18,30 @@ import type { Session } from './command.ts';
 import { EXIT_OK, type ExitCode } from './exit.ts';
 import { writeJson, writeLine, type Streams } from './output.ts';
 
+/**
+ * Every code a success can carry in `warnings[]`, with what it means. One table, so the output help
+ * renders the same list the commands use, and a code nobody documented cannot be emitted.
+ */
+export const WARNING_CODES = {
+  durability_unconfirmed:
+    'login saved the key, but the filesystem did not confirm the write is durable.',
+  environment_overrides:
+    'login saved the key, but the environment pair is set and is used instead of it.',
+  environment_still_set:
+    'logout removed the saved login, but the environment pair is still set and still used.',
+  version_skew: 'status found a server of another release that speaks the same protocol.',
+  markdown_degraded:
+    'create or update stored Markdown constructs only as text; constructs lists them by name.',
+} as const satisfies Readonly<Record<string, string>>;
+
+export type WarningCode = keyof typeof WARNING_CODES;
+
 /** Something worth knowing about a success that did not stop it. */
 export interface Warning {
-  readonly code: string;
+  readonly code: WarningCode;
   readonly message: string;
+  /** For `markdown_degraded`: the constructs kept only as text, as `DEGRADED_CONSTRUCTS` names them. */
+  readonly constructs?: readonly string[];
 }
 
 export interface Success {

@@ -69,11 +69,23 @@ export const newSession = (invocation: Invocation): Session => ({
   interruption: undefined,
 });
 
+/**
+ * Whether standard input and standard output are terminals. A header row is printed only on a
+ * terminal, and a body read from a terminal says how to finish. Not a terminal covers a pipe, a file,
+ * `/dev/null` and a closed descriptor alike, so anything worded from it is worded conditionally.
+ */
+export interface Terminal {
+  readonly stdin: boolean;
+  readonly stdout: boolean;
+}
+
 export interface CommandContext {
   readonly streams: Streams;
   readonly session: Session;
   /** Cancelled by SIGINT or SIGTERM. Every request and every wait on input takes it. */
   readonly signal: AbortSignal;
+  /** Which standard streams are terminals. Decided from `isTTY` alone; nothing is read to find out. */
+  readonly terminal: Terminal;
   /**
    * The transport for this command. Called only once arguments are parsed, so argument errors are
    * reported before a credential is read. The same transport on every call.

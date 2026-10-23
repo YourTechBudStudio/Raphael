@@ -63,6 +63,13 @@ const get = (connection: Connection, id: number) =>
 const favorited = (connection: Connection, id: number) =>
   expectRight(add(connection, { target: { id } }));
 
+/** The membership half of an add or remove answer; `node` is checked on its own. */
+const stateOf = (answer: { nodeId: number; isFavorite: boolean; changed: boolean }) => ({
+  nodeId: answer.nodeId,
+  isFavorite: answer.isFavorite,
+  changed: answer.changed,
+});
+
 interface Row {
   readonly revision: number;
   readonly updatedAt: number;
@@ -102,18 +109,27 @@ test('add by id or by path answers the resulting state, and a repeat leaves one 
     const garden = area(connection, { id: WORK }, 'Garden');
     const launch = project(connection, { id: garden.id }, 'Launch');
 
-    assert.deepEqual(expectRight(add(connection, { target: { id: garden.id } })), {
-      nodeId: garden.id,
-      isFavorite: true,
-    });
-    assert.deepEqual(expectRight(add(connection, { target: { path: '/work/garden/launch' } })), {
-      nodeId: launch.id,
-      isFavorite: true,
-    });
-    assert.deepEqual(expectRight(add(connection, { target: { id: garden.id } })), {
-      nodeId: garden.id,
-      isFavorite: true,
-    });
+    const first = expectRight(add(connection, { target: { id: garden.id } }));
+    assert.deepEqual(stateOf(first), { nodeId: garden.id, isFavorite: true, changed: true });
+    // The answer names what was marked, as it now stands, and carries a path only on request.
+    const {
+      body: _body,
+      metadata: _metadata,
+      archiveCauses: _causes,
+      ...summary
+    } = get(connection, garden.id);
+    assert.deepEqual(first.node, summary);
+    assert.equal('path' in first.node, false);
+
+    const byPath = expectRight(
+      add(connection, { target: { path: '/work/garden/launch' }, includePaths: true }),
+    );
+    assert.deepEqual(stateOf(byPath), { nodeId: launch.id, isFavorite: true, changed: true });
+    assert.equal(byPath.node.path, '/work/garden/launch');
+    assert.equal(byPath.node.title, 'Launch');
+
+    const repeat = expectRight(add(connection, { target: { id: garden.id } }));
+    assert.deepEqual(stateOf(repeat), { nodeId: garden.id, isFavorite: true, changed: false });
     assert.deepEqual(favoriteRows(connection), [garden.id, launch.id]);
   });
 });
@@ -123,18 +139,22 @@ test('remove ensures absence: repeating it, or naming an id that is nothing, suc
     const garden = area(connection, { id: WORK }, 'Garden');
     favorited(connection, garden.id);
 
-    assert.deepEqual(expectRight(remove(connection, { target: { path: '/work/garden' } })), {
-      nodeId: garden.id,
-      isFavorite: false,
-    });
-    assert.deepEqual(expectRight(remove(connection, { target: { id: garden.id } })), {
-      nodeId: garden.id,
-      isFavorite: false,
-    });
-    assert.deepEqual(expectRight(remove(connection, { target: { id: 999_999 } })), {
-      nodeId: 999_999,
-      isFavorite: false,
-    });
+    const first = expectRight(
+      remove(connection, { target: { path: '/work/garden' }, includePaths: true }),
+    );
+    assert.deepEqual(stateOf(first), { nodeId: garden.id, isFavorite: false, changed: true });
+    assert.equal(first.node?.isFavorite, false, 'the summary is read after the change');
+    assert.equal(first.node?.path, '/work/garden');
+
+    const repeat = expectRight(remove(connection, { target: { id: garden.id } }));
+    assert.deepEqual(stateOf(repeat), { nodeId: garden.id, isFavorite: false, changed: false });
+    assert.equal(repeat.node?.id, garden.id);
+
+    // An id that names nothing: absence is what was asked for, and there is nothing to name.
+    const nothing = expectRight(
+      remove(connection, { target: { id: 999_999 }, includePaths: true }),
+    );
+    assert.deepEqual(nothing, { nodeId: 999_999, isFavorite: false, changed: false, node: null });
     assert.deepEqual(favoriteRows(connection), []);
   });
 });
@@ -196,9 +216,10 @@ test('a note is refused with a reason on target, and nothing is written; removin
     assert.equal(error.message, 'Only areas and projects can be favorites.');
     assert.deepEqual(favoriteRows(connection), []);
 
-    assert.deepEqual(expectRight(remove(connection, { target: { id: runbook.id } })), {
+    assert.deepEqual(stateOf(expectRight(remove(connection, { target: { id: runbook.id } }))), {
       nodeId: runbook.id,
       isFavorite: false,
+      changed: false,
     });
     assert.equal(get(connection, runbook.id).isFavorite, false);
   });
@@ -226,10 +247,9 @@ test('something archived, directly or through a container, can still be added an
     archived(connection, shelf.id);
 
     for (const id of [shelf.id, inner.id]) {
-      assert.deepEqual(expectRight(add(connection, { target: { id } })), {
-        nodeId: id,
-        isFavorite: true,
-      });
+      const answer = expectRight(add(connection, { target: { id } }));
+      assert.deepEqual(stateOf(answer), { nodeId: id, isFavorite: true, changed: true });
+      assert.equal(answer.node.archived, true, 'the summary says it is archived');
       assert.equal(get(connection, id).isFavorite, true);
     }
     assert.deepEqual(favoriteRows(connection), [shelf.id, inner.id]);
@@ -416,5 +436,36 @@ test('every node response says whether the node is a favorite', () => {
       ),
     ).node;
     assert.equal(moved.isFavorite, true);
+  });
+});
+
+test('the list says when archived favorites were left out, and includes them on request', () => {
+  withMigrated('favorites-archived-left-out', (connection) => {
+    const shelf = area(connection, { id: WORK }, 'Shelf');
+    const inner = project(connection, { id: shelf.id }, 'Inner');
+    const visible = area(connection, { id: WORK }, 'Visible');
+    favorited(connection, visible.id);
+    assert.equal(list(connection).archivedLeftOut, false);
+
+    favorited(connection, inner.id);
+    archived(connection, shelf.id);
+    // The archived favorite is beyond this window too: the flag is about the whole answer.
+    const hidden = list(connection, { limit: 1 });
+    assert.deepEqual(
+      hidden.items.map((item) => item.id),
+      [visible.id],
+    );
+    assert.equal(hidden.archivedLeftOut, true);
+
+    const all = list(connection, { includeArchived: true, includePaths: true });
+    assert.deepEqual(
+      all.items.map((item) => [item.id, item.archived, item.path]),
+      [
+        [inner.id, true, '/work/shelf/inner'],
+        [visible.id, false, '/work/visible'],
+      ],
+    );
+    assert.equal(all.archivedLeftOut, false);
+    assert.equal('path' in (list(connection).items[0] ?? {}), false);
   });
 });

@@ -59,7 +59,7 @@ test('a fresh instance creates an area under a seeded root area', () => {
   });
 });
 
-test('internal timestamps are stored but never returned', () => {
+test('the update time is returned in its wire spelling, and the creation time never is', () => {
   withMigrated('create-timestamps', (connection) => {
     const at = 1_700_000_123_456;
     const response = expectRight(
@@ -74,9 +74,11 @@ test('internal timestamps are stored but never returned', () => {
     assert.equal(stored.createdAt, at, 'both timestamps take the one sampled instant');
     assert.equal(stored.updatedAt, at);
 
-    // The complete published surface, named exhaustively. `kind` joined it; `body_text` did not, and
-    // must not - it is storage for a search story that has not shipped, and a column that leaks into a
-    // response becomes a field someone depends on before anyone decided it was one.
+    assert.equal(response.entity.updatedAt, new Date(at).toISOString());
+
+    // The complete published surface, named exhaustively. `kind` and `updatedAt` joined it; `body_text`
+    // and `created_at` did not, and must not - a column that leaks into a response becomes a field
+    // someone depends on before anyone decided it was one. `path` appears only on request.
     const keys = Object.keys(response.entity).sort();
     assert.deepEqual(keys, [
       'active',
@@ -94,6 +96,7 @@ test('internal timestamps are stored but never returned', () => {
       'tags',
       'title',
       'type',
+      'updatedAt',
     ]);
   });
 });

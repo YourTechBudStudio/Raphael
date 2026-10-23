@@ -173,6 +173,7 @@ const SUMMARY_COLUMNS_OF_NODES = {
   description: nodes.description,
   tags: nodes.tags,
   active: nodes.active,
+  updatedAt: nodes.updatedAt,
   isFavorite: favoriteExpression(nodes.id),
 } as const;
 

@@ -45,7 +45,13 @@ after(async () => {
 
 const A = 3;
 
-const answer = (isFavorite) => (body) => ok({ nodeId: body.target.id, isFavorite });
+const answer = (isFavorite) => (body) =>
+  ok({
+    nodeId: body.target.id,
+    isFavorite,
+    changed: true,
+    node: summary(body.target.id, { isFavorite }),
+  });
 
 const connect = (transport) => {
   useConnectionStore.setState({
@@ -151,7 +157,7 @@ describe('the favorite star', () => {
       screen.at('header').toggle(read);
     });
 
-    assert.deepEqual(server.pending(ADD), { target: { id: A } });
+    assert.deepEqual(server.pending(ADD), { target: { id: A }, includePaths: false });
     for (const name of ['header', 'row']) {
       assert.equal(screen.at(name).isFavorite(read), true, name);
       assert.equal(screen.at(name).isBusy(A), true, name);

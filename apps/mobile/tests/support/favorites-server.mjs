@@ -27,6 +27,7 @@ export const summary = (id, over = {}) => ({
   active: false,
   archived: false,
   isFavorite: true,
+  updatedAt: '2026-10-19T10:42:07.123Z',
   ...over,
 });
 
@@ -34,7 +35,7 @@ export const ok = (value) => ({ ok: true, value });
 
 /** A favorites page answering the request it is for, so its window is the one that was asked. */
 export const page = (body, items, hasMore = false) =>
-  ok({ items, skip: body.skip, limit: body.limit, hasMore });
+  ok({ items, skip: body.skip, limit: body.limit, hasMore, archivedLeftOut: false });
 
 export const refused = () => ({
   ok: false,

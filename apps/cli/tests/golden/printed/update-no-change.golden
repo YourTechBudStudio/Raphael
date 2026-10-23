@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Give at least one change: --title, --description, --slug, --body, --body-literal, --tag, --no-tags, --active, --inactive. Standard input is not a terminal; to read the body from it, pass --body @-.
+The change was not sent.
+hint: Run "raphael update --help" for usage.

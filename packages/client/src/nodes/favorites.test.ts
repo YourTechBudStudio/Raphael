@@ -54,40 +54,54 @@ const summary = {
   active: false,
   archived: false,
   isFavorite: true,
+  updatedAt: '2026-10-19T10:42:07.123Z',
 };
 
 describe('favorites', () => {
   it('add and remove post the selector to their own routes and read the resulting state back', async () => {
-    const added = answering(200, { nodeId: 7, isFavorite: true });
+    const addAnswer = { nodeId: 7, isFavorite: true, changed: true, node: summary };
+    const added = answering(200, addAnswer);
     const result = await addFavorite(added.transport, { target: { path: '/work/backend' } });
-    assert.deepEqual(result, { ok: true, value: { nodeId: 7, isFavorite: true } });
+    assert.deepEqual(result, { ok: true, value: addAnswer });
     assert.deepEqual(added.sent, [
       {
         url: 'http://127.0.0.1:1/api/favorites/add',
-        body: { target: { path: '/work/backend' } },
+        body: { target: { path: '/work/backend' }, includePaths: false },
       },
     ]);
 
-    const removed = answering(200, { nodeId: 7, isFavorite: false });
+    const removeAnswer = { nodeId: 7, isFavorite: false, changed: false, node: null };
+    const removed = answering(200, removeAnswer);
     const gone = await removeFavorite(removed.transport, { target: { id: 7 } });
-    assert.deepEqual(gone, { ok: true, value: { nodeId: 7, isFavorite: false } });
+    assert.deepEqual(gone, { ok: true, value: removeAnswer });
     assert.deepEqual(removed.sent, [
-      { url: 'http://127.0.0.1:1/api/favorites/remove', body: { target: { id: 7 } } },
+      {
+        url: 'http://127.0.0.1:1/api/favorites/remove',
+        body: { target: { id: 7 }, includePaths: false },
+      },
     ]);
   });
 
   it('list posts the decoded window, defaults included, and reads an ordinary page', async () => {
-    const page = { items: [summary], skip: 0, limit: 50, hasMore: false };
+    const page = { items: [summary], skip: 0, limit: 50, hasMore: false, archivedLeftOut: false };
     const { transport, sent } = answering(200, page);
     const result = await listFavorites(transport, {});
     assert.deepEqual(result, { ok: true, value: page });
     assert.deepEqual(sent, [
-      { url: 'http://127.0.0.1:1/api/favorites/list', body: { skip: 0, limit: 50 } },
+      {
+        url: 'http://127.0.0.1:1/api/favorites/list',
+        body: { skip: 0, limit: 50, includeArchived: false, includePaths: false },
+      },
     ]);
   });
 
   it('refuse an answer that contradicts the request', async () => {
-    const { transport } = answering(200, { nodeId: 7, isFavorite: false });
+    const { transport } = answering(200, {
+      nodeId: 7,
+      isFavorite: false,
+      changed: true,
+      node: summary,
+    });
     const result = await addFavorite(transport, { target: { id: 7 } });
     assert.equal(result.ok, false);
     if (!result.ok) assert.equal(result.failure.kind, 'bad_response');

@@ -5,6 +5,7 @@ import { Db } from '../../infrastructure/database/index.ts';
 import { invalidInputFrom } from './diagnostics.ts';
 import type { NodeError } from './errors.ts';
 import { effectiveCauses } from './lifecycle.ts';
+import { pathOf } from './paths.ts';
 import { bodyProjection, entityProjection, storedBody } from './projection.ts';
 import { loadEntity } from './resolve.ts';
 import { raise, unwrapFailure } from './storage-failures.ts';
@@ -23,11 +24,16 @@ export const getNode = (input: unknown): Effect.Effect<GetResponse, NodeError, D
         if (Either.isLeft(request)) {
           return raise(invalidInputFrom(request.left, input));
         }
-        const { target, format } = request.right;
+        const { target, format, includePaths } = request.right;
         return readTransaction(db, () => {
           const handle = orm(db);
           const found = loadEntity(handle, target, 'target', OPERATION);
-          return { found, causes: effectiveCauses(handle, found, OPERATION), format };
+          return {
+            found,
+            causes: effectiveCauses(handle, found, OPERATION),
+            format,
+            path: includePaths ? pathOf(handle, found, OPERATION) : undefined,
+          };
         });
       },
       catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'read' }, cause),
@@ -39,6 +45,7 @@ export const getNode = (input: unknown): Effect.Effect<GetResponse, NodeError, D
           row.found,
           bodyProjection(storedBody(row.found.body), row.format),
           row.causes,
+          row.path,
         ),
       }),
       catch: (cause) => unwrapFailure({ operation: OPERATION, stage: 'projection' }, cause),

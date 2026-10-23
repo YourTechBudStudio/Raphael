@@ -87,14 +87,39 @@ test('the nodes entry point publishes the favorites vocabulary', async () => {
   assert.equal(nodes.NODE_ROUTES.listFavorites.path, '/api/favorites/list');
   assert.equal(Either.isRight(nodes.decodeFavoriteRequest({ target: { id: 1 } })), true);
   assert.equal(Either.isRight(nodes.decodeFavoriteListRequest({})), true);
+  const node = {
+    id: 1,
+    type: 'area',
+    kind: null,
+    parentId: null,
+    slug: 'work',
+    revision: 1,
+    title: 'Work',
+    description: '',
+    tags: [],
+    active: false,
+    archived: false,
+    isFavorite: true,
+    updatedAt: '2026-10-19T10:42:07.123Z',
+  };
   assert.equal(
-    Either.isRight(nodes.decodeAddFavoriteResponse({ nodeId: 1, isFavorite: true })),
+    Either.isRight(
+      nodes.decodeAddFavoriteResponse({ nodeId: 1, isFavorite: true, changed: true, node }),
+    ),
     true,
   );
   assert.equal(
-    Either.isRight(nodes.decodeRemoveFavoriteResponse({ nodeId: 1, isFavorite: false })),
+    Either.isRight(
+      nodes.decodeRemoveFavoriteResponse({
+        nodeId: 1,
+        isFavorite: false,
+        changed: false,
+        node: null,
+      }),
+    ),
     true,
   );
+  assert.equal(nodes.formatUpdatedAt(0), '1970-01-01T00:00:00.000Z');
   assert.equal('PageWindowFields' in nodes, false, 'the window stays internal to the contracts');
 });
 

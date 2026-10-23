@@ -1,0 +1,20 @@
+==== exit ====
+0
+==== stdout ====
+project 12: Raphael
+  path:        /work/platform/raphael
+  slug:        raphael
+  parent:      1
+  revision:    3
+  updated:     2026-10-19T10:42:07.123Z
+  active:      yes
+  archived:    no
+  favorite:    no
+  tags:        "a, b", c, " padded"
+  description: The second brain
+  metadata:    {"owner":"noor"}
+
+# Heading
+
+Some text.
+==== stderr ====

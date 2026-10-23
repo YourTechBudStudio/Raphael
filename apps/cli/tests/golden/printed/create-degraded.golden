@@ -1,0 +1,8 @@
+==== exit ====
+0
+==== stdout ====
+Created resource.note 305: Table
+  path:     /work/table
+  revision: 1
+==== stderr ====
+warning: The body was stored with changes: a table was kept as Markdown source in a code block; a task list checkbox, an image and raw HTML were kept as plain text. Run "raphael get --id 305" to see the stored body, or use --strict to refuse such a body.

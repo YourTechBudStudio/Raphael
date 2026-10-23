@@ -1,0 +1,9 @@
+==== exit ====
+0
+==== stdout ====
+Unchanged project 12: Raphael
+  path:     /work/platform/raphael
+  revision: 5
+  archived: no
+==== stderr ====
+Nothing changed: it was not archived.

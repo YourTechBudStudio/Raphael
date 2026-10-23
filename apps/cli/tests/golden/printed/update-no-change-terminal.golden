@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Give at least one change: --title, --description, --slug, --body, --body-literal, --tag, --no-tags, --active, --inactive.
+The change was not sent.
+hint: Run "raphael update --help" for usage.

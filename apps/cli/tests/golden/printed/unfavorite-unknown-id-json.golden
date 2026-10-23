@@ -1,0 +1,5 @@
+==== exit ====
+0
+==== stdout ====
+{"ok":true,"command":"unfavorite","nodeId":999,"isFavorite":false,"changed":false,"node":null}
+==== stderr ====

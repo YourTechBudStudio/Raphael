@@ -148,6 +148,7 @@ const run = async (
     exit: () => {
       throw new Error('Remote commands must return their exit code');
     },
+    terminal: { stdin: false, stdout: false },
     connect: () => connectFrom(environment, process.platform),
   });
   return { code, stdout, stderr };
@@ -513,8 +514,8 @@ describe('pagination', () => {
     assert.equal(ran.code, 0, ran.stderr);
     // The page note describes the page; it is not one of its rows, so it is on stderr.
     assert.equal(ran.stdout.trimEnd().split('\n').length, 2, 'stdout holds exactly the rows');
-    assert.match(ran.stderr, /skip 0, limit 2/);
-    assert.match(ran.stderr, /More available: --skip 2/);
+    // The footer gives the range and the whole next command, with the page size kept.
+    assert.equal(ran.stderr, 'Showing 1-2. More: raphael list /work --limit 2 --skip 2\n');
   });
 
   it('refuses a limit outside the contract rather than clamping it', async () => {
@@ -760,7 +761,7 @@ describe('notes', () => {
 
     const listed = await run(['list', '/work', '--filter', '{"type":"resource"}']);
     assert.equal(listed.code, 0);
-    assert.match(listed.stdout, /resource\.note {2}- {2}api-design$/m);
+    assert.match(listed.stdout, /resource\.note {2}- {2}\/work\/api-design +API design$/m);
   });
 
   it('accepts a body from a file, standard input, and TipTap', async () => {
@@ -821,7 +822,7 @@ describe('notes', () => {
     assert.equal(unnamed.code, 2);
     assert.match(
       unnamed.stderr,
-      /--title is required: nothing in the body or description can name this note\./,
+      /--title is required: the body and description have no text to take a title from\./,
     );
     assert.equal((await run(['get', '/work/note-unnamed'])).code, 3, 'nothing was sent');
   });
@@ -847,7 +848,7 @@ describe('notes', () => {
         exit: 2,
         code: 'usage',
         lines: [
-          '--title is required: nothing in the body or description can name this note.',
+          '--title is required: no body was given to take a title from, and no description. Standard input is not a terminal; to read the body from it, pass --body @-.',
           'The change was not sent.',
           'hint: Run "raphael create --help" for usage.',
         ],
@@ -1237,7 +1238,7 @@ describe('updating', () => {
     assert.equal(ran.code, 0, ran.stderr);
     assert.match(ran.stdout, /^Updated resource\.note \d+: Original$/m);
     assert.match(ran.stdout, /revision: 2/);
-    assert.match(ran.stdout, /slug: +update-by-id/);
+    assert.match(ran.stdout, /^ {2}path: +\/work\/update-by-id$/m);
     assert.equal((await entityAt('/work/update-by-id')).description, 'Now described');
   });
 
@@ -1648,7 +1649,7 @@ describe('updating', () => {
     const rows = listed.stdout.split('\n').filter((line) => line.includes('selection-shown'));
     assert.equal(rows.length, 1);
     // The state is its own column before the free text, so a title or slug cannot imitate it.
-    assert.match(rows[0] ?? '', / {2}active {2}selection-shown$/);
+    assert.match(rows[0] ?? '', / {2}active {2}\/work\/selection-shown +Original$/);
 
     // --json is unchanged in shape and simply carries the field, so it is the independent statement
     // of which rows are selected that the marker can be checked against.
@@ -1660,7 +1661,7 @@ describe('updating', () => {
     );
     const selected = json.items
       .filter((row: { active: boolean }) => row.active)
-      .map((row: { slug: string }) => row.slug)
+      .map((row: { path: string }) => row.path)
       .sort();
     const marked = listed.stdout
       .split('\n')
@@ -1668,12 +1669,12 @@ describe('updating', () => {
       .filter((columns) => columns[2] === 'active')
       .map((columns) => columns[3])
       .sort();
-    assert.ok(selected.includes('selection-shown'));
+    assert.ok(selected.includes('/work/selection-shown'));
     assert.deepEqual(marked, selected, 'exactly the selected rows are marked, and no others');
 
     // An inactive row says so in the same column, with the fixed word for "nothing to mark".
     const plain = listed.stdout.split('\n').find((line) => line.includes('selection-by-path'));
-    assert.match(plain ?? '', / {2}- +selection-by-path$/);
+    assert.match(plain ?? '', / {2}- +\/work\/selection-by-path +Original$/);
     assert.equal(jsonOf(await run(['get', '/work', '--json'])).entity.active, false);
     assert.equal(created.active, false);
   });
@@ -1725,8 +1726,8 @@ describe('search', () => {
   it('finds a note by its text, and prints the title beside the slug', async () => {
     const ran = await run(['search', '/searching', '-q', 'auth tokens']);
     assert.equal(ran.code, 0, ran.stderr);
-    assert.match(ran.stdout, /resource\.note {2}- {2}tokens {2}Auth tokens$/m);
-    assert.match(ran.stderr, /shown, skip 0, limit \d+/);
+    assert.match(ran.stdout, /resource\.note {2}- {2}\/searching\/tokens {2}Auth tokens$/m);
+    assert.match(ran.stderr, /^Showing 1(-\d+)?\. No more\.$/m);
 
     // The same request as JSON is the independent statement of what was found, so the text form is
     // checked against it rather than against a hand-written expectation.
@@ -1834,8 +1835,8 @@ describe('search', () => {
     await run(['update', '/searching/deep', '--active']);
     const ran = await run(['search', '/searching', '-q', 'deep']);
     assert.equal(ran.code, 0, ran.stderr);
-    const row = ran.stdout.split('\n').find((line) => line.includes('  deep  '));
-    assert.match(row ?? '', /project +active {2}deep {2}Deep$/);
+    const row = ran.stdout.split('\n').find((line) => line.includes('/searching/deep  '));
+    assert.match(row ?? '', /project +active {2}\/searching\/deep {2}Deep$/);
     await run(['update', '/searching/deep', '--inactive']);
   });
 
@@ -1993,7 +1994,6 @@ describe('moving', () => {
 
   it('moves into an existing container and keeps the slug', async () => {
     const note = await seedNote('/work/move-keep');
-    const personal = await entityAt('/personal');
 
     const ran = await run(['move', '/work/move-keep', '/personal']);
     assert.equal(ran.code, 0, ran.stderr);
@@ -2001,9 +2001,9 @@ describe('moving', () => {
       ran.stdout,
       [
         `Moved resource.note ${note.id}: Moving note`,
+        '  path:     /personal/move-keep',
+        '  was:      /work/move-keep',
         `  revision: ${note.revision + 1}`,
-        '  slug:     move-keep',
-        `  parent:   ${personal.id}`,
         '',
       ].join('\n'),
     );
@@ -2021,7 +2021,7 @@ describe('moving', () => {
     const note = await seedNote('/work/move-rename');
     const ran = await run(['move', '/work/move-rename', '/personal/move-renamed']);
     assert.equal(ran.code, 0, ran.stderr);
-    assert.match(ran.stdout, /\n {2}slug: +move-renamed\n/);
+    assert.match(ran.stdout, /\n {2}path: +\/personal\/move-renamed\n/);
 
     const path = await run(['path', '--id', String(note.id)]);
     assert.equal(path.stdout.trim(), '/personal/move-renamed');
@@ -2084,19 +2084,25 @@ describe('moving', () => {
     assert.equal((await entityAt('/work/move-stale')).id, note.id);
   });
 
-  it('reports a move to where it already is as an ordinary success at the same revision', async () => {
+  it('reports a move to where it already is as unchanged, at the same revision', async () => {
     const note = await seedNote('/work/move-noop');
     const ran = await run(['move', '/work/move-noop', '/work']);
     assert.equal(ran.code, 0, ran.stderr);
-    assert.match(ran.stdout, new RegExp(`^Moved resource.note ${note.id}: Moving note\\n`));
+    assert.match(ran.stdout, new RegExp(`^Unchanged resource.note ${note.id}: Moving note\\n`));
     assert.match(ran.stdout, new RegExp(`\\n {2}revision: ${note.revision}\\n`));
+    assert.equal(ran.stderr, 'Nothing changed: it is already at /work/move-noop.\n');
+    const json = jsonOf(await run(['move', '/work/move-noop', '/work', '--json']));
+    assert.deepEqual(
+      [json.changed, json.previousPath, json.node.path],
+      [false, '/work/move-noop', '/work/move-noop'],
+    );
   });
 
   it('moves an area to the top level', async () => {
     await seedArea('/work/move-to-top');
     const ran = await run(['move', '/work/move-to-top', '/']);
     assert.equal(ran.code, 0, ran.stderr);
-    assert.match(ran.stdout, /\n {2}parent: +top level\n$/);
+    assert.match(ran.stdout, /\n {2}path: +\/move-to-top\n {2}was: +\/work\/move-to-top\n/);
     assert.equal((await run(['path', '/move-to-top'])).stdout.trim(), '/move-to-top');
   });
 
@@ -2194,6 +2200,7 @@ describe('archiving and restoring', () => {
       archived.stdout,
       [
         `Archived project ${project.id}: Basic`,
+        '  path:     /work/arch-basic',
         `  revision: ${project.revision + 1}`,
         '  archived: yes',
         '    directly (user)',
@@ -2213,6 +2220,7 @@ describe('archiving and restoring', () => {
       restored.stdout,
       [
         `Restored project ${project.id}: Basic`,
+        '  path:     /work/arch-basic',
         `  revision: ${project.revision + 2}`,
         '  archived: no',
         '',
@@ -2238,6 +2246,7 @@ describe('archiving and restoring', () => {
       still.stdout,
       [
         `Still archived resource.note ${note.id}: Kept`,
+        '  path:     /work/arch-shelf/kept',
         `  revision: ${note.revision + 2}`,
         '  archived: yes',
         `    through area ${shelf.id} "Shelf" (user)`,
@@ -2247,7 +2256,7 @@ describe('archiving and restoring', () => {
     // The next step is not a result, so it is on stderr: restore the container that holds it.
     assert.equal(
       still.stderr,
-      `hint: Run "raphael restore --id ${shelf.id}" to restore area ${shelf.id} too.\n`,
+      `hint: It is archived through area ${shelf.id}. Run "raphael restore --id ${shelf.id}" to restore that area.\n`,
     );
 
     const json = await run(['restore', '--id', String(shelf.id), '--json']);
@@ -2285,16 +2294,21 @@ describe('archiving and restoring', () => {
 
     const hidden = await run(['list', '/work/arch-list']);
     assert.equal(hidden.stdout.includes('zephyr'), false);
-    assert.match(hidden.stdout, /breeze\n/);
+    assert.match(hidden.stdout, /\/breeze {2}Zephyr two\n/);
+    // Left out, and said so, with the command that shows them.
+    assert.match(
+      hidden.stderr,
+      /^Archived items were left out\. To include them: raphael list \/work\/arch-list --include-archived$/m,
+    );
 
     const shown = await run(['list', '/work/arch-list', '--include-archived']);
-    assert.match(shown.stdout, / {2}archived {2}zephyr\n/);
-    assert.match(shown.stdout, /breeze\n/);
+    assert.match(shown.stdout, / {2}archived {2}\/work\/arch-list\/zephyr {2}Zephyr one\n/);
+    assert.match(shown.stdout, /\/breeze {2}Zephyr two\n/);
 
     const searched = await run(['search', '/work/arch-list', '-q', 'zephyr']);
     assert.equal(searched.stdout.includes('Zephyr one'), false);
     const included = await run(['search', '/work/arch-list', '-q', 'zephyr', '--include-archived']);
-    assert.match(included.stdout, / {2}archived {2}zephyr {2}Zephyr one\n/);
+    assert.match(included.stdout, / {2}archived {2}\/work\/arch-list\/zephyr {2}Zephyr one\n/);
   });
 
   it('explains each refusal of something archived by what is archived and how', async () => {
@@ -2396,23 +2410,35 @@ describe('favorites', () => {
     const project = await created(['create', 'project', '/work/fav-basic', '--title', 'Basic']);
     assert.equal(await favoriteLine('/work/fav-basic'), 'favorite: no');
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (const headline of ['Favorited', 'Unchanged']) {
       const added = await run(['favorite', '/work/fav-basic']);
       assert.equal(added.code, 0, added.stderr);
-      assert.equal(added.stdout, `Item ${project.id} is a favorite.\n`);
+      assert.equal(
+        added.stdout,
+        `${headline} project ${project.id}: Basic\n  path:     /work/fav-basic\n  favorite: yes\n`,
+      );
     }
     assert.equal(await favoriteLine('/work/fav-basic'), 'favorite: yes');
 
     const listed = await run(['favorites']);
     assert.equal(listed.code, 0, listed.stderr);
-    assert.match(listed.stdout, new RegExp(`^${project.id} +project +- +Basic$`, 'm'));
-    assert.match(listed.stderr, /shown, skip 0, limit 50\. No more\.\n$/);
+    assert.match(
+      listed.stdout,
+      new RegExp(`^${project.id} +project +- +/work/fav-basic +Basic$`, 'm'),
+    );
+    assert.match(listed.stderr, /^Showing 1(-\d+)?\. No more\.\n$/);
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (const headline of ['Unfavorited', 'Unchanged']) {
       const removed = await run(['unfavorite', '--id', String(project.id)]);
       assert.equal(removed.code, 0, removed.stderr);
-      assert.equal(removed.stdout, `Item ${project.id} is not a favorite.\n`);
+      assert.equal(
+        removed.stdout,
+        `${headline} project ${project.id}: Basic\n  path:     /work/fav-basic\n  favorite: no\n`,
+      );
     }
+    const nothing = await run(['unfavorite', '--id', '999999']);
+    assert.equal(nothing.code, 0, nothing.stderr);
+    assert.equal(nothing.stdout, 'No item has id 999999, so nothing changed.\n');
     assert.equal(await favoriteLine('/work/fav-basic'), 'favorite: no');
     assert.equal((await listedIds()).includes(project.id), false);
   });
@@ -2421,10 +2447,11 @@ describe('favorites', () => {
     const area = await created(['create', 'area', '/work/fav-json', '--title', 'Json']);
     const added = await run(['favorite', '--id', String(area.id), '--json']);
     assert.equal(added.code, 0, added.stderr);
-    assert.deepEqual(Either.getOrUndefined(decodeAddFavoriteResponse(jsonOf(added))), {
-      nodeId: area.id,
-      isFavorite: true,
-    });
+    const answer = Either.getOrUndefined(decodeAddFavoriteResponse(jsonOf(added)));
+    assert.deepEqual(
+      [answer?.nodeId, answer?.isFavorite, answer?.changed, answer?.node.path],
+      [area.id, true, true, '/work/fav-json'],
+    );
 
     const page = await run(['favorites', '--limit', '1', '--skip', '0', '--json']);
     assert.equal(page.code, 0, page.stderr);

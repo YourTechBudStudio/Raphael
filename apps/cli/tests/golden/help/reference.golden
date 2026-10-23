@@ -116,6 +116,8 @@ Options:
       Literal body text, including text beginning with @. Updates require --revision.
       --body-format <format>
       Submitted body: markdown or tiptap. Default: markdown.
+      --strict
+      Refuse a Markdown body that has constructs Raphael keeps only as text. See help content.
       --return-format <format>
       Returned body: markdown or tiptap. Requires --json. Default: markdown.
       --json
@@ -130,7 +132,7 @@ Examples:
   raphael create resource.note --parent-id 42 --slug review --title Review --tag reviewed
 
 Prints:
-  The created item with its id and revision. JSON carries `entity`.
+  The created item with its id, path and revision. A warning on stderr names Markdown kept only as text. JSON carries `entity`.
 
 Next: raphael list / -r
 
@@ -166,6 +168,8 @@ Options:
       Literal body text, including text beginning with @. Updates require --revision.
       --body-format <format>
       Submitted body: markdown or tiptap. Default: markdown.
+      --strict
+      Refuse a Markdown body that has constructs Raphael keeps only as text. See help content.
       --tag <tag>
       Repeat for each tag; at most 25 tags of 50 characters. Commas are refused. Updates replace all tags. Repeatable.
       --no-tags
@@ -189,7 +193,7 @@ Examples:
   raphael update --id 42 --title 'Contract review' --description ''
 
 Prints:
-  The updated item and revision. JSON carries `entity`.
+  The item with its path and revision. When every value given matches what is stored it reads Unchanged and the revision is kept. JSON carries `entity` and `changed`.
 
 Next: raphael get --id 42
 
@@ -222,9 +226,9 @@ Examples:
   raphael move --id 42 /
 
 Prints:
-  The moved item, id and revision. JSON carries `node`.
+  The item with its new path, the path it had, and its revision; Unchanged when it was already there. JSON carries `node`, `changed` and `previousPath`.
 
-Next: raphael path --id 42
+Next: raphael get --id 42
 
 See also: raphael help addressing; raphael help revisions
 
@@ -255,7 +259,7 @@ Examples:
   raphael archive --id 42 --revision 8 --json
 
 Prints:
-  The item and remaining archive causes. JSON carries `node` and `archiveCauses`.
+  The item with its path, revision and archive causes; Unchanged when it was already archived. JSON carries `node`, `archiveCauses` and `changed`.
 
 Next: raphael restore --id 42
 
@@ -288,7 +292,7 @@ Examples:
   raphael restore --id 42 --revision 8 --json
 
 Prints:
-  The item and remaining archive causes. JSON carries `node` and `archiveCauses`.
+  The item with its path, revision and remaining archive causes. Still archived, with the restore command for the container, when a container keeps it archived; Unchanged when nothing was removed. JSON carries `node`, `archiveCauses` and `changed`.
 
 Next: raphael get --id 42
 
@@ -301,7 +305,7 @@ Usage: raphael favorite <path> [options]
 
 Add an area or project to favorites.
 
-Already a favorite succeeds. Favorites keep their state while archived, but archived items are omitted from the favorites list.
+Already a favorite succeeds without a change. Favorites keep their state while archived; favorites leaves archived items out unless --include-archived is given.
 
 Options:
       --id <id>
@@ -317,7 +321,7 @@ Examples:
   raphael favorite /work/raphael --json
 
 Prints:
-  The id and favorite state. JSON carries `nodeId` and `isFavorite`.
+  The item with its path and favorite state; Unchanged when it already was in that state. JSON carries `nodeId`, `isFavorite`, `changed` and `node`.
 
 Next: raphael favorites
 
@@ -330,7 +334,7 @@ Usage: raphael unfavorite <path> [options]
 
 Remove an area or project from favorites.
 
-An item that is not a favorite succeeds without a change.
+An item that is not a favorite succeeds without a change, and so does an id that names nothing.
 
 Options:
       --id <id>
@@ -346,7 +350,7 @@ Examples:
   raphael unfavorite /work/raphael --json
 
 Prints:
-  The id and favorite state. JSON carries `nodeId` and `isFavorite`.
+  The item with its path and favorite state; Unchanged when it already was in that state, and a plain sentence when the id names nothing. JSON carries `nodeId`, `isFavorite`, `changed` and `node`.
 
 Next: raphael favorites
 
@@ -358,13 +362,15 @@ Usage: raphael favorites [options]
 
 List favorites by title.
 
-List favorite areas and projects by title. Archived favorites are left out and stay favorites.
+List favorite areas and projects by title. Archived favorites stay favorites and are left out unless --include-archived is given; a note under the list says when any were.
 
 Options:
       --skip <n>
       Number of results to skip. Default: 0.
       --limit <n>
       Page size, 1 to 500. Default: 50.
+      --include-archived
+      Include archived items.
       --json
       Print one JSON result.
   -h, --help
@@ -376,7 +382,7 @@ Examples:
   raphael favorites --skip 20 --limit 20 --json
 
 Prints:
-  A page of items. JSON carries `items` and `page`; paging notes go to stderr.
+  One row per item: id, type, state, path, title. JSON carries `items` and `page`; paging notes go to stderr.
 
 Next: raphael get --id 42
 
@@ -407,7 +413,7 @@ Examples:
   raphael get --id 42 --return-format tiptap --json
 
 Prints:
-  Fields and body. JSON carries `entity`.
+  Every field, including path, revision and update time, then the body. JSON carries `entity`.
 
 Next: raphael update --id 42 --title "Reviewed design"
 
@@ -484,7 +490,7 @@ Examples:
   raphael list /work /personal --filter '{"tags":{"$in":["urgent"]}}'
 
 Prints:
-  One row per item. JSON carries `items` and `page`; paging notes go to stderr.
+  One row per item: id, type, state, path, title. JSON carries `items` and `page`; paging notes go to stderr.
 
 Next: raphael get --id 42
 
@@ -532,7 +538,7 @@ Examples:
   raphael search /work --direct -q auth --filter '{"type":"resource","kind":"note"}'
 
 Prints:
-  One row per match, with closest matches first. JSON carries `items[].node` and `page`.
+  One row per match, closest first: id, type, state, path, title. JSON carries `items[].node` and `page`.
 
 Next: raphael get --id 42
 
@@ -802,13 +808,15 @@ raphael help content - Note bodies, files, stdin and Markdown conversion.
 
 Create a note with create resource.note. Give --title, or let the first non-empty line of the body (then description) supply it. A title must still be available when the body is empty.
 
-Body text is literal unless it starts with @: --body @draft.md reads a file, and --body @- reads stdin. Use --body-literal to keep a leading @ as text. Empty stdin is refused. To explicitly clear an existing body use update with --body '' and --revision. A pipe is read only when --body @- is given.
+Body text is literal unless it starts with @: --body @draft.md reads a file, and --body @- reads stdin. Use --body-literal to keep a leading @ as text. Empty stdin is refused. To explicitly clear an existing body use update with --body '' and --revision. A pipe is read only when --body @- is given; on a terminal, @- says how to finish typing.
 
 Metadata and filters accept inline JSON or @file, but not @-. Metadata is set once at create and cannot be updated. File and stdin reads are bounded, and invalid independent arguments are refused before reading body content.
 
 Body formats: markdown, tiptap. Supported Markdown heading levels: 1, 2, 3. Supported document elements: doc, paragraph, text, heading, bulletList, orderedList, listItem, codeBlock, blockquote, horizontalRule, hardBreak. Supported text styles: bold, italic, strike, code, link. Documents allow at most 64 levels and 10000 elements. The complete serialized request may contain at most 1048576 UTF-8 bytes.
 
-Markdown conversion can degrade unsupported constructs. Markdown output is a best-effort export of the stored document; use --json --return-format tiptap to read its structured body. --return-format requires --json; it controls the response, while --body-format controls submitted content.
+Markdown the stored document cannot represent is kept as text: a table is kept as Markdown source in a code block; a task list checkbox is kept as plain text; an image is kept as plain text; raw HTML is kept as plain text; a link whose destination is not allowed is kept as plain text; a heading deeper than level 3 (#### or more) is kept as Markdown source in a code block. When that happens, create and update warn on standard error and in warnings[]; --strict refuses the body instead, with exit 2. Escaping, joined lines and other rewrites that keep the meaning are not reported. Text such as List<String> is an HTML tag by CommonMark's rules; put it in backticks to keep it as code.
+
+A body that is a TipTap JSON document must be sent with --body-format tiptap; sent as Markdown it is refused. To keep JSON as note text, put it in a fenced code block. Markdown output is a best-effort export of the stored document; use --json --return-format tiptap to read its structured body. --return-format requires --json; it controls the response, while --body-format controls submitted content.
 
 Examples:
   raphael create resource.note /work/idea --body '# An idea'
@@ -840,11 +848,11 @@ Next: raphael help reference
 
 raphael help output - Text results, JSON envelopes, paging and diagnostics.
 
-Standard output holds results only. Without --json, lists print tab-separated rows; a header is printed only on a terminal. Rows include id, type, path, title, revision and updatedAt. List order defaults to slug ascending; use list --order-by updatedAt:desc for recent changes. Search orders by relevance and does not accept --order-by. Bodies are printed as Markdown by default.
+Standard output holds results only. Without --json, lists, search and favorites print one row per item: id, type, state, path and title, in columns padded to the widest value on the page. State is -, active, archived or active,archived, and comes before the title, which is always last. A header line is printed only on a terminal. A write prints a line naming the item, then its path, and its revision when it has one; a write that changed nothing says Unchanged; get prints every field, including the update time. List order defaults to slug ascending; use list --order-by updatedAt:desc for recent changes. Search orders by relevance and does not accept --order-by. Bodies are printed as Markdown by default.
 
-With --json, a successful command prints exactly one document: {"ok":true,"command":"get",...data}. Full-item reads and writes use entity; move, archive and restore use node; lists and favorites use items; search uses items[].node. These are machine field names. Summaries include path and updatedAt. No createdAt field is exposed. Writes that can leave values unchanged include changed; false means success without a revision bump. Favorite commands report nodeId and isFavorite. Path reports path.
+With --json, a successful command prints exactly one document: {"ok":true,"command":"get",...data}. Full-item reads and writes use entity; move, archive and restore use node; lists and favorites use items; search uses items[].node. These are machine field names. Items include path and updatedAt, an ISO 8601 UTC time such as 2026-10-19T10:42:07.123Z; text output prints the same string. No createdAt field is exposed. Update, move, archive, restore, favorite and unfavorite include changed; false means success without a change and without a revision bump. Move also reports previousPath. Favorite commands report `nodeId`, `isFavorite` and `node`, which is null when unfavorite names an id that does not exist. Path reports path.
 
-Paged results include page with skip, limit, hasMore and nextSkip. The result footer and runnable next-page command go to standard error, never standard output. Empty-result notes, warnings, hints, prompts and failures also go to standard error. Warnings appear in warnings[] on JSON successes. Closing a pipe early does not turn a completed command into a failure.
+Paged results include page with skip, limit, hasMore, nextSkip and archivedLeftOut, which is true when archived items were left out of the answer. The result footer and runnable next-page command go to standard error, never standard output. Empty-result notes, warnings, hints, prompts and failures also go to standard error. Warnings appear in warnings[] on JSON successes as {code, message}, plus constructs for markdown_degraded. Codes: durability_unconfirmed: login saved the key, but the filesystem did not confirm the write is durable. environment_overrides: login saved the key, but the environment pair is set and is used instead of it. environment_still_set: logout removed the saved login, but the environment pair is still set and still used. version_skew: status found a server of another release that speaks the same protocol. markdown_degraded: create or update stored Markdown constructs only as text; constructs lists them by name. Closing a pipe early does not turn a completed command into a failure.
 
 JSON failures leave stdout empty and print exactly one document to stderr: {"ok":false,"error":{"code":...,"category":...,"message":...,"hint":...,"exitCode":...,"applied":...,"retryable":...}}. Optional fields include status, field, target, serverMessage, details, and connection {endpoint, source, configFile} once a connection was resolved. applied is false when no change was applied, true when known applied, and null when unknown. Retry decisions must consider exitCode and applied; do not blindly retry an uncertain write. The JSON envelope and exit-code meanings are stable within a major version.
 

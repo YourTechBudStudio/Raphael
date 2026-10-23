@@ -5,13 +5,15 @@ raphael help content - Note bodies, files, stdin and Markdown conversion.
 
 Create a note with create resource.note. Give --title, or let the first non-empty line of the body (then description) supply it. A title must still be available when the body is empty.
 
-Body text is literal unless it starts with @: --body @draft.md reads a file, and --body @- reads stdin. Use --body-literal to keep a leading @ as text. Empty stdin is refused. To explicitly clear an existing body use update with --body '' and --revision. A pipe is read only when --body @- is given.
+Body text is literal unless it starts with @: --body @draft.md reads a file, and --body @- reads stdin. Use --body-literal to keep a leading @ as text. Empty stdin is refused. To explicitly clear an existing body use update with --body '' and --revision. A pipe is read only when --body @- is given; on a terminal, @- says how to finish typing.
 
 Metadata and filters accept inline JSON or @file, but not @-. Metadata is set once at create and cannot be updated. File and stdin reads are bounded, and invalid independent arguments are refused before reading body content.
 
 Body formats: markdown, tiptap. Supported Markdown heading levels: 1, 2, 3. Supported document elements: doc, paragraph, text, heading, bulletList, orderedList, listItem, codeBlock, blockquote, horizontalRule, hardBreak. Supported text styles: bold, italic, strike, code, link. Documents allow at most 64 levels and 10000 elements. The complete serialized request may contain at most 1048576 UTF-8 bytes.
 
-Markdown conversion can degrade unsupported constructs. Markdown output is a best-effort export of the stored document; use --json --return-format tiptap to read its structured body. --return-format requires --json; it controls the response, while --body-format controls submitted content.
+Markdown the stored document cannot represent is kept as text: a table is kept as Markdown source in a code block; a task list checkbox is kept as plain text; an image is kept as plain text; raw HTML is kept as plain text; a link whose destination is not allowed is kept as plain text; a heading deeper than level 3 (#### or more) is kept as Markdown source in a code block. When that happens, create and update warn on standard error and in warnings[]; --strict refuses the body instead, with exit 2. Escaping, joined lines and other rewrites that keep the meaning are not reported. Text such as List<String> is an HTML tag by CommonMark's rules; put it in backticks to keep it as code.
+
+A body that is a TipTap JSON document must be sent with --body-format tiptap; sent as Markdown it is refused. To keep JSON as note text, put it in a fenced code block. Markdown output is a best-effort export of the stored document; use --json --return-format tiptap to read its structured body. --return-format requires --json; it controls the response, while --body-format controls submitted content.
 
 Examples:
   raphael create resource.note /work/idea --body '# An idea'

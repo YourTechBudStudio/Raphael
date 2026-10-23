@@ -26,7 +26,7 @@ Examples:
   raphael archive --id 42 --revision 8 --json
 
 Prints:
-  The item and remaining archive causes. JSON carries `node` and `archiveCauses`.
+  The item with its path, revision and archive causes; Unchanged when it was already archived. JSON carries `node`, `archiveCauses` and `changed`.
 
 Next: raphael restore --id 42
 

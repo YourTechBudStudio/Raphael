@@ -29,6 +29,8 @@ Options:
       Literal body text, including text beginning with @. Updates require --revision.
       --body-format <format>
       Submitted body: markdown or tiptap. Default: markdown.
+      --strict
+      Refuse a Markdown body that has constructs Raphael keeps only as text. See help content.
       --tag <tag>
       Repeat for each tag; at most 25 tags of 50 characters. Commas are refused. Updates replace all tags. Repeatable.
       --no-tags
@@ -52,7 +54,7 @@ Examples:
   raphael update --id 42 --title 'Contract review' --description ''
 
 Prints:
-  The updated item and revision. JSON carries `entity`.
+  The item with its path and revision. When every value given matches what is stored it reads Unchanged and the revision is kept. JSON carries `entity` and `changed`.
 
 Next: raphael get --id 42
 

@@ -1,0 +1,7 @@
+==== exit ====
+0
+==== stdout ====
+4  area  -  /work/platform  Platform
+==== stderr ====
+Showing 1. No more.
+Archived items were left out. To include them: raphael favorites --limit 1 --include-archived

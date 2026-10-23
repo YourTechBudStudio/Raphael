@@ -1,0 +1,11 @@
+==== exit ====
+0
+==== stdout ====
+Still archived project 12: Raphael
+  path:     /work/platform/raphael
+  revision: 5
+  archived: yes
+    through area 4 "Platform" (user)
+==== stderr ====
+Nothing changed: it was not archived directly.
+hint: It is archived through area 4. Run "raphael restore --id 4" to restore that area.

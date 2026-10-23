@@ -24,7 +24,7 @@ Examples:
   raphael get --id 42 --return-format tiptap --json
 
 Prints:
-  Fields and body. JSON carries `entity`.
+  Every field, including path, revision and update time, then the body. JSON carries `entity`.
 
 Next: raphael update --id 42 --title "Reviewed design"
 

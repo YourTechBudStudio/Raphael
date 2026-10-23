@@ -33,6 +33,8 @@ Options:
       Literal body text, including text beginning with @. Updates require --revision.
       --body-format <format>
       Submitted body: markdown or tiptap. Default: markdown.
+      --strict
+      Refuse a Markdown body that has constructs Raphael keeps only as text. See help content.
       --return-format <format>
       Returned body: markdown or tiptap. Requires --json. Default: markdown.
       --json
@@ -47,7 +49,7 @@ Examples:
   raphael create resource.note --parent-id 42 --slug review --title Review --tag reviewed
 
 Prints:
-  The created item with its id and revision. JSON carries `entity`.
+  The created item with its id, path and revision. A warning on stderr names Markdown kept only as text. JSON carries `entity`.
 
 Next: raphael list / -r
 
