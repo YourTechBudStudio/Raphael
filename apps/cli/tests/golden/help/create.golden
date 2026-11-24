@@ -10,9 +10,11 @@ Types: area, project, resource.note. A full path supplies both parent and slug.
 The parent must already exist.
 
 Areas and projects require --title. Without --title, a note takes its title from
-the text of the body's first paragraph or heading, with its line breaks read as
-spaces, then from the description's first line, cut at 200 characters. Metadata
-is set once, at create.
+the first line of the body's text that is not blank, in whatever block it is: a
+heading, paragraph, list item, quote or code block. Each block and each hard
+line break starts a new line; a soft line break reads as a space. With no such
+line, the description's first line that is not blank is used. Either is trimmed
+and cut at 200 characters. Metadata is set once, at create.
 
 Rules:
   See `raphael help addressing` for containment and slug rules. A taken slug,

@@ -5,4 +5,5 @@ Created resource.note 305: Link
   path:     /work/link
   revision: 1
 ==== stderr ====
-warning: The body was stored with changes: a link title was left out; a footnote was kept as plain text. Run "raphael get --id 305" to see the stored body, or use --strict to refuse such a body.
+warning: The body was stored with changes: a link title was left out; a footnote was kept as plain text. Use --strict to refuse such a body.
+hint: Run "raphael get --id 305" to see the stored body.

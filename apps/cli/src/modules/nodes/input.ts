@@ -647,7 +647,11 @@ export const scopesFrom = (
       // same verdict the request decoder would, early enough to say which scope was wrong and why.
       // Without it the decoder answers for a union of two selector shapes, and someone who forgot the
       // leading slash is told an `id` was expected - true of the union, and useless to them.
-      validatePath(path, command, positionals.length === 1 ? 'path' : `path (${ordinal(index + 1)})`);
+      validatePath(
+        path,
+        command,
+        positionals.length === 1 ? 'path' : `path (${ordinal(index + 1)})`,
+      );
       // The original string travels, not a path rebuilt from the segments. `parsePath` refuses a
       // noncanonical path rather than repairing one, so there is nothing to rebuild and rebuilding
       // would be the rewriting it exists to prevent.
@@ -668,7 +672,10 @@ export const scopesFrom = (
     const key = JSON.stringify(scope);
     if (seen.has(key)) {
       const given = 'path' in scope ? scope.path : `--id ${scope.id}`;
-      throw new UsageError(`Paths and --id must not repeat a target: ${given} is given twice.`, command);
+      throw new UsageError(
+        `Paths and --id must not repeat a target: ${given} is given twice.`,
+        command,
+      );
     }
     seen.add(key);
   }
@@ -810,6 +817,9 @@ const sentence = asSentence;
 /** The commands whose paths are places to look in, where the root is one of them. */
 const SCOPE_COMMANDS: ReadonlySet<string> = new Set(['list', 'search']);
 
+/** The positional path, alone or numbered among several: `path`, `path (2nd)`. */
+const isPathArgument = (flag: string): boolean => /^path(?: \(\d+\w\w\))?$/u.test(flag);
+
 const validatePath = (raw: string, command: string, flag: string): void => {
   const result = parsePath(raw);
   if (Either.isLeft(result)) {
@@ -817,7 +827,7 @@ const validatePath = (raw: string, command: string, flag: string): void => {
     // the trailing one. An option given after `--` is not taken for a path that lost its slash.
     // A positive integer is an id typed where a path goes; every command with a path takes --id.
     const message = `${flag}: ${sentence(describePathRejection(result.left))}`;
-    if (flag === 'path' && /^[1-9]\d*$/u.test(raw)) {
+    if (isPathArgument(flag) && /^[1-9]\d*$/u.test(raw)) {
       throw new UsageError(message, command, `Try "--id ${raw}".`, {
         typed: raw,
         suggested: ['--id', raw],
@@ -825,7 +835,7 @@ const validatePath = (raw: string, command: string, flag: string): void => {
     }
     const lower = raw.normalize('NFC').toLowerCase();
     // An empty path is not taken for the root, except where the root is something to list or search.
-    const rootAllowed = raw !== '' || (flag === 'path' && SCOPE_COMMANDS.has(command));
+    const rootAllowed = raw !== '' || (isPathArgument(flag) && SCOPE_COMMANDS.has(command));
     const candidate = [
       lower,
       ...(raw.startsWith('-') ? [] : [`/${lower}`]),

@@ -291,7 +291,10 @@ describe('a log reader that goes away', () => {
 describe('refusing to start', () => {
   it('treats a missing key as a setup problem, not an operation failure', async () => {
     const directory = workspace();
-    const config = configFile(directory, `server:\n  host: 127.0.0.1\n  port: ${await freePort()}\n`);
+    const config = configFile(
+      directory,
+      `server:\n  host: 127.0.0.1\n  port: ${await freePort()}\n`,
+    );
     const started = startServe(['--config', config], {}, directory);
 
     assert.equal(await started.exited, 5, 'a configuration problem is "not configured"');
@@ -443,7 +446,12 @@ describe('failing to start', () => {
     const directory = workspace();
     writeFileSync(join(directory, 'plain-file'), '');
     const started = startServe(
-      ['--port', String(await freePort()), '--database', join(directory, 'plain-file', 'raphael.sqlite')],
+      [
+        '--port',
+        String(await freePort()),
+        '--database',
+        join(directory, 'plain-file', 'raphael.sqlite'),
+      ],
       { RAPHAEL_SERVER_API_KEY: KEY },
       directory,
     );
@@ -599,7 +607,10 @@ describe('startup failure goldens', () => {
   it('a host this machine does not have', async () => {
     const directory = workspace();
     // TEST-NET-1 (RFC 5737): never assigned to an interface.
-    const ran = await failToStart(['--host', '192.0.2.1', '--port', String(await freePort())], directory);
+    const ran = await failToStart(
+      ['--host', '192.0.2.1', '--port', String(await freePort())],
+      directory,
+    );
     assert.equal(ran.code, 5);
     serveGoldens.expectRun('host-unavailable', scrubbed(ran, directory));
   });
@@ -610,7 +621,10 @@ describe('startup failure goldens', () => {
     const holder = new DatabaseSync(path);
     holder.exec('BEGIN EXCLUSIVE; CREATE TABLE held (x); ');
     try {
-      const ran = await failToStart(['--port', String(await freePort()), '--database', path], directory);
+      const ran = await failToStart(
+        ['--port', String(await freePort()), '--database', path],
+        directory,
+      );
       assert.equal(ran.code, 5);
       serveGoldens.expectRun('database-in-use', scrubbed(ran, directory));
     } finally {
@@ -628,7 +642,10 @@ describe('startup failure goldens', () => {
         "INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('future', 4102444800000);",
     );
     newer.close();
-    const ran = await failToStart(['--port', String(await freePort()), '--database', path], directory);
+    const ran = await failToStart(
+      ['--port', String(await freePort()), '--database', path],
+      directory,
+    );
     assert.equal(ran.code, 5);
     serveGoldens.expectRun('database-newer', scrubbed(ran, directory));
   });
@@ -649,7 +666,10 @@ describe('startup failure goldens', () => {
         `INSERT INTO __drizzle_migrations (hash, created_at) VALUES ('x', ${journal.entries[0]?.when});`,
     );
     partial.close();
-    const ran = await failToStart(['--port', String(await freePort()), '--database', path], directory);
+    const ran = await failToStart(
+      ['--port', String(await freePort()), '--database', path],
+      directory,
+    );
     assert.equal(ran.code, 5);
     assert.doesNotMatch(ran.stderr, /query|SQL|Reinstall/u);
     serveGoldens.expectRun('database-partly-migrated', scrubbed(ran, directory));
@@ -679,7 +699,10 @@ describe('startup failure goldens', () => {
     ];
     try {
       for (const [name, database] of cases) {
-        const ran = await failToStart(['--port', String(await freePort()), '--database', database], directory);
+        const ran = await failToStart(
+          ['--port', String(await freePort()), '--database', database],
+          directory,
+        );
         assert.equal(ran.code, 5, name);
         assert.doesNotMatch(ran.stderr, /ENOENT|EACCES|mkdir|SQLITE|Reinstall/u, name);
         serveGoldens.expectRun(name, scrubbed(ran, directory));
@@ -858,7 +881,11 @@ describe('a .env key cut short by a comment', () => {
   it('starts, and warns that the key stops at the "#"', async () => {
     const directory = workspace();
     writeFileSync(join(directory, '.env'), `RAPHAEL_SERVER_API_KEY=${KEY}#rest\n`, { mode: 0o600 });
-    const started = startServe(['--port', String(await freePort()), '--database', './x.sqlite'], {}, directory);
+    const started = startServe(
+      ['--port', String(await freePort()), '--database', './x.sqlite'],
+      {},
+      directory,
+    );
     await waitFor(() => started.stderr().includes('Press Ctrl-C'), 'the server to be ready');
     assert.ok(
       started

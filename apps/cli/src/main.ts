@@ -286,7 +286,11 @@ const unknownCommand = (argv: readonly string[]): UsageError => {
       return new UsageError(message, command);
     }
     const reordered = ['raphael', command, ...moved].map(shellArg).join(' ');
-    return new UsageError(message, undefined, `Put options after the command, as in "${reordered}".`);
+    return new UsageError(
+      message,
+      undefined,
+      `Put options after the command, as in "${reordered}".`,
+    );
   }
   // A topic is read through help: `raphael addressing --help` meant `raphael help addressing`.
   if (isTopic(name)) {
@@ -344,7 +348,9 @@ export const invocationOf = (argv: readonly string[]): Invocation => ({
 
 /** `--json --version` is `--version --json`, as `--json --help` is `--help --json`. */
 const versionFirst = (argv: readonly string[]): readonly string[] | undefined =>
-  argv[0] === '--json' && argv[1] === '--version' ? ['--version', '--json', ...argv.slice(2)] : undefined;
+  argv[0] === '--json' && argv[1] === '--version'
+    ? ['--version', '--json', ...argv.slice(2)]
+    : undefined;
 
 const commandInvocation = (argv: readonly string[]): Invocation => {
   const reordered = versionFirst(argv);

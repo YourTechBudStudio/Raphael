@@ -897,7 +897,7 @@ describe('notes', () => {
     for (const token of ['resource', 'resource.bogus', 'resource.note.extra', 'note', 'sketch']) {
       const ran = await run(['create', token, '/work/whatever', '--title', 'T']);
       assert.equal(ran.code, 2, token);
-      assert.match(ran.stderr, /area, project, resource\.note/, token);
+      assert.match(ran.stderr, /area, project or resource\.note/, token);
     }
   });
 
@@ -1210,7 +1210,7 @@ describe('ordering', () => {
     assert.match(ran.stdout, /area, project, resource\.note/);
     assert.match(
       wrapped(ran.stdout),
-      /Without --title, a note takes its title from the text of the body's first paragraph or heading/,
+      /Without --title, a note takes its title from the first line of the body's text that is not blank/,
     );
   });
 });

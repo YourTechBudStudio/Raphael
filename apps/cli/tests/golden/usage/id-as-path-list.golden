@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-path: A path must start with "/".
+path (2nd): A path must start with "/".
 hint: Did you mean "raphael list /work --id 9"?

@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-"--recursive" is not a command.
+"--recursive" is an option, not a command.
 hint: Put options after the command, as in "raphael list / --recursive".

@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+"--limit" is an option, not a command.
+hint: Put options after the command, as in "raphael list / --limit 5".

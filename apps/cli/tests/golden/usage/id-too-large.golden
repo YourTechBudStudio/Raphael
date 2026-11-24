@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
---id is too large to be an identifier.
+--id is too large. Give a smaller whole number.
 hint: Run "raphael get --help" for usage.

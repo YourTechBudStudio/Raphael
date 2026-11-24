@@ -2,4 +2,4 @@
 2
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"create","error":{"code":"usage","category":"usage","message":"--body must be a TipTap document object with type doc and optional array content.","hint":"Run \"raphael help content\" for the elements Raphael accepts.","exitCode":2,"applied":false,"retryable":false}}
+{"ok":false,"command":"create","error":{"code":"usage","category":"usage","message":"--body must be a TipTap document object: {\"type\":\"doc\",\"content\":[...]}.","hint":"Run \"raphael help content\" for the elements Raphael accepts.","exitCode":2,"field":"--body","applied":false,"retryable":false}}

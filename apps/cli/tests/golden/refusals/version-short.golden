@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-"-v" is not a command.
+"-v" is an option, not a command.
 hint: Run "raphael help" to see the commands.

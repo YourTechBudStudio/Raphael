@@ -5,4 +5,5 @@ Updated resource.note 305: Item 305
   path:     /work/platform/raphael/output-contract
   revision: 2
 ==== stderr ====
-warning: The body was stored with changes: a link whose destination is not allowed was kept as plain text. Run "raphael get --id 305" to see the stored body, or use --strict to refuse such a body.
+warning: The body was stored with changes: a link whose destination is not allowed was kept as plain text. Use --strict to refuse such a body.
+hint: Run "raphael get --id 305" to see the stored body.

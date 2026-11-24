@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
---order-by must name slug, updatedAt, id; for example --order-by updatedAt:desc.
+--order-by must name slug, updatedAt or id; for example --order-by updatedAt:desc.
 hint: Run "raphael list --help" for usage.

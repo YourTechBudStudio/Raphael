@@ -100,9 +100,11 @@ Types: area, project, resource.note. A full path supplies both parent and slug.
 The parent must already exist.
 
 Areas and projects require --title. Without --title, a note takes its title from
-the text of the body's first paragraph or heading, with its line breaks read as
-spaces, then from the description's first line, cut at 200 characters. Metadata
-is set once, at create.
+the first line of the body's text that is not blank, in whatever block it is: a
+heading, paragraph, list item, quote or code block. Each block and each hard
+line break starts a new line; a soft line break reads as a space. With no such
+line, the description's first line that is not blank is used. Either is trimmed
+and cut at 200 characters. Metadata is set once, at create.
 
 Rules:
   See `raphael help addressing` for containment and slug rules. A taken slug,
@@ -987,9 +989,12 @@ Next: raphael help reference
 raphael help content - Note bodies, files, stdin and Markdown conversion.
 
 Create a note with `create resource.note`. Without --title, a note takes its
-title from the text of the body's first paragraph or heading, with its line
-breaks read as spaces, then from the description's first line, cut at 200
-characters. A title must still be available when the body is empty.
+title from the first line of the body's text that is not blank, in whatever
+block it is: a heading, paragraph, list item, quote or code block. Each block
+and each hard line break starts a new line; a soft line break reads as a space.
+With no such line, the description's first line that is not blank is used.
+Either is trimmed and cut at 200 characters. A title must still be available
+when the body is empty.
 
 Body text is literal unless it starts with @: `--body @draft.md` reads a file,
 and `--body @-` reads stdin. Use --body-literal to keep a leading @ as text. A
@@ -1083,13 +1088,14 @@ raphael help output - Text results, JSON envelopes, paging and diagnostics.
 Standard output holds results only. Without --json, lists, search and favorites
 print one row per item: id, type, state, path and title, in columns padded to
 the widest value on the page. State is -, active, archived or active,archived,
-and comes before the title, which is always last. A header line is printed only
-on a terminal. A write prints a line naming the item, then its path, and its
-revision when it has one; a write that changed nothing says Unchanged; get
-prints every field, including the update time. List order defaults to slug
-ascending; use `list --order-by updatedAt:desc` for recent changes. Search
-orders by relevance and does not accept --order-by. Bodies are printed as
-Markdown by default.
+and comes before the title, which is always last. A title, description or tag
+that could be misread, such as one holding a quote, a backslash or a control
+character, is printed as a JSON string. A header line is printed only on a
+terminal. A write prints a line naming the item, then its path, and its revision
+when it has one; a write that changed nothing says Unchanged; get prints every
+field, including the update time. List order defaults to slug ascending; use
+`list --order-by updatedAt:desc` for recent changes. Search orders by relevance
+and does not accept --order-by. Bodies are printed as Markdown by default.
 
 With --json, a successful command prints exactly one document:
 {"ok":true,"command":"get",...data}. Full-item reads and writes use entity;
@@ -1161,8 +1167,7 @@ name, summary, group, writes, usage, behavior, options, examples, prints and
 next, and may have constraints and seeAlso. Each option has name, type and
 description, and may have short, multiple, whole {min, max}, valueName, default
 and constraint. A topic has name, summary, body and examples. Each errorCodes
-entry has code, source, exitCodes and categories, and a meaning for this CLI's
-codes.
+entry has code, source, exitCodes, categories and meaning.
 
 For text write failures, the state line distinguishes Nothing was changed., The
 change was not sent., and The change may or may not have been applied. Set
@@ -1266,20 +1271,37 @@ still applies. Choose a recovery from exitCode; use the code to tell causes
 apart.
 
 Server codes:
-  invalid_input             Exit 2.
-  unauthorized              Exit 5.
-  node_not_found            Exit 3.
-  route_not_found           Exit 5.
-  method_not_allowed        Exit 5.
-  slug_conflict             Exit 4.
-  revision_conflict         Exit 4.
-  node_archived             Exit 4.
-  payload_too_large         Exit 2.
-  unsupported_media_type    Exit 2.
-  invalid_parent            Exit 4.
-  unsupported_content       Exit 2.
-  storage_busy              Exit 6.
-  internal_error            Exit 1, or 7 when a write may have been applied.
+  invalid_input             Exit 2. The server refused a value in the request
+                            because a rule refuses it, or could not read the
+                            request at all.
+  unauthorized              Exit 5. The server did not accept the API key.
+  node_not_found            Exit 3. Nothing exists at the path or id given, or
+                            at the parent or destination named.
+  route_not_found           Exit 5. The server has no such operation: it runs
+                            another version of Raphael, or is not Raphael.
+  method_not_allowed        Exit 5. The server does not take the operation as it
+                            was sent: it runs another version of Raphael, or is
+                            not Raphael.
+  slug_conflict             Exit 4. An item already holds that slug in that
+                            place, possibly an archived one.
+  revision_conflict         Exit 4. The item changed after the revision given
+                            was read.
+  node_archived             Exit 4. The item, or a container above it, is
+                            archived, so it cannot be changed that way.
+  payload_too_large         Exit 2. The request is larger than the server
+                            accepts.
+  unsupported_media_type    Exit 2. The server cannot read the request's content
+                            type, charset or encoding.
+  invalid_parent            Exit 4. The item cannot go there: that parent cannot
+                            hold its type, or the move would put it inside
+                            itself.
+  unsupported_content       Exit 2. The body has an element, style, attribute or
+                            link that the server does not store.
+  storage_busy              Exit 6. The server's database was busy and nothing
+                            was applied; trying again may work.
+  internal_error            Exit 1, or 7 when a write may have been applied. The
+                            server failed for a reason of its own; after a
+                            write, the change may or may not have been applied.
 
 Codes from this CLI:
   usage                     Exit 2. The command as typed was refused before

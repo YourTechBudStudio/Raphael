@@ -6,13 +6,14 @@ raphael help output - Text results, JSON envelopes, paging and diagnostics.
 Standard output holds results only. Without --json, lists, search and favorites
 print one row per item: id, type, state, path and title, in columns padded to
 the widest value on the page. State is -, active, archived or active,archived,
-and comes before the title, which is always last. A header line is printed only
-on a terminal. A write prints a line naming the item, then its path, and its
-revision when it has one; a write that changed nothing says Unchanged; get
-prints every field, including the update time. List order defaults to slug
-ascending; use `list --order-by updatedAt:desc` for recent changes. Search
-orders by relevance and does not accept --order-by. Bodies are printed as
-Markdown by default.
+and comes before the title, which is always last. A title, description or tag
+that could be misread, such as one holding a quote, a backslash or a control
+character, is printed as a JSON string. A header line is printed only on a
+terminal. A write prints a line naming the item, then its path, and its revision
+when it has one; a write that changed nothing says Unchanged; get prints every
+field, including the update time. List order defaults to slug ascending; use
+`list --order-by updatedAt:desc` for recent changes. Search orders by relevance
+and does not accept --order-by. Bodies are printed as Markdown by default.
 
 With --json, a successful command prints exactly one document:
 {"ok":true,"command":"get",...data}. Full-item reads and writes use entity;
@@ -84,8 +85,7 @@ name, summary, group, writes, usage, behavior, options, examples, prints and
 next, and may have constraints and seeAlso. Each option has name, type and
 description, and may have short, multiple, whole {min, max}, valueName, default
 and constraint. A topic has name, summary, body and examples. Each errorCodes
-entry has code, source, exitCodes and categories, and a meaning for this CLI's
-codes.
+entry has code, source, exitCodes, categories and meaning.
 
 For text write failures, the state line distinguishes Nothing was changed., The
 change was not sent., and The change may or may not have been applied. Set

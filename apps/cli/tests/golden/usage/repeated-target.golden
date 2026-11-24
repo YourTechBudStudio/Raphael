@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-Paths and --id must not repeat a target.
+Paths and --id must not repeat a target: /work is given twice.
 hint: Run "raphael list --help" for usage.

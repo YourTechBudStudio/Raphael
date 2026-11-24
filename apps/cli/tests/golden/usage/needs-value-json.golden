@@ -2,4 +2,4 @@
 2
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"get","error":{"code":"usage","category":"usage","message":"--id needs a value.","hint":"For example: --id 42.","exitCode":2,"applied":false,"retryable":false}}
+{"ok":false,"command":"get","error":{"code":"usage","category":"usage","message":"--id needs a value.","hint":"For example: --id 42.","exitCode":2,"field":"--id","applied":false,"retryable":false}}

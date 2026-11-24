@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-Root help takes no arguments.
-hint: Run "raphael help --help" for usage.
+--help takes no command or topic name.
+hint: Run "raphael help" to see the commands and topics.

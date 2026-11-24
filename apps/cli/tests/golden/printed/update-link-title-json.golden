@@ -1,5 +1,5 @@
 ==== exit ====
 0
 ==== stdout ====
-{"ok":true,"command":"update","entity":{"id":305,"type":"resource","kind":"note","parentId":1,"slug":"output-contract","revision":2,"title":"Item 305","description":"","tags":[],"active":false,"archived":false,"isFavorite":false,"updatedAt":"2026-10-19T10:42:07.123Z","path":"/work/platform/raphael/output-contract","body":{"format":"markdown","value":"# Heading\n\nSome text."},"metadata":{},"archiveCauses":[]},"changed":true,"warnings":[{"code":"markdown_degraded","constructs":["link_title"],"message":"The body was stored with changes: a link title was left out. Run \"raphael get --id 305\" to see the stored body, or use --strict to refuse such a body."}]}
+{"ok":true,"command":"update","entity":{"id":305,"type":"resource","kind":"note","parentId":1,"slug":"output-contract","revision":2,"title":"Item 305","description":"","tags":[],"active":false,"archived":false,"isFavorite":false,"updatedAt":"2026-10-19T10:42:07.123Z","path":"/work/platform/raphael/output-contract","body":{"format":"markdown","value":"# Heading\n\nSome text."},"metadata":{},"archiveCauses":[]},"changed":true,"warnings":[{"code":"markdown_degraded","constructs":["link_title"],"message":"The body was stored with changes: a link title was left out. Use --strict to refuse such a body. Run \"raphael get --id 305\" to see the stored body."}]}
 ==== stderr ====

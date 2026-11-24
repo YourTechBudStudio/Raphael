@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+"--" cannot come before the command.
+hint: Put options after the command, as in "raphael list /".

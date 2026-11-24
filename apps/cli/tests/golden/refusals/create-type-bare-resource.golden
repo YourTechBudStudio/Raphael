@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-"resource" is not something Raphael can create. Give area, project, resource.note.
+"resource" is not something Raphael can create. Give area, project or resource.note.
 The change was not sent.
-hint: A resource needs its kind: did you mean resource.note?
+hint: Did you mean "raphael create resource.note /work/n --title N"?

@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-The body is not a TipTap document Raphael can read.
+--body must hold at least one block, such as {"type":"paragraph"}.
 The change was not sent.
-hint: Run "raphael help content" for the elements Raphael accepts.
+hint: To store an empty body, give --body '' without --body-format tiptap.

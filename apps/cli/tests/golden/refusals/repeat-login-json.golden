@@ -2,4 +2,4 @@
 2
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"login","error":{"code":"usage","category":"usage","message":"--json can be given only once.","hint":"Run \"raphael login --help\" for usage.","exitCode":2,"applied":false,"retryable":false}}
+{"ok":false,"command":"login","error":{"code":"usage","category":"usage","message":"--json can be given only once.","hint":"Run \"raphael login --help\" for usage.","exitCode":2,"field":"--json","applied":false,"retryable":false}}

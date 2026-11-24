@@ -2,4 +2,4 @@
 2
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"list","error":{"code":"usage","category":"usage","message":"--limit must be a whole number between 1 and 500.","hint":"Run \"raphael list --help\" for usage.","exitCode":2,"applied":false,"retryable":false}}
+{"ok":false,"command":"list","error":{"code":"usage","category":"usage","message":"--limit must be a whole number between 1 and 500.","hint":"Run \"raphael list --help\" for usage.","exitCode":2,"field":"--limit","applied":false,"retryable":false}}

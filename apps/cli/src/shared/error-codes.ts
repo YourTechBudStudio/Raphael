@@ -346,7 +346,8 @@ export const SERVER_CODE_MEANINGS: Readonly<Record<ApiErrorCode, string>> = {
     'The server does not take the operation as it was sent: it runs another version of Raphael, or is not Raphael.',
   slug_conflict: 'An item already holds that slug in that place, possibly an archived one.',
   revision_conflict: 'The item changed after the revision given was read.',
-  node_archived: 'The item, or a container above it, is archived, so it cannot be changed that way.',
+  node_archived:
+    'The item, or a container above it, is archived, so it cannot be changed that way.',
   payload_too_large: 'The request is larger than the server accepts.',
   unsupported_media_type: "The server cannot read the request's content type, charset or encoding.",
   invalid_parent:

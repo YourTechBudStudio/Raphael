@@ -25,20 +25,37 @@ still applies. Choose a recovery from exitCode; use the code to tell causes
 apart.
 
 Server codes:
-  invalid_input             Exit 2.
-  unauthorized              Exit 5.
-  node_not_found            Exit 3.
-  route_not_found           Exit 5.
-  method_not_allowed        Exit 5.
-  slug_conflict             Exit 4.
-  revision_conflict         Exit 4.
-  node_archived             Exit 4.
-  payload_too_large         Exit 2.
-  unsupported_media_type    Exit 2.
-  invalid_parent            Exit 4.
-  unsupported_content       Exit 2.
-  storage_busy              Exit 6.
-  internal_error            Exit 1, or 7 when a write may have been applied.
+  invalid_input             Exit 2. The server refused a value in the request
+                            because a rule refuses it, or could not read the
+                            request at all.
+  unauthorized              Exit 5. The server did not accept the API key.
+  node_not_found            Exit 3. Nothing exists at the path or id given, or
+                            at the parent or destination named.
+  route_not_found           Exit 5. The server has no such operation: it runs
+                            another version of Raphael, or is not Raphael.
+  method_not_allowed        Exit 5. The server does not take the operation as it
+                            was sent: it runs another version of Raphael, or is
+                            not Raphael.
+  slug_conflict             Exit 4. An item already holds that slug in that
+                            place, possibly an archived one.
+  revision_conflict         Exit 4. The item changed after the revision given
+                            was read.
+  node_archived             Exit 4. The item, or a container above it, is
+                            archived, so it cannot be changed that way.
+  payload_too_large         Exit 2. The request is larger than the server
+                            accepts.
+  unsupported_media_type    Exit 2. The server cannot read the request's content
+                            type, charset or encoding.
+  invalid_parent            Exit 4. The item cannot go there: that parent cannot
+                            hold its type, or the move would put it inside
+                            itself.
+  unsupported_content       Exit 2. The body has an element, style, attribute or
+                            link that the server does not store.
+  storage_busy              Exit 6. The server's database was busy and nothing
+                            was applied; trying again may work.
+  internal_error            Exit 1, or 7 when a write may have been applied. The
+                            server failed for a reason of its own; after a
+                            write, the change may or may not have been applied.
 
 Codes from this CLI:
   usage                     Exit 2. The command as typed was refused before
