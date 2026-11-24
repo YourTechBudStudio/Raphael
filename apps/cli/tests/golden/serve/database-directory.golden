@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Cannot open the database at "<tmp>": it is a directory.
+hint: Set --database or database.path to a file path you can write.

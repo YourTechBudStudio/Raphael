@@ -6,33 +6,53 @@ Usage: raphael search <path>... -q <query> [options]
 
 Search all descendants by text.
 
-Search is recursive by default; use --direct for direct children only. Search everything with raphael search / -q auth. Matching includes titles, descriptions and note text. Repeat -q to OR queries together, at most 10 queries. Each query allows at most 1000 characters and 32 words or quoted phrases. Adjacent words mean OR; uppercase AND binds more tightly than uppercase OR. Double quotes make a phrase. Operators need a word or phrase on both sides. Lowercase and and or are ordinary search words. There are no parentheses, NOT, wildcards or field prefixes. Matching ignores case and accents; there is no stemming: token does not match tokens. Punctuation separates words: auth* matches auth, not authentication.
+Search is recursive by default; use --direct for direct children only. Search
+everything with `raphael search / -q auth`. Matching includes titles,
+descriptions and note text. Repeat -q to OR queries together, at most 10
+queries. Each query allows at most 1000 characters and 32 words or quoted
+phrases. Words separated by spaces mean OR; uppercase AND binds more tightly
+than uppercase OR. Double quotes make a phrase. Words joined by punctuation,
+such as auth-token or auth.token, must appear together and in that order, like a
+phrase. * is punctuation too: auth* matches auth, not authentication. Operators
+need a word or phrase on both sides. Lowercase and and or are ordinary search
+words. There are no parentheses, NOT, wildcards or field prefixes. Matching
+ignores case and accents; there is no stemming: token does not match tokens.
 
 Results are ordered by relevance; --order-by is not accepted.
 
 Rules:
-  The default page contains at most 50 results. --limit accepts 1–500; --skip skips results. At most 10 paths or ids may be searched or listed in one request.
-  --filter accepts a JSON object with keys type, kind, tags. Allowed type values: area, project, resource. Allowed kind values: note. Each value is a scalar or {"$in":[...]}; sibling keys are ANDed. Tags match at least one supplied tag, with exact case after trimming and NFC normalization. A kind does not imply a type.
+  The default page contains at most 50 results. --limit accepts 1–500; --skip
+    skips results. At most 10 paths or ids may be searched or listed in one
+    request.
+  --filter accepts a JSON object with keys type, kind, tags. Allowed type
+    values: area, project, resource. Allowed kind values: note. Each value is a
+    scalar or {"$in":[...]}; sibling keys are ANDed. Tags match at least one
+    supplied tag, with exact case after trimming and NFC normalization. A kind
+    does not imply a type.
+  A value that starts with -, such as a query, must be joined to its flag with
+    =, as in `--query=-draft`; otherwise it is read as another option and
+    refused.
 
 Options:
       --id <id>
-      Include this id alongside positional paths. Repeatable.
+          Include this id alongside positional paths. Repeatable.
       --filter <json|@file>
-      JSON object. Keys: type, kind, tags. Values may use {"$in":[...]}. See help addressing.
+          JSON object. Keys: type, kind, tags. Values may use {"$in":[...]}. See
+          `raphael help addressing`.
       --skip <n>
-      Number of results to skip. Default: 0.
+          Number of results to skip. Default: 0.
       --limit <n>
-      Page size, 1 to 500. Default: 50.
+          Page size, 1 to 500. Default: 50.
       --include-archived
-      Include archived items.
+          Include archived items.
   -q, --query <text>
-      Text to search. At least one required. Repeatable.
+          Text to search. At least one required. Repeatable.
       --direct
-      Search direct children only.
+          Search direct children only.
       --json
-      Print one JSON result.
+          Print the result as one JSON document.
   -h, --help
-      Show this help.
+          Show help.
 
 Examples:
   raphael search / -q auth
@@ -41,7 +61,8 @@ Examples:
   raphael search /work --direct -q auth --filter '{"type":"resource","kind":"note"}'
 
 Prints:
-  One row per match, closest first: id, type, state, path, title. JSON carries `items[].node` and `page`.
+  One row per match, closest first: id, type, state, path, title. JSON carries
+  `items[].node` and `page`.
 
 Next: raphael get --id 42
 

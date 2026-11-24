@@ -8,13 +8,13 @@ Print the installed Raphael release.
 
 Works offline: reads no configuration and contacts no server.
 
-To compare with a server, run raphael status, which reports both sides.
+To compare with a server, run `raphael status`, which reports both sides.
 
 Options:
       --json
-      Also print the protocol version, as one JSON document.
+          Print the result as one JSON document.
   -h, --help
-      Show help.
+          Show help.
 
 Examples:
   raphael version

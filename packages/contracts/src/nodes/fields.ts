@@ -12,7 +12,7 @@ import {
 } from '../shared/json.ts';
 import { JSON_SAFETY_MAX_VALUES } from '../shared/limits.ts';
 import { NonNegativeSafeInt, PositiveSafeInt } from '../shared/numbers.ts';
-import { SLUG_MAX_CODE_POINTS, isCanonicalSlug } from './slug.ts';
+import { SLUG_MAX_CODE_POINTS, describeSlugRejection, inspectSlugInput } from './slug.ts';
 
 /**
  * Product input limits for authored node fields. These bound what a caller may submit; they are not
@@ -174,31 +174,57 @@ export const inspectTitleInput = (input: unknown): TitleRejection | undefined =>
   return undefined;
 };
 
+/**
+ * One fixed sentence per reason, for every client and the server alike, so a title refused before it
+ * is sent and one refused by the server read the same. Never repeats the submitted value.
+ */
+export const describeTitleRejection = (rejection: TitleRejection): string => {
+  switch (rejection.reason) {
+    case 'not_string':
+      return 'a title must be text';
+    case 'title_required':
+      return 'a title is required';
+    case 'title_too_long':
+      return `a title may contain at most ${rejection.limit ?? TITLE_MAX_CODE_POINTS} characters after trimming`;
+  }
+};
+
 /** Titles are mandatory. The policy itself lives in `inspectTitleInput`. */
 export const TitleInput = Schema.String.pipe(
   Schema.filter((value) => {
     const rejection = inspectTitleInput(value);
-    if (rejection === undefined) return true;
-    return rejection.reason === 'title_too_long'
-      ? `a title may be at most ${TITLE_MAX_CODE_POINTS} characters`
-      : 'a title is required';
+    return rejection === undefined || describeTitleRejection(rejection);
   }),
 );
 
 export const SlugInput = Schema.String.pipe(
-  Schema.filter(
-    (value) =>
-      isCanonicalSlug(value) ||
-      `a slug must be a canonical lowercase slug of at most ${SLUG_MAX_CODE_POINTS} characters`,
-  ),
+  Schema.filter((value) => {
+    const rejection = inspectSlugInput(value);
+    return rejection === undefined || describeSlugRejection(rejection);
+  }),
 );
 
+/** Why a submitted description cannot be sent as it is. */
+export interface DescriptionRejection {
+  readonly reason: 'description_too_long';
+  readonly limit: number;
+}
+
+/** Inspects a submitted description, for the reason `inspectTitleInput` exists. */
+export const inspectDescriptionInput = (value: string): DescriptionRejection | undefined =>
+  codePointLength(value) <= DESCRIPTION_MAX_CODE_POINTS
+    ? undefined
+    : { reason: 'description_too_long', limit: DESCRIPTION_MAX_CODE_POINTS };
+
+/** The one sentence for a refused description, for every client and the server alike. */
+export const describeDescriptionRejection = (rejection: DescriptionRejection): string =>
+  `a description may be at most ${rejection.limit} characters`;
+
 export const DescriptionInput = Schema.String.pipe(
-  Schema.filter(
-    (value) =>
-      codePointLength(value) <= DESCRIPTION_MAX_CODE_POINTS ||
-      `a description may be at most ${DESCRIPTION_MAX_CODE_POINTS} characters`,
-  ),
+  Schema.filter((value) => {
+    const rejection = inspectDescriptionInput(value);
+    return rejection === undefined || describeDescriptionRejection(rejection);
+  }),
 );
 
 /**
@@ -267,6 +293,23 @@ export const inspectTagsInput = (tags: readonly string[]): TagsRejection | undef
 };
 
 /**
+ * One fixed sentence per reason, for every client and the server alike, so a tag list refused before
+ * it is sent and one refused by the server read the same. Never repeats the submitted value.
+ */
+export const describeTagsRejection = (rejection: TagsRejection): string => {
+  switch (rejection.reason) {
+    case 'tag_empty':
+      return 'a tag must not be empty';
+    case 'tag_too_long':
+      return `a tag may be at most ${rejection.limit ?? TAG_MAX_CODE_POINTS} characters`;
+    case 'tags_too_many':
+      return `at most ${rejection.limit ?? TAGS_MAX_COUNT} tags may be given`;
+    case 'tags_repeat':
+      return 'tags must not repeat';
+  }
+};
+
+/**
  * Tags are trimmed and NFC-normalized on input, then compared for duplicates by exact equality of
  * that normalized form. Case and internal whitespace are preserved and significant, so `Work` and
  * `work` are two different tags. This deliberately avoids a second, case-insensitive identity that
@@ -279,18 +322,16 @@ export const TagInput = Schema.transform(Schema.String, Schema.String, {
 }).pipe(
   Schema.filter((value) => {
     const rejection = inspectTagInput(value);
-
-    if (rejection === undefined) return true;
-
-    return rejection.reason === 'tag_too_long'
-      ? `a tag may be at most ${TAG_MAX_CODE_POINTS} characters`
-      : 'a tag must not be empty';
+    return rejection === undefined || describeTagsRejection(rejection);
   }),
 );
 
 export const TagsInput = Schema.Array(TagInput).pipe(
   Schema.maxItems(TAGS_MAX_COUNT),
-  Schema.filter((tags) => new Set(tags).size === tags.length || 'tags must not repeat'),
+  Schema.filter(
+    (tags) =>
+      new Set(tags).size === tags.length || describeTagsRejection({ reason: 'tags_repeat' }),
+  ),
 );
 
 const METADATA_LIMITS: JsonTraversalLimits = {

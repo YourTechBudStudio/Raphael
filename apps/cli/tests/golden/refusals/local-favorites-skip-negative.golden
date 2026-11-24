@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--skip must be zero or a positive whole number.
+hint: Run "raphael favorites --help" for usage.

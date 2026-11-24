@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+-r does not take a value.
+hint: Use -r on its own.

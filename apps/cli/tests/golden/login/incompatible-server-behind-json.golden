@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"login","error":{"code":"incompatible_protocol","category":"not_configured","message":"Cannot use the server at <other>. This server speaks protocol 2026-01-01; Raphael here understands 2026-10-23. Update the server. This CLI is release 0.0.1; the server's release is unknown.","hint":"Update the server, then run \"raphael login <other>\" again.","exitCode":5,"applied":false,"retryable":false,"details":{"serverProtocol":"2026-01-01","serverVersion":null,"cliProtocol":"2026-10-23","cliVersion":"0.0.1"}}}

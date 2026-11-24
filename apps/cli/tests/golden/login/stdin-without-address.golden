@@ -3,4 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 --api-key-stdin needs the address as an argument, as in: printf '%s\n' "$KEY" | raphael login http://127.0.0.1:3000 --api-key-stdin.
+Nothing was saved.
 hint: Run "raphael login --help" for usage.

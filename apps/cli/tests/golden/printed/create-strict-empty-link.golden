@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--strict: the body has a link with no label, which Raphael cannot store as written. Change the body, or leave out --strict to store it anyway.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

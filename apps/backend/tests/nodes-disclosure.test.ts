@@ -3,6 +3,12 @@ import test from 'node:test';
 import { inspect } from 'node:util';
 
 import {
+  TITLE_MAX_CODE_POINTS,
+  asSentence,
+  describeTitleRejection,
+} from '@raphael/contracts/nodes';
+
+import {
   createNode as createNodeRaw,
   getNode,
   listNodes,
@@ -68,7 +74,12 @@ test('a rejected title never echoes the submitted title', () => {
         }),
       ),
     );
-    assert.equal(toPublicError(error).message, 'Title is longer than 200 characters.');
+    assert.equal(
+      toPublicError(error).message,
+      asSentence(
+        describeTitleRejection({ reason: 'title_too_long', limit: TITLE_MAX_CODE_POINTS }),
+      ),
+    );
     assertClean(error, 'title too long');
   });
 });

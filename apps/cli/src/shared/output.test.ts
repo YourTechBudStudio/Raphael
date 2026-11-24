@@ -24,6 +24,8 @@ describe('inline rendering', () => {
     assert.equal(forTerminal('Backend\nslug: forged'), 'Backend\\u000aslug: forged');
     assert.equal(forTerminal('a\rb'), 'a\\u000db');
     assert.equal(forTerminal('a\tb'), 'a\\u0009b');
+    // Unicode's own line and paragraph separators split a row for any reader that honors them.
+    assert.equal(forTerminal('a b c'), 'a\\u2028b\\u2029c');
   });
 
   it('escapes bidirectional overrides and isolates', () => {

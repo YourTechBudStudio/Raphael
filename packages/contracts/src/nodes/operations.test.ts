@@ -1188,6 +1188,21 @@ test('an update answers with the resulting entity and whether it changed anythin
     false,
   );
   assert.equal(Either.isLeft(decodeUpdateResponse({ entity: entity() })), true);
+
+  // With paths asked for, it also says where the item was before the update.
+  const withPaths = right(
+    decodeUpdateResponse({
+      entity: entity({ path: '/work/renamed' }),
+      changed: true,
+      previousPath: '/work/backend',
+    }),
+  );
+  assert.equal(withPaths.previousPath, '/work/backend');
+  assert.equal('previousPath' in decoded, false);
+  assert.equal(
+    Either.isLeft(decodeUpdateResponse({ entity: entity(), changed: true, previousPath: '/' })),
+    true,
+  );
 });
 
 const directCause = {

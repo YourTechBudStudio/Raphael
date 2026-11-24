@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"get","error":{"code":"unreachable","category":"not_configured","message":"Could not connect to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json): the server's certificate is not trusted on this machine.","hint":"Give the server a certificate this machine trusts, or set NODE_EXTRA_CA_CERTS to the file of the certificate that issued it.","exitCode":5,"target":{"path":"/work"},"applied":false,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

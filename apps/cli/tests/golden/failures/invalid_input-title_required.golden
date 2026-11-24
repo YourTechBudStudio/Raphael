@@ -2,7 +2,7 @@
 2
 ==== stdout ====
 ==== stderr ====
---title must not be empty.
+--title: A title is required.
 Nothing was changed.
 hint: Run "raphael update --help" for usage.
 code: invalid_input (400)

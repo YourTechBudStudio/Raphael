@@ -1,0 +1,2 @@
+cli:    --title: A title is required.
+server: A title is required.

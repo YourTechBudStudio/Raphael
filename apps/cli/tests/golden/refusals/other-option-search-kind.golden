@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+search does not take --kind.
+hint: To filter by kind, use --filter '{"type":"resource","kind":"note"}'.

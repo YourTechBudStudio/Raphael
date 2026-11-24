@@ -1,0 +1,2 @@
+cli:    -q: A query may have at most 32 words or phrases.
+server: A query may have at most 32 words or phrases.

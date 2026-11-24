@@ -55,7 +55,29 @@ export interface EnvironmentSnapshot {
   readonly get: (name: string) => string | undefined;
   /** Where the effective value came from. Used for diagnostics; never reports a value. */
   readonly sourceOf: (name: string) => 'process' | 'file' | 'absent';
+  /**
+   * Whether the `.env` line that sets `name` has an unquoted `#` right after other text, as in
+   * `KEY=ab#cd`. Following the dotenv convention
+   * `parseEnv` keeps, that starts a comment, so the value stops before it. Never reports a value.
+   */
+  readonly cutAtComment: (name: string) => boolean;
 }
+
+/**
+ * Whether the last assignment to `name` in a `.env` text is unquoted and holds a `#` right after
+ * other text: the value it yields stops there. A quoted value keeps its `#`.
+ */
+const assignmentCutAtComment = (text: string, name: string): boolean => {
+  let cut = false;
+  for (const line of text.split(/\r?\n/u)) {
+    const match = /^\s*(?:export\s+)?([\w.-]+)\s*=\s*(.*)$/u.exec(line);
+    if (match?.[1] !== name) continue;
+    const value = match[2] ?? '';
+    // `KEY=value # note` is a comment as written; `KEY=ab#cd` is a value that lost its end.
+    cut = !/^["'`]/u.test(value) && /\S#/u.test(value);
+  }
+  return cut;
+};
 
 /**
  * Read an own data property from a parsed `.env` result.
@@ -70,7 +92,12 @@ const ownValue = (source: object, name: string): string | undefined => {
   return typeof descriptor.value === 'string' ? descriptor.value : undefined;
 };
 
-const readEnvFile = (path: string): Record<string, unknown> | undefined => {
+interface EnvFile {
+  readonly values: Record<string, unknown>;
+  readonly text: string;
+}
+
+const readEnvFile = (path: string): EnvFile | undefined => {
   let size: number;
   try {
     size = statSync(path).size;
@@ -102,17 +129,30 @@ const readEnvFile = (path: string): Record<string, unknown> | undefined => {
     );
   }
 
+  let text: string;
   try {
-    return parseEnv(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    text = readFileSync(path, 'utf8');
   } catch (cause) {
+    // Present but unreadable (mode 000, say): refused like a stat failure, even when the key is set
+    // in the environment, because a file that is there and not being used is what an operator
+    // needs told about.
     configurationFailure(
       'env_unreadable',
-      `Cannot read "${path}": ${describeSystemError(cause)}.`,
+      `Cannot read "${path}": ${describeSystemError(cause)}. Raphael will not start while a ` +
+        `${ENV_FILE_NAME} it cannot read is present.`,
       {
         cause,
+        hint:
+          (cause as NodeJS.ErrnoException).code === 'EISDIR'
+            ? `Remove the directory "${path}", or replace it with a ${ENV_FILE_NAME} file.`
+            : `Fix the permissions on "${path}", or remove it.`,
       },
     );
   }
+  // Editors on some systems start a UTF-8 file with a byte order mark, which would otherwise become
+  // part of the first variable's name.
+  const content = text.startsWith('\uFEFF') ? text.slice(1) : text;
+  return { values: parseEnv(content) as Record<string, unknown>, text: content };
 };
 
 /**
@@ -131,7 +171,8 @@ export const loadEnvironment = (context: {
   const processEnv = context.processEnv ?? process.env;
   const envFile =
     context.readEnvFile === false ? undefined : resolve(context.directory, ENV_FILE_NAME);
-  const fromFile = envFile === undefined ? undefined : readEnvFile(envFile);
+  const file = envFile === undefined ? undefined : readEnvFile(envFile);
+  const fromFile = file?.values;
 
   const sourceOf = (name: string): 'process' | 'file' | 'absent' => {
     if (ownValue(processEnv, name) !== undefined) return 'process';
@@ -142,6 +183,8 @@ export const loadEnvironment = (context: {
   return {
     envFile,
     sourceOf,
+    cutAtComment: (name) =>
+      file !== undefined && sourceOf(name) === 'file' && assignmentCutAtComment(file.text, name),
     get: (name) => {
       const fromProcess = ownValue(processEnv, name);
       if (fromProcess !== undefined) return fromProcess;

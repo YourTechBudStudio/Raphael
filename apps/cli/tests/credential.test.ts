@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 
+import { API_KEY_MAX_LENGTH } from '@raphael/contracts/connection';
 import { formatMode } from '@raphael/fs-trust';
 
 import {
@@ -279,7 +280,7 @@ describe('the environment pair', () => {
 
   it('takes any sendable key the environment supplies, and refuses one no header can carry', () => {
     // No length floor and no alphabet beyond what an HTTP header carries unchanged.
-    for (const key of ['x', 'k'.repeat(40), 'Zm9v+/=_-~']) {
+    for (const key of ['x', 'k'.repeat(40), 'Zm9v+/=_-~', 'k'.repeat(API_KEY_MAX_LENGTH)]) {
       const resolved = resolveConnection(
         { ...home(), RAPHAEL_ENDPOINT: 'https://x.example.com', RAPHAEL_API_KEY: key },
         'linux',
@@ -288,7 +289,12 @@ describe('the environment pair', () => {
       assert.equal(resolved.configFile, null);
       assert.equal(resolved.config.apiKey, key);
     }
-    for (const key of ['a key with spaces', '\u{1F511}', `${'k'.repeat(40)} `]) {
+    for (const key of [
+      'a key with spaces',
+      '\u{1F511}',
+      `${'k'.repeat(40)} `,
+      'k'.repeat(API_KEY_MAX_LENGTH + 1),
+    ]) {
       assert.equal(
         reason(() =>
           resolveConnection(

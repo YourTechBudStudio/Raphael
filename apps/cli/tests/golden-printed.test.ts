@@ -256,6 +256,44 @@ describe('writes', () => {
     );
   });
 
+  it('shows where an update moved an item from, only when its path changed', async () => {
+    const renamed = { ...created, slug: 'contract', path: '/work/platform/raphael/contract' };
+    await pinned(
+      'update-slug',
+      ['update', '--id', '305', '--slug', 'contract', '--revision', '1'],
+      {
+        [UPDATE]: {
+          entity: { ...renamed, revision: 2 },
+          changed: true,
+          previousPath: '/work/platform/raphael/output-contract',
+        },
+      },
+    );
+    await pinned(
+      'update-slug-json',
+      ['update', '--id', '305', '--slug', 'contract', '--revision', '1', '--json'],
+      {
+        [UPDATE]: {
+          entity: { ...renamed, revision: 2 },
+          changed: true,
+          previousPath: '/work/platform/raphael/output-contract',
+        },
+      },
+    );
+    // A title change keeps the path, so there is nothing to say it was.
+    await pinned(
+      'update-same-path',
+      ['update', '--id', '305', '--title', 'Renamed', '--revision', '1'],
+      {
+        [UPDATE]: {
+          entity: { ...created, title: 'Renamed', revision: 2 },
+          changed: true,
+          previousPath: '/work/platform/raphael/output-contract',
+        },
+      },
+    );
+  });
+
   it('shows where a move came from, and says when it went nowhere', async () => {
     const moved = summary(12, '/engineering/raphael', { revision: 4 });
     await pinned('move', ['move', '/work/platform/raphael', '/engineering', '--revision', '3'], {
@@ -380,6 +418,31 @@ describe('get', () => {
     });
   });
 
+  it('quotes a tag or description spelled like the empty placeholder', async () => {
+    // A tag `-` printed bare reads as no tags at all.
+    await pinned('get-dash-values', ['get', '--id', '4'], {
+      [GET]: {
+        entity: entity(summary(4, '/work/platform', { type: 'area', title: 'Platform' }), {
+          description: '-',
+          tags: ['-'],
+        }),
+      },
+    });
+  });
+
+  it('quotes a tag or description that would otherwise read back as something else', async () => {
+    // A tab is escaped for the terminal, so a tag spelled with that escape must not print the same;
+    // a backslash or a quote of the value's own is quoted too, and a line separator is escaped.
+    await pinned('get-ambiguous-values', ['get', '--id', '4'], {
+      [GET]: {
+        entity: entity(summary(4, '/work/platform', { type: 'area', title: 'Platform' }), {
+          description: 'Ends a\u2028line, and \\u0009 is text',
+          tags: ['tab\\u0009x', 'tab\tx', 'back\\slash', '"q"', 'plain'],
+        }),
+      },
+    });
+  });
+
   it('prints no trailing blank lines for an empty body', async () => {
     await pinned('get-empty-body', ['get', '--id', '4'], {
       [GET]: {
@@ -438,6 +501,62 @@ describe('the body', () => {
         '--json',
       ],
       { [CREATE]: { entity: { ...created, title: 'Table', path: '/work/table' } } },
+    );
+    // A link with no label has no text to hold it, so it is left out of the stored body.
+    await pinned(
+      'create-empty-link',
+      [
+        'create',
+        'resource.note',
+        '/work/link',
+        '--title',
+        'Link',
+        '--body',
+        'See [](https://example.com) here.',
+      ],
+      { [CREATE]: { entity: { ...created, title: 'Link', path: '/work/link' } } },
+    );
+    await pinned(
+      'create-empty-link-json',
+      [
+        'create',
+        'resource.note',
+        '/work/link',
+        '--title',
+        'Link',
+        '--body',
+        'See [](https://example.com).\n\n| a |\n|---|\n| 1 |',
+        '--json',
+      ],
+      { [CREATE]: { entity: { ...created, title: 'Link', path: '/work/link' } } },
+    );
+    // A link title has nowhere to go on the link, and a footnote is not a construct the body has.
+    await pinned(
+      'create-link-title-footnote',
+      [
+        'create',
+        'resource.note',
+        '/work/link',
+        '--title',
+        'Link',
+        '--body',
+        'See [spec](https://example.com/spec "Draft 3").[^1]\n\n[^1]: The note.',
+      ],
+      { [CREATE]: { entity: { ...created, title: 'Link', path: '/work/link' } } },
+    );
+    await pinned(
+      'update-link-title-json',
+      [
+        'update',
+        '--id',
+        '305',
+        '--body',
+        '[ref](https://example.com "Important caveat")',
+        '--revision',
+        '1',
+        '--json',
+      ],
+      { [UPDATE]: { entity: { ...created, revision: 2 }, changed: true } },
     );
     await pinned(
       'update-degraded',
@@ -515,6 +634,29 @@ describe('the body', () => {
       '--strict',
       '--json',
     ]);
+    // An allowed link with no label would be left out of the stored body.
+    const emptyLink = await pinned('create-strict-empty-link', [
+      'create',
+      'resource.note',
+      '/work/link',
+      '--title',
+      'Link',
+      '--body',
+      'See [](https://example.com) here.',
+      '--strict',
+    ]);
+    assert.equal(emptyLink.code, 2);
+    const titled = await pinned('create-strict-link-title-footnote', [
+      'create',
+      'resource.note',
+      '/work/link',
+      '--title',
+      'Link',
+      '--body',
+      '[spec](https://example.com/spec "Draft 3")[^1]',
+      '--strict',
+    ]);
+    assert.equal(titled.code, 2);
     // A refused link with no label, and HTML whose attribute holds an entity, are caught too.
     await pinned('create-strict-empty-label-link', [
       'create',

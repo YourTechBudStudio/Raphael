@@ -1,0 +1,2 @@
+cli:    --title: A title may contain at most 200 characters after trimming.
+server: A title may contain at most 200 characters after trimming.

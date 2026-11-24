@@ -1,0 +1,8 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+"<tmp>/raphael.yaml" is not valid:
+  server.prot: unknown key. Did you mean "port"?
+  server.port: must be a whole number between 1 and 65535.
+hint: Fix the configuration, then run "raphael server serve --config <tmp>/raphael.yaml --database <tmp>/x.sqlite" again.

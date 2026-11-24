@@ -4,4 +4,5 @@
 4  area  -  /work/platform  Platform
 ==== stderr ====
 Showing 1. No more.
-Archived items were left out. To include them: raphael favorites --limit 1 --include-archived
+Archived items were left out.
+hint: Run "raphael favorites --limit 1 --include-archived" to include them.

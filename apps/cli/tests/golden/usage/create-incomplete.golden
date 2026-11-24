@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Give a complete path, or --parent-id together with --slug.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

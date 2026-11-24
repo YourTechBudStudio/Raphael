@@ -1,0 +1,7 @@
+==== exit ====
+7
+==== stdout ====
+==== stderr ====
+An unexpected failure occurred.
+The change may or may not have been applied.
+hint: Run it again with RAPHAEL_DEBUG=1 to see where it failed.

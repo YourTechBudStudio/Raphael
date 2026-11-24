@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Give either a path or --id, not both. Got "/work" and --id 2.
+hint: Run "raphael get --help" for usage.

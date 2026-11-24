@@ -34,7 +34,7 @@ import {
 import { NodeFilter } from './filter.ts';
 import { ROOT_PATH, isCanonicalPath, isEntityPath } from './path.ts';
 import { SearchQueries } from './search-query.ts';
-import { isCanonicalSlugShape } from './slug.ts';
+import { describeSlugRejection, isCanonicalSlugShape } from './slug.ts';
 
 /** A path usable as a scope, including the virtual root. */
 export const ScopePath = Schema.String.pipe(
@@ -102,7 +102,7 @@ export const Scopes = Schema.Array(ScopeSelector).pipe(
  * Whether the answer carries each item's computed path. Off by default: a path is computed from the
  * item's current ancestors on request and never stored (ADR 0004), so a caller that does not need one
  * does not pay for the walk. With it on, every item the answer describes carries `path`, and a move
- * also carries `previousPath`.
+ * or an update also carries `previousPath`.
  */
 export const IncludePathsField = Schema.optionalWith(Schema.Boolean, {
   default: () => false,
@@ -389,7 +389,9 @@ const NodeSummaryFields = {
   kind: Schema.NullOr(ResourceKindSchema),
   parentId: Schema.NullOr(NodeId),
   slug: Schema.String.pipe(
-    Schema.filter((value) => isCanonicalSlugShape(value) || 'a slug must be a canonical slug'),
+    Schema.filter(
+      (value) => isCanonicalSlugShape(value) || describeSlugRejection({ reason: 'not_slug' }),
+    ),
   ),
   revision: NodeRevision,
   title: Schema.String,
@@ -493,7 +495,15 @@ export const GetResponse = Schema.Struct({ entity: NodeEntity });
  * canonical form). Nothing is written then: the revision and update time stay as they were, and the
  * entity is the current one.
  */
-export const UpdateResponse = Schema.Struct({ entity: NodeEntity, changed: Schema.Boolean });
+export const UpdateResponse = Schema.Struct({
+  entity: NodeEntity,
+  changed: Schema.Boolean,
+  /**
+   * The path before the update, present exactly when `entity.path` is (`includePaths`). It differs
+   * from `entity.path` only when the slug changed.
+   */
+  previousPath: Schema.optionalWith(AnsweredPath, { exact: true }),
+});
 
 /**
  * A move publishes a summary, not an entity: everything it changes - `parentId`, `slug`, `revision` -

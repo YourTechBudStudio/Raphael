@@ -16,6 +16,7 @@
  */
 
 import {
+  accessSync,
   chmodSync,
   closeSync,
   fsyncSync,
@@ -28,6 +29,7 @@ import {
   rmSync,
   unlinkSync,
   writeFileSync,
+  constants,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
@@ -54,6 +56,7 @@ export type ConfigReason =
   | 'unsupported_platform'
   | 'no_home'
   | 'relative_xdg_config_home'
+  | 'relative_home'
   | 'directory_unusable'
   | 'directory_uncreatable'
   | 'file_unusable'
@@ -61,9 +64,7 @@ export type ConfigReason =
   | 'file_too_large'
   | 'file_malformed'
   | 'not_configured'
-  | 'write_failed'
-  /** The replacement happened; only the durability of it is unconfirmed. */
-  | 'durability_unconfirmed';
+  | 'write_failed';
 
 export class ConfigError extends Error {
   readonly reason: ConfigReason;
@@ -93,9 +94,9 @@ export interface ConfigLocation {
  * XDG on macOS as well as Linux. That is a deliberate choice and worth naming: macOS convention would
  * be `~/Library/Application Support`, but a command-line tool's configuration is something people
  * edit, back up, and put in dotfile repositories, and `~/.config/raphael` is where they will look for
- * it. `XDG_CONFIG_HOME` is honored when it is absolute; a relative value is refused rather than
- * resolved against the current directory, because that would put a credential somewhere that changes
- * with `cd`.
+ * it. `XDG_CONFIG_HOME` and `HOME` are honored when they are absolute; a relative value is refused
+ * rather than resolved against the current directory, because that would put a credential somewhere
+ * that changes with `cd`.
  */
 export const configLocation = (
   environment: Readonly<Record<string, string | undefined>> = process.env,
@@ -123,11 +124,24 @@ export const configLocation = (
   }
 
   const home = environment.HOME;
+  // The same rule as XDG_CONFIG_HOME: a relative HOME would put the credential under whatever
+  // directory the command happens to run in.
+  if (home !== undefined && home !== '' && !isAbsolute(home)) {
+    throw new ConfigError(
+      'relative_home',
+      `HOME must be an absolute path. Got "${home}". Raphael will not resolve a credential ` +
+        'location against the current directory.',
+    );
+  }
+  // An unset HOME falls back to the account's home directory, as `os.homedir()` finds it. An empty
+  // one is not looked past: Node reports it as the home directory, and an empty path is no place.
   const resolved = home !== undefined && home !== '' ? home : homedir();
   if (resolved === '') {
     throw new ConfigError(
       'no_home',
-      'Cannot work out where to store configuration: neither XDG_CONFIG_HOME nor HOME is set.',
+      home === ''
+        ? 'Cannot work out where to store configuration: HOME is empty and XDG_CONFIG_HOME is not set.'
+        : 'Cannot work out where to store configuration: HOME and XDG_CONFIG_HOME are not set, and this account has no home directory.',
     );
   }
   const directory = join(resolved, '.config', CONFIG_DIR_NAME);
@@ -323,6 +337,7 @@ export interface SaveOutcome {
  */
 export const saveConfig = (location: ConfigLocation, config: StoredConfig): SaveOutcome => {
   const directory = verifiedDirectory(location, true);
+  checkReplaceable(directory);
   const file = join(directory, CONFIG_FILE_NAME);
   const temporary = join(directory, `.${CONFIG_FILE_NAME}.${process.pid}.tmp`);
 
@@ -344,7 +359,7 @@ export const saveConfig = (location: ConfigLocation, config: StoredConfig): Save
     rmSync(temporary, { force: true });
     throw new ConfigError(
       'write_failed',
-      `Could not write the new configuration in "${directory}": ${describeSystemError(error)}. Your existing configuration is unchanged.`,
+      `Could not write the new configuration in "${directory}": ${describeSystemError(error)}.`,
     );
   }
 
@@ -354,7 +369,7 @@ export const saveConfig = (location: ConfigLocation, config: StoredConfig): Save
     rmSync(temporary, { force: true });
     throw new ConfigError(
       'write_failed',
-      `Could not replace "${file}": ${describeSystemError(error)}. Your existing configuration is unchanged.`,
+      `Could not replace "${file}": ${describeSystemError(error)}.`,
     );
   }
 
@@ -376,9 +391,49 @@ export const saveConfig = (location: ConfigLocation, config: StoredConfig): Save
 export const configDirectoryOf = (file: string): string => dirname(file);
 
 /**
+ * What a save needs from a directory that already passed the trust checks: that this user can write
+ * in it, and that anything at `config.json` is a file a rename can replace. A save checks it first, and
+ * login checks it before anyone types a key, so both say the same thing.
+ */
+const checkReplaceable = (directory: string): void => {
+  try {
+    accessSync(directory, constants.W_OK | constants.X_OK);
+  } catch (error) {
+    throw new ConfigError(
+      'write_failed',
+      `Could not write the new configuration in "${directory}": ${describeSystemError(error)}.`,
+    );
+  }
+  const file = join(directory, CONFIG_FILE_NAME);
+  const info = inspected(file, () => lstatSync(file, { throwIfNoEntry: false }));
+  // A link is replaced as a link, so only something else in the way is refused.
+  if (info !== undefined && !info.isFile() && !info.isSymbolicLink()) {
+    throw new ConfigError(
+      'write_failed',
+      `Could not replace "${file}": ${info.isDirectory() ? 'it is a directory' : 'it is not a regular file'}.`,
+      `Move "${file}" out of the way, then run "raphael login" again.`,
+    );
+  }
+};
+
+/** Whether this user can create entries in a directory: the nearest one a save would create under. */
+const checkCreatable = (directory: string, target: string): void => {
+  try {
+    accessSync(directory, constants.W_OK | constants.X_OK);
+  } catch (error) {
+    // The same sentence the save's own `mkdir` would give.
+    throw new ConfigError(
+      'directory_uncreatable',
+      `Cannot create "${target}": ${describeSystemError(error)}.`,
+    );
+  }
+};
+
+/**
  * Check, before anyone types a key, that `saveConfig` will be able to keep it: the directory passes
- * every trust check if it exists, and otherwise the nearest existing ancestor is a directory whose
- * chain no other user can replace. Nothing is created.
+ * every trust check, can be written, and holds nothing at `config.json` that is not a file, if it
+ * exists; otherwise the nearest existing ancestor is a directory this user can create in, whose chain
+ * no other user can replace. Nothing is created.
  */
 export const checkConfigDestination = (location: ConfigLocation): void => {
   if (!supportsPosixModes()) {
@@ -397,7 +452,7 @@ export const checkConfigDestination = (location: ConfigLocation): void => {
     current = parent;
   }
   if (current === location.directory) {
-    verifiedExisting(current);
+    checkReplaceable(verifiedExisting(current));
     return;
   }
   const resolved = inspected(current, () => realpathSync(current));
@@ -410,6 +465,7 @@ export const checkConfigDestination = (location: ConfigLocation): void => {
   }
   const ancestor = inspectAncestors(resolved);
   if (ancestor !== undefined) throw ancestorRefusal(ancestor);
+  checkCreatable(resolved, location.directory);
 };
 
 /** The endpoint of the saved login, if there is a readable one; never a reason to fail. */
@@ -460,7 +516,7 @@ export const removeConfig = (location: ConfigLocation): RemoveOutcome => {
   } catch (error) {
     throw new ConfigError(
       'write_failed',
-      `Could not remove "${file}": ${describeSystemError(error)}. The saved login is unchanged.`,
+      `Could not remove "${file}": ${describeSystemError(error)}.`,
       'Check that you can write to that directory, then run "raphael logout" again.',
     );
   }

@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 The connection to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) was lost before an answer arrived.
-hint: Run the command again.
+hint: Run the command again. If the server speaks https rather than http, run "raphael login" with the right address.

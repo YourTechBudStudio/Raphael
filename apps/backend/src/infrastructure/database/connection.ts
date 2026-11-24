@@ -3,6 +3,8 @@ import { dirname, resolve } from 'node:path';
 
 import Database from 'better-sqlite3';
 
+import { assertRaphaelOrEmpty } from './migrate.ts';
+
 /**
  * One backend process owns one database for as long as it runs, through SQLite's own
  * `locking_mode = EXCLUSIVE`: any other SQLite client is refused, and the kernel releases the lock if
@@ -46,6 +48,9 @@ export const openDatabase = (options: DatabaseOptions): DatabaseConnection => {
     db.pragma(`busy_timeout = ${options.acquisitionTimeoutMs ?? 250}`);
     // Before the first WAL access, so SQLite keeps the wal-index in memory rather than in `-shm`.
     db.pragma('locking_mode = EXCLUSIVE');
+    // Before the first write: switching to WAL rewrites the file's header, and another
+    // application's database must be left exactly as it was.
+    assertRaphaelOrEmpty(db);
     db.pragma('journal_mode = WAL');
     db.pragma('synchronous = FULL');
     db.pragma('foreign_keys = ON');

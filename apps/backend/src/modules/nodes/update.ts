@@ -79,6 +79,7 @@ export const updateNode = (input: unknown): Effect.Effect<UpdateResponse, NodeEr
             written.path,
           ),
           changed: written.changed,
+          ...(written.previousPath === undefined ? {} : { previousPath: written.previousPath }),
         }),
         catch: (cause) =>
           unwrapFailure({ operation: OPERATION, stage: 'response projection' }, cause),
@@ -124,7 +125,12 @@ const commit = (
   prepared: PreparedUpdate,
   content: { readonly stored: string; readonly text: string } | undefined,
   clock: Clock.Clock,
-): { readonly entity: StoredEntity; readonly changed: boolean; readonly path?: string } => {
+): {
+  readonly entity: StoredEntity;
+  readonly changed: boolean;
+  readonly path?: string;
+  readonly previousPath?: string;
+} => {
   const handle = orm(db);
   const now = sampleNow(clock, OPERATION);
 
@@ -138,10 +144,12 @@ const commit = (
   }
   requireActive(handle, row, 'target', OPERATION);
 
-  const pathOfRow = (entity: StoredEntity) =>
-    prepared.includePaths ? { path: pathOf(handle, entity, OPERATION) } : {};
+  // Computed before the write, as a move does, so a slug change can say where the item was.
+  const previousPath = prepared.includePaths ? pathOf(handle, row, OPERATION) : undefined;
+  const paths = (path: string | undefined) =>
+    previousPath === undefined || path === undefined ? {} : { path, previousPath };
   if (!differsFromStored(prepared, content, row)) {
-    return { entity: row, changed: false, ...pathOfRow(row) };
+    return { entity: row, changed: false, ...paths(previousPath) };
   }
 
   try {
@@ -174,7 +182,11 @@ const commit = (
   }
 
   const written = loadEntity(handle, { id: row.id }, 'target', OPERATION);
-  return { entity: written, changed: true, ...pathOfRow(written) };
+  return {
+    entity: written,
+    changed: true,
+    ...paths(prepared.includePaths ? pathOf(handle, written, OPERATION) : undefined),
+  };
 };
 
 /** Whether any submitted value differs from the stored one. Tags compare as their stored JSON. */

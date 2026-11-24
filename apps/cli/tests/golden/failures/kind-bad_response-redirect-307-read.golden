@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) redirected the request to http://127.0.0.1:2.
+hint: Run "raphael login http://127.0.0.1:2".

@@ -6,19 +6,27 @@ Usage: raphael archive <path> [options]
 
 Hide an item and everything inside it.
 
-Archive hides items from ordinary lists and search without deleting them. The slug stays reserved, and favorites and project active state are retained.
+Archive hides items from ordinary lists and search without deleting them. The
+slug stays reserved, and favorites and project active state are retained.
 
-Archiving an item already hidden through a parent adds its own archive cause. Restoring the parent then leaves this item archived. There is no delete command.
+Archiving an item already hidden through a parent adds its own archive cause.
+Restoring the parent then leaves this item archived. There is no delete command.
+
+Archive causes print one per line, nearest first: directly, or through the
+archived container above the item, then who set the cause in parentheses. (user)
+is a cause set with archive; restore removes only that cause, and only on the
+item itself. JSON carries each cause as origin, owner and reason.
 
 Options:
       --id <id>
-      Address by durable id instead of path.
+          Address by stable id instead of path.
       --revision <n>
-      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+          Revision read previously. When omitted, it is read just before
+          sending.
       --json
-      Print one JSON result.
+          Print the result as one JSON document.
   -h, --help
-      Show this help.
+          Show help.
 
 Examples:
   raphael archive /work/raphael
@@ -26,7 +34,8 @@ Examples:
   raphael archive --id 42 --revision 8 --json
 
 Prints:
-  The item with its path, revision and archive causes; Unchanged when it was already archived. JSON carries `node`, `archiveCauses` and `changed`.
+  The item with its path, revision and archive causes; Unchanged when it was
+  already archived. JSON carries `node`, `archiveCauses` and `changed`.
 
 Next: raphael restore --id 42
 

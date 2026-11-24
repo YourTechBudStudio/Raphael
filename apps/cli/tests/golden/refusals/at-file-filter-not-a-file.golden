@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The filter file at "<tmp>/folder" is not a regular file.
+hint: Give the JSON inline instead.

@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+path: A path must start with "/".
+hint: Did you mean "raphael get --id 9"?

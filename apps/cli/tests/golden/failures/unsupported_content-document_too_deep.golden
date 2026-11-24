@@ -2,7 +2,7 @@
 2
 ==== stdout ====
 ==== stderr ====
-The body is nested more than 32 levels deep.
+The body is nested more than 32 levels deep, counting each JSON object and array.
 Nothing was changed.
-hint: Run "raphael update --help" for the body formats Raphael accepts.
+hint: Run "raphael help content" for the elements Raphael accepts.
 code: unsupported_content (422)

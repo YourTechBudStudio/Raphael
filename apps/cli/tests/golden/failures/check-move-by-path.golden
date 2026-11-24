@@ -1,0 +1,7 @@
+==== exit ====
+7
+==== stdout ====
+==== stderr ====
+The connection to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) was lost before an answer arrived.
+The change may or may not have been applied.
+hint: Run "raphael get /work/p2/nl4" to check whether it was applied before sending it again. If /work/p2/nl4 was already an area or project, run "raphael get /work/p2/nl4/nl2" instead. If the server speaks https rather than http, run "raphael login" with the right address.

@@ -2,5 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-The key has characters that cannot be sent: a key must be visible ASCII characters with no spaces, on one line. Nothing was saved.
+The key cannot be sent: a key must be 1 to 512 visible ASCII characters with no spaces, on one line.
+Nothing was saved.
 hint: Give the server's RAPHAEL_SERVER_API_KEY exactly, on one line.

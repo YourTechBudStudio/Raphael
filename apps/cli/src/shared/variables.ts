@@ -13,8 +13,10 @@ export const TIMEOUT_VARIABLE = 'RAPHAEL_TIMEOUT';
 export const SERVER_API_KEY_VARIABLE = 'RAPHAEL_SERVER_API_KEY';
 
 /**
- * The one way help tells someone to make a server key file. The file is owner-only before the key is
- * written into it: the umask makes a new file 0600, the chmod tightens one that already existed (a
- * plain `>` keeps an existing file's mode), and if the chmod fails nothing is written.
+ * The one way help tells someone to make a server key file. It never touches an existing `.env`,
+ * which may hold other settings or the key clients already use: it says so and stops. A new file is
+ * owner-only from the moment it exists, because the umask applies when the redirect creates it, and
+ * `set -C` (noclobber) makes the redirect itself refuse a file that appeared since the check, or a
+ * link at `.env`.
  */
-export const SERVER_KEY_FILE_RECIPE = `(umask 077 && touch .env && chmod 600 .env && echo "${SERVER_API_KEY_VARIABLE}=$(openssl rand -hex 32)" > .env)`;
+export const SERVER_KEY_FILE_RECIPE = `[ -e .env ] && echo ".env already exists; add ${SERVER_API_KEY_VARIABLE} to it yourself." >&2 || (umask 077 && set -C && echo "${SERVER_API_KEY_VARIABLE}=$(openssl rand -hex 32)" > .env)`;

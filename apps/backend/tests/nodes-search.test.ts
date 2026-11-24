@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { SEARCH_QUERY_MAX_CODE_POINTS, SEARCH_QUERY_MAX_TERMS } from '@raphael/contracts/nodes';
+import {
+  SEARCH_QUERY_MAX_CODE_POINTS,
+  SEARCH_QUERY_MAX_TERMS,
+  describeFilterRejection,
+  describeQueryRejection,
+} from '@raphael/contracts/nodes';
 
 import {
   createNode as createNodeRaw,
@@ -225,6 +230,31 @@ test('several queries are OR-combined', () => {
     const [oneQuery] = bothScopes(connection, { queries: ['tokens finance'] });
     assert.deepEqual([...separate].sort(), [...oneQuery].sort());
     assert.deepEqual([...separate].sort(), ['login-flow']);
+  });
+});
+
+// `SEARCH_PUNCTUATION_RULE`, which help shows, makes exactly these claims.
+test('words joined by punctuation match together and in order, never as an OR', () => {
+  withMigrated('search-grammar-punctuation', (connection) => {
+    const work = idOf(connection, 'work');
+    create(connection, {
+      type: 'resource',
+      kind: 'note',
+      parent: { id: work },
+      title: 'Plain auth only',
+      slug: 'plain-row',
+    });
+
+    for (const query of ['plain-auth', 'plain.auth', 'plain:auth']) {
+      const [joined] = bothScopes(connection, { queries: [query] });
+      assert.deepEqual(joined, ['plain-row'], query);
+    }
+    const [reversed] = bothScopes(connection, { queries: ['auth-plain'] });
+    assert.deepEqual(reversed, [], 'joined words keep their order');
+    const [joinedMissing] = bothScopes(connection, { queries: ['auth-zzz'] });
+    assert.deepEqual(joinedMissing, [], 'joined words are not ORed');
+    const [spaced] = bothScopes(connection, { queries: ['auth zzz'] });
+    assert.deepEqual(spaced, ['plain-row'], 'words separated by spaces are ORed');
   });
 });
 
@@ -579,7 +609,11 @@ test('every published failure is our own vocabulary, and echoes nothing submitte
         what: 'a malformed query',
         request: { ...base, queries: ['topsecretword AND'] },
         code: 'invalid_input',
-        fields: { field: 'queries', reason: 'query_malformed' },
+        fields: {
+          field: 'queries',
+          reason: 'query_malformed',
+          rule: describeQueryRejection({ reason: 'dangling_operator' }),
+        },
         secret: 'topsecretword',
       },
       {
@@ -611,33 +645,53 @@ test('every published failure is our own vocabulary, and echoes nothing submitte
         what: 'an unsupported filter key',
         request: { ...base, queries: ['auth'], filter: { secretkeyname: 1 } },
         code: 'invalid_input',
-        fields: { field: 'filter', reason: 'filter_unsupported' },
+        fields: {
+          field: 'filter',
+          reason: 'filter_unsupported',
+          rule: describeFilterRejection({ reason: 'unsupported_key' }),
+        },
         secret: 'secretkeyname',
       },
       {
         what: 'an unsupported filter operator',
         request: { ...base, queries: ['auth'], filter: { type: { $nin: ['area'] } } },
         code: 'invalid_input',
-        fields: { field: 'filter', reason: 'filter_unsupported' },
+        fields: {
+          field: 'filter',
+          reason: 'filter_unsupported',
+          rule: describeFilterRejection({ reason: 'unsupported_operator', key: 'type' }),
+        },
       },
       {
         what: 'a bad filter value',
         request: { ...base, queries: ['auth'], filter: { type: 'folder' } },
         code: 'invalid_input',
-        fields: { field: 'filter', reason: 'invalid' },
+        fields: {
+          field: 'filter',
+          reason: 'invalid',
+          rule: describeFilterRejection({ reason: 'invalid_value', key: 'type' }),
+        },
         secret: 'folder',
       },
       {
         what: 'an empty $in',
         request: { ...base, queries: ['auth'], filter: { type: { $in: [] } } },
         code: 'invalid_input',
-        fields: { field: 'filter', reason: 'invalid' },
+        fields: {
+          field: 'filter',
+          reason: 'invalid',
+          rule: describeFilterRejection({ reason: 'invalid_value', key: 'type' }),
+        },
       },
       {
         what: 'a bad tag',
         request: { ...base, queries: ['auth'], filter: { tags: '   ' } },
         code: 'invalid_input',
-        fields: { field: 'filter', reason: 'invalid' },
+        fields: {
+          field: 'filter',
+          reason: 'invalid',
+          rule: describeFilterRejection({ reason: 'invalid_value', key: 'tags' }),
+        },
       },
       {
         what: 'an empty scope list',

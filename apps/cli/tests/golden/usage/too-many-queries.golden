@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+-q takes at most 10 queries.
+hint: Run "raphael search --help" for usage.

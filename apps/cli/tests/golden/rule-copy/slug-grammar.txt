@@ -1,0 +1,2 @@
+cli:    --slug: A slug must follow this grammar: NFC lowercase Unicode letter or number tokens joined by single hyphens; combining marks may follow the first letter or number in each token.
+server: A slug must follow this grammar: NFC lowercase Unicode letter or number tokens joined by single hyphens; combining marks may follow the first letter or number in each token.

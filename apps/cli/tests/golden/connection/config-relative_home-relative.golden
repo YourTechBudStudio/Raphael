@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+HOME must be an absolute path. Got "relhome". Raphael will not resolve a credential location against the current directory.
+hint: Set HOME to your home directory's absolute path, or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY in the environment.

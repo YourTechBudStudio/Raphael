@@ -7,4 +7,5 @@ Still archived project 12: Raphael
   archived: yes
     through area 4 "Platform" (user)
 ==== stderr ====
-hint: It is archived through area 4. Run "raphael restore --id 4" to restore that area.
+It is archived through area 4.
+hint: Run "raphael restore --id 4" to restore that area.

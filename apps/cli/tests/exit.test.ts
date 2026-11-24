@@ -72,7 +72,7 @@ describe('RAPHAEL_TIMEOUT', () => {
   it('bounds the transport a remote command uses', () => {
     const { transport } = connectFrom(
       {
-        RAPHAEL_ENDPOINT: 'http://127.0.0.1:9',
+        RAPHAEL_ENDPOINT: 'http://127.0.0.1:2',
         RAPHAEL_API_KEY: 'timeout-key-0123456789abcdef0123456789',
         RAPHAEL_TIMEOUT: '42',
       },

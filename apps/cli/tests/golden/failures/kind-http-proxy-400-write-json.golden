@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"archive","error":{"code":"http_status","category":"not_configured","message":"The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) answered 400 without a Raphael error.","hint":"Check any proxy in front of the server. Then run \"raphael get /work\" to check whether it was applied before sending it again.","exitCode":5,"status":400,"target":{"path":"/work"},"applied":null,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

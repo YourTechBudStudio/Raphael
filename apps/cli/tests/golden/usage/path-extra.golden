@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+path takes one path, or --id.
+hint: Run "raphael path --help" for usage.

@@ -1,0 +1,7 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Could not connect to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json): its port is one that HTTP clients refuse to use.
+The change was not sent.
+hint: Serve Raphael on another port, then run "raphael login" with the right address.

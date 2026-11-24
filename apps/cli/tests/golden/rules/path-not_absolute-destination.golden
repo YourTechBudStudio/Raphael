@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+destination: A path must start with "/".
+The change was not sent.
+hint: Did you mean "raphael move /work/a /work"?

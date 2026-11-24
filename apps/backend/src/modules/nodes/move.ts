@@ -1,6 +1,7 @@
 import {
   SLUG_MAX_CODE_POINTS,
   decodeMoveRequest,
+  describePathRejection,
   formatPath,
   isCanonicalSlug,
   parsePath,
@@ -101,9 +102,10 @@ const prepareMove = (request: MoveRequest): PreparedMove => {
 };
 
 /**
- * A parent selector names the parent and optionally a new slug. A path that names a container (or the
- * root) is the parent, and the target keeps its slug; one that names a note is taken; any other path is
- * an address whose last segment is the new slug.
+ * A parent selector names the parent and optionally a new slug. A path that names the target itself
+ * keeps it where it is; one that names a container (or the root) is the parent, and the target keeps
+ * its slug; one that names a note is taken; any other path is an address whose last segment is the new
+ * slug.
  */
 const resolveDestination = (
   handle: Orm,
@@ -119,15 +121,23 @@ const resolveDestination = (
 
   const found = lookupScope(handle, { path: destination.path }, 'destination', OPERATION);
   if (found !== undefined) {
+    // The target's own path is where it already is: neither a taken address nor a container to move
+    // into, so it answers like its current parent does, as a move that changes nothing.
+    if (found.kind === 'node' && found.node.id === target.id) {
+      return {
+        parentScope:
+          target.parentId === null
+            ? { kind: 'root' }
+            : resolveScope(handle, { id: target.parentId }, 'destination', OPERATION),
+        slug: target.slug,
+      };
+    }
     if (found.kind === 'root' || found.node.type !== 'resource') {
       return { parentScope: found, slug: target.slug };
     }
     // A note inside the target is a move into itself before it is a taken address: the cycle is the
     // problem to report, and naming the note's slug would send the caller after the wrong one.
-    if (
-      found.node.id !== target.id &&
-      ancestorChain(handle, found.node, OPERATION).some((step) => step.id === target.id)
-    ) {
+    if (ancestorChain(handle, found.node, OPERATION).some((step) => step.id === target.id)) {
       return raise(
         new InvalidParent({
           field: 'destination',
@@ -150,7 +160,13 @@ const resolveDestination = (
   const segments = parsePath(destination.path);
   const slug = Either.isRight(segments) ? segments.right.at(-1) : undefined;
   if (Either.isLeft(segments) || slug === undefined) {
-    return raise(new InvalidInput({ field: 'destination', reason: 'invalid' }));
+    return raise(
+      new InvalidInput({
+        field: 'destination',
+        reason: 'invalid',
+        ...(Either.isLeft(segments) ? { rule: describePathRejection(segments.left) } : {}),
+      }),
+    );
   }
   if (!isCanonicalSlug(slug)) {
     return raise(

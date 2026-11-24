@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The file at "/dev/null" cannot hold a database.
+hint: Set --database or database.path to a file path you can write.

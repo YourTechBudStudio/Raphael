@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+/admin cannot be used here: the server gave a reason this CLI does not know.
+Nothing was changed.
+hint: Choose another slug. Check that this CLI and the server are the same version with "raphael status".
+code: slug_conflict (409)

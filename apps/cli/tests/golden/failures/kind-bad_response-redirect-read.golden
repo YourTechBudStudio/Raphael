@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) redirected the request to http://raphael.invalid.
-hint: Use the final address, such as http://raphael.invalid: run "raphael login" with the right address.
+hint: Run "raphael login" with the server's root address, such as http://127.0.0.1:3000.

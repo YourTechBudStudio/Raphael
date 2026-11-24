@@ -3,4 +3,4 @@
 ==== stdout ====
 ==== stderr ====
 path: A path must not end with "/".
-hint: Run "raphael list --help" for usage.
+hint: Did you mean "raphael list /work"?

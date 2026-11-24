@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
---filter: Type must be area, project, resource, or $in with one or more of those values.
+--filter: Type must be area, project, resource, or $in with one or more distinct values from that list. A kind has its own key: for notes, use {"type":"resource","kind":"note"}.
 hint: Run "raphael list --help" for usage.

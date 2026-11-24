@@ -1,0 +1,8 @@
+==== exit ====
+1
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) answered in a form this version of the CLI cannot read.
+The change was not sent.
+hint: Check that this CLI and the server are the same version with "raphael status".
+debug: status 200, application/json, 20 bytes, not JSON

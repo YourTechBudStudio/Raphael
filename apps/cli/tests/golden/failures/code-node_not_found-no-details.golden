@@ -4,5 +4,5 @@
 ==== stderr ====
 Nothing exists at /work/raphael.
 Nothing was changed.
-hint: Run "raphael list /work" to see what is there.
+hint: Run "raphael list / -r" to see which paths exist.
 code: node_not_found (404)

@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--slug: A slug may contain at most 100 characters.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

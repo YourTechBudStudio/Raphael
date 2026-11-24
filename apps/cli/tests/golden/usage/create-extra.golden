@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+create takes one type and one path, or one type with --parent-id and --slug.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

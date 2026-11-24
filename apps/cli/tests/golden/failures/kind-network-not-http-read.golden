@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) does not speak HTTP; check the address and scheme.
+hint: Run "raphael login" with the right address and scheme (http or https).

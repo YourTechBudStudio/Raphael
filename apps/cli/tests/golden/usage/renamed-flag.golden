@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--format has been renamed to --return-format.
+hint: Use --return-format with --json.

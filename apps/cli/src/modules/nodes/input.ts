@@ -11,15 +11,20 @@ import {
 } from '@raphael/content';
 import { fromMarkdown, importMarkdown } from '@raphael/content/conversion';
 import { canonicalizeDocument, deriveTitle } from '@raphael/content/schema';
+import { inspectDocumentTransport } from '@raphael/content/validation';
 import { REQUEST_MAX_BYTES, isJsonObject, type Decoder, type JsonObject } from '@raphael/contracts';
 import {
   CONTAINER_TYPES,
-  DESCRIPTION_MAX_CODE_POINTS,
   DocumentTransportInput,
   SCOPES_MAX_COUNT,
   SEARCH_QUERIES_MAX_COUNT,
-  SLUG_MAX_CODE_POINTS,
-  SLUG_GRAMMAR_DESCRIPTION,
+  asSentence,
+  describeDescriptionRejection,
+  describeSlugRejection,
+  describeTagsRejection,
+  describeTitleRejection,
+  inspectDescriptionInput,
+  inspectSlugInput,
   inspectTitleInput,
   inspectTagsInput,
   inspectMetadataInput,
@@ -37,17 +42,23 @@ import {
   inspectQueryInput,
   parsePath,
   type ContainerType,
+  type FilterRejection,
   type NodeFilterInput,
   type NodeOrderBy as NodeOrderByType,
+  type NodeType,
   type ResourceKind,
   type ScopeSelector,
   type TipTapDocumentTransport,
 } from '@raphael/contracts/nodes';
 import { Either, Schema } from 'effect';
 
-import { UsageError } from '../../shared/args.ts';
+import { UsageError, wholeNumberRule } from '../../shared/args.ts';
+import { CONTENT_HINT, bodyFailureSentence, shellArg } from '../../shared/failure-wording.ts';
 import { readStandardInput } from '../../shared/stdin.ts';
 import type { Warning } from '../../shared/success.ts';
+
+/** The one node type that is not a container: it is qualified by a kind, as `resource.note`. */
+export const RESOURCE_TYPE = 'resource' satisfies NodeType;
 
 /** What `raphael create <type>` was asked to make. */
 export type CreateTarget =
@@ -57,7 +68,7 @@ export type CreateTarget =
 /** Every token the create command accepts, in the order the help lists them. */
 export const CREATE_TARGETS: readonly string[] = [
   ...CONTAINER_TYPES,
-  ...RESOURCE_KINDS.map((kind) => `resource.${kind}`),
+  ...RESOURCE_KINDS.map((kind) => `${RESOURCE_TYPE}.${kind}`),
 ];
 
 /**
@@ -71,11 +82,51 @@ export const CREATE_TARGETS: readonly string[] = [
  * A second dot is refused rather than split, so `resource.note.extra` is an error instead of a silently
  * accepted prefix that would create something other than what was typed.
  */
-export const parseCreateTarget = (token: string, command: string): CreateTarget => {
+/** `a`, `a and b`, `a, b and c`, or with "or". */
+const listed = (items: readonly string[], conjunction: 'and' | 'or' = 'and'): string =>
+  items.length <= 1
+    ? (items[0] ?? '')
+    : `${items.slice(0, -1).join(', ')} ${conjunction} ${items[items.length - 1] ?? ''}`;
+
+/** `1st`, `2nd`, `3rd`, `4th`: which of several values a refusal is about. */
+const ordinal = (position: number): string => {
+  const tens = position % 100;
+  const suffix =
+    tens >= 11 && tens <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][position % 10] ?? 'th');
+  return `${position}${suffix}`;
+};
+
+export const parseCreateTarget = (
+  token: string,
+  command: string,
+  /** The positional after the type, to recognize a type given after the path. */
+  next?: string,
+): CreateTarget => {
+  const qualified = RESOURCE_KINDS.map((kind) => `${RESOURCE_TYPE}.${kind}`);
+  // The type it most likely meant: in lowercase (`Area`), with the type a bare kind belongs to
+  // (`note`), or with the kind a bare `resource` needs when it has only one.
+  const lower = token.toLowerCase();
+  const meant = CREATE_TARGETS.includes(lower)
+    ? lower
+    : (RESOURCE_KINDS as readonly string[]).includes(lower)
+      ? `${RESOURCE_TYPE}.${lower}`
+      : lower === RESOURCE_TYPE && qualified.length === 1
+        ? qualified[0]
+        : undefined;
+  const suggestion =
+    token.startsWith('/') && next !== undefined && CREATE_TARGETS.includes(next)
+      ? `Give the type first, as in "raphael create ${next} ${shellArg(token)}".`
+      : meant !== undefined
+        ? `Did you mean ${meant}?`
+        : lower === RESOURCE_TYPE
+          ? `A ${RESOURCE_TYPE} needs its kind: did you mean ${listed(qualified, 'or')}?`
+          : undefined;
   const refuse = (): never => {
     throw new UsageError(
-      `"${token}" is not something Raphael can create. Give ${CREATE_TARGETS.join(', ')}.${token === 'note' ? ' Did you mean resource.note?' : ''}`,
+      `"${token}" is not something Raphael can create. Give ${listed(CREATE_TARGETS, 'or')}.`,
       command,
+      suggestion,
+      meant === undefined || token.startsWith('/') ? undefined : { typed: token, suggested: meant },
     );
   };
 
@@ -88,7 +139,7 @@ export const parseCreateTarget = (token: string, command: string): CreateTarget 
     return { type: base as ContainerType };
   }
   if (parts.length !== 2) return refuse();
-  if (base !== 'resource') return refuse();
+  if (base !== RESOURCE_TYPE) return refuse();
   if (kind === undefined || !(RESOURCE_KINDS as readonly string[]).includes(kind)) return refuse();
   return { type: 'resource', kind: kind as ResourceKind };
 };
@@ -112,24 +163,26 @@ export const parseOrderBy = (
 ): NodeOrderByType | undefined => {
   if (values.length === 0) return undefined;
 
-  const clauses = values.map((value) => {
+  const clauses = values.map((value, index) => {
+    // With several, the one refused is named by its place, so the caller knows which to fix.
+    const flag = values.length === 1 ? '--order-by' : `--order-by (${ordinal(index + 1)})`;
     const parts = value.split(':');
     if (parts.length !== 2) {
       throw new UsageError(
-        '--order-by takes field:direction, for example --order-by updatedAt:desc.',
+        `${flag} takes field:direction, for example --order-by updatedAt:desc.`,
         command,
       );
     }
     const [field, direction] = parts;
     if (field === undefined || !(NODE_ORDER_FIELDS as readonly string[]).includes(field)) {
       throw new UsageError(
-        `--order-by must name ${NODE_ORDER_FIELDS.join(', ')}; for example --order-by updatedAt:desc.`,
+        `${flag} must name ${listed(NODE_ORDER_FIELDS, 'or')}; for example --order-by updatedAt:desc.`,
         command,
       );
     }
     if (direction === undefined || !(ORDER_DIRECTIONS as readonly string[]).includes(direction)) {
       throw new UsageError(
-        `--order-by direction must be ${ORDER_DIRECTIONS.join(' or ')}; for example --order-by updatedAt:desc.`,
+        `${flag} direction must be ${listed(ORDER_DIRECTIONS, 'or')}; for example --order-by updatedAt:desc.`,
         command,
       );
     }
@@ -160,6 +213,8 @@ export const selectorFrom = (
   id: string | undefined,
   command: string,
 ): Selector => {
+  // An empty `--id=` is refused for what it is before anything is said about having both.
+  if (id === '') parseId(id, command);
   if (positional !== undefined && id !== undefined) {
     throw new UsageError(
       `Give either a path or --id, not both. Got "${positional}" and --id ${id}.`,
@@ -170,7 +225,11 @@ export const selectorFrom = (
   if (positional !== undefined) {
     validatePath(positional, command, 'path');
     if (positional === ROOT_PATH)
-      throw new UsageError('The root path cannot select an item.', command);
+      throw new UsageError(
+        `${ROOT_PATH} is the top level, not an item.`,
+        command,
+        `Run "raphael list ${ROOT_PATH}" to see the items there.`,
+      );
     return { path: positional };
   }
   throw new UsageError(`Give a path, or --id.`, command);
@@ -192,10 +251,7 @@ export const destinationFrom = (raw: string | undefined, command: string): strin
       command,
     );
   }
-  const parsed = parsePath(raw);
-  if (Either.isLeft(parsed)) {
-    throw new UsageError(`destination "${raw}": ${describePathRejection(parsed.left)}`, command);
-  }
+  validatePath(raw, command, 'destination');
   return raw;
 };
 
@@ -206,12 +262,13 @@ export const destinationFrom = (raw: string | undefined, command: string): strin
  * different value than the one that was typed, or rejected by the server with a confusing message.
  */
 export const parseId = (raw: string, command: string, flag = '--id'): number => {
-  if (!/^[1-9]\d*$/.test(raw)) {
-    throw new UsageError(`${flag} must be a positive whole number.`, command);
-  }
+  // Leading zeros are accepted, as by every whole-number option: `007` is 7 wherever it is typed.
   const value = Number(raw);
+  if (!/^\d+$/.test(raw) || value < 1) {
+    throw new UsageError(wholeNumberRule(flag, { min: 1, max: Number.MAX_SAFE_INTEGER }), command);
+  }
   if (!Number.isSafeInteger(value)) {
-    throw new UsageError(`${flag} is too large to be an identifier.`, command);
+    throw new UsageError(`${flag} is too large. Give a smaller whole number.`, command);
   }
   return value;
 };
@@ -307,15 +364,69 @@ const readStdin = async (command: string, reading: BodyReading): Promise<string>
   });
   if (bytes.byteLength === 0) {
     throw new UsageError(
-      `--body @- read nothing: standard input was empty. ${
-        command === 'update'
-          ? "To clear the body on purpose, give --body '' --revision <n>."
-          : 'To create it without a body, leave out --body.'
-      }`,
+      `--body @- read nothing: standard input was empty. ${clearBodyAdvice(command)}`,
       command,
     );
   }
-  return decodeUtf8(bytes, 'The body on standard input', command);
+  const text = decodeUtf8(bytes, 'The body on standard input', command);
+  if (text.trim() === '') {
+    throw new UsageError(
+      `--body @- read nothing but whitespace: standard input had no text. ${clearBodyAdvice(command)}`,
+      command,
+    );
+  }
+  return text;
+};
+
+/** How to send no body on purpose, for the command that refused an empty one. */
+const clearBodyAdvice = (command: string): string =>
+  command === 'update'
+    ? "To clear the body on purpose, give --body '' --revision <n>."
+    : 'To create it without a body, leave out --body.';
+
+/**
+ * A flag that reads `@file`: how its file is named in a refusal, and what to use instead when the
+ * file cannot be used. Only escapes the flag really has are offered: metadata and filters refuse
+ * `@-`, and JSON never begins with `@`.
+ */
+export interface FileFlag {
+  readonly flag: string;
+  /** `The body file`, `The metadata file`. */
+  readonly label: string;
+  readonly example: string;
+  /** For text that begins with `@` and was not meant as a file. */
+  readonly literal?: string;
+  /** For something that is not a regular file. */
+  readonly instead: string;
+}
+
+const BODY_FILE: FileFlag = {
+  flag: '--body',
+  label: 'The body file',
+  example: 'draft.md',
+  literal: 'Use --body-literal for text beginning with @.',
+  instead: 'Pipe it through standard input with @- instead.',
+};
+const METADATA_FILE: FileFlag = {
+  flag: '--metadata',
+  label: 'The metadata file',
+  example: 'metadata.json',
+  instead: 'Give the JSON inline instead.',
+};
+const FILTER_FILE: FileFlag = {
+  flag: '--filter',
+  label: 'The filter file',
+  example: 'filter.json',
+  instead: 'Give the JSON inline instead.',
+};
+
+/** `@` alone names no file; resolved, it would be the current directory. */
+const refuseBareAt = (raw: string | undefined, source: FileFlag, command: string): void => {
+  if (raw !== '@') return;
+  throw new UsageError(
+    `${source.flag} @ needs a file name after the @, as in ${source.flag} @${source.example}.${source.literal === undefined ? '' : ` ${source.literal}`}`,
+    command,
+  );
 };
 
 /**
@@ -327,8 +438,10 @@ const readStdin = async (command: string, reading: BodyReading): Promise<string>
  * reports a size of zero while supplying bytes without end. Reading a fixed budget from one open
  * descriptor is bounded whatever the entry turns out to be.
  */
-export const readLocalFile = (path: string, label: string, command: string): string => {
+export const readLocalFile = (path: string, source: FileFlag, command: string): string => {
+  refuseBareAt(`@${path}`, source, command);
   path = resolve(path);
+  const at = `${source.label} at "${path}"`;
   let fd: number;
   try {
     // `O_NONBLOCK` is what makes the type check below reachable. Opening a FIFO for reading blocks
@@ -337,25 +450,21 @@ export const readLocalFile = (path: string, label: string, command: string): str
     fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    const reason =
-      code === 'ENOENT'
-        ? 'does not exist'
-        : code === 'EACCES' || code === 'EPERM'
-          ? 'permission denied'
-          : 'cannot be opened';
     throw new UsageError(
-      `${label} at "${path}" ${reason}. Use --body-literal for text beginning with @.`,
+      code === 'ENOENT'
+        ? `${at} does not exist.`
+        : code === 'EACCES' || code === 'EPERM'
+          ? `${at} cannot be read: permission denied.`
+          : `${at} cannot be opened.`,
       command,
+      code === 'ENOENT' ? source.literal : undefined,
     );
   }
 
   try {
     const info = fstatSync(fd);
     if (!info.isFile()) {
-      throw new UsageError(
-        `${label} at "${path}" is not a regular file. Pipe it through standard input with @- instead.`,
-        command,
-      );
+      throw new UsageError(`${at} is not a regular file.`, command, source.instead);
     }
 
     // One byte past the budget, so exceeding it is observed rather than inferred from a full buffer.
@@ -367,15 +476,33 @@ export const readLocalFile = (path: string, label: string, command: string): str
       total += read;
       if (total > REQUEST_MAX_BYTES) {
         throw new UsageError(
-          `${label} at "${path}" is larger than the ${REQUEST_MAX_BYTES}-byte request limit.`,
+          `${at} is larger than the ${REQUEST_MAX_BYTES}-byte request limit.`,
           command,
         );
       }
     }
-    return decodeUtf8(buffer.subarray(0, total), `${label} at "${path}"`, command);
+    return decodeUtf8(buffer.subarray(0, total), at, command);
   } finally {
     closeSync(fd);
   }
+};
+
+/**
+ * Read a body file, refusing one with no text, for the reason `readStdin` refuses empty input: a
+ * generator that failed into `draft.md` would otherwise clear the note under a successful exit.
+ */
+const readBodyFile = (path: string, command: string): string => {
+  const text = readLocalFile(path, BODY_FILE, command);
+  if (text.trim() === '') {
+    const at = `the body file at "${resolve(path)}"`;
+    throw new UsageError(
+      text === ''
+        ? `--body @file read nothing: ${at} is empty. ${clearBodyAdvice(command)}`
+        : `--body @file read nothing but whitespace: ${at} has no text. ${clearBodyAdvice(command)}`,
+      command,
+    );
+  }
+  return text;
 };
 
 /** How a body is read: what interrupts the wait, and where a note for the person goes. */
@@ -422,16 +549,18 @@ export const resolveBody = async (
     text = bodyLiteral;
   } else if (body !== undefined) {
     if (body === '@-') text = await readStdin(command, reading);
-    else if (body.startsWith('@')) text = readLocalFile(body.slice(1), 'the body file', command);
+    else if (body.startsWith('@')) text = readBodyFile(body.slice(1), command);
     else text = body;
   }
 
   if (text === undefined) return undefined;
+  // Named as typed, so a refusal of the text is about the flag that carried it.
+  const flag = bodyLiteral === undefined ? '--body' : '--body-literal';
 
   if (chosen === 'markdown') {
     if (looksLikeTipTapDocument(text)) {
       throw new UsageError(
-        `${bodyLiteral === undefined ? '--body' : '--body-literal'} looks like a TipTap document, but it would be stored as Markdown text. Add --body-format tiptap to send it as a document. To keep JSON as note text, put it in a fenced code block.`,
+        `${flag} looks like a TipTap document, but it would be stored as Markdown text. Add --body-format tiptap to send it as a document. To keep JSON as note text, put it in a fenced code block.`,
         command,
       );
     }
@@ -442,17 +571,38 @@ export const resolveBody = async (
   // original string would produce a request the shared contract can never accept, since a TipTap body
   // is an object. Parsing locally also means a malformed document is a usage error before a round
   // trip rather than a rejection after one.
-  const document = parseJson(text, '--body', command);
+  const document = parseJson(text, flag, command);
+  // The transport bounds first, so a document nested too deeply is refused for its depth rather than
+  // for a shape it may well have.
+  const transport = inspectDocumentTransport(document);
+  if (transport !== undefined) {
+    throw new UsageError(bodyFailureSentence(transport), command, CONTENT_HINT);
+  }
   if (Either.isLeft(Schema.decodeUnknownEither(DocumentTransportInput)(document))) {
     throw new UsageError(
-      '--body must be a TipTap document object with type doc and optional array content.',
+      `${flag} must be a TipTap document object: {"type":"doc","content":[...]}.`,
       command,
+      CONTENT_HINT,
     );
   }
-  // A compile-time bridge across a runtime-validated boundary, not a claim about the document. What
-  // was parsed is arbitrary JSON; the shared request decoder checks it against the document schema
-  // before anything is sent, and reports the offending field if it does not match. Re-implementing
-  // that check here would be a second opinion about a contract that already has one.
+  // A document holds at least one block. Said as that, rather than as a document that cannot be
+  // read, with the way to store no body at all.
+  const { content } = document as { readonly content?: unknown };
+  if (content === undefined || (Array.isArray(content) && content.length === 0)) {
+    throw new UsageError(
+      `${flag} must hold at least one block, such as {"type":"paragraph"}.`,
+      command,
+      `To store an empty body, give --body '' without --body-format tiptap.`,
+    );
+  }
+  // The content package's own check, the one the server runs on this body: an element, style,
+  // attribute or link it would refuse is refused here, before anything is sent. The document travels
+  // as typed; storing its canonical form is the server's to do.
+  const checked = canonicalizeDocument(document);
+  if (Either.isLeft(checked)) {
+    throw new UsageError(bodyFailureSentence(checked.left), command, CONTENT_HINT);
+  }
+  // A compile-time bridge across a boundary the content package has just checked.
   return { format: 'tiptap', value: document as TipTapDocumentTransport };
 };
 
@@ -463,14 +613,13 @@ export const resolveMetadata = (
 ): JsonObject | undefined => {
   if (raw === undefined) return undefined;
   prevalidateMetadata(raw, command);
-  const text = raw.startsWith('@')
-    ? readLocalFile(raw.slice(1), 'the metadata file', command)
-    : raw;
-  const parsed = parseJson(text, '--metadata', command);
+  const text = raw.startsWith('@') ? readLocalFile(raw.slice(1), METADATA_FILE, command) : raw;
+  const parsed = parseJson(text, '--metadata', command, true);
   const rejection = inspectMetadataInput(parsed);
   if (rejection !== undefined)
     throw new UsageError(`--metadata: ${sentence(rejection.detail)}`, command);
   if (!isJsonObject(parsed)) throw new UsageError('--metadata must be a JSON object.', command);
+  refuseInexactInteger(parsed, command);
   return parsed;
 };
 
@@ -492,19 +641,21 @@ export const scopesFrom = (
   command: string,
 ): readonly ScopeSelector[] => {
   const scopes: ScopeSelector[] = [
-    ...positionals.map((path) => {
+    ...positionals.map((path, index) => {
       // `parsePath` is not a second opinion about addressing: `ScopePath` filters on
       // `isCanonicalPath`, which *is* `Either.isRight(parsePath(value))`. Asking it here reaches the
       // same verdict the request decoder would, early enough to say which scope was wrong and why.
       // Without it the decoder answers for a union of two selector shapes, and someone who forgot the
       // leading slash is told an `id` was expected - true of the union, and useless to them.
-      validatePath(path, command, 'path');
+      validatePath(path, command, positionals.length === 1 ? 'path' : `path (${ordinal(index + 1)})`);
       // The original string travels, not a path rebuilt from the segments. `parsePath` refuses a
       // noncanonical path rather than repairing one, so there is nothing to rebuild and rebuilding
       // would be the rewriting it exists to prevent.
       return { path };
     }),
-    ...ids.map((id) => ({ id: parseId(id, command) })),
+    ...ids.map((id, index) => ({
+      id: parseId(id, command, ids.length === 1 ? '--id' : `--id (${ordinal(index + 1)})`),
+    })),
   ];
   if (scopes.length === 0) throw new UsageError('Give at least one path, or --id.', command);
   if (scopes.length > SCOPES_MAX_COUNT)
@@ -512,8 +663,15 @@ export const scopesFrom = (
       `Paths and --id take at most ${SCOPES_MAX_COUNT} targets in total.`,
       command,
     );
-  if (new Set(scopes.map((value) => JSON.stringify(value))).size !== scopes.length)
-    throw new UsageError('Paths and --id must not repeat a target.', command);
+  const seen = new Set<string>();
+  for (const scope of scopes) {
+    const key = JSON.stringify(scope);
+    if (seen.has(key)) {
+      const given = 'path' in scope ? scope.path : `--id ${scope.id}`;
+      throw new UsageError(`Paths and --id must not repeat a target: ${given} is given twice.`, command);
+    }
+    seen.add(key);
+  }
   return scopes;
 };
 
@@ -540,13 +698,11 @@ export const resolveFilter = (
 ): NodeFilterInput | undefined => {
   if (raw === undefined) return undefined;
   prevalidateFilter(raw, command);
-  const text = raw.startsWith('@') ? readLocalFile(raw.slice(1), 'the filter file', command) : raw;
-  const parsed = parseJson(text, '--filter', command);
+  const text = raw.startsWith('@') ? readLocalFile(raw.slice(1), FILTER_FILE, command) : raw;
+  const parsed = parseJson(text, '--filter', command, true);
 
   const rejection = inspectFilterInput(parsed);
-  if (rejection !== undefined) {
-    throw new UsageError(`--filter: ${sentence(describeFilterRejection(rejection))}`, command);
-  }
+  if (rejection !== undefined) throw new UsageError(filterRefusal(parsed, rejection), command);
   // A compile-time bridge across a runtime-checked boundary. `inspectFilterInput` has just established
   // that the value carries only the keys this filter owns, each with a value its own decoder accepts.
   return parsed as NodeFilterInput;
@@ -567,10 +723,11 @@ export const parseQueries = (values: readonly string[], command: string): readon
   if (values.length === 0) throw new UsageError('Give at least one -q query.', command);
   if (values.length > SEARCH_QUERIES_MAX_COUNT)
     throw new UsageError(`-q takes at most ${SEARCH_QUERIES_MAX_COUNT} queries.`, command);
-  for (const value of values) {
+  for (const [index, value] of values.entries()) {
     const rejection = inspectQueryInput(value);
     if (rejection !== undefined) {
-      throw new UsageError(`-q: ${sentence(describeQueryRejection(rejection))}`, command);
+      const flag = values.length === 1 ? '-q' : `-q (${ordinal(index + 1)})`;
+      throw new UsageError(`${flag}: ${sentence(describeQueryRejection(rejection))}`, command);
     }
   }
   return values;
@@ -600,10 +757,6 @@ export const titleFromContent = (
 };
 
 /** `a`, `a and b`, `a, b and c`. */
-const listed = (items: readonly string[]): string =>
-  items.length <= 1
-    ? (items[0] ?? '')
-    : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1] ?? ''}`;
 
 /**
  * The Markdown constructs this body would be stored without, as `@raphael/content` converts it - the
@@ -636,64 +789,91 @@ export const degradedWarning = (
 ): Warning => ({
   code: 'markdown_degraded',
   constructs: degraded,
-  message: `The body was stored with changes: ${keptAs(degraded)}. Run "${readCommand}" to see the stored body, or use --strict to refuse such a body.`,
+  message: `The body was stored with changes: ${keptAs(degraded)}. Use --strict to refuse such a body.`,
+  hint: `Run "${readCommand}" to see the stored body.`,
 });
 
-/** `a table was kept as …; an image and raw HTML were kept as plain text`, grouped by what was kept. */
+/** `a table was kept as …; an image and raw HTML were kept as plain text`, grouped by outcome. */
 const keptAs = (degraded: readonly DegradedConstruct[]): string => {
   const groups = new Map<string, string[]>();
   for (const construct of degraded) {
-    const { name, kept } = DEGRADED_CONSTRUCT_DESCRIPTIONS[construct];
-    groups.set(kept, [...(groups.get(kept) ?? []), name]);
+    const { name, outcome } = DEGRADED_CONSTRUCT_DESCRIPTIONS[construct];
+    groups.set(outcome, [...(groups.get(outcome) ?? []), name]);
   }
   return [...groups]
-    .map(
-      ([kept, names]) => `${listed(names)} ${names.length === 1 ? 'was' : 'were'} kept as ${kept}`,
-    )
+    .map(([outcome, names]) => `${listed(names)} ${names.length === 1 ? 'was' : 'were'} ${outcome}`)
     .join('; ');
 };
 
-const sentence = (text: string): string =>
-  `${text.charAt(0).toUpperCase()}${text.slice(1).replace(/[.]$/, '')}.`;
+const sentence = asSentence;
+
+/** The commands whose paths are places to look in, where the root is one of them. */
+const SCOPE_COMMANDS: ReadonlySet<string> = new Set(['list', 'search']);
 
 const validatePath = (raw: string, command: string, flag: string): void => {
   const result = parsePath(raw);
   if (Either.isLeft(result)) {
-    const candidate = raw.normalize('NFC').toLowerCase();
-    const hint =
-      candidate !== raw && Either.isRight(parsePath(candidate)) ? ` Try "${candidate}".` : '';
+    // The path it most likely meant: in canonical case, with the leading slash it lacks, or without
+    // the trailing one. An option given after `--` is not taken for a path that lost its slash.
+    // A positive integer is an id typed where a path goes; every command with a path takes --id.
+    const message = `${flag}: ${sentence(describePathRejection(result.left))}`;
+    if (flag === 'path' && /^[1-9]\d*$/u.test(raw)) {
+      throw new UsageError(message, command, `Try "--id ${raw}".`, {
+        typed: raw,
+        suggested: ['--id', raw],
+      });
+    }
+    const lower = raw.normalize('NFC').toLowerCase();
+    // An empty path is not taken for the root, except where the root is something to list or search.
+    const rootAllowed = raw !== '' || (flag === 'path' && SCOPE_COMMANDS.has(command));
+    const candidate = [
+      lower,
+      ...(raw.startsWith('-') ? [] : [`/${lower}`]),
+      lower.replace(/\/+$/u, ''),
+    ].find(
+      (repaired) =>
+        repaired !== raw &&
+        (rootAllowed || repaired !== ROOT_PATH) &&
+        Either.isRight(parsePath(repaired)),
+    );
     throw new UsageError(
-      `${flag}: ${sentence(describePathRejection(result.left))}${hint}`,
+      message,
       command,
+      candidate === undefined ? undefined : `Try "${shellArg(candidate)}".`,
+      candidate === undefined ? undefined : { typed: raw, suggested: candidate },
     );
   }
 };
 
+/** A slug refused in the contract's words, the same sentence the server sends for it. */
 export const validateSlug = (raw: string | undefined, command: string, flag = '--slug'): void => {
-  if (raw === undefined || isCanonicalSlug(raw)) return;
+  if (raw === undefined) return;
+  const rejection = inspectSlugInput(raw);
+  if (rejection === undefined) return;
   const candidate = raw.normalize('NFC').toLowerCase();
   throw new UsageError(
-    `${flag} must follow this grammar: ${SLUG_GRAMMAR_DESCRIPTION}; at most ${SLUG_MAX_CODE_POINTS} characters.${candidate !== raw && isCanonicalSlug(candidate) ? ` Try "${candidate}".` : ''}`,
+    `${flag}: ${sentence(describeSlugRejection(rejection))}`,
     command,
+    candidate !== raw && isCanonicalSlug(candidate) ? `Try "${candidate}".` : undefined,
+    candidate !== raw && isCanonicalSlug(candidate)
+      ? { typed: raw, suggested: candidate }
+      : undefined,
   );
 };
 
+/** A title refused in the contract's words, the same sentence the server sends for it. */
 export const validateTitle = (raw: string | undefined, command: string): void => {
-  if (raw === undefined) throw new UsageError('--title is required.', command);
   const rejection = inspectTitleInput(raw);
   if (rejection !== undefined)
-    throw new UsageError(
-      rejection.reason === 'title_too_long'
-        ? `--title must be at most ${rejection.limit} characters after trimming.`
-        : '--title must not be empty.',
-      command,
-    );
+    throw new UsageError(`--title: ${sentence(describeTitleRejection(rejection))}`, command);
 };
 
+/** A description refused in the contract's words, the same sentence the server sends for it. */
 export const validateDescription = (raw: string | undefined, command: string): void => {
-  if (raw !== undefined && [...raw].length > DESCRIPTION_MAX_CODE_POINTS)
+  const rejection = raw === undefined ? undefined : inspectDescriptionInput(raw);
+  if (rejection !== undefined)
     throw new UsageError(
-      `--description must be at most ${DESCRIPTION_MAX_CODE_POINTS} characters.`,
+      `--description: ${sentence(describeDescriptionRejection(rejection))}`,
       command,
     );
 };
@@ -701,21 +881,14 @@ export const validateDescription = (raw: string | undefined, command: string): v
 export const validateTags = (values: readonly string[], command: string, flag = '--tag'): void => {
   if (values.some((value) => value.includes(',')))
     throw new UsageError(
-      `${flag} does not accept commas inside a tag. Give each tag its own --tag.`,
+      `${flag} does not accept commas inside a tag.`,
       command,
+      'Give each tag its own --tag.',
     );
+  // A tag refused in the contract's words, the same sentence the server sends for it.
   const rejection = inspectTagsInput(values.map(normalizeTag));
-  if (rejection !== undefined) {
-    const rule =
-      rejection.reason === 'tags_too_many'
-        ? `takes at most ${rejection.limit} tags`
-        : rejection.reason === 'tag_too_long'
-          ? `takes tags of at most ${rejection.limit} characters`
-          : rejection.reason === 'tags_repeat'
-            ? 'must not repeat a tag'
-            : 'must not contain an empty tag';
-    throw new UsageError(`${flag} ${rule}.`, command);
-  }
+  if (rejection !== undefined)
+    throw new UsageError(`${flag}: ${sentence(describeTagsRejection(rejection))}`, command);
 };
 
 export const validateBodyArguments = (
@@ -725,6 +898,7 @@ export const validateBodyArguments = (
 ): void => {
   if (body !== undefined && literal !== undefined)
     throw new UsageError('Give either --body or --body-literal, not both.', command);
+  refuseBareAt(body, BODY_FILE, command);
 };
 
 /** Locate the first syntax failure without depending on engine-specific JSON error prose. */
@@ -862,11 +1036,55 @@ const jsonSyntaxOffset = (text: string): number => {
   return cursor;
 };
 
+/**
+ * The first key an object in valid JSON text repeats, if any. `JSON.parse` keeps the last value of a
+ * repeated key, so `{"a":1,"a":2}` would be sent as `{"a":2}` with the first value silently gone.
+ */
+const repeatedKey = (text: string): string | undefined => {
+  // One frame per open object (its keys, and whether a key comes next) or array (`undefined`).
+  const frames: ({ keys: Set<string>; key: boolean } | undefined)[] = [];
+  for (let cursor = 0; cursor < text.length; cursor += 1) {
+    const character = text[cursor];
+    const frame = frames.at(-1);
+    if (character === '{') frames.push({ keys: new Set(), key: true });
+    else if (character === '[') frames.push(undefined);
+    else if (character === '}' || character === ']') frames.pop();
+    else if (character === ',' && frame !== undefined) frame.key = true;
+    else if (character === '"') {
+      const start = cursor;
+      for (cursor += 1; text[cursor] !== '"'; cursor += 1) {
+        if (text[cursor] === '\\') cursor += 1;
+      }
+      if (frame?.key === true) {
+        const key = JSON.parse(text.slice(start, cursor + 1)) as string;
+        if (frame.keys.has(key)) return key;
+        frame.keys.add(key);
+        frame.key = false;
+      }
+    }
+  }
+  return undefined;
+};
+
+/** Refuse a repeated key, naming it only when it is a plain word. */
+const refuseRepeatedKey = (text: string, flag: string, command: string): void => {
+  const key = repeatedKey(text);
+  if (key === undefined) return;
+  throw new UsageError(
+    `${flag} repeats ${/^[\w.-]{1,64}$/.test(key) ? `the key "${key}"` : 'a key'} in one object.`,
+    command,
+    'Give each key once.',
+  );
+};
+
 /** Parse syntax without quoting submitted JSON in diagnostics. */
-const parseJson = (text: string, flag: string, command: string): unknown => {
+const parseJson = (text: string, flag: string, command: string, unique = false): unknown => {
   try {
-    return JSON.parse(text);
-  } catch {
+    const value: unknown = JSON.parse(text);
+    if (unique) refuseRepeatedKey(text, flag, command);
+    return value;
+  } catch (error) {
+    if (error instanceof UsageError) throw error;
     const offset = jsonSyntaxOffset(text);
     const prefix = text.slice(0, offset);
     const line = prefix.split('\n').length;
@@ -882,20 +1100,81 @@ export const prevalidateMetadata = (raw: string | undefined, command: string): v
   if (raw === undefined) return;
   if (raw === '@-')
     throw new UsageError('--metadata does not accept @-. Give inline JSON or @file.', command);
+  refuseBareAt(raw, METADATA_FILE, command);
   if (raw.startsWith('@')) return;
-  const rejection = inspectMetadataInput(parseJson(raw, '--metadata', command));
+  const parsed = parseJson(raw, '--metadata', command, true);
+  const rejection = inspectMetadataInput(parsed);
   if (rejection !== undefined)
     throw new UsageError(`--metadata: ${sentence(rejection.detail)}`, command);
+  refuseInexactInteger(parsed, command);
+};
+
+/**
+ * A whole number past `Number.MAX_SAFE_INTEGER` has already lost digits by the time it is parsed,
+ * and metadata is set once, so storing it would keep a different number for good without a word.
+ * Refused instead, with the way to keep it exactly.
+ */
+const refuseInexactInteger = (value: unknown, command: string): void => {
+  const pending: { readonly value: unknown; readonly path: readonly string[] }[] = [
+    { value, path: [] },
+  ];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (typeof next.value === 'number') {
+      if (Number.isInteger(next.value) && !Number.isSafeInteger(next.value)) {
+        const at = next.path.length === 0 ? 'The value' : `"${next.path.join('.')}"`;
+        throw new UsageError(
+          `--metadata: ${at} is a whole number too large to store exactly.`,
+          command,
+          'Give it as a JSON string to keep every digit.',
+        );
+      }
+    } else if (typeof next.value === 'object' && next.value !== null) {
+      for (const [key, child] of Object.entries(next.value)) {
+        pending.push({ value: child, path: [...next.path, key] });
+      }
+    }
+  }
 };
 
 export const prevalidateFilter = (raw: string | undefined, command: string): void => {
   if (raw === undefined) return;
   if (raw === '@-')
     throw new UsageError('--filter does not accept @-. Give inline JSON or @file.', command);
+  refuseBareAt(raw, FILTER_FILE, command);
   if (raw.startsWith('@')) return;
-  const rejection = inspectFilterInput(parseJson(raw, '--filter', command));
-  if (rejection !== undefined)
-    throw new UsageError(`--filter: ${sentence(describeFilterRejection(rejection))}`, command);
+  const parsed = parseJson(raw, '--filter', command, true);
+  const rejection = inspectFilterInput(parsed);
+  if (rejection !== undefined) throw new UsageError(filterRefusal(parsed, rejection), command);
+};
+
+/**
+ * The contract's sentence for a refused filter, and, for a value written in a shape another tool or
+ * the create command teaches, the shape this filter takes. Only the shape is named; nothing typed is
+ * repeated.
+ */
+const filterRefusal = (parsed: unknown, rejection: FilterRejection): string => {
+  const refusal = `--filter: ${sentence(describeFilterRejection(rejection))}`;
+  if (rejection.reason !== 'invalid_value' || rejection.key === undefined || !isJsonObject(parsed))
+    return refusal;
+  const value = parsed[rejection.key];
+  if (Array.isArray(value)) {
+    return `${refusal} A list goes inside $in, as in {"${rejection.key}":{"$in":[...]}}.`;
+  }
+  if (rejection.key === 'type') {
+    const given =
+      typeof value === 'string'
+        ? [value]
+        : isJsonObject(value) && Array.isArray(value['$in'])
+          ? value['$in']
+          : [];
+    const kind = RESOURCE_KINDS.find((candidate) =>
+      given.some((entry) => entry === candidate || entry === `${RESOURCE_TYPE}.${candidate}`),
+    );
+    if (kind !== undefined) {
+      return `${refusal} A kind has its own key: for ${kind}s, use ${JSON.stringify({ type: RESOURCE_TYPE, kind })}.`;
+    }
+  }
+  return refusal;
 };
 
 /** Measure the same contract-decoded representation the HTTP client sends, including defaults. */

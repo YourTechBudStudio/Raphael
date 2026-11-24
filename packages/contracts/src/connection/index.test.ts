@@ -13,6 +13,8 @@ import {
   isCompatibleProtocolVersion,
   isPrintableRelease,
   isSendableApiKey,
+  API_KEY_MAX_LENGTH,
+  SENDABLE_API_KEY_RULE,
 } from './index.ts';
 
 /** A server one protocol revision behind, one ahead, and one predating the date-based scheme. */
@@ -143,8 +145,8 @@ test('a key is never trimmed or re-encoded on its way through', () => {
   assert.equal(padded.trim() === padded, false);
 });
 
-test('a sendable key is visible ASCII with no whitespace anywhere', () => {
-  for (const key of ['a', 'zq9x-0123456789abcdef', '!~', 'a'.repeat(4096)]) {
+test('a sendable key is visible ASCII with no whitespace anywhere, up to the length limit', () => {
+  for (const key of ['a', 'zq9x-0123456789abcdef', '!~', 'a'.repeat(API_KEY_MAX_LENGTH)]) {
     assert.equal(isSendableApiKey(key), true, `${JSON.stringify(key)} is sendable`);
   }
   for (const key of [
@@ -158,9 +160,19 @@ test('a sendable key is visible ASCII with no whitespace anywhere', () => {
     'ключ',
     'café',
     '\u007f',
+    'a'.repeat(API_KEY_MAX_LENGTH + 1),
+    'a'.repeat(4096),
   ]) {
     assert.equal(isSendableApiKey(key), false, `${JSON.stringify(key)} is not sendable`);
   }
+});
+
+test('the sendable-key rule states the length limit from the constant', () => {
+  assert.equal(API_KEY_MAX_LENGTH, 512);
+  assert.equal(
+    SENDABLE_API_KEY_RULE,
+    `1 to ${API_KEY_MAX_LENGTH} visible ASCII characters with no spaces`,
+  );
 });
 
 test('the server release is optional in a verification answer, and any string decodes', () => {

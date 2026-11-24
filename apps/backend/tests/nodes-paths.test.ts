@@ -10,6 +10,7 @@ import {
   moveNode,
   restoreNode,
   searchNodes,
+  updateNode,
 } from '../src/modules/nodes/index.ts';
 import {
   clockAt,
@@ -214,6 +215,71 @@ test('paths follow a move, and the move says where the item was', () => {
       ),
     );
     assert.equal('path' in plain.node, false);
+    assert.equal('previousPath' in plain, false);
+  });
+});
+
+test('an update says where the item was, computed before the write', () => {
+  withMigrated('paths-update', (connection) => {
+    const { launch, runbook } = tree(connection);
+
+    const renamed = expectRight(
+      runNodes(
+        connection,
+        updateNode({
+          target: { id: launch.id },
+          revision: launch.revision,
+          slug: 'liftoff',
+          includePaths: true,
+        }),
+        clockAt(T0 + 1_000),
+      ),
+    );
+    assert.equal(renamed.changed, true);
+    assert.equal(renamed.previousPath, '/work/garden/launch');
+    assert.equal(renamed.entity.path, '/work/garden/liftoff');
+    assert.equal(pathOfId(connection, runbook.id), '/work/garden/liftoff/runbook');
+
+    // A change that keeps the slug keeps the path, and a no-op answers the same path twice.
+    const retitled = expectRight(
+      runNodes(
+        connection,
+        updateNode({
+          target: { id: launch.id },
+          revision: renamed.entity.revision,
+          title: 'Liftoff',
+          includePaths: true,
+        }),
+      ),
+    );
+    assert.equal(retitled.previousPath, '/work/garden/liftoff');
+    assert.equal(retitled.entity.path, '/work/garden/liftoff');
+    const unchanged = expectRight(
+      runNodes(
+        connection,
+        updateNode({
+          target: { id: launch.id },
+          revision: retitled.entity.revision,
+          title: 'Liftoff',
+          includePaths: true,
+        }),
+      ),
+    );
+    assert.equal(unchanged.changed, false);
+    assert.equal(unchanged.previousPath, unchanged.entity.path);
+
+    // Without paths asked for, neither is computed.
+    const plain = expectRight(
+      runNodes(
+        connection,
+        updateNode({
+          target: { id: launch.id },
+          revision: retitled.entity.revision,
+          slug: 'launch',
+        }),
+      ),
+    );
+    assert.equal('path' in plain.entity, false);
     assert.equal('previousPath' in plain, false);
   });
 });

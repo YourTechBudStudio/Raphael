@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The database at "<tmp>/newer.sqlite" was migrated by a newer or different Raphael release.
+hint: Update raphael, or use another database with --database or database.path.

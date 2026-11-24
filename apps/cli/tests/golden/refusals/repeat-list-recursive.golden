@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
---recursive can be given only once.
+-r can be given only once.
 hint: Run "raphael list --help" for usage.

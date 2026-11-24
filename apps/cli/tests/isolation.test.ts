@@ -6,6 +6,9 @@ import { dirname, join, resolve } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { HELP_TOPICS } from '../src/help.ts';
+import { COMMAND_DEFINITIONS } from '../src/main.ts';
+
 /**
  * Help and version must work on a machine that is not set up.
  *
@@ -22,6 +25,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(here, '..');
+// The build, on purpose: this is about what the installed program loads. The package's `pretest`
+// builds first, so it is never older than the sources.
 const binary = join(packageRoot, 'dist', 'main.js');
 
 const directories: string[] = [];
@@ -132,35 +137,41 @@ describe('the import hook itself', () => {
 });
 
 describe('help and version need nothing', () => {
-  const cases: Array<[string, readonly string[]]> = [
-    ['no arguments', []],
-    ['help', ['help']],
-    ['--help', ['--help']],
-    ...[
-      'addressing',
-      'content',
-      'revisions',
-      'output',
-      'connecting',
-      'exit-codes',
-      'reference',
-    ].map((topic): [string, readonly string[]] => [`help ${topic}`, ['help', topic]]),
-    ['help search', ['help', 'search']],
-    ['help --json', ['help', '--json']],
-    ['-h', ['-h']],
-    ['--version', ['--version']],
-    ['version', ['version']],
-    ['create --help', ['create', '--help']],
-    ['get --help', ['get', '--help']],
-    ['list --help', ['list', '--help']],
-    ['path --help', ['path', '--help']],
-    ['login --help', ['login', '--help']],
-    ['server', ['server']],
-    ['server serve --help', ['server', 'serve', '--help']],
+  /**
+   * Every help page, by every spelling, plus version. The pages come from the command table and the
+   * topic list of the build under test, so a new command or topic is covered without being listed
+   * here; the count is checked against the sources, so the matrix cannot silently shrink.
+   */
+  const MATRIX = `
+const commandPages = COMMAND_DEFINITIONS.flatMap(({ name }) => {
+  const words = name.split(' ');
+  return [
+    [name + ' --help', [...words, '--help']],
+    [name + ' -h', [...words, '-h']],
+    ['help ' + name, ['help', ...words]],
   ];
+});
+const topicPages = [...HELP_TOPICS.map(({ name }) => name), 'reference'].map((name) => [
+  'help ' + name,
+  ['help', name],
+]);
+const cases = [
+  ['no arguments', []],
+  ['--help', ['--help']],
+  ['-h', ['-h']],
+  ['help', ['help']],
+  ['help --json', ['help', '--json']],
+  ['server', ['server']],
+  ['--version', ['--version']],
+  ['version', ['version']],
+  ['version --json', ['version', '--json']],
+  ...commandPages,
+  ...topicPages,
+];
+`;
 
-  it('answers every help and version alias without backend, native driver, or configuration', async () => {
-    // One guarded process checks the alias matrix after loading the dispatcher once. Separate
+  it('answers every help page and version without backend, native driver, or configuration', async () => {
+    // One guarded process runs the whole matrix after loading the dispatcher once. Separate
     // executable cases below still verify OS exit codes and actual stdout/stderr wiring.
     const directory = hookDirectory();
     const probe = join(directory, 'aliases.mjs');
@@ -168,8 +179,10 @@ describe('help and version need nothing', () => {
       probe,
       `
 import assert from 'node:assert/strict';
-import { run } from ${JSON.stringify(pathToFileURL(binary).href)};
-for (const [label, args] of ${JSON.stringify(cases)}) {
+import { run, COMMAND_DEFINITIONS } from ${JSON.stringify(pathToFileURL(binary).href)};
+import { HELP_TOPICS } from ${JSON.stringify(pathToFileURL(join(packageRoot, 'dist', 'help.js')).href)};
+${MATRIX}
+for (const [label, args] of cases) {
   let stdout = '';
   let stderr = '';
   const code = await run(args, {
@@ -180,19 +193,22 @@ for (const [label, args] of ${JSON.stringify(cases)}) {
     onSignal: () => { throw new Error('Unexpected signal registration'); },
     exit: () => { throw new Error('Unexpected process exit'); },
     connect: () => { throw new Error('Help and version must not connect'); },
+    terminal: { stdin: false, stdout: false },
   });
   assert.equal(code, 0, label + ': ' + stderr);
   assert.equal(stderr, '', label);
   assert.ok(stdout.length > 0, label);
   assert.equal(stdout.includes('FORBIDDEN_IMPORT'), false, label);
 }
-console.log('aliases passed');
+console.log('passed ' + cases.length);
 `,
     );
     const ran = await runGuarded([], probe);
     assert.equal(ran.code, 0, ran.stderr);
     assert.equal(ran.stderr, '');
-    assert.equal(ran.stdout.trim(), 'aliases passed');
+    // Nine fixed cases, three spellings of every command page, and every topic plus reference.
+    const expected = 9 + COMMAND_DEFINITIONS.length * 3 + HELP_TOPICS.length + 1;
+    assert.equal(ran.stdout.trim(), `passed ${expected}`);
   });
 
   it('reports the root manifest version, not a literal beside it', async () => {

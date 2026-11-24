@@ -1,0 +1,2 @@
+cli:    path: A path must start with "/".
+server: A path must start with "/".

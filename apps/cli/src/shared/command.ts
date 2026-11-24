@@ -9,7 +9,7 @@
 
 import type { OperationCall, Transport } from '@raphael/client';
 
-import type { OptionConfig } from './args.ts';
+import type { OptionConfig, OptionSpec, WholeRange } from './args.ts';
 import type { Interruption, InterruptSignal } from './interrupt.ts';
 import type { Streams } from './output.ts';
 import { checkServer, diagnosisOf, isUnexplainedAnswer, type Diagnosis } from './server-check.ts';
@@ -35,9 +35,16 @@ export interface Connected {
 export interface Invocation {
   /** The command as typed (`create`, `server serve`), or null when none was recognized. */
   readonly command: string | null;
+  /** The arguments as typed, so a refusal can repeat the command with one of them corrected. */
+  readonly argv?: readonly string[];
   readonly json: boolean;
   /** Whether a success would change stored state. Decides whether a failure carries a state line. */
   readonly writes: boolean;
+  /**
+   * For a command that changes something other than stored items, what every failure of it left
+   * unchanged, printed as its state line: login's `Nothing was saved.`
+   */
+  readonly stateLine?: string;
   readonly fieldFlags?: Readonly<Record<string, string>>;
   /**
    * The command verifies the server itself (`status`, `login`), so an unreadable answer is never
@@ -58,10 +65,13 @@ export interface Session {
   writeSent: boolean;
   /** Set when a remote command watches signals. */
   interruption: Interruption | undefined;
+  /** `RAPHAEL_DEBUG=1`: failures add what the system said, after their layout. */
+  readonly debug: boolean;
 }
 
-export const newSession = (invocation: Invocation): Session => ({
+export const newSession = (invocation: Invocation, debug = false): Session => ({
   invocation,
+  debug,
   endpoint: undefined,
   connection: undefined,
   diagnosis: undefined,
@@ -156,17 +166,48 @@ export interface CommandExample {
   readonly description?: string;
 }
 
-export interface CommandOption {
+interface OptionBase {
   readonly name: string;
   readonly short?: string;
-  readonly type: 'string' | 'boolean';
   readonly multiple?: boolean;
-  readonly valueName?: string;
-  readonly default?: string | number | boolean;
   readonly description: string;
   readonly constraint?: string;
   readonly changes?: boolean;
 }
+
+export interface FlagOption extends OptionBase {
+  readonly type: 'boolean';
+}
+
+export interface ValueOption extends OptionBase {
+  readonly type: 'string';
+  /** The value is a whole number in this range; refusals state it. */
+  readonly whole?: WholeRange;
+  readonly valueName?: string;
+  readonly default?: string | number | boolean;
+  /** A value that works, shown when the value is missing: `For example: --port 3000.` */
+  readonly example: string;
+  /** No value starts with a dash, so the `--name=value` form for such values is never offered. */
+  readonly leadingDash?: false;
+}
+
+export type CommandOption = FlagOption | ValueOption;
+
+/**
+ * The two options every command shares, worded once so they read the same on every page. What the
+ * JSON document holds is each command's own `prints`.
+ */
+export const JSON_OPTION: CommandOption = {
+  name: 'json',
+  type: 'boolean',
+  description: 'Print the result as one JSON document.',
+};
+export const HELP_OPTION: CommandOption = {
+  name: 'help',
+  short: 'h',
+  type: 'boolean',
+  description: 'Show help.',
+};
 
 /** Product data owned beside a command's handler. Dispatch stays explicit. */
 export interface CommandDefinition {
@@ -190,12 +231,22 @@ export interface CommandDefinition {
 /** Parser grammar derives from the same options the help renderer describes. */
 export const optionsFor = (definition: CommandDefinition): OptionConfig =>
   Object.fromEntries(
-    definition.options.map(({ name, type, multiple, short }) => [
-      name,
-      {
-        type,
-        ...(multiple === undefined ? {} : { multiple }),
-        ...(short === undefined ? {} : { short }),
-      },
-    ]),
+    definition.options.map((option): [string, OptionSpec] => {
+      const shared = {
+        ...(option.multiple === undefined ? {} : { multiple: option.multiple }),
+        ...(option.short === undefined ? {} : { short: option.short }),
+      };
+      return [
+        option.name,
+        option.type === 'boolean'
+          ? { type: 'boolean', ...shared }
+          : {
+              type: 'string',
+              ...shared,
+              example: option.example,
+              ...(option.whole === undefined ? {} : { whole: option.whole }),
+              ...(option.leadingDash === undefined ? {} : { leadingDash: option.leadingDash }),
+            },
+      ];
+    }),
   );

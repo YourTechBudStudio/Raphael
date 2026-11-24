@@ -1,0 +1,2 @@
+cli:    path: A path segment must follow the slug grammar at segment 1: NFC lowercase Unicode letter or number tokens joined by single hyphens; combining marks may follow the first letter or number in each token.
+server: A path segment must follow the slug grammar at segment 1: NFC lowercase Unicode letter or number tokens joined by single hyphens; combining marks may follow the first letter or number in each token.

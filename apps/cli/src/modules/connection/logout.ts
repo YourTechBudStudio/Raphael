@@ -7,13 +7,22 @@
  */
 
 import { UsageError, parseArgs } from '../../shared/args.ts';
-import { optionsFor, type CommandDefinition, type Session } from '../../shared/command.ts';
+import {
+  HELP_OPTION,
+  JSON_OPTION,
+  optionsFor,
+  type CommandDefinition,
+  type Session,
+} from '../../shared/command.ts';
 import type { ExitCode } from '../../shared/exit.ts';
 import { forTerminal, type Streams } from '../../shared/output.ts';
 import { renderSuccess, type Warning } from '../../shared/success.ts';
 import { CLIENT_API_KEY_VARIABLE, CLIENT_ENDPOINT_VARIABLE } from '../../shared/variables.ts';
 import { configLocation, removeConfig } from './config.ts';
 import { environmentPair, environmentPairNote } from './remote.ts';
+
+/** What every failed logout left as it was, printed as its state line. */
+export const LOGOUT_STATE_LINE = 'The saved login is unchanged.';
 
 export const LOGOUT_DEFINITION: CommandDefinition = {
   name: 'logout',
@@ -26,10 +35,7 @@ export const LOGOUT_DEFINITION: CommandDefinition = {
     'With no saved login, says so and exits 0.',
     `${CLIENT_ENDPOINT_VARIABLE} and ${CLIENT_API_KEY_VARIABLE} are not changed; when they are set, commands keep using them, and logout warns.`,
   ],
-  options: [
-    { name: 'json', type: 'boolean', description: 'Print the result as one JSON document.' },
-    { name: 'help', short: 'h', type: 'boolean', description: 'Show help.' },
-  ],
+  options: [JSON_OPTION, HELP_OPTION],
   examples: [{ argv: ['logout'] }, { argv: ['logout', '--json'] }],
   prints:
     'What was removed, or that there was nothing to remove. JSON has removed, endpoint (null when unknown) and configFile.',

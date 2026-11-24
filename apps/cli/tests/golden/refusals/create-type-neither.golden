@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+"/work" is not something Raphael can create. Give area, project, resource.note.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

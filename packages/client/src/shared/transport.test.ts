@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import type { AddressInfo } from 'node:net';
+import { createServer as createNetServer, type AddressInfo, type Socket } from 'node:net';
 import { after, describe, it } from 'node:test';
 
 import { AUTHORIZATION_SCHEME } from '@raphael/contracts/connection';
@@ -329,6 +329,8 @@ describe('response reading', () => {
       delivery: 'answered',
       status: 502,
       message: 'The server answered 502.',
+      // Its shape, for an operator; never its content.
+      diagnostic: 'status 502, text/html, 37 bytes, not JSON',
     });
     assert.equal(retryable(failure), true);
   });
@@ -412,6 +414,21 @@ describe('an unreachable server', () => {
     const cases: ReadonlyArray<readonly [unknown, string]> = [
       [withCause(Object.assign(new Error('refused'), { code: 'ECONNREFUSED' })), 'not_sent'],
       [withCause(Object.assign(new Error('dns'), { code: 'ENOTFOUND' })), 'not_sent'],
+      // A host name longer than DNS allows: the lookup refuses it, so nothing was sent.
+      [
+        withCause(
+          Object.assign(new Error('getaddrinfo EINVAL'), {
+            code: 'EINVAL',
+            syscall: 'getaddrinfo',
+          }),
+        ),
+        'not_sent',
+      ],
+      // The same code from anything but the lookup proves nothing.
+      [
+        withCause(Object.assign(new Error('write EINVAL'), { code: 'EINVAL', syscall: 'write' })),
+        'unknown',
+      ],
       [
         withCause(
           Object.assign(new AggregateError([], 'both'), {
@@ -453,12 +470,33 @@ describe('an unreachable server', () => {
       [withCode('ECONNREFUSED'), 'refused'],
       [withCode('ENOTFOUND'), 'dns'],
       [withCode('EAI_AGAIN'), 'dns'],
+      [
+        new TypeError('fetch failed', {
+          cause: Object.assign(new Error('getaddrinfo EINVAL'), {
+            code: 'EINVAL',
+            syscall: 'getaddrinfo',
+          }),
+        }),
+        'dns',
+      ],
       [withCode('ECONNRESET'), 'reset'],
       [withCode('UND_ERR_SOCKET'), 'reset'],
       [withCode('EHOSTUNREACH'), 'unreachable'],
       [withCode('ERR_SSL_WRONG_VERSION_NUMBER'), 'tls'],
-      [withCode('CERT_HAS_EXPIRED'), 'tls'],
-      [withCode('DEPTH_ZERO_SELF_SIGNED_CERT'), 'tls'],
+      [withCode('ERR_SSL_SSLV3_ALERT_HANDSHAKE_FAILURE'), 'tls'],
+      [withCode('CERT_HAS_EXPIRED'), 'certificate'],
+      [withCode('DEPTH_ZERO_SELF_SIGNED_CERT'), 'certificate'],
+      [withCode('UNABLE_TO_VERIFY_LEAF_SIGNATURE'), 'certificate'],
+      [withCode('ERR_TLS_CERT_ALTNAME_INVALID'), 'certificate'],
+      [new TypeError('fetch failed', { cause: new Error('bad port') }), 'blocked_port'],
+      [
+        new TypeError('fetch failed', {
+          cause: Object.assign(new Error('Response does not match the HTTP/1.1 protocol'), {
+            name: 'HTTPParserError',
+          }),
+        }),
+        'not_http',
+      ],
       [
         new TypeError('fetch failed', {
           cause: Object.assign(new AggregateError([], 'both'), {
@@ -492,6 +530,36 @@ describe('an unreachable server', () => {
     await new Promise<void>((resolve) => probe.close(() => resolve()));
     const result = await call(transportFor(`http://127.0.0.1:${port}`));
     assert.equal(!result.ok && result.failure.cause, 'refused');
+    assert.equal(!result.ok && result.failure.delivery, 'not_sent');
+  });
+});
+
+describe('an endpoint that does not speak HTTP', () => {
+  it('is reported as not HTTP, and as possibly delivered, since the request went out', async () => {
+    // An SSH server's greeting where an HTTP status line should be.
+    const sockets = new Set<Socket>();
+    const banner = createNetServer((socket) => {
+      sockets.add(socket);
+      socket.on('error', () => {});
+      socket.end('SSH-2.0-OpenSSH_9.6\r\n');
+    });
+    await new Promise<void>((resolve) => banner.listen(0, '127.0.0.1', () => resolve()));
+    const { port } = banner.address() as AddressInfo;
+    try {
+      const result = await call(transportFor(`http://127.0.0.1:${port}`));
+      assert.equal(!result.ok && result.failure.kind, 'network');
+      assert.equal(!result.ok && result.failure.cause, 'not_http');
+      assert.equal(!result.ok && result.failure.delivery, 'unknown');
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      banner.close();
+    }
+  });
+
+  it('reports a port fetch refuses to use as blocked, and not sent', async () => {
+    // 6000 is on the Fetch standard's port blocklist; nothing is opened, so nothing need listen.
+    const result = await call(transportFor('http://127.0.0.1:6000'));
+    assert.equal(!result.ok && result.failure.cause, 'blocked_port');
     assert.equal(!result.ok && result.failure.delivery, 'not_sent');
   });
 });

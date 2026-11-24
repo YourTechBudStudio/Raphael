@@ -1,0 +1,5 @@
+==== exit ====
+0
+==== stdout ====
+{"ok":true,"command":"create","entity":{"id":305,"type":"resource","kind":"note","parentId":1,"slug":"output-contract","revision":1,"title":"Link","description":"","tags":[],"active":false,"archived":false,"isFavorite":false,"updatedAt":"2026-10-19T10:42:07.123Z","path":"/work/link","body":{"format":"markdown","value":"# Heading\n\nSome text."},"metadata":{},"archiveCauses":[]},"warnings":[{"code":"markdown_degraded","constructs":["table","empty_link"],"message":"The body was stored with changes: a table was kept as Markdown source in a code block; a link with no label was left out. Run \"raphael get --id 305\" to see the stored body, or use --strict to refuse such a body."}]}
+==== stderr ====

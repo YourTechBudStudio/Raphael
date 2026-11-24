@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---title is required: the body and description have no text to take a title from.
+--title: A title is required. The body and description have no text to take one from.
 The change was not sent.
 hint: Run "raphael create --help" for usage.

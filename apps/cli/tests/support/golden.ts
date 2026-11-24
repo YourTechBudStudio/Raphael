@@ -176,6 +176,20 @@ export const assertRefusal = (
   }
 };
 
+/**
+ * A `--json` run that is not pinned by its own golden file: a valid error document whose message is
+ * the first line of the pinned text run. The envelope is the same for every failure, so a few pinned
+ * JSON files cover its shape and this covers the rest.
+ */
+export const assertJsonMirrorsText = (
+  json: Ran,
+  text: Ran,
+  expected: { readonly exit: number; readonly code?: string; readonly command?: string | null },
+): void => {
+  const document = assertErrorDocument(json, expected);
+  assert.equal(document.error.message, text.stderr.split('\n')[0]);
+};
+
 /** A file-name-safe slug for a case label. */
 export const caseName = (...parts: readonly string[]): string =>
   parts

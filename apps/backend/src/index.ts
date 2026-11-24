@@ -27,6 +27,7 @@ export {
   ApiCredential,
   ConfigurationError,
   CONFIG_DEFAULTS,
+  CONFIGURED_PORT_RANGE,
   loadConfiguration,
   resolveOptions,
   validateOptions,

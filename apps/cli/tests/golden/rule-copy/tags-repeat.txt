@@ -1,0 +1,2 @@
+cli:    --tag: Tags must not repeat.
+server: Tags must not repeat.

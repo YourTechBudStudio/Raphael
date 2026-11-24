@@ -1,0 +1,5 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"login","error":{"code":"cancelled","category":"usage","message":"Cancelled.","hint":"Run \"raphael login\" again when you are ready.","exitCode":2,"applied":false,"retryable":false}}

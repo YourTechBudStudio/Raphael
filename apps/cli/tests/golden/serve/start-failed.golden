@@ -1,0 +1,6 @@
+==== exit ====
+1
+==== stdout ====
+==== stderr ====
+The server could not start.
+hint: Run it again with RAPHAEL_DEBUG=1 to see where it failed.

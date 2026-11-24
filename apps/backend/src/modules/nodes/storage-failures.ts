@@ -1,10 +1,12 @@
+import type { SlugConflictReason } from '@raphael/contracts';
+
 import { InternalFailure, SlugConflict, type NodeError } from './errors.ts';
 
 /**
  * SQLite names columns, not indexes, in a unique violation, so only these exact messages mean a slug
  * clash. A reworded message degrades to an internal failure, which is the safe direction.
  */
-const SLUG_CONFLICT_SCOPES = new Map<string, 'root' | 'sibling'>([
+const SLUG_CONFLICT_SCOPES = new Map<string, SlugConflictReason>([
   ['UNIQUE constraint failed: nodes.slug', 'root'],
   ['UNIQUE constraint failed: nodes.parent_id, nodes.slug', 'sibling'],
 ]);

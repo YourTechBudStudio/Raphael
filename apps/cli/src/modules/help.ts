@@ -1,4 +1,4 @@
-import type { CommandDefinition } from '../shared/command.ts';
+import { HELP_OPTION, JSON_OPTION, type CommandDefinition } from '../shared/command.ts';
 
 export const VERSION_DEFINITION: CommandDefinition = {
   name: 'version',
@@ -8,16 +8,9 @@ export const VERSION_DEFINITION: CommandDefinition = {
   usage: ['raphael version [--json]', 'raphael --version [--json]'],
   behavior: [
     'Works offline: reads no configuration and contacts no server.',
-    'To compare with a server, run raphael status, which reports both sides.',
+    'To compare with a server, run `raphael status`, which reports both sides.',
   ],
-  options: [
-    {
-      name: 'json',
-      type: 'boolean',
-      description: 'Also print the protocol version, as one JSON document.',
-    },
-    { name: 'help', short: 'h', type: 'boolean', description: 'Show help.' },
-  ],
+  options: [JSON_OPTION, HELP_OPTION],
   examples: [{ argv: ['version'] }, { argv: ['version', '--json'] }, { argv: ['--version'] }],
   prints: 'The bare release number. JSON has version and protocolVersion.',
   next: 'raphael status',
@@ -31,19 +24,17 @@ export const HELP_DEFINITION: CommandDefinition = {
   writes: false,
   usage: ['raphael help [<command> | <topic>] [--json]'],
   behavior: [
-    'Commands take precedence over topics. Help works without a connection or saved login.',
-    'help reference prints every page in one stream.',
+    'Commands take precedence over topics. Help works without a connection or saved login. `raphael help <x>`, `raphael <x> --help` and `raphael <x> -h` print the same page, as text or, with --json, as the same document.',
+    '`raphael help reference` prints every page in one stream.',
   ],
-  options: [
-    { name: 'json', type: 'boolean', description: 'Print machine-readable command definitions.' },
-    { name: 'help', short: 'h', type: 'boolean', description: 'Show help.' },
-  ],
+  options: [JSON_OPTION, HELP_OPTION],
   examples: [
     { argv: ['help', 'create'] },
     { argv: ['help', 'reference'] },
     { argv: ['help', '--json', 'search'] },
   ],
-  prints: 'Help text, or machine-readable definitions with --json.',
+  prints:
+    'Help text. With --json, one document {"ok":true,"command":"help",...}: commands, topics, examples, exitCodes and errorCodes for the root page and reference, definition for a command, topic for a topic. `raphael help output` describes it.',
   next: 'raphael help reference',
   fieldFlags: {},
 };

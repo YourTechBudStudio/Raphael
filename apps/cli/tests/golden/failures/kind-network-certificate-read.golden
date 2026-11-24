@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Could not connect to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json): the server's certificate is not trusted on this machine.
+hint: Give the server a certificate this machine trusts, or set NODE_EXTRA_CA_CERTS to the file of the certificate that issued it.

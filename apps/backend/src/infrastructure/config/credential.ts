@@ -51,7 +51,7 @@ export class ApiCredential {
     if (!isSendableApiKey(key)) {
       configurationFailure(
         'api_key_unsendable',
-        `${source} has characters no client could send: a key must be ${SENDABLE_API_KEY_RULE}.`,
+        `${source} is not a key any client could send: a key must be ${SENDABLE_API_KEY_RULE}.`,
         { hint: GENERATE_HINT },
       );
     }

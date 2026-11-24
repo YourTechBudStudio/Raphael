@@ -69,6 +69,11 @@ export {
   inspectTagInput,
   inspectTagsInput,
   inspectTitleInput,
+  describeTitleRejection,
+  describeTagsRejection,
+  describeDescriptionRejection,
+  inspectDescriptionInput,
+  type DescriptionRejection,
   normalizeTag,
 } from './fields.ts';
 export {
@@ -104,6 +109,7 @@ export {
 } from './favorites.ts';
 export { compareNodeOrder } from './ordering.ts';
 export {
+  SEARCH_PUNCTUATION_RULE,
   SearchQueries,
   SearchQueryInput,
   describeQueryRejection,
@@ -185,16 +191,22 @@ export {
   SLUG_GRAMMAR_DESCRIPTION,
   compareSlugBinary,
   deriveSlug,
+  describeSlugRejection,
+  inspectSlugInput,
   isCanonicalSlug,
   isCanonicalSlugShape,
   type SlugDerivationFailure,
   type SlugDerivationReason,
+  type SlugRejection,
+  type SlugRejectionReason,
 } from './slug.ts';
 
 export {
   REQUEST_FIELDS,
   isRequestField,
   invalidRequestIssueFrom,
+  describeInvalidInput,
+  asSentence,
   type RequestField,
   type InvalidRequestIssue,
 } from './diagnostics.ts';

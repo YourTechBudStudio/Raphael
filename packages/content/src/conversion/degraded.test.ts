@@ -70,6 +70,20 @@ describe('degraded constructs', () => {
         '[](javascript:alert(1))',
         'Before [](./relative.md) after',
       ],
+      // An allowed link with no label has no text for its mark to sit on.
+      empty_link: [
+        '[](https://example.com)',
+        'See [](https://example.com) here.',
+        '- [](mailto:me@example.com) item',
+      ],
+      // The link mark has no title, so the title text is not stored.
+      link_title: [
+        '[spec](https://example.com/spec "Draft 3")',
+        "See [a](https://x.com 'Title') here.",
+        '[ref][1]\n\n[1]: https://example.com "Important caveat"',
+      ],
+      // Not a construct the parser knows: the marker and the definition stay as plain text.
+      footnote: ['Text[^1].\n\n[^1]: The note.', 'A claim.[^note]', '[^1]: Only a definition.'],
       deep_heading: ['#### Four', '###### Six'],
     };
     for (const construct of DEGRADED_CONSTRUCTS) {
@@ -118,6 +132,12 @@ describe('degraded constructs', () => {
       '\\[click](javascript:alert(1))',
       'Run `[click](javascript:alert(1))` to see',
       'javascript: is a scheme',
+      // A footnote asked for as literal text, inside code, or not a footnote marker at all.
+      '\\[^1] is escaped',
+      'Run `x[^1]` to see',
+      '[^ 1] has a space',
+      'a ^ b and [c] d',
+      '[link](https://example.com "")',
     ]) {
       assert.deepEqual(degraded(markdown), [], markdown);
     }
@@ -129,6 +149,52 @@ describe('degraded constructs', () => {
     assert.deepEqual(kept.right.document.content, [
       { type: 'paragraph', content: [{ type: 'text', text: '[](javascript:alert(1))' }] },
     ]);
+  });
+
+  it('reports a link title and a footnote without changing what is stored', () => {
+    const titled = importMarkdown('[a](https://x.com "Title")');
+    assert.ok(Either.isRight(titled));
+    assert.deepEqual(titled.right.degraded, ['link_title']);
+    assert.deepEqual(titled.right.document.content, [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'a', marks: [{ type: 'link', attrs: { href: 'https://x.com' } }] },
+        ],
+      },
+    ]);
+    const footnote = importMarkdown('Text[^1].');
+    assert.ok(Either.isRight(footnote));
+    assert.deepEqual(footnote.right.degraded, ['footnote']);
+    assert.deepEqual(footnote.right.document.content, [
+      { type: 'paragraph', content: [{ type: 'text', text: 'Text[^1].' }] },
+    ]);
+  });
+
+  it('reports an allowed link with no label without changing what is stored', () => {
+    const imported = importMarkdown(
+      'See [](https://example.com) here, and [x](https://example.com).',
+    );
+    assert.ok(Either.isRight(imported));
+    assert.deepEqual(imported.right.degraded, ['empty_link']);
+    assert.deepEqual(imported.right.document.content, [
+      {
+        type: 'paragraph',
+        content: [
+          { type: 'text', text: 'See  here, and ' },
+          {
+            type: 'text',
+            text: 'x',
+            marks: [{ type: 'link', attrs: { href: 'https://example.com' } }],
+          },
+          { type: 'text', text: '.' },
+        ],
+      },
+    ]);
+    // Any text at all, even a space or another construct, carries the link.
+    for (const markdown of ['[ ](https://example.com)', '[**](https://example.com)']) {
+      assert.deepEqual(degraded(markdown), [], markdown);
+    }
   });
 
   it('agrees with fromMarkdown on the document and on refusals', () => {
@@ -181,7 +247,7 @@ describe('degraded constructs', () => {
   it('describes every construct', () => {
     for (const construct of DEGRADED_CONSTRUCTS) {
       const description = DEGRADED_CONSTRUCT_DESCRIPTIONS[construct];
-      assert.ok(description.name.length > 0 && description.kept.length > 0, construct);
+      assert.ok(description.name.length > 0 && description.outcome.length > 0, construct);
     }
   });
 });

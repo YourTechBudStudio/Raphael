@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+"/work/n" is not something Raphael can create. Give area, project, resource.note.
+The change was not sent.
+hint: Give the type first, as in "raphael create resource.note /work/n".

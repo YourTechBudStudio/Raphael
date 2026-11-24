@@ -1,0 +1,7 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Cannot work out where to store configuration: HOME is empty and XDG_CONFIG_HOME is not set.
+Nothing was saved.
+hint: Set HOME to your home directory, or set XDG_CONFIG_HOME.

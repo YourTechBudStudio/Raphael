@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--order-by must name at most 3 fields and must not repeat one.
+hint: Run "raphael list --help" for usage.

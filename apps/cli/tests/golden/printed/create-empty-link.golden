@@ -1,0 +1,8 @@
+==== exit ====
+0
+==== stdout ====
+Created resource.note 305: Link
+  path:     /work/link
+  revision: 1
+==== stderr ====
+warning: The body was stored with changes: a link with no label was left out. Run "raphael get --id 305" to see the stored body, or use --strict to refuse such a body.

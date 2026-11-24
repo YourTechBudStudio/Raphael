@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--metadata does not accept @-. Give inline JSON or @file.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

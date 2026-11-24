@@ -1,0 +1,2 @@
+cli:    --tag: At most 25 tags may be given.
+server: At most 25 tags may be given.

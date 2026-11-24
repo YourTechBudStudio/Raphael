@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--filter: Type must be area, project, resource, or $in with one or more distinct values from that list. A list goes inside $in, as in {"type":{"$in":[...]}}.
+hint: Run "raphael list --help" for usage.

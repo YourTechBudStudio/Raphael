@@ -1,3 +1,4 @@
+import { isIPv4 } from 'node:net';
 import { dirname, isAbsolute, resolve } from 'node:path';
 
 import { Either, ParseResult, Schema } from 'effect';
@@ -34,11 +35,30 @@ const boundedInteger = (name: string, min: number, max: number) =>
  */
 const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\s]/u;
 
+/**
+ * Why a host is not one this machine could ever bind, for shapes that are clearly something else: a
+ * URL, an address with a port, the bracketed IPv6 form a URL uses, or four numbers that are not an
+ * IPv4 address. Anything else is left for the system to judge when the server listens.
+ */
+const hostShapeProblem = (value: string): string | undefined => {
+  if (value.includes('://'))
+    return 'host must be an address, not a URL; leave out the scheme and any port';
+  if (value.startsWith('[') || value.endsWith(']')) {
+    return 'host must be an IPv6 address without brackets, such as ::1';
+  }
+  if (/^[^:]*:\d*$/u.test(value))
+    return 'host must be an address without a port; give the port on its own';
+  if (/^\d+\.\d+\.\d+\.\d+$/u.test(value) && !isIPv4(value)) {
+    return 'host must be a valid IPv4 address, with each of its four numbers from 0 to 255';
+  }
+  return undefined;
+};
+
 /** A host is an address to bind, not a URL. */
 const Host = Schema.String.pipe(
   Schema.filter((value) =>
     value.length > 0 && value.length <= 255 && !UNPRINTABLE.test(value)
-      ? true
+      ? (hostShapeProblem(value) ?? true)
       : 'host must be a non-empty address with no spaces or control characters',
   ),
 );
@@ -56,7 +76,9 @@ const DatabasePath = Schema.String.pipe(
  * reads the bound address back, and useless to an operator whose clients need a fixed address - so it
  * is rejected here and permitted only through the programmatic interface.
  */
-const ConfiguredPort = boundedInteger('port', 1, 65_535);
+export const CONFIGURED_PORT_RANGE = { min: 1, max: 65_535 } as const;
+
+const ConfiguredPort = boundedInteger('port', CONFIGURED_PORT_RANGE.min, CONFIGURED_PORT_RANGE.max);
 
 const ServerShape = Schema.Struct({
   host: Schema.optional(Host),
@@ -167,8 +189,24 @@ export interface OptionOverrides {
   readonly databasePath?: string;
 }
 
-/** Each override is checked by the schema of the file key it replaces, and reported by its flag. */
+/** The configuration file's own path, as `--config` gives it: a path, like the database's. */
+const ConfigPath = Schema.String.pipe(
+  Schema.filter((value) =>
+    value.trim().length > 0 && value.length <= 4_096 && !/[\p{Cc}\p{Cf}]/u.test(value)
+      ? true
+      : 'config path must be a non-empty path with no control characters',
+  ),
+);
+
+/** The flags `server serve` takes: the overrides, and the configuration file they override. */
+export type ServeFlags = OptionOverrides & { readonly configPath?: string };
+
+/**
+ * Each override is checked by the schema of the file key it replaces, and reported by its flag;
+ * `--config` by the path rule, so an empty one is a mistake in the command like an empty `--database`.
+ */
 const OVERRIDE_FLAGS = [
+  { key: 'configPath', flag: '--config', schema: ConfigPath },
   { key: 'host', flag: '--host', schema: Host },
   { key: 'port', flag: '--port', schema: ConfiguredPort },
   { key: 'databasePath', flag: '--database', schema: DatabasePath },
@@ -178,7 +216,7 @@ const OVERRIDE_FLAGS = [
  * Refuse flag values the file's own schemas would refuse, by flag name. A mistake in the command, so
  * it has its own reason: the command as typed cannot succeed, whatever the configuration says.
  */
-export const checkOverrides = (overrides: OptionOverrides): void => {
+export const checkOverrides = (overrides: ServeFlags): void => {
   const problems = overrideProblems(overrides);
   if (problems.length > 0) {
     configurationFailure(
@@ -188,7 +226,7 @@ export const checkOverrides = (overrides: OptionOverrides): void => {
   }
 };
 
-const overrideProblems = (overrides: OptionOverrides): string[] =>
+const overrideProblems = (overrides: ServeFlags): string[] =>
   OVERRIDE_FLAGS.flatMap(({ key, flag, schema }) => {
     const given = overrides[key];
     if (given === undefined) return [];

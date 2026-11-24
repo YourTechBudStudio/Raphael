@@ -5,4 +5,5 @@ Favorited area 4: Platform
   path:     /work/platform
   favorite: yes
 ==== stderr ====
-It is archived, so raphael favorites leaves it out. To see it: raphael favorites --include-archived
+It is archived, so raphael favorites leaves it out.
+hint: Run "raphael favorites --include-archived" to see it.

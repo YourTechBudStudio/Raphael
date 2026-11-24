@@ -170,6 +170,13 @@ const codeOf = (value: unknown): string | undefined => {
 };
 
 /**
+ * The host name lookup itself failed, whatever code it gave: nothing can be sent before a name
+ * resolves. A name longer than DNS allows fails here with `EINVAL`, a code that alone proves nothing.
+ */
+const lookupFailed = (value: unknown): boolean =>
+  (value as { syscall?: unknown } | null)?.syscall === 'getaddrinfo';
+
+/**
  * Whether a failed `fetch` provably never sent the request.
  *
  * Only a socket error carried as the cause can prove it, and only one of the codes above. A connection
@@ -182,13 +189,15 @@ const neverSent = (error: unknown): boolean => {
   const cause: unknown = error.cause;
   if (cause === undefined) return false;
   const code = codeOf(cause);
-  if (code !== undefined) return NOT_CONNECTED_CODES.has(code);
+  if (code !== undefined) return NOT_CONNECTED_CODES.has(code) || lookupFailed(cause);
   if (cause instanceof Error && NOT_CONNECTED_MESSAGES.has(cause.message)) return true;
   const attempts = (cause as { errors?: unknown } | null)?.errors;
   return (
     Array.isArray(attempts) &&
     attempts.length > 0 &&
-    attempts.every((attempt) => NOT_CONNECTED_CODES.has(codeOf(attempt) ?? ''))
+    attempts.every(
+      (attempt) => NOT_CONNECTED_CODES.has(codeOf(attempt) ?? '') || lookupFailed(attempt),
+    )
   );
 };
 
@@ -211,6 +220,22 @@ const CAUSES: ReadonlyMap<string, NetworkCause> = new Map([
 ]);
 
 /**
+ * Codes that say the handshake worked and the server's certificate is what was refused: expired,
+ * self-signed, from an unknown issuer, or for another name.
+ */
+const CERTIFICATE_CODE =
+  /^(CERT_|UNABLE_TO_GET_ISSUER|UNABLE_TO_VERIFY_LEAF|DEPTH_ZERO_SELF_SIGNED|SELF_SIGNED_CERT|ERR_TLS_CERT_ALTNAME)/u;
+
+/**
+ * Whether an answer arrived that is not HTTP: undici's parser refusing the first bytes it read
+ * ("Response does not match the HTTP/1.1 protocol"), as an SSH banner, a TLS server addressed with
+ * `http://`, or any other protocol produces.
+ */
+const isParserFailure = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  (cause.name === 'HTTPParserError' || (codeOf(cause)?.startsWith('HPE_') ?? false));
+
+/**
  * What a failed `fetch` says about why, read from its cause's code. Certificate and TLS codes are
  * recognized by their families; a multi-address attempt counts only when every attempt agrees.
  */
@@ -220,17 +245,52 @@ const causeOf = (error: unknown): NetworkCause | undefined => {
     if (code === undefined) return undefined;
     const known = CAUSES.get(code);
     if (known !== undefined) return known;
-    return /^(ERR_TLS_|ERR_SSL_|CERT_|UNABLE_TO_|DEPTH_ZERO_|SELF_SIGNED_)/u.test(code)
-      ? 'tls'
-      : undefined;
+    if (CERTIFICATE_CODE.test(code)) return 'certificate';
+    return /^(ERR_TLS_|ERR_SSL_)/u.test(code) ? 'tls' : undefined;
   };
   const cause: unknown = error.cause;
+  if (isParserFailure(cause)) return 'not_http';
+  if (cause instanceof Error && NOT_CONNECTED_MESSAGES.has(cause.message)) return 'blocked_port';
+  if (lookupFailed(cause)) return 'dns';
   const direct = classify(codeOf(cause));
   if (direct !== undefined) return direct;
   const attempts = (cause as { errors?: unknown } | null)?.errors;
   if (!Array.isArray(attempts) || attempts.length === 0) return undefined;
   const causes = new Set(attempts.map((attempt) => classify(codeOf(attempt))));
   return causes.size === 1 ? [...causes][0] : undefined;
+};
+
+/**
+ * What the system said about a failed `fetch`: each underlying error's name, code and first line.
+ * Messages from the socket and parser layers name codes and addresses, never what was exchanged.
+ */
+const systemErrorOf = (error: unknown): string | undefined => {
+  if (!(error instanceof Error)) return undefined;
+  const describe = (value: unknown): string | undefined => {
+    if (!(value instanceof Error) && typeof value !== 'object') return undefined;
+    const name = value instanceof Error ? value.name : 'Error';
+    const code = codeOf(value);
+    const message = value instanceof Error ? (value.message.split('\n')[0] ?? '') : '';
+    return [
+      name,
+      code === undefined ? undefined : `(${code})`,
+      message === '' ? undefined : `: ${message}`,
+    ]
+      .filter((part) => part !== undefined)
+      .join(' ')
+      .replace(' : ', ': ');
+  };
+  const cause: unknown = error.cause;
+  const attempts = (cause as { errors?: unknown } | null)?.errors;
+  const parts = Array.isArray(attempts) && attempts.length > 0 ? attempts : [cause ?? error];
+  const described = parts.map(describe).filter((part): part is string => part !== undefined);
+  return described.length === 0 ? undefined : described.join('; ');
+};
+
+/** The shape of an answer that could not be read, for diagnosis: never its content. */
+const answerShape = (response: Response, text: string, parsed: boolean): string => {
+  const type = response.headers.get('content-type') ?? 'no content type';
+  return `status ${response.status}, ${type.split(';')[0]}, ${new TextEncoder().encode(text).length} bytes, ${parsed ? 'JSON this request does not expect' : 'not JSON'}`;
 };
 
 /** The origin of a redirect's target, when it names an HTTP or HTTPS one. */
@@ -306,12 +366,14 @@ const dispatch = async <A>(
       });
     }
     const cause = causeOf(error);
+    const diagnostic = systemErrorOf(error);
     return fail({
       kind: 'network',
       effect,
       delivery: !answerStarted && neverSent(error) ? 'not_sent' : 'unknown',
       message: 'The server could not be reached.',
       ...(cause === undefined ? {} : { cause }),
+      ...(diagnostic === undefined ? {} : { diagnostic }),
     });
   };
 
@@ -353,7 +415,7 @@ const dispatch = async <A>(
       // The status arrived and the body did not: the server had the request, and its answer was lost.
       return exchangeFailed(error, true);
     }
-    return readResponse(response.status, text, call);
+    return readResponse(response, text, call);
   } finally {
     clearTimeout(timer);
     call.signal?.removeEventListener('abort', onCallerAbort);
@@ -373,19 +435,23 @@ const parseJson = (text: string): { readonly value: unknown } | undefined => {
   }
 };
 
-const readResponse = <A>(status: number, text: string, call: OperationCall<A>): ClientResult<A> => {
+const readResponse = <A>(
+  response: Response,
+  text: string,
+  call: OperationCall<A>,
+): ClientResult<A> => {
+  const { status } = response;
   const parsed = parseJson(text);
+  const unreadable = (message: string): ClientResult<A> =>
+    fail({
+      ...badResponse(call.effect, message, status),
+      diagnostic: answerShape(response, text, parsed !== undefined),
+    });
 
   if (status === call.successStatus) {
     const decoded = parsed === undefined ? undefined : call.decode(parsed.value);
     if (decoded === undefined || Either.isLeft(decoded)) {
-      return fail(
-        badResponse(
-          call.effect,
-          'The server answered with a result this client could not read.',
-          status,
-        ),
-      );
+      return unreadable('The server answered with a result this client could not read.');
     }
     return succeed(decoded.right);
   }
@@ -393,13 +459,7 @@ const readResponse = <A>(status: number, text: string, call: OperationCall<A>): 
   const envelope = parsed === undefined ? undefined : decodeApiErrorEnvelope(parsed.value);
   if (envelope === undefined || Either.isLeft(envelope)) {
     if (status < 400) {
-      return fail(
-        badResponse(
-          call.effect,
-          `The server answered ${status}, which this request does not expect.`,
-          status,
-        ),
-      );
+      return unreadable(`The server answered ${status}, which this request does not expect.`);
     }
     // A proxy's page or a bare status: the status is all there is to go on.
     return fail({
@@ -408,6 +468,7 @@ const readResponse = <A>(status: number, text: string, call: OperationCall<A>): 
       delivery: 'answered',
       status,
       message: `The server answered ${status}.`,
+      diagnostic: answerShape(response, text, parsed !== undefined),
     });
   }
   const { code, message, details } = envelope.right.error;

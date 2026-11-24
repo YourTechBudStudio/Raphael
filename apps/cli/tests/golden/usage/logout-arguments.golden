@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+logout takes no arguments.
+The saved login is unchanged.
+hint: Run "raphael logout --help" for usage.

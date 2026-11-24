@@ -14,9 +14,163 @@ raphael help exit-codes - Choose recovery from the process exit code.
   130  Interrupted by SIGINT.
   143  Interrupted by SIGTERM.
 
-For exit 7 reconcile by reading before retrying. SIGINT and SIGTERM retain their conventional codes; a write interrupted after sending may still have been applied. JSON failures also report applied and retryable.
+For exit 7 reconcile by reading before retrying. SIGINT and SIGTERM retain their
+conventional codes; a write interrupted after sending may still have been
+applied. JSON failures also report applied and retryable.
 
-Server error codes: invalid_input, unauthorized, node_not_found, route_not_found, method_not_allowed, slug_conflict, revision_conflict, node_archived, payload_too_large, unsupported_media_type, invalid_parent, unsupported_content, storage_busy, internal_error. Machine codes are stable identifiers; use exitCode to choose a recovery category.
+Every failure carries a stable identifier in error.code. A failure the server
+answered keeps the server's code; every other failure carries one of this CLI's
+codes. A code listed nowhere here comes from a newer server, and its exitCode
+still applies. Choose a recovery from exitCode; use the code to tell causes
+apart.
+
+Server codes:
+  invalid_input             Exit 2.
+  unauthorized              Exit 5.
+  node_not_found            Exit 3.
+  route_not_found           Exit 5.
+  method_not_allowed        Exit 5.
+  slug_conflict             Exit 4.
+  revision_conflict         Exit 4.
+  node_archived             Exit 4.
+  payload_too_large         Exit 2.
+  unsupported_media_type    Exit 2.
+  invalid_parent            Exit 4.
+  unsupported_content       Exit 2.
+  storage_busy              Exit 6.
+  internal_error            Exit 1, or 7 when a write may have been applied.
+
+Codes from this CLI:
+  usage                     Exit 2. The command as typed was refused before
+                            anything was sent: an unknown command or option, a
+                            missing or malformed value, or input the rules
+                            refuse.
+  cancelled                 Exit 2. A login prompt was cancelled; nothing was
+                            saved.
+  interrupted               Exit 130 or 143. SIGINT or SIGTERM stopped the
+                            command. After a write was sent, applied is null:
+                            read before retrying.
+  invalid_request           Exit 2. The request failed the client's own check,
+                            so it was not sent.
+  unexpected                Exit 1 or 7. A fault in this CLI. Exit 7 when a
+                            write had already been sent, otherwise 1. Run it
+                            again with RAPHAEL_DEBUG=1 to see where it failed.
+  not_configured            Exit 5. There is no saved login, and
+                            RAPHAEL_ENDPOINT and RAPHAEL_API_KEY are not set.
+  unsupported_platform      Exit 5. Saved logins are not supported on this
+                            platform; set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY
+                            instead.
+  no_home                   Exit 5. XDG_CONFIG_HOME is not set, and HOME is
+                            empty, or unset on an account with no home
+                            directory, so there is no place for a saved login.
+                            An unset HOME otherwise falls back to the account's
+                            home directory.
+  relative_xdg_config_home  Exit 5. XDG_CONFIG_HOME is not an absolute path.
+  relative_home             Exit 5. HOME is not an absolute path.
+  directory_unusable        Exit 5. The directory for the saved login, or a
+                            directory above it, cannot be inspected, is not a
+                            directory, or is not private to you.
+  directory_uncreatable     Exit 5. The directory for the saved login could not
+                            be created.
+  file_unusable             Exit 5. The saved login file is a link, not a
+                            regular file, or readable by other users.
+  file_unreadable           Exit 5. The saved login file could not be read.
+  file_too_large            Exit 5. The saved login file is larger than a saved
+                            login can be.
+  file_malformed            Exit 5. The saved login file is not JSON with an
+                            endpoint and an API key.
+  write_failed              Exit 5. login could not save, or logout could not
+                            remove, the saved login file.
+  incomplete_environment    Exit 5. Only one of RAPHAEL_ENDPOINT and
+                            RAPHAEL_API_KEY is set; set both or neither.
+  malformed                 Exit 2 or 5. The server address is not a URL. Exit 2
+                            for an address typed at login, 5 otherwise.
+  unsupported_scheme        Exit 2 or 5. The server address does not start with
+                            http:// or https://. Exit 2 for an address typed at
+                            login, 5 otherwise.
+  credentials_in_url        Exit 2 or 5. The server address carries a user name
+                            or password. Exit 2 for an address typed at login, 5
+                            otherwise.
+  query_not_allowed         Exit 2 or 5. The server address has a part after
+                            "?". Exit 2 for an address typed at login, 5
+                            otherwise.
+  fragment_not_allowed      Exit 2 or 5. The server address has a part after
+                            "#". Exit 2 for an address typed at login, 5
+                            otherwise.
+  api_key_missing           Exit 2 or 5. No API key: none was given at login
+                            (exit 2), the saved login has none, or the server
+                            has none configured (exit 5).
+  api_key_unsendable        Exit 2 or 5. The API key cannot be sent in a request
+                            header. Exit 2 for a key given at login, 5 for a
+                            saved, environment or server key.
+  timeout_out_of_range      Exit 5. RAPHAEL_TIMEOUT is not a whole number of
+                            seconds in the allowed range.
+  unreachable               Exit 5 or 6. Could not connect to the server, so
+                            nothing was sent. Exit 5 when the secure connection
+                            could not be set up or the server's certificate is
+                            not trusted, which retrying cannot change; otherwise
+                            6.
+  blocked_port              Exit 5. The address uses a port that requests are
+                            never sent to, so nothing was sent.
+  not_http                  Exit 5 or 7. Something answered at the address, but
+                            not in HTTP. Exit 7 when a write may have been sent,
+                            otherwise 5.
+  connection_lost           Exit 5, 6 or 7. The connection failed after the
+                            request was sent. Exit 7 for a write, 5 when the
+                            secure connection failed, otherwise 6.
+  timeout                   Exit 6 or 7. No answer within the timeout
+                            (RAPHAEL_TIMEOUT). Exit 7 when a write may have been
+                            sent, otherwise 6.
+  incompatible_protocol     Exit 5 or 7. The server speaks another protocol
+                            version; details names both sides. Exit 7 when a
+                            write may have been applied, otherwise 5; after a
+                            write answered with a redirect or a bare 3xx or 4xx
+                            status, applied is null with exit 5.
+  not_raphael               Exit 5 or 7. The address does not answer as a
+                            Raphael server. Exit 7 when a write may have been
+                            applied, otherwise 5; after a write answered with a
+                            redirect or a bare 3xx or 4xx status, applied is
+                            null with exit 5.
+  bad_response              Exit 1, 5 or 7. The answer could not be read, or was
+                            a redirect or a status the command does not expect.
+                            Exit 7 for an unreadable success after a write, 1
+                            for one on a read, otherwise 5; after a write,
+                            applied is null, because something in front of the
+                            server may have forwarded it.
+  http_status               Exit 1, 5 or 7. The answer was a bare HTTP status
+                            with no Raphael error, often from a proxy. For a 5xx
+                            status: exit 7 after a write, 1 on a read. Otherwise
+                            5; after a write, applied is null, because a proxy
+                            may have forwarded it.
+  port_in_use               Exit 5. The port is already in use.
+  listen_denied             Exit 5. This user may not listen on that port.
+  host_unavailable          Exit 5. The host is not an address on this machine.
+  listen_failed             Exit 1. The server could not listen for another
+                            reason the error names.
+  database_in_use           Exit 5. Another process, such as another Raphael
+                            server, is using the database.
+  database_newer            Exit 5. The database was migrated by a newer or
+                            different Raphael release.
+  database_unusable         Exit 1 or 5. The database could not be opened or
+                            created. Exit 1 when the cause is not a setting,
+                            such as a broken installation, otherwise 5.
+  start_failed              Exit 1. The server could not start for a reason of
+                            its own.
+  option_invalid            Exit 2. A server serve flag has a value the server
+                            cannot use.
+  config_unreadable         Exit 5. The server configuration file could not be
+                            read.
+  config_too_large          Exit 5. The server configuration file is too large.
+  config_malformed          Exit 5. The server configuration file is empty or
+                            not valid YAML.
+  config_unsafe             Exit 5. The server configuration file uses YAML that
+                            is not read literally: an anchor, an alias, a tag,
+                            or more than one document.
+  config_invalid            Exit 5. A server setting has a value the server
+                            cannot use.
+  env_unreadable            Exit 5. The .env file the server reads could not be
+                            read.
+  env_too_large             Exit 5. The .env file the server reads is too large.
 
 Examples:
   raphael get /work --json

@@ -167,9 +167,9 @@ export const describeFilterRejection = (rejection: FilterRejection): string => {
     case 'invalid_value':
       switch (rejection.key) {
         case 'type':
-          return `type must be ${NODE_TYPES.join(', ')}, or $in with one or more of those values`;
+          return `type must be ${NODE_TYPES.join(', ')}, or $in with one or more distinct values from that list`;
         case 'kind':
-          return `kind must be ${RESOURCE_KINDS.join(', ')}, or $in with one or more of those values`;
+          return `kind must be ${RESOURCE_KINDS.join(', ')}, or $in with one or more distinct values from that list`;
         case 'tags':
           return `tags must be a nonempty tag of at most ${TAG_MAX_CODE_POINTS} characters, or $in with at most ${TAGS_MAX_COUNT} distinct tags`;
         default:

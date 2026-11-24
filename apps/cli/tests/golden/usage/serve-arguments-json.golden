@@ -1,0 +1,5 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"server serve","error":{"code":"usage","category":"usage","message":"server serve does not take --json.","hint":"Run \"raphael server serve --help\" for usage.","exitCode":2,"applied":false,"retryable":false}}

@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---body could not be read as a TipTap document, so no title can be taken from it. The body has an element Raphael does not support (block 1). Supported: paragraph, heading, bulletList, orderedList, listItem, codeBlock, blockquote, horizontalRule, hardBreak.
+The body has an element Raphael does not support (block 1). Supported: paragraph, heading, bulletList, orderedList, listItem, codeBlock, blockquote, horizontalRule, hardBreak.
 The change was not sent.
-hint: Run "raphael create --help" for usage.
+hint: Run "raphael help content" for the elements Raphael accepts.

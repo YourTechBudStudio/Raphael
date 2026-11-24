@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Give --tag or --no-tags, not both.
+The change was not sent.
+hint: Run "raphael update --help" for usage.

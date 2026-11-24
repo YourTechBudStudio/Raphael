@@ -47,6 +47,14 @@ import {
  * same strings into the same trees, and this paragraph would be the thing that needs rewriting.
  */
 
+/**
+ * The punctuation property above, in the words help and other clients show a person. A term such as
+ * `auth-token` is one operand, so its words match as one contiguous, ordered sequence and are never
+ * ORed like words separated by spaces. The backend's search tests pin this sentence's claims.
+ */
+export const SEARCH_PUNCTUATION_RULE =
+  'Words joined by punctuation, such as auth-token or auth.token, must appear together and in that order, like a phrase. * is punctuation too: auth* matches auth, not authentication.';
+
 /** One thing to match: a single word, or a sequence of words that must appear contiguously. */
 export type SearchOperand = { readonly kind: 'term' | 'phrase'; readonly text: string };
 

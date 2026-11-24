@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Give a destination: an existing area or project, or the new full path.
+The change was not sent.
+hint: Run "raphael move --help" for usage.

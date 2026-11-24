@@ -3,5 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 The body has an element Raphael does not support (block 1). Supported: paragraph, heading, bulletList, orderedList, listItem, codeBlock, blockquote, horizontalRule, hardBreak.
-hint: Run "raphael get --help" for the body formats Raphael accepts.
+hint: Run "raphael help content" for the elements Raphael accepts.
 code: unsupported_content (422)

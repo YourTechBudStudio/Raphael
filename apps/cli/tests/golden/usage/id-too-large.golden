@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--id is too large to be an identifier.
+hint: Run "raphael get --help" for usage.

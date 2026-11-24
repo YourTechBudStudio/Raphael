@@ -1,0 +1,8 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The server refused the request (--title).
+Nothing was changed.
+hint: Run "raphael update --help" for usage.
+code: invalid_input (400)

@@ -1,0 +1,8 @@
+==== exit ====
+0
+==== stdout ====
+Updated resource.note 305: Item 305
+  path:     /work/platform/raphael/contract
+  was:      /work/platform/raphael/output-contract
+  revision: 2
+==== stderr ====

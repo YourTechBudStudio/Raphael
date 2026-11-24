@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---tag takes at most 25 tags.
+--tag: At most 25 tags may be given.
 The change was not sent.
 hint: Run "raphael create --help" for usage.

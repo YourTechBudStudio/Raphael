@@ -40,6 +40,37 @@ export const isCanonicalSlugShape = (value: string): boolean => {
 export const isCanonicalSlug = (value: string): boolean =>
   codePointLength(value) <= SLUG_MAX_CODE_POINTS && isCanonicalSlugShape(value);
 
+/** Why a submitted slug cannot be used as it is. */
+export type SlugRejectionReason =
+  /** Not a slug at all: some token breaks the grammar. */
+  | 'not_slug'
+  /** A slug, but longer than the submission bound. */
+  | 'slug_too_long';
+
+export interface SlugRejection {
+  readonly reason: SlugRejectionReason;
+  /** The bound that was exceeded, when the reason is a limit. */
+  readonly limit?: number;
+}
+
+/** Names what is wrong with a submitted slug, without repeating it. */
+export const inspectSlugInput = (value: string): SlugRejection | undefined => {
+  if (!isCanonicalSlugShape(value)) return { reason: 'not_slug' };
+  if (codePointLength(value) > SLUG_MAX_CODE_POINTS) {
+    return { reason: 'slug_too_long', limit: SLUG_MAX_CODE_POINTS };
+  }
+  return undefined;
+};
+
+/**
+ * One fixed sentence per reason, for every client and the server alike, so a slug refused before it
+ * is sent and one refused by the server read the same.
+ */
+export const describeSlugRejection = (rejection: SlugRejection): string =>
+  rejection.reason === 'slug_too_long'
+    ? `a slug may contain at most ${rejection.limit ?? SLUG_MAX_CODE_POINTS} characters`
+    : `a slug must follow this grammar: ${SLUG_GRAMMAR_DESCRIPTION}`;
+
 export type SlugDerivationReason =
   /** No letter or number survived normalization, so there is nothing to address the node by. */
   | 'slug_underivable'

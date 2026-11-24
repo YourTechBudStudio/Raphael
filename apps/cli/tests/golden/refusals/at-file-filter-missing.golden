@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The filter file at "<tmp>/missing.json" does not exist.
+hint: Run "raphael list --help" for usage.

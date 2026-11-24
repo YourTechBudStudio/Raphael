@@ -1,0 +1,7 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Could not write the new configuration in "<tmp>/raphael": permission denied.
+Nothing was saved.
+hint: Check that you can write to that directory, then run "raphael login" again.

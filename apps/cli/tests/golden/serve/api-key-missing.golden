@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+RAPHAEL_SERVER_API_KEY is not set in the environment or in "<tmp>/.env". Raphael will not start without a key.
+hint: Generate a key with "openssl rand -hex 32" and add RAPHAEL_SERVER_API_KEY=<key> to "<tmp>/.env".

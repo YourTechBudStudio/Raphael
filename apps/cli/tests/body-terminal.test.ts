@@ -20,7 +20,7 @@ const HINT = 'Reading the body from standard input. Finish with Ctrl-D, or Ctrl-
 const ENVIRONMENT = {
   PATH: process.env.PATH ?? '',
   TERM: 'dumb',
-  RAPHAEL_ENDPOINT: 'http://127.0.0.1:9',
+  RAPHAEL_ENDPOINT: 'http://127.0.0.1:2',
   RAPHAEL_API_KEY: 'zq9x-key-0123456789abcdef0123456789',
 };
 const ARGV = [main, 'create', 'resource.note', '/work/typed', '--title', 'Typed', '--body', '@-'];

@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"login","error":{"code":"directory_uncreatable","category":"not_configured","message":"Cannot create \"<tmp>/read-only/raphael\": permission denied.","hint":"Check that you can create that directory, or set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY in the environment instead.","exitCode":5,"applied":false,"retryable":false}}

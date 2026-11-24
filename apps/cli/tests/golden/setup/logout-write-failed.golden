@@ -1,0 +1,7 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Could not remove "<tmp>/raphael/config.json": permission denied.
+The saved login is unchanged.
+hint: Check that you can write to that directory, then run "raphael logout" again.

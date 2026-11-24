@@ -7,4 +7,4 @@ Key:      accepted
 Protocol: 2026-10-23 (both sides)
 Releases: server 9.9.9, this CLI <version>
 ==== stderr ====
-warning: The server runs raphael 9.9.9 and this CLI is 0.0.1. They speak the same protocol, so commands work; update one side to match.
+warning: The server runs Raphael 9.9.9 and this CLI is 0.0.1. They speak the same protocol, so commands work; update one side to match.

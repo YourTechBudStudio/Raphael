@@ -1,4 +1,4 @@
-import { canContain, parsePath } from '@raphael/contracts/nodes';
+import { canContain, describePathRejection, parsePath } from '@raphael/contracts/nodes';
 import { and, eq, isNull } from 'drizzle-orm';
 import { Either } from 'effect';
 
@@ -108,7 +108,11 @@ export const lookupScope = (
   }
 
   const segments = parsePath(selector.path);
-  if (Either.isLeft(segments)) return raise(new InvalidInput({ field, reason: 'invalid' }));
+  if (Either.isLeft(segments)) {
+    return raise(
+      new InvalidInput({ field, reason: 'invalid', rule: describePathRejection(segments.left) }),
+    );
+  }
   if (segments.right.length === 0) return { kind: 'root' };
 
   const node = byPath(orm, segments.right, operation);

@@ -3,4 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 "<tmp>/raphael" is accessible to other users (mode 755). Raphael will not report a credential as protected when it is not.
+The saved login is unchanged.
 hint: If it is yours, run "chmod 700 <tmp>/raphael".

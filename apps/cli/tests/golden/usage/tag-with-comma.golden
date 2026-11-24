@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--tag does not accept commas inside a tag.
+The change was not sent.
+hint: Give each tag its own --tag.

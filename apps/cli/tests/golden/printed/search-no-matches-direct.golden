@@ -3,4 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 Nothing in /work matches the queries.
-Only direct children were searched. To search everything underneath: raphael search /work -q zzzz
+Only direct children were searched.
+hint: Run "raphael search /work -q zzzz" to search everything underneath.

@@ -3,8 +3,16 @@ import type {
   ApiErrorCode,
   ApiErrorDetails,
   InvalidInputReason as ApiInvalidInputReason,
+  InvalidParentReason,
+  NodeArchivedReason,
+  SlugConflictReason,
 } from '@raphael/contracts';
-import { PARENTAGE, RESOURCE_KINDS } from '@raphael/contracts/nodes';
+import {
+  PARENTAGE,
+  RESOURCE_KINDS,
+  asSentence,
+  describeInvalidInput,
+} from '@raphael/contracts/nodes';
 import { Data } from 'effect';
 
 import type { NodeType } from './types.ts';
@@ -33,6 +41,8 @@ export class InvalidInput extends Data.TaggedError('InvalidInput')<{
   readonly reason: InvalidInputReason;
   /** The bound that was exceeded, when the reason is a limit. */
   readonly limit?: number;
+  /** The contract's sentence for the exact rule broken, when the check knows it; never input. */
+  readonly rule?: string;
 }> {}
 
 /** The request fields a selector can be named under when it does not resolve. */
@@ -50,7 +60,7 @@ export class NodeNotFound extends Data.TaggedError('NodeNotFound')<{
  */
 export class InvalidParent extends Data.TaggedError('InvalidParent')<{
   readonly field: 'parent' | 'destination';
-  readonly reason: 'parentage' | 'cycle';
+  readonly reason: InvalidParentReason;
   readonly parentType: NodeType | 'root';
   readonly childType: NodeType;
 }> {}
@@ -71,7 +81,7 @@ export interface BlockingNode {
 export class SlugConflict extends Data.TaggedError('SlugConflict')<{
   readonly field: 'slug' | 'destination';
   readonly slug: string;
-  readonly scope: 'root' | 'sibling';
+  readonly scope: SlugConflictReason;
   readonly parentId?: number | null;
   readonly holder?: BlockingNode;
 }> {}
@@ -89,7 +99,7 @@ export class RevisionConflict extends Data.TaggedError('RevisionConflict')<{
  */
 export class NodeArchived extends Data.TaggedError('NodeArchived')<{
   readonly field: 'target' | 'parent' | 'destination';
-  readonly standing: 'direct' | 'inherited';
+  readonly standing: NodeArchivedReason;
   /** The nearest archived item: the node itself when `direct`, else the container it inherits from. */
   readonly blocking?: BlockingNode;
 }> {}
@@ -125,34 +135,20 @@ export interface PublicApiError {
   readonly details?: ApiErrorDetails;
 }
 
-/** Fields named in the plural, so a sentence about them agrees. */
-const PLURAL_FIELDS: ReadonlySet<RequestField> = new Set(['tags', 'scopes', 'queries']);
-
-const invalidInputMessage = ({ field, reason, limit }: InvalidInput): string => {
-  switch (reason) {
-    case 'invalid':
-      if (field === undefined) return 'The request was not valid.';
-      return `The ${field} ${PLURAL_FIELDS.has(field) ? 'are' : 'is'} not valid.`;
-    case 'title_required':
-      return 'Title is required.';
-    case 'title_too_long':
-      return `Title is longer than ${limit} characters.`;
-    case 'slug_too_long':
-      return `The slug is longer than ${limit} characters.`;
-    case 'active_requires_project':
-      return 'Only a project can be marked active.';
-    case 'favorite_requires_container':
-      return 'Only areas and projects can be favorites.';
-    case 'query_malformed':
-      return 'The search query is not well formed.';
-    case 'query_too_long':
-      return `The search query is longer than ${limit} characters.`;
-    case 'query_too_many_terms':
-      return `The search query has more than ${limit} terms.`;
-    case 'filter_unsupported':
-      return 'The filter uses a key or operator that is not supported.';
-  }
-};
+/**
+ * The contract's sentence for the rule, the same one a client words when it catches the rule before
+ * sending, so the phone and the command line read the same refusal either way. Generic: it names the
+ * rule and its limit, never what was sent.
+ */
+const invalidInputMessage = ({ field, reason, limit, rule }: InvalidInput): string =>
+  asSentence(
+    describeInvalidInput({
+      reason,
+      ...(field === undefined ? {} : { field }),
+      ...(limit === undefined ? {} : { limit }),
+      ...(rule === undefined ? {} : { rule }),
+    }),
+  );
 
 const notFoundMessage = ({ field, index }: NodeNotFound): string => {
   switch (field) {

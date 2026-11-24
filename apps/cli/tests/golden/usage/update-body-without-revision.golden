@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+A body change needs --revision: pass the revision you read the body at, so a newer version on the server is not overwritten.
+The change was not sent.
+hint: Run "raphael update --help" for usage.

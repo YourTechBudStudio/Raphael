@@ -1,0 +1,2 @@
+cli:    --metadata: Metadata must be a JSON object.
+server: Metadata must be a JSON object.

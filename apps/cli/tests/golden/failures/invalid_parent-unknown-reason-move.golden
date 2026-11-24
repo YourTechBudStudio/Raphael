@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+/work/p cannot move to /work/raphael: the server gave a reason this CLI does not know.
+Nothing was changed.
+hint: Run "raphael list /" to choose another place. Check that this CLI and the server are the same version with "raphael status".
+code: invalid_parent (422)

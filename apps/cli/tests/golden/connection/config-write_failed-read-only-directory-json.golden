@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"login","error":{"code":"write_failed","category":"not_configured","message":"Could not write the new configuration in \"<tmp>/raphael\": permission denied.","hint":"Check that you can write to that directory, then run \"raphael login\" again.","exitCode":5,"applied":false,"retryable":false}}

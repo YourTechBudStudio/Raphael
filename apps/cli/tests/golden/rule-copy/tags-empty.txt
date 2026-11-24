@@ -1,0 +1,2 @@
+cli:    --tag: A tag must not be empty.
+server: A tag must not be empty.

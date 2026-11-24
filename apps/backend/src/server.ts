@@ -11,6 +11,8 @@ import {
 import {
   DatabaseUnavailableError,
   Db,
+  ForeignDatabaseError,
+  MigrationFailedError,
   MigrationHistoryError,
   layer as databaseLayer,
 } from './infrastructure/database/index.ts';
@@ -42,7 +44,9 @@ export interface RunningServer {
 export class StartupFailure extends Error {
   readonly stage: 'listen' | 'database';
   /**
-   * The system error code (`EADDRINUSE`, `EACCES`, ...), or `database_in_use` or `migration_history`;
+   * The system error code (`EADDRINUSE`, `EACCES`, ...), or `database_in_use`, `migration_history`
+   * `foreign_database` (another application's database, left unchanged) or `migration_failed` (a
+   * migration's SQL failed against the database's schema, and was rolled back);
    * undefined when nothing more specific is known.
    */
   readonly code: string | undefined;
@@ -193,7 +197,11 @@ export const serve = (
                 ? 'database_in_use'
                 : cause instanceof MigrationHistoryError
                   ? 'migration_history'
-                  : errorCode(cause),
+                  : cause instanceof ForeignDatabaseError
+                    ? 'foreign_database'
+                    : cause instanceof MigrationFailedError
+                      ? 'migration_failed'
+                      : errorCode(cause),
             host: address.address,
             port: address.port,
             databasePath,

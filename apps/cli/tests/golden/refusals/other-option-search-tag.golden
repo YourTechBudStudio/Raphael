@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+search does not take --tag.
+hint: To filter by tag, use --filter '{"tags":{"$in":["urgent"]}}'.

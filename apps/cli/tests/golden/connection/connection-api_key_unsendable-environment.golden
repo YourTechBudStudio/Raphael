@@ -2,5 +2,5 @@
 5
 ==== stdout ====
 ==== stderr ====
-RAPHAEL_API_KEY has characters that cannot be sent: a key must be visible ASCII characters with no spaces.
+RAPHAEL_API_KEY cannot be sent: a key must be 1 to 512 visible ASCII characters with no spaces.
 hint: Set RAPHAEL_API_KEY to the server's RAPHAEL_SERVER_API_KEY, exactly.

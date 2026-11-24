@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
--q is longer than 1000 characters.
+-q: A query may be at most 1000 characters.
 hint: Run "raphael search --help" for usage.
 code: invalid_input (400)

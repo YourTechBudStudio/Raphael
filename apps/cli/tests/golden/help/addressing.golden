@@ -3,26 +3,49 @@
 ==== stdout ====
 raphael help addressing - Paths, ids, slugs, containment and field limits.
 
-Paths are absolute: /work/raphael/backend. The root is /. For commands that address one item, use a path or --id, never both. List and search may mix paths and repeated --id. The root can be listed and searched, but cannot be read or changed as an item. A path changes when an item or an ancestor moves or changes slug; its positive integer id stays the same. --id is repeatable only on list and search.
+Paths are absolute: /work/raphael/backend. The root is /. For commands that
+address one item, use a path or --id, never both. List and search may mix paths
+and repeated --id. The root can be listed and searched, but cannot be read or
+changed as an item. A path changes when an item or an ancestor moves or changes
+slug; its positive integer id stays the same. --id is repeatable only on list
+and search.
 
-Types: area, project, resource.note. Items that can hold children: area, project.
+Types: area, project, resource.note. Items that can hold children: area,
+project.
 
-The root (/) can directly hold area.
-area can directly hold area, project, resource.note.
-project can directly hold resource.note.
-resource.note cannot hold children.
+The root (/) can directly hold: area.
+An area can directly hold: area, project, resource.note.
+A project can directly hold: resource.note.
+A resource.note cannot hold children.
 
-NFC lowercase Unicode letter or number tokens joined by single hyphens; combining marks may follow the first letter or number in each token. A slug may contain at most 100 Unicode characters.
+NFC lowercase Unicode letter or number tokens joined by single hyphens;
+combining marks may follow the first letter or number in each token. A slug may
+contain at most 100 Unicode characters.
 
-Create with a full path, or with --parent-id and --slug. The final path segment is the new slug. Parent items must already exist. Renaming a title does not change the slug; use update --slug to change its address. Archive retains the item and reserves its slug. There is no delete command.
+Create with a full path, or with --parent-id and --slug. The final path segment
+is the new slug. Parent items must already exist. Renaming a title does not
+change the slug; use `update --slug` to change its address. Archive retains the
+item and reserves its slug. There is no delete command.
 
-Titles are required and may contain at most 200 characters after trimming. Descriptions may contain at most 4000 characters. Give each tag its own --tag: 1–50 characters per tag, at most 25 tags. Tags are trimmed and NFC-normalized, are case-sensitive, and must not repeat or contain commas. Metadata is a JSON object set once at create: at most 50 top-level keys, 5 levels deep, 100 characters per key, and 16384 serialized UTF-8 bytes.
+Titles are required and may contain at most 200 characters after trimming.
+Descriptions may contain at most 4000 characters. Give each tag its own --tag:
+1–50 characters per tag, at most 25 tags. Tags are trimmed and NFC-normalized,
+are case-sensitive, and must not repeat or contain commas. Metadata is a JSON
+object set once at create: at most 50 top-level keys, 5 levels deep, 100
+characters per key, and 16384 serialized UTF-8 bytes.
 
-The default page contains at most 50 results. --limit accepts 1–500; --skip skips results. At most 10 paths or ids may be searched or listed in one request.
+The default page contains at most 50 results. --limit accepts 1–500; --skip
+skips results. At most 10 paths or ids may be searched or listed in one request.
 
-For list: --order-by accepts slug, updatedAt, id with asc or desc; for example --order-by updatedAt:desc. Search orders by relevance and does not accept --order-by.
+For list: --order-by accepts slug, updatedAt, id with asc or desc; for example
+`--order-by updatedAt:desc`. Search orders by relevance and does not accept
+--order-by.
 
---filter accepts a JSON object with keys type, kind, tags. Allowed type values: area, project, resource. Allowed kind values: note. Each value is a scalar or {"$in":[...]}; sibling keys are ANDed. Tags match at least one supplied tag, with exact case after trimming and NFC normalization. A kind does not imply a type.
+--filter accepts a JSON object with keys type, kind, tags. Allowed type values:
+area, project, resource. Allowed kind values: note. Each value is a scalar or
+{"$in":[...]}; sibling keys are ANDed. Tags match at least one supplied tag,
+with exact case after trimming and NFC normalization. A kind does not imply a
+type.
 
 Examples:
   raphael get /work/raphael

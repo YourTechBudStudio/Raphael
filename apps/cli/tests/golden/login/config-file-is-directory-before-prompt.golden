@@ -1,0 +1,7 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Could not replace "<tmp>/raphael/config.json": it is a directory.
+Nothing was saved.
+hint: Move "<tmp>/raphael/config.json" out of the way, then run "raphael login" again.

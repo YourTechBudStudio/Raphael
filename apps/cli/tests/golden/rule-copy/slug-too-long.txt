@@ -1,0 +1,2 @@
+cli:    --slug: A slug may contain at most 100 characters.
+server: A slug may contain at most 100 characters.

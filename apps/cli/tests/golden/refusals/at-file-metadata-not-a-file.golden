@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The metadata file at "<tmp>/folder" is not a regular file.
+The change was not sent.
+hint: Give the JSON inline instead.

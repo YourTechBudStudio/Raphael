@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-path: A path segment must follow the slug grammar at segment 1: NFC lowercase Unicode letter or number tokens joined by single hyphens; combining marks may follow the first letter or number in each token. Try "/work".
-hint: Run "raphael list --help" for usage.
+path: A path segment must follow the slug grammar at segment 1: NFC lowercase Unicode letter or number tokens joined by single hyphens; combining marks may follow the first letter or number in each token.
+hint: Did you mean "raphael list /work"?

@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Cannot read the configuration file "<tmp>/absent.yaml": it does not exist.
+hint: Fix the configuration, then run "raphael server serve --config <tmp>/absent.yaml" again.

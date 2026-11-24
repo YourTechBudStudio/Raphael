@@ -3,4 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 No favorites that are not archived.
-Archived items were left out. To include them: raphael favorites --include-archived
+Archived items were left out.
+hint: Run "raphael favorites --include-archived" to include them.

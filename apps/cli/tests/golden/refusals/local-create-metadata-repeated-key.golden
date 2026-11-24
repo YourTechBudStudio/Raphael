@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--metadata repeats the key "a" in one object.
+The change was not sent.
+hint: Give each key once.

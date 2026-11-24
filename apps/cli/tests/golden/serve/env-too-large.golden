@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+"<tmp>/.env" is 71683 bytes, larger than the 65536-byte limit.
+hint: Fix the configuration, then run "raphael server serve --config <tmp>/raphael.yaml" again.

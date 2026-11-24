@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--body @file read nothing: the body file at "<tmp>/empty.md" is empty. To create it without a body, leave out --body.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

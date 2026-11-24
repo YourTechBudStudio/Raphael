@@ -6,19 +6,26 @@ Usage: raphael restore <path> [options]
 
 Remove an item’s own archive cause.
 
-Restore removes only the item’s own archive cause. If a parent remains archived, the item stays archived and the answer names the parent to restore.
+Restore removes only the item’s own archive cause. If a parent remains archived,
+the item stays archived and the answer names the parent to restore.
 
 An already active item succeeds without a change.
 
+Archive causes print one per line, nearest first: directly, or through the
+archived container above the item, then who set the cause in parentheses. (user)
+is a cause set with archive; restore removes only that cause, and only on the
+item itself. JSON carries each cause as origin, owner and reason.
+
 Options:
       --id <id>
-      Address by durable id instead of path.
+          Address by stable id instead of path.
       --revision <n>
-      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+          Revision read previously. When omitted, it is read just before
+          sending.
       --json
-      Print one JSON result.
+          Print the result as one JSON document.
   -h, --help
-      Show this help.
+          Show help.
 
 Examples:
   raphael restore /work/raphael
@@ -26,7 +33,10 @@ Examples:
   raphael restore --id 42 --revision 8 --json
 
 Prints:
-  The item with its path, revision and remaining archive causes. Still archived, with the restore command for the container, when a container keeps it archived; Unchanged when nothing was removed. JSON carries `node`, `archiveCauses` and `changed`.
+  The item with its path, revision and remaining archive causes. Still archived,
+  with the restore command for the container, when a container keeps it
+  archived; Unchanged when nothing was removed. JSON carries `node`,
+  `archiveCauses` and `changed`.
 
 Next: raphael get --id 42
 

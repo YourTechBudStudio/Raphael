@@ -164,14 +164,14 @@ describe('status', () => {
   });
 
   it('reports the environment pair as the source when it is set', async () => {
-    const environment = { RAPHAEL_ENDPOINT: 'http://127.0.0.1:9', RAPHAEL_API_KEY: STUB_KEY };
+    const environment = { RAPHAEL_ENDPOINT: 'http://127.0.0.1:2', RAPHAEL_API_KEY: STUB_KEY };
     const ran = await runCli(['status', '--json'], {
       environment,
       connect: () => connectFrom(environment, process.platform),
     });
     const document = assertErrorDocument(ran, { exit: 6 });
     assert.deepEqual(document.error.connection, {
-      endpoint: 'http://127.0.0.1:9',
+      endpoint: 'http://127.0.0.1:2',
       source: 'environment',
       configFile: null,
     });
@@ -216,12 +216,15 @@ describe('logout', () => {
   });
 
   it('warns that the environment pair is still set and still used', async () => {
-    const { ran } = await logoutWith(
-      [],
-      (dir) => saveConfig(location(dir), { endpoint: 'http://127.0.0.1:3000', apiKey: STUB_KEY }),
-      { RAPHAEL_ENDPOINT: 'http://127.0.0.1:9', RAPHAEL_API_KEY: STUB_KEY },
-    );
-    setup.expectRun('logout-environment-still-set', ran);
+    for (const argv of [[], ['--json']]) {
+      const { ran } = await logoutWith(
+        argv,
+        (dir) => saveConfig(location(dir), { endpoint: 'http://127.0.0.1:3000', apiKey: STUB_KEY }),
+        { RAPHAEL_ENDPOINT: 'http://127.0.0.1:2', RAPHAEL_API_KEY: STUB_KEY },
+      );
+      assert.equal(ran.code, 0);
+      setup.expectRun(`logout-environment-still-set${argv.length === 0 ? '' : '-json'}`, ran);
+    }
   });
 
   it('removes a link without following it', async () => {
@@ -248,6 +251,18 @@ describe('logout', () => {
     assert.equal(existsSync(location(root).file), true, 'nothing was removed');
     setup.expectRun('logout-directory-unusable', ran);
   });
+
+  it('says on its state line that the saved login is unchanged when it cannot be removed', async () => {
+    const { ran, root } = await logoutWith([], (dir) => {
+      saveConfig(location(dir), { endpoint: 'http://127.0.0.1:3000', apiKey: STUB_KEY });
+      // Private, but not writable: the file cannot be unlinked.
+      chmodSync(join(dir, 'raphael'), 0o500);
+    });
+    chmodSync(location(root).directory, 0o700);
+    assert.equal(ran.code, 5);
+    assert.equal(existsSync(location(root).file), true, 'nothing was removed');
+    setup.expectRun('logout-write-failed', ran);
+  });
 });
 
 describe('version', () => {
@@ -267,5 +282,7 @@ describe('version', () => {
       JSON.parse((await runCli(['--version', '--json'])).stdout),
       JSON.parse(asJson.stdout),
     );
+    // --json before --version, as before --help.
+    assert.deepEqual(await runCli(['--json', '--version']), await runCli(['--version', '--json']));
   });
 });

@@ -13,7 +13,7 @@
  * - help and version, with the expected version;
  * - a server from the installation starts against a configuration-relative database, accepts the right
  *   key, refuses a wrong or missing one, round-trips create, get, and full-text search, and stops
- *   cleanly on SIGTERM;
+ *   cleanly on SIGTERM, exiting 143;
  * - in copies of the installation with the native driver removed or corrupted, help, version, and a
  *   remote operation against the intact server still work, while `server serve` fails with context;
  * - in a copy without its migration journal, `server serve` fails naming it;
@@ -596,7 +596,8 @@ const verifyInstalled = async (
     const stop = async (running: Server, label: string): Promise<void> => {
       const { ran, forced } = await processes.stop(running);
       expect(!forced, `${label} did not stop within ${String(SHUTDOWN_TIMEOUT_MS)}ms of SIGTERM.`);
-      expect(ran.code === 0, describeRun(`${label} after SIGTERM`, ran));
+      // An orderly stop that a signal asked for exits with that signal's conventional code.
+      expect(ran.code === 143, describeRun(`${label} after SIGTERM`, ran));
     };
     await stop(server, 'raphael server serve');
 

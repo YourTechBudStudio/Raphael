@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"get","error":{"code":"file_unusable","category":"not_configured","message":"\"<tmp>/raphael/config.json\" is readable by other users (mode 644).","hint":"Run \"chmod 600 <tmp>/raphael/config.json\", or run \"raphael login\" again.","exitCode":5,"applied":false,"retryable":false}}

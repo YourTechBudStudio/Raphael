@@ -43,11 +43,79 @@ describe('help pages', () => {
       assert.deepEqual(await runCli([...words, '-h']), expected);
     });
   }
+  for (const definition of COMMAND_DEFINITIONS) {
+    it(`prints one identical help document for all ${definition.name} help spellings with --json`, async () => {
+      const words = definition.name.split(' ');
+      const expected = await runCli(['help', ...words, '--json']);
+      assert.equal(expected.code, 0, expected.stderr);
+      assert.equal(expected.stderr, '');
+      const document = JSON.parse(expected.stdout) as { ok: boolean; command: string };
+      assert.deepEqual(Object.keys(document), ['ok', 'command', 'definition']);
+      assert.equal(document.ok, true);
+      assert.equal(document.command, 'help');
+      for (const argv of [
+        ['help', '--json', ...words],
+        [...words, '--help', '--json'],
+        [...words, '--json', '--help'],
+        [...words, '-h', '--json'],
+      ]) {
+        assert.deepEqual(await runCli(argv), expected, argv.join(' '));
+      }
+    });
+  }
   for (const argv of [[], ['--help'], ['-h']]) {
     it(`prints root help for ${argv.join(' ') || 'no arguments'}`, async () => {
       assert.deepEqual(await runCli(argv), await runCli(['help']));
     });
   }
+  it('prints one identical root help document for every spelling with --json', async () => {
+    const expected = await runCli(['help', '--json']);
+    assert.equal(expected.code, 0, expected.stderr);
+    const document = JSON.parse(expected.stdout) as Record<string, unknown>;
+    assert.deepEqual(Object.keys(document), [
+      'ok',
+      'command',
+      'commands',
+      'topics',
+      'examples',
+      'exitCodes',
+      'errorCodes',
+    ]);
+    assert.equal(document.command, 'help');
+    for (const argv of [
+      ['--help', '--json'],
+      ['-h', '--json'],
+      ['--json', '--help'],
+      ['--json', '-h'],
+      ['help', 'reference', '--json'],
+    ]) {
+      assert.deepEqual(await runCli(argv), expected, argv.join(' '));
+    }
+  });
+  it('reports a help failure as the help command, as text and as JSON', async () => {
+    for (const argv of [
+      ['help', 'nope', '--json'],
+      ['help', '--bogus', '--json'],
+      ['--help', 'extra', '--json'],
+      ['--json', '--help', 'extra'],
+    ]) {
+      const ran = await runCli(argv);
+      assert.equal(ran.code, 2, argv.join(' '));
+      assert.equal(ran.stdout, '');
+      assert.equal((JSON.parse(ran.stderr) as { command: string }).command, 'help', argv.join(' '));
+    }
+  });
+  it('publishes no member only the CLI reads in help --json', async () => {
+    const ran = await runCli(['help', '--json']);
+    const { commands } = JSON.parse(ran.stdout) as {
+      commands: readonly (Record<string, unknown> & { options: readonly object[] })[];
+    };
+    for (const command of commands) {
+      assert.equal('fieldFlags' in command, false);
+      assert.equal('verifiesServer' in command, false);
+      for (const option of command.options) assert.equal('changes' in option, false);
+    }
+  });
   it('has no overlapping command and topic names', () => {
     const names = new Set(COMMAND_DEFINITIONS.map((definition) => definition.name));
     assert.deepEqual(
@@ -59,7 +127,7 @@ describe('help pages', () => {
     it(`returns the full ${topic.name} topic as JSON`, async () => {
       const ran = await runCli(['help', '--json', topic.name]);
       assert.equal(ran.code, 0, ran.stderr);
-      assert.deepEqual(JSON.parse(ran.stdout), topic);
+      assert.deepEqual(JSON.parse(ran.stdout), { ok: true, command: 'help', topic });
     });
   }
   it('returns the aggregate reference as JSON', async () => {

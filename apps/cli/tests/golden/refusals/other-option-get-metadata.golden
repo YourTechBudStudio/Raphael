@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+get does not take --metadata.
+hint: Run "raphael create --help" for that option.

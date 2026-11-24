@@ -16,7 +16,7 @@ import { COMMAND_DEFINITIONS } from '../src/main.ts';
 import { runCli } from './support/cli.ts';
 
 const ENVIRONMENT = {
-  RAPHAEL_ENDPOINT: 'http://127.0.0.1:9',
+  RAPHAEL_ENDPOINT: 'http://127.0.0.1:2',
   RAPHAEL_API_KEY: 'stub-key-0123456789abcdef0123456789',
 };
 
@@ -87,7 +87,8 @@ describe('phase 03 invalid-input fuzz pass', () => {
   const refuse = async (
     argv: readonly string[],
     subject?: string,
-    next: RegExp = /raphael .*--help|raphael help/u,
+    // The next step: help, or - when the refusal knows it - the exact fix, given in place of help.
+    next: RegExp = /(?:^hint: |"hint":")(?:.*raphael .*--help|.*raphael help|For example: --|Use --\S+ on its own|Did you mean |Remove -|Give each tag its own --tag|Try ")/mu,
   ): Promise<void> => {
     let connections = 0;
     const ran = await runCli(argv, {

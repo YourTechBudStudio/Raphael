@@ -5,33 +5,51 @@ Usage: raphael server serve [--config <path>] [--host <address>] [--port <n>] [-
 
 Run a Raphael server on this machine.
 
-The API key comes from RAPHAEL_SERVER_API_KEY, in the environment or in a .env file. With --config, .env is read from that file's directory; without it, from the current directory.
+The API key comes from RAPHAEL_SERVER_API_KEY, in the environment or in a .env
+file. With --config, .env is read from that file's directory; without it, from
+the current directory.
 
-Make an owner-only key file with: (umask 077 && touch .env && chmod 600 .env && echo "RAPHAEL_SERVER_API_KEY=$(openssl rand -hex 32)" > .env). Clients log in with the same key. It must be visible ASCII characters with no spaces.
+Make an owner-only key file with:
+`[ -e .env ] && echo ".env already exists; add RAPHAEL_SERVER_API_KEY to it yourself." >&2 || (umask 077 && set -C && echo "RAPHAEL_SERVER_API_KEY=$(openssl rand -hex 32)" > .env)`.
+Clients log in with the same key. It must be 1 to 512 visible ASCII characters
+with no spaces. In .env, quote a key that contains #, which otherwise starts a
+comment.
 
-Clients read RAPHAEL_API_KEY, not RAPHAEL_SERVER_API_KEY, so starting a server never changes which server client commands use.
+Clients read RAPHAEL_API_KEY, not RAPHAEL_SERVER_API_KEY, so starting a server
+never changes which server client commands use.
 
-Without --config, listens on 127.0.0.1:3000 with the database at ./data/raphael.sqlite, relative to the current directory.
+Without --config, listens on 127.0.0.1:3000 with the database at
+./data/raphael.sqlite, relative to the current directory.
 
-The YAML file may set server.host, server.port and database.path; every key is optional and unknown keys are refused. A relative database.path resolves against the file's directory.
+The YAML file may set server.host, server.port and database.path; every key is
+optional and unknown keys are refused. A relative database.path resolves against
+the file's directory.
 
-Flags override the file. A relative --database resolves against the current directory.
+Flags override the file. A relative --database resolves against the current
+directory.
 
-The port is bound before the database is opened, so a port in use creates nothing.
+The port is bound before the database is opened, so a port in use creates
+nothing.
 
-This command never reads your saved login. It prints only to standard error and runs until Ctrl-C.
+This command never reads your saved login. It prints only to standard error and
+runs until Ctrl-C.
+
+A stop by signal finishes the shutdown, then exits 130 after Ctrl-C (SIGINT) or
+143 after SIGTERM. A second signal stops it at once, without finishing.
 
 Options:
       --config <path>
-      Read configuration from this YAML file.
+          Read configuration from this YAML file.
       --host <address>
-      Address to listen on. 0.0.0.0 listens on every interface. Default: 127.0.0.1.
+          Address to listen on. 0.0.0.0 listens on every interface. Default:
+          127.0.0.1.
       --port <n>
-      Port to listen on, from 1 to 65535. Default: 3000.
+          Port to listen on, from 1 to 65535. Default: 3000.
       --database <path>
-      SQLite database file. Created if it does not exist. Default: ./data/raphael.sqlite.
+          SQLite database file. Created if it does not exist. Default:
+          ./data/raphael.sqlite.
   -h, --help
-      Show help.
+          Show help.
 
 Examples:
   raphael server serve
@@ -40,7 +58,8 @@ Examples:
   raphael server serve --host 0.0.0.0 --database ./data/raphael.sqlite
 
 Prints:
-  The address, the database, where the key came from, and the login command, on standard error. Standard output is empty.
+  The address, the database, where the key came from, and the login command, on
+  standard error. Standard output is empty.
 
 Next: raphael login http://127.0.0.1:3000
 

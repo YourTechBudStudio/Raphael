@@ -21,9 +21,11 @@ const USE_ENVIRONMENT = `set ${ENDPOINT_VARIABLE} and ${API_KEY_VARIABLE} in the
 
 const CONFIG_HINTS: Readonly<Record<ConfigReason, string>> = {
   unsupported_platform: `On this platform, ${USE_ENVIRONMENT} instead.`,
-  no_home: `Set HOME, or ${USE_ENVIRONMENT}.`,
+  // Not the environment pair: it does not give login or logout a place for the saved login.
+  no_home: 'Set HOME to your home directory, or set XDG_CONFIG_HOME.',
   relative_xdg_config_home:
     'Set XDG_CONFIG_HOME to an absolute path, such as $HOME/.config, or unset it to use ~/.config.',
+  relative_home: `Set HOME to your home directory's absolute path, or ${USE_ENVIRONMENT}.`,
   directory_unusable: `Fix the permissions on that directory, or ${USE_ENVIRONMENT} instead.`,
   directory_uncreatable: `Check that you can create that directory, or ${USE_ENVIRONMENT} instead.`,
   file_unusable: 'Run "raphael login" again to replace it.',
@@ -32,7 +34,6 @@ const CONFIG_HINTS: Readonly<Record<ConfigReason, string>> = {
   file_malformed: 'Run "raphael login" again to replace it.',
   not_configured: `Run "raphael login", or set ${ENDPOINT_VARIABLE} and ${API_KEY_VARIABLE}.`,
   write_failed: 'Check that you can write to that directory, then run "raphael login" again.',
-  durability_unconfirmed: 'If this machine loses power soon, run "raphael login" again.',
 };
 
 const CONNECTION_HINTS: Readonly<Record<ConnectionReason, string>> = {

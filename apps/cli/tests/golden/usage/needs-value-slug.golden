@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--slug needs a value.
+The change was not sent.
+hint: For example: --slug review.

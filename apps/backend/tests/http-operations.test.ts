@@ -2,6 +2,12 @@ import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
 
 import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
+import {
+  TITLE_MAX_CODE_POINTS,
+  asSentence,
+  describeQueryRejection,
+  describeTitleRejection,
+} from '@raphael/contracts/nodes';
 
 import { call, envelope, withServer } from './server-support.ts';
 
@@ -78,7 +84,10 @@ describe('operations over HTTP', () => {
       assert.equal(response.status, 400);
       const error = envelope(response.json);
       assert.equal(error.code, 'invalid_input');
-      assert.equal(error.message, 'The search query is not well formed.');
+      assert.equal(
+        error.message,
+        asSentence(describeQueryRejection({ reason: 'dangling_operator' })),
+      );
       assert.doesNotMatch(JSON.stringify(response.json), /confidentialword/u);
     });
   });
@@ -429,7 +438,7 @@ describe('operations over HTTP', () => {
       assert.equal(response.status, 400);
       assert.deepEqual(envelope(response.json), {
         code: 'invalid_input',
-        message: 'Title is required.',
+        message: asSentence(describeTitleRejection({ reason: 'title_required' })),
         details: { field: 'title', reason: 'title_required' },
       });
 
@@ -437,7 +446,10 @@ describe('operations over HTTP', () => {
         body: JSON.stringify({ type: 'area', parent: { path: '/' }, slug: 'untitled' }),
       });
       assert.equal(container.status, 400);
-      assert.equal(envelope(container.json).message, 'Title is required.');
+      assert.equal(
+        envelope(container.json).message,
+        asSentence(describeTitleRejection({ reason: 'title_required' })),
+      );
     });
   });
 
@@ -495,7 +507,9 @@ describe('operations over HTTP', () => {
       assert.equal(response.status, 400);
       assert.deepEqual(envelope(response.json), {
         code: 'invalid_input',
-        message: 'Title is longer than 200 characters.',
+        message: asSentence(
+          describeTitleRejection({ reason: 'title_too_long', limit: TITLE_MAX_CODE_POINTS }),
+        ),
         details: { field: 'title', reason: 'title_too_long', limit: 200 },
       });
     });

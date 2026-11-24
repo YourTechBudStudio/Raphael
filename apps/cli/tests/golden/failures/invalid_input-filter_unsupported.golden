@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---filter uses a key or an operator that is not supported. Keys: type, kind, tags.
+--filter: A filter may only use type, kind, tags, each with a value or $in.
 hint: Run "raphael list --help" for usage.
 code: invalid_input (400)

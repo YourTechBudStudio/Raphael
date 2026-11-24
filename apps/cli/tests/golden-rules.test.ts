@@ -14,6 +14,7 @@ import {
   METADATA_MAX_TOP_LEVEL_KEYS,
   SEARCH_QUERY_MAX_CODE_POINTS,
   SEARCH_QUERY_MAX_TERMS,
+  SLUG_MAX_CODE_POINTS,
   TAGS_MAX_COUNT,
   TAG_MAX_CODE_POINTS,
   TITLE_MAX_CODE_POINTS,
@@ -22,6 +23,7 @@ import {
   type MetadataRejectionReason,
   type PathRejectionReason,
   type SearchQueryRejectionReason,
+  type SlugRejectionReason,
   type TagsRejectionReason,
   type TitleRejectionReason,
 } from '@raphael/contracts/nodes';
@@ -57,18 +59,36 @@ const one = (argv: readonly string[]): Case => ({ argv: { '': argv } });
 /** A metadata object nested one level deeper than the metadata bound allows. */
 const nested = (depth: number): unknown => (depth === 0 ? 1 : { a: nested(depth - 1) });
 
+/** A path as an item, a listing place and a move destination: the same sentence after each label. */
+const paths = (path: string): Case => ({
+  argv: {
+    '': ['list', path],
+    destination: ['move', '/work/a', path],
+  },
+});
+
 const PATH_CASES: Record<PathRejectionReason, Case> = {
-  not_absolute: one(['list', 'work']),
-  trailing_separator: one(['list', '/work/']),
-  empty_segment: one(['list', '/work//notes']),
-  noncanonical_segment: one(['list', '/Work']),
+  not_absolute: paths('work'),
+  trailing_separator: paths('/work/'),
+  empty_segment: paths('/work//notes'),
+  noncanonical_segment: paths('/Work'),
 };
 
 const FILTER_CASES: Record<FilterRejectionReason, Case> = {
   not_object: one(['list', '/', '--filter', '[]']),
   unsupported_key: one(['list', '/', '--filter', '{"title":"x"}']),
   unsupported_operator: one(['list', '/', '--filter', '{"type":{"$nin":["area"]}}']),
-  invalid_value: one(['list', '/', '--filter', '{"type":"resource.note"}']),
+  invalid_value: {
+    argv: {
+      '': ['list', '/', '--filter', '{"type":"resource.note"}'],
+      // The create vocabulary, a kind given as a type, and bare lists each get the accepted shape.
+      'kind-as-type': ['search', '/', '-q', 'a', '--filter', '{"type":{"$in":["area","note"]}}'],
+      'tags-list': ['list', '/', '--filter', '{"tags":["x","y"]}'],
+      'type-list': ['list', '/', '--filter', '{"type":["area"]}'],
+      tags: ['list', '/', '--filter', '{"tags":{"$in":[]}}'],
+      type: ['list', '/', '--filter', '{"type":"Area"}'],
+    },
+  },
 };
 
 const QUERY_CASES: Record<SearchQueryRejectionReason, Case> = {
@@ -108,6 +128,37 @@ const TITLE_CASES: Record<TitleRejectionReason, Case> = {
     '--title',
     't'.repeat(TITLE_MAX_CODE_POINTS + 1),
   ]),
+};
+
+/** Through --slug on create and update, and as a path's last segment on create. */
+const SLUG_CASES: Record<SlugRejectionReason, Case> = {
+  not_slug: {
+    argv: {
+      '': ['create', 'project', '--parent-id', '1', '--slug', 'Big Plan', '--title', 'Plan'],
+      update: ['update', '/work/raphael', '--slug', 'big_plan'],
+    },
+  },
+  slug_too_long: {
+    argv: {
+      '': [
+        'create',
+        'project',
+        '--parent-id',
+        '1',
+        '--slug',
+        's'.repeat(SLUG_MAX_CODE_POINTS + 1),
+        '--title',
+        'Plan',
+      ],
+      path: [
+        'create',
+        'project',
+        `/work/${'s'.repeat(SLUG_MAX_CODE_POINTS + 1)}`,
+        '--title',
+        'Plan',
+      ],
+    },
+  },
 };
 
 const TAG_CASES: Record<TagsRejectionReason, Case> = {
@@ -228,6 +279,7 @@ describe('path rejections', () => pin('path', PATH_CASES));
 describe('filter rejections', () => pin('filter', FILTER_CASES));
 describe('query rejections', () => pin('query', QUERY_CASES));
 describe('title rejections', () => pin('title', TITLE_CASES));
+describe('slug rejections', () => pin('slug', SLUG_CASES));
 describe('tag rejections', () => pin('tags', TAG_CASES));
 describe('metadata rejections', () => pin('metadata', METADATA_CASES));
 describe('JSON rejections', () => pin('json', JSON_CASES));

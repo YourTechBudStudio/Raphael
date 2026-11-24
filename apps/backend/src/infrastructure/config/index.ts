@@ -31,7 +31,12 @@ export interface LoadedConfiguration {
   readonly options: BackendOptions;
   readonly credential: ApiCredential;
   /** Where the key came from, for the startup summary. Never the key. */
-  readonly keySource: { readonly variable: string; readonly file: string | undefined };
+  readonly keySource: {
+    readonly variable: string;
+    readonly file: string | undefined;
+    /** The file's value had an unquoted `#`, so the key stops before it (the dotenv convention). */
+    readonly cutAtComment: boolean;
+  };
 }
 
 export interface LoadConfigurationContext {
@@ -53,7 +58,7 @@ export const loadConfiguration = (context: LoadConfigurationContext = {}): Loade
   const { configPath } = context;
   // A mistyped flag, then a configuration file that cannot be read, before the key: the key is looked
   // for beside that file, so a wrong --config would otherwise read as a missing key.
-  if (context.overrides !== undefined) checkOverrides(context.overrides);
+  checkOverrides({ ...context.overrides, ...(configPath === undefined ? {} : { configPath }) });
   const parsed = configPath === undefined ? undefined : readConfigFile(configPath);
   const baseDirectory = baseDirectoryFor(configPath, cwd);
   const environment = loadEnvironment({
@@ -76,6 +81,7 @@ export const loadConfiguration = (context: LoadConfigurationContext = {}): Loade
     keySource: {
       variable: API_KEY_VARIABLE,
       file: environment.sourceOf(API_KEY_VARIABLE) === 'file' ? environment.envFile : undefined,
+      cutAtComment: environment.cutAtComment(API_KEY_VARIABLE),
     },
   };
 };
@@ -92,6 +98,7 @@ export {
 export { ConfigurationError, type ConfigurationReason } from './errors.ts';
 export {
   CONFIG_DEFAULTS,
+  CONFIGURED_PORT_RANGE,
   type OptionOverrides,
   baseDirectoryFor,
   resolveOptions,

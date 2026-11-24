@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+RAPHAEL_SERVER_API_KEY in the environment is not a key any client could send: a key must be 1 to 512 visible ASCII characters with no spaces.
+hint: Generate a key with "openssl rand -hex 32" and set RAPHAEL_SERVER_API_KEY to it.

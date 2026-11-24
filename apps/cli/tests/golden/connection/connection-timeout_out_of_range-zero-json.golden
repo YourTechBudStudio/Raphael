@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"get","error":{"code":"timeout_out_of_range","category":"not_configured","message":"RAPHAEL_TIMEOUT must be a whole number of seconds from 1 to 120. Got \"0\".","hint":"Set RAPHAEL_TIMEOUT to a value in that range, or unset it to wait the default 15 seconds.","exitCode":5,"applied":false,"retryable":false}}

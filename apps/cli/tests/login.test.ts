@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -18,7 +19,7 @@ import { fileURLToPath } from 'node:url';
 
 import { ApiCredential, serve, silentLogger } from '@raphael/backend';
 import type { EndpointRejectionReason } from '@raphael/client';
-import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
+import { API_KEY_MAX_LENGTH, PROTOCOL_VERSION } from '@raphael/contracts/connection';
 import { Effect, Exit, Scope } from 'effect';
 
 import { version } from '../src/distribution.ts';
@@ -52,7 +53,8 @@ const relay = join(here, 'support', 'pty-relay.py');
  */
 const KEY = 'zq9x-key-0123456789abcdef0123456789';
 /** Nothing listens on the discard port, so a connection there is refused straight away. */
-const REFUSED = 'http://127.0.0.1:9';
+const REFUSED = 'http://127.0.0.1:2';
+const CONFIG = { endpoint: REFUSED, apiKey: KEY };
 
 const login = goldenSurface('login');
 const directories: string[] = [];
@@ -214,6 +216,14 @@ describe('login with a scripted prompt', () => {
     login.expectRun('unsendable-key', ran);
   });
 
+  it('refuses a typed key longer than any client sends, without showing it', async () => {
+    const long = 'k'.repeat(API_KEY_MAX_LENGTH + 1);
+    const ran = await loginWith([], endpoint, long);
+    assert.equal(ran.code, 2);
+    assert.equal(ran.stderr.includes(long.slice(0, 64)), false);
+    login.expectRun('unsendable-key-too-long', ran);
+  });
+
   it('takes the address as an argument and asks only for the key', async () => {
     const asked: string[] = [];
     const ran = await loginWith([endpoint], 'unused', KEY, undefined, {
@@ -247,9 +257,80 @@ describe('login with a scripted prompt', () => {
     login.expectRun('directory-checked-before-prompt', ran);
   });
 
+  /** A login that must refuse before any prompt: the prompter fails the case if it is reached. */
+  const noPrompt = (): Prompter => {
+    throw new Error('no prompt may appear before the destination is checked');
+  };
+
+  it('refuses a configuration directory it could not create, before asking for a key', async () => {
+    const root = temporary();
+    chmodSync(root, 0o500);
+    try {
+      const ran = await loginWith([], endpoint, KEY, undefined, { root, prompter: noPrompt });
+      assert.equal(ran.code, 5);
+      assert.equal(existsSync(join(root, 'raphael')), false);
+      login.expectRun('directory-uncreatable-before-prompt', ran);
+      // Piped, nothing is read from standard input either.
+      const fromPipe = await loginWith(
+        [endpoint, '--api-key-stdin'],
+        'unused',
+        'unused',
+        undefined,
+        {
+          root,
+          stdin: {
+            isTTY: false,
+            read: () => Promise.reject(new Error('standard input must not be read')),
+          },
+        },
+      );
+      assert.equal(fromPipe.code, 5);
+      assert.equal(fromPipe.stderr, ran.stderr);
+    } finally {
+      chmodSync(root, 0o700);
+    }
+  });
+
+  it('refuses a configuration directory it cannot write in, before asking for a key', async () => {
+    const root = temporary();
+    const directory = join(root, 'raphael');
+    mkdirSync(directory, { mode: 0o700 });
+    chmodSync(directory, 0o500);
+    try {
+      const ran = await loginWith([], endpoint, KEY, undefined, { root, prompter: noPrompt });
+      assert.equal(ran.code, 5);
+      login.expectRun('directory-unwritable-before-prompt', ran);
+      // The save itself says the same thing.
+      assert.throws(
+        () => saveConfig({ directory, file: join(directory, 'config.json') }, CONFIG),
+        (error: Error) =>
+          error.message ===
+          `Could not write the new configuration in "${directory}": permission denied.`,
+      );
+    } finally {
+      chmodSync(directory, 0o700);
+    }
+  });
+
+  it('refuses a config.json that is not a file, before asking for a key', async () => {
+    const root = temporary();
+    const directory = join(root, 'raphael');
+    mkdirSync(join(directory, 'config.json'), { recursive: true, mode: 0o700 });
+    chmodSync(directory, 0o700);
+    const ran = await loginWith([], endpoint, KEY, undefined, { root, prompter: noPrompt });
+    assert.equal(ran.code, 5);
+    login.expectRun('config-file-is-directory-before-prompt', ran);
+    assert.throws(
+      () => saveConfig({ directory, file: join(directory, 'config.json') }, CONFIG),
+      (error: Error) =>
+        error.message ===
+        `Could not replace "${join(directory, 'config.json')}": it is a directory.`,
+    );
+  });
+
   it('warns when the environment pair will override what it saved', async () => {
     const ran = await loginWith([], endpoint, KEY, undefined, {
-      environment: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:9', RAPHAEL_API_KEY: 'other-key' },
+      environment: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:2', RAPHAEL_API_KEY: 'other-key' },
     });
     assert.equal(ran.code, 0);
     login.expectRun('saved-environment-overrides', ran);
@@ -261,6 +342,12 @@ describe('login with a scripted prompt', () => {
       document.warnings.map((warning) => warning.code),
       ['environment_overrides'],
     );
+    login.expectRun('saved-environment-overrides-partial-json', json);
+    const both = await loginWith(['--json'], endpoint, KEY, undefined, {
+      environment: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:2', RAPHAEL_API_KEY: 'other-key' },
+    });
+    assert.equal(both.code, 0);
+    login.expectRun('saved-environment-overrides-json', both);
   });
 
   it('says when it replaced a saved login for a different server', async () => {
@@ -282,6 +369,42 @@ describe('login with a scripted prompt', () => {
 
   it('refuses a key the server does not accept, saving nothing', async () => {
     login.expectRun('wrong-key', await loginWith([], endpoint, `${KEY}-wrong`));
+  });
+
+  /** A server that verifies as another protocol, with this release or none. */
+  const otherProtocol = async (
+    answer: { readonly protocolVersion: string; readonly raphaelVersion?: string },
+    argv: readonly string[] = [],
+  ): Promise<Ran> => {
+    const server = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(answer));
+    });
+    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
+    const address = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    try {
+      const ran = await loginWith(argv, address, KEY);
+      const scrub = (text: string): string => text.replaceAll(address, '<other>');
+      return { code: ran.code, stdout: scrub(ran.stdout), stderr: scrub(ran.stderr) };
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    }
+  };
+
+  it('names both releases and which side to update when the server is ahead', async () => {
+    const ran = await otherProtocol({ protocolVersion: '2999-01-01', raphaelVersion: '9.9.9' });
+    assert.equal(ran.code, 5);
+    login.expectRun('incompatible-server-ahead', ran);
+  });
+
+  it('names both releases and which side to update when the server is behind', async () => {
+    const ran = await otherProtocol({ protocolVersion: '2026-01-01' });
+    assert.equal(ran.code, 5);
+    login.expectRun('incompatible-server-behind', ran);
+    const json = await otherProtocol({ protocolVersion: '2026-01-01' }, ['--json']);
+    assert.equal(json.code, 5);
+    login.expectRun('incompatible-server-behind-json', json);
   });
 
   it('refuses a server it cannot reach, saving nothing', async () => {
@@ -393,6 +516,47 @@ describe('login --api-key-stdin', () => {
     );
   });
 
+  it('words a cancelled prompt as itself, in text and in JSON', async () => {
+    const { Cancelled } = await import('../src/shared/interrupt.ts');
+    const cancelling = (): Prompter => ({
+      ask: async () => {
+        throw new Cancelled('Cancelled.', 'raphael login');
+      },
+      askHidden: async () => assert.fail('the key is not asked for'),
+      close: () => {},
+    });
+    login.expectRun(
+      'cancelled',
+      await loginWith([], endpoint, KEY, undefined, { prompter: cancelling }),
+    );
+    login.expectRun(
+      'cancelled-json',
+      await loginWith(['--json'], endpoint, KEY, undefined, { prompter: cancelling }),
+    );
+  });
+
+  it('refuses more input than any key by the key rule, not by the read bound', async () => {
+    for (const json of [false, true]) {
+      const root = temporary();
+      const child = spawnSync(
+        process.execPath,
+        [main, 'login', REFUSED, '--api-key-stdin', ...(json ? ['--json'] : [])],
+        {
+          env: { PATH: process.env.PATH ?? '', HOME: root, XDG_CONFIG_HOME: root },
+          input: Buffer.alloc(70 * 1024, 0x61),
+          encoding: 'utf8',
+          timeout: 15_000,
+        },
+      );
+      assert.equal(existsSync(join(root, 'raphael', 'config.json')), false);
+      login.expectRun(json ? 'stdin-too-large-json' : 'stdin-too-large', {
+        code: child.status,
+        stdout: child.stdout,
+        stderr: child.stderr,
+      });
+    }
+  });
+
   it('bounds what it reads from standard input', async () => {
     const { Readable } = await import('node:stream');
     const { readStandardInput } = await import('../src/shared/stdin.ts');
@@ -402,6 +566,135 @@ describe('login --api-key-stdin', () => {
       /too large/,
     );
   });
+});
+
+describe('SIGUSR1 while login waits', () => {
+  /**
+   * Reports on descriptor 3 once the CLI watches SIGTERM, so it is waiting, and when a SIGUSR1
+   * listener the CLI registered runs. Nothing here listens for SIGUSR1 itself: that alone would keep
+   * the inspector closed.
+   */
+  const HOOK = `
+import { writeSync } from 'node:fs';
+const on = process.on.bind(process);
+process.on = (event, listener) => {
+  if (event === 'SIGUSR1') {
+    on(event, (...args) => { listener(...args); writeSync(3, 'usr1\\n'); });
+    return process;
+  }
+  on(event, listener);
+  if (event === 'SIGTERM') writeSync(3, 'watching\\n');
+  return process;
+};
+`;
+
+  it('opens no inspector, and keeps waiting', async () => {
+    const root = temporary();
+    const hook = join(root, 'hook.mjs');
+    writeFileSync(hook, HOOK);
+    const child = spawn(
+      process.execPath,
+      ['--import', hook, main, 'login', REFUSED, '--api-key-stdin'],
+      {
+        env: {
+          PATH: process.env.PATH ?? '',
+          HOME: root,
+          XDG_CONFIG_HOME: root,
+          // Any free port, so a regression cannot collide with a debugger on 9229.
+          NODE_OPTIONS: '--inspect-port=127.0.0.1:0',
+        },
+        stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+        timeout: 15_000,
+        killSignal: 'SIGKILL',
+      },
+    );
+    let stderr = '';
+    let signalled = false;
+    const stopped = (): void => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+    };
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+      if (stderr.includes('Debugger listening')) stopped();
+    });
+    (child.stdio[3] as NodeJS.ReadableStream).on('data', (chunk: Buffer) => {
+      const text = chunk.toString('utf8');
+      if (text.includes('watching') && !signalled) {
+        signalled = true;
+        child.kill('SIGUSR1');
+      }
+      if (text.includes('usr1')) stopped();
+    });
+    const code = await new Promise<number | null>((done) => child.on('close', done));
+    assert.ok(signalled, `login never waited:\n${stderr}`);
+    assert.doesNotMatch(stderr, /Debugger listening/u);
+    assert.equal(code, 143, 'it was still waiting when SIGTERM came');
+  });
+});
+
+describe('a signal while login --api-key-stdin waits on standard input', () => {
+  /**
+   * Loaded before the CLI: reports on descriptor 3 once the CLI watches both signals. From then on a
+   * signal can only be handled once login is waiting, because everything between registering the
+   * handlers and starting the read is synchronous; so the signal is sent on that report, not after a
+   * guessed delay.
+   */
+  const READY_HOOK = `
+import { writeSync } from 'node:fs';
+const on = process.on.bind(process);
+process.on = (event, listener) => {
+  on(event, listener);
+  if (event === 'SIGTERM') writeSync(3, 'watching\\n');
+  return process;
+};
+`;
+
+  const interrupted = async (signal: 'SIGINT' | 'SIGTERM'): Promise<Ran> => {
+    const root = temporary();
+    const hook = join(root, 'ready.mjs');
+    writeFileSync(hook, READY_HOOK);
+    const child = spawn(
+      process.execPath,
+      ['--import', hook, main, 'login', REFUSED, '--api-key-stdin'],
+      {
+        env: { PATH: process.env.PATH ?? '', HOME: root, XDG_CONFIG_HOME: root },
+        // Standard input is a pipe that is never written to or closed: login waits on it.
+        stdio: ['pipe', 'pipe', 'pipe', 'pipe'],
+        timeout: 15_000,
+        killSignal: 'SIGKILL',
+      },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
+    child.stderr?.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
+    const ready = child.stdio[3] as NodeJS.ReadableStream;
+    let watching = false;
+    ready.on('data', () => {
+      if (watching) return;
+      watching = true;
+      child.kill(signal);
+    });
+    const code = await new Promise<number | null>((done) => child.on('close', done));
+    assert.ok(watching, `login never watched for signals:\n${stderr}`);
+    assert.equal(existsSync(join(root, 'raphael')), false, 'nothing was saved');
+    return { code, stdout, stderr };
+  };
+
+  for (const [signal, exit] of [
+    ['SIGINT', 130],
+    ['SIGTERM', 143],
+  ] as const) {
+    it(`ends on ${signal} with exit ${exit} and says nothing was saved`, async () => {
+      const ran = await interrupted(signal);
+      assert.equal(ran.code, exit, ran.stderr);
+      assert.equal(ran.stdout, '');
+      assert.equal(
+        ran.stderr,
+        `Interrupted by ${signal}.\nNothing was saved.\nhint: Run the command again.\n`,
+      );
+    });
+  }
 });
 
 describe('login and RAPHAEL_TIMEOUT', () => {
@@ -430,7 +723,7 @@ describe('login and RAPHAEL_TIMEOUT', () => {
         platform: process.platform,
       });
       assert.equal(code, 6, stderr);
-      assert.match(stderr, /did not answer in time\. Nothing was saved\./);
+      assert.match(stderr, /did not answer in time\.\nNothing was saved\.\n/);
     } finally {
       slow.closeAllConnections();
       await new Promise<void>((resolveClose) => slow.close(() => resolveClose()));
@@ -447,7 +740,7 @@ describe('login and RAPHAEL_TIMEOUT', () => {
  * terminal displays, including what the line discipline itself echoes, comes back on stdout.
  */
 const underTerminal = (
-  answers: ReadonlyArray<readonly [prompt: string, answer: string]>,
+  answers: ReadonlyArray<readonly [prompt: string, answer: string | (() => void)]>,
   options: {
     readonly command?: readonly string[];
     readonly root?: string;
@@ -477,7 +770,8 @@ const underTerminal = (
       const next = pending[0];
       if (next !== undefined && screen.endsWith(next[0])) {
         pending.shift();
-        child.stdin.write(next[1]);
+        if (typeof next[1] === 'string') child.stdin.write(next[1]);
+        else next[1]();
       }
     });
     child.on('error', rejectRun);
@@ -499,7 +793,10 @@ describe(
       ]);
       // The prompt was answered and the login went on to try the connection, so the key was read.
       assert.match(ran.screen, /API key: /);
-      assert.match(ran.screen, /Could not connect to the server at \S+\. Nothing was saved\./);
+      assert.match(
+        ran.screen,
+        /Could not connect to the server at \S+(?:: [^\r\n]*)?\.\r?\nNothing was saved\./,
+      );
       assert.equal(ran.code, 6, 'nothing was sent, and trying again may work');
       assert.equal(ran.screen.includes(KEY), false, `the key appeared on screen:\n${ran.screen}`);
       // Not even a prefix of it: one echoed keypress is already a leak.
@@ -508,14 +805,14 @@ describe(
 
     it('cancels on Ctrl-C at the address prompt', async () => {
       const ran = await underTerminal([['Server address: ', 'http\u0003']]);
-      assert.match(ran.screen, /Cancelled\. Nothing was saved\./);
+      assert.match(ran.screen, /Cancelled\.\r?\nNothing was saved\./);
       assert.doesNotMatch(ran.screen, /--help|unsettled/, 'a cancellation is not a usage mistake');
       assert.equal(ran.code, 2);
     });
 
     it('cancels on Ctrl-D at an empty address prompt', async () => {
       const ran = await underTerminal([['Server address: ', '\u0004']]);
-      assert.match(ran.screen, /Cancelled\. Nothing was saved\./);
+      assert.match(ran.screen, /Cancelled\.\r?\nNothing was saved\./);
       assert.doesNotMatch(ran.screen, /--help|unsettled/);
       assert.equal(ran.code, 2);
     });
@@ -525,7 +822,7 @@ describe(
         ['Server address: ', `${REFUSED}\r`],
         ['API key: ', '\u0004'],
       ]);
-      assert.match(ran.screen, /No key was entered\. Nothing was saved\./);
+      assert.match(ran.screen, /No key was entered\.\r?\nNothing was saved\./);
       assert.doesNotMatch(ran.screen, /--help/);
       assert.equal(ran.code, 2);
     });
@@ -582,12 +879,55 @@ describe(
       assert.equal(ran.code, 2);
     });
 
+    for (const [signal, exit] of [
+      ['SIGHUP', 129],
+      ['SIGQUIT', 131],
+    ] as const) {
+      for (const prompt of ['Server address: ', 'API key: ']) {
+        it(`puts the terminal back on ${signal} at "${prompt.trim()}", and still ends as ${signal}`, async () => {
+          const root = temporary();
+          const hook = join(root, 'pid.mjs');
+          const pidFile = join(root, 'pid');
+          writeFileSync(
+            hook,
+            `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));`,
+          );
+          const send = (): void => {
+            process.kill(Number(readFileSync(pidFile, 'utf8')), signal);
+          };
+          const ran = await underTerminal(
+            prompt === 'API key: '
+              ? [
+                  ['Server address: ', `${REFUSED}\r`],
+                  [prompt, send],
+                ]
+              : [[prompt, send]],
+            {
+              root,
+              command: [
+                '/bin/sh',
+                '-c',
+                '"$0" --import "$1" "$2" login; echo "CLI_EXIT=$?"; stty -a',
+                process.execPath,
+                hook,
+                main,
+              ],
+            },
+          );
+          assert.match(ran.screen, new RegExp(`CLI_EXIT=${exit}`, 'u'), ran.screen);
+          const modes = ran.screen.slice(ran.screen.indexOf('CLI_EXIT='));
+          assert.match(modes, /(?<![-\w])icanon/u, modes);
+          assert.match(modes, /(?<![-\w])echo(?![\w])/u, modes);
+        });
+      }
+    }
+
     it('cancels on Ctrl-C at the key prompt', async () => {
       const ran = await underTerminal([
         ['Server address: ', `${REFUSED}\r`],
         ['API key: ', 'abc\u0003'],
       ]);
-      assert.match(ran.screen, /Cancelled\. Nothing was saved\./);
+      assert.match(ran.screen, /Cancelled\.\r?\nNothing was saved\./);
       assert.equal(ran.screen.includes('abc'), false);
       assert.equal(ran.code, 2);
     });

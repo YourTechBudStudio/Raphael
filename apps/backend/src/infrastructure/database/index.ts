@@ -6,7 +6,9 @@ export {
 } from './connection.ts';
 export { Db, layer, type DatabaseLayerOptions, type DatabaseService } from './layer.ts';
 export {
+  ForeignDatabaseError,
   MIGRATIONS_TABLE,
+  MigrationFailedError,
   MigrationHistoryError,
   migrateToLatest,
   migrationsFolder,

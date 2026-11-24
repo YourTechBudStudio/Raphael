@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The body file at "<tmp>/locked.md" cannot be read: permission denied.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

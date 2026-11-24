@@ -6,50 +6,64 @@ Usage: raphael create <type> <path> [options]
 
 Create an area, project, or note.
 
-Types: area, project, resource.note. A full path supplies both parent and slug. The parent must already exist.
+Types: area, project, resource.note. A full path supplies both parent and slug.
+The parent must already exist.
 
-Areas and projects require --title. Notes may derive their title from the first body line, then the description. Metadata is set once, at create.
+Areas and projects require --title. Without --title, a note takes its title from
+the text of the body's first paragraph or heading, with its line breaks read as
+spaces, then from the description's first line, cut at 200 characters. Metadata
+is set once, at create.
 
 Rules:
-  See help addressing for containment and slug rules. A taken slug, including one reserved by an archived item, is refused.
-  When supplying a body, give either --body or --body-literal. Give each tag its own --tag.
+  See `raphael help addressing` for containment and slug rules. A taken slug,
+    including one reserved by an archived item, is refused.
+  When supplying a body, give either --body or --body-literal. Give each tag its
+    own --tag.
+  A value that starts with -, such as a Markdown list, must be joined to its
+    flag with =, as in `--body='- first item'`; otherwise it is read as another
+    option and refused. A longer body is easier as a file or a pipe:
+    `--body @list.md` or `--body @-`.
 
 Options:
       --title <text>
-      Name, at most 200 characters.
+          Name, at most 200 characters.
       --parent-id <id>
-      Parent id instead of a full path. Requires --slug.
+          Parent id instead of a full path. Requires --slug.
       --slug <slug>
-      Address within the parent, at most 100 characters. See help addressing.
+          Address within the parent, at most 100 characters. See
+          `raphael help addressing`.
       --description <text>
-      Description, at most 4000 characters. An empty string clears it.
+          Description, at most 4000 characters.
       --tag <tag>
-      Repeat for each tag; at most 25 tags of 50 characters. Commas are refused. Updates replace all tags. Repeatable.
+          Repeat for each tag; at most 25 tags of 50 characters. Commas are
+          refused. Repeatable.
       --metadata <json|@file>
-      JSON object set once at create. @- is refused.
+          JSON object set once at create. @- is refused.
       --body <text|@file|@->
-      Body text, @file, or @- for stdin. An empty string clears it; updates require --revision.
+          Body text, @file, or @- for stdin.
       --body-literal <text>
-      Literal body text, including text beginning with @. Updates require --revision.
+          Literal body text, including text beginning with @.
       --body-format <format>
-      Submitted body: markdown or tiptap. Default: markdown.
+          Submitted body: markdown or tiptap. Default: markdown.
       --strict
-      Refuse a Markdown body that has constructs Raphael keeps only as text. See help content.
+          Refuse a Markdown body with constructs Raphael cannot store as
+          written. See `raphael help content`.
       --return-format <format>
-      Returned body: markdown or tiptap. Requires --json. Default: markdown.
+          Returned body: markdown or tiptap. Requires --json. Default: markdown.
       --json
-      Print one JSON result.
+          Print the result as one JSON document.
   -h, --help
-      Show this help.
+          Show help.
 
 Examples:
-  raphael create area /work --title Work
+  raphael create area /work/clients --title Clients
   raphael create project /work/raphael --title Raphael
   raphael create resource.note /work/raphael/api-design --body '# API design'
   raphael create resource.note --parent-id 42 --slug review --title Review --tag reviewed
 
 Prints:
-  The created item with its id, path and revision. A warning on stderr names Markdown kept only as text. JSON carries `entity`.
+  The created item with its id, path and revision. A warning on stderr names
+  Markdown not stored as written. JSON carries `entity`.
 
 Next: raphael list / -r
 

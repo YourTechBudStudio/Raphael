@@ -3,4 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 Nothing in /work that is not archived.
-Archived items were left out. To include them: raphael list /work --include-archived
+Archived items were left out.
+hint: Run "raphael list /work --include-archived" to include them.

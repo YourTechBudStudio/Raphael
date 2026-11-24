@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+restore takes one path, or --id.
+The change was not sent.
+hint: Run "raphael restore --help" for usage.

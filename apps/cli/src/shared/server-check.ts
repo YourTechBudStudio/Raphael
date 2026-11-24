@@ -113,6 +113,31 @@ export const diagnosisOf = (check: ServerCheck): Diagnosis | undefined => {
   return missingRoute || notAnAnswer ? { kind: 'not_raphael' } : undefined;
 };
 
+/**
+ * Verify a server for a command that verifies it itself (`status`, `login`): the request is the
+ * verification, so what it finds is recorded as the diagnosis, and a server that answers with another
+ * protocol is a failure, worded from that diagnosis with both releases.
+ */
+export const verifyServer = async (
+  session: { diagnosis: Diagnosis | undefined },
+  transport: Transport,
+  signal?: AbortSignal,
+): Promise<ServerCheck> => {
+  const check = await checkServer(transport, signal);
+  session.diagnosis = diagnosisOf(check);
+  if (!check.ok || session.diagnosis?.kind !== 'incompatible') return check;
+  return {
+    ok: false,
+    failure: {
+      kind: 'bad_response',
+      effect: 'read',
+      delivery: 'answered',
+      code: 'incompatible_protocol',
+      message: describeProtocolMismatch(check.server.protocolVersion),
+    },
+  };
+};
+
 /** Whether the server is ahead of this release, so this side is the one to update. */
 export const serverIsAhead = (version: ReceivedProtocolVersion): boolean =>
   typeof version === 'string' && version > PROTOCOL_VERSION;

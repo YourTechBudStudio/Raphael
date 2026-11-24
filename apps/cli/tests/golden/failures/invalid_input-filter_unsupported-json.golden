@@ -2,4 +2,4 @@
 2
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"list","error":{"code":"invalid_input","category":"usage","message":"--filter uses a key or an operator that is not supported. Keys: type, kind, tags.","hint":"Run \"raphael list --help\" for usage.","exitCode":2,"status":400,"field":"--filter","applied":false,"retryable":false,"serverMessage":"The server's sentence for invalid_input.","details":{"field":"filter","reason":"filter_unsupported"},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}
+{"ok":false,"command":"list","error":{"code":"invalid_input","category":"usage","message":"--filter: A filter may only use type, kind, tags, each with a value or $in.","hint":"Run \"raphael list --help\" for usage.","exitCode":2,"status":400,"field":"--filter","applied":false,"retryable":false,"serverMessage":"The server's sentence for invalid_input.","details":{"field":"filter","reason":"filter_unsupported"},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

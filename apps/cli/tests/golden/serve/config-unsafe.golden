@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+"<tmp>/raphael.yaml" defines a YAML anchor (&a). Raphael's configuration is read literally; remove the anchor and write each value where it is used.
+hint: Fix the configuration, then run "raphael server serve --config <tmp>/raphael.yaml" again.

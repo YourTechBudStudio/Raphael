@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { TITLE_MAX_CODE_POINTS } from '@raphael/contracts/nodes';
+import {
+  TITLE_MAX_CODE_POINTS,
+  asSentence,
+  describeSlugRejection,
+  describeTitleRejection,
+} from '@raphael/contracts/nodes';
 
 import { createNode, toPublicError, type NodeError } from '../src/modules/nodes/index.ts';
 import {
@@ -108,14 +113,19 @@ test('a title is required, and its limit is measured on the trimmed value', () =
         expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title })),
       );
       assert.equal(error.code, 'invalid_input');
-      assert.equal(error.message, 'Title is required.');
+      assert.equal(error.message, asSentence(describeTitleRejection({ reason: 'title_required' })));
     }
 
     const tooLong = 'a'.repeat(TITLE_MAX_CODE_POINTS + 1);
     const error = publicOf(
       expectLeft(create(connection, { type: 'area', parent: { path: '/' }, title: tooLong })),
     );
-    assert.equal(error.message, `Title is longer than ${TITLE_MAX_CODE_POINTS} characters.`);
+    assert.equal(
+      error.message,
+      asSentence(
+        describeTitleRejection({ reason: 'title_too_long', limit: TITLE_MAX_CODE_POINTS }),
+      ),
+    );
 
     // An explicit slug isolates the title bound from the shorter slug bound a derived address would hit.
     const padded = `   ${'b'.repeat(TITLE_MAX_CODE_POINTS)}   `;
@@ -134,7 +144,7 @@ test('an absent title keeps the reason a client can act on', () => {
     assert.equal(absent.code, 'invalid_input');
     assert.equal(
       absent.message,
-      'Title is required.',
+      asSentence(describeTitleRejection({ reason: 'title_required' })),
       'a missing title is a missing title, not an unspecified invalid field',
     );
 
@@ -204,7 +214,7 @@ test('a slug is required and must already be canonical; the server never derives
       ),
     );
     assert.equal(error.code, 'invalid_input');
-    assert.equal(error.message, 'The slug is not valid.');
+    assert.equal(error.message, asSentence(describeSlugRejection({ reason: 'not_slug' })));
   });
 });
 
@@ -538,7 +548,7 @@ test('a container missing its title still gets title_required, not a discriminan
     // have silently replaced mobile's only specific recovery copy with "the type was wrong".
     const error = publicOf(expectLeft(create(connection, { type: 'area', parent: { path: '/' } })));
     assert.equal(error.code, 'invalid_input');
-    assert.equal(error.message, 'Title is required.');
+    assert.equal(error.message, asSentence(describeTitleRejection({ reason: 'title_required' })));
 
     const tooLong = publicOf(
       expectLeft(
@@ -549,7 +559,12 @@ test('a container missing its title still gets title_required, not a discriminan
         }),
       ),
     );
-    assert.equal(tooLong.message, `Title is longer than ${TITLE_MAX_CODE_POINTS} characters.`);
+    assert.equal(
+      tooLong.message,
+      asSentence(
+        describeTitleRejection({ reason: 'title_too_long', limit: TITLE_MAX_CODE_POINTS }),
+      ),
+    );
 
     // A genuinely unknown type is still reported as the type, because nothing more specific is known.
     const unknown = publicOf(
@@ -565,7 +580,7 @@ test('a note is not named by the server: an omitted title is refused', () => {
       expectLeft(note(connection, { slug: 'api-design', body: { value: '# API design' } })),
     );
     assert.equal(error.code, 'invalid_input');
-    assert.equal(error.message, 'Title is required.');
+    assert.equal(error.message, asSentence(describeTitleRejection({ reason: 'title_required' })));
     assert.equal(
       count(connection.db, `SELECT count(*) AS c FROM nodes WHERE type = 'resource'`),
       0,

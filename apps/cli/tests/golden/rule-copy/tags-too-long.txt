@@ -1,0 +1,2 @@
+cli:    --tag: A tag may be at most 50 characters.
+server: A tag may be at most 50 characters.

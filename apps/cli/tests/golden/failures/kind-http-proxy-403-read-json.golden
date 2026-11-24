@@ -2,4 +2,4 @@
 5
 ==== stdout ====
 ==== stderr ====
-{"ok":false,"command":"get","error":{"code":"not_raphael","category":"not_configured","message":"The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) answered 403 without a Raphael error.","hint":"Run \"raphael login\" with the server's root address, such as http://127.0.0.1:3000.","exitCode":5,"status":403,"target":{"path":"/work"},"applied":false,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}
+{"ok":false,"command":"get","error":{"code":"http_status","category":"not_configured","message":"The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) answered 403 without a Raphael error.","hint":"Check that any proxy in front of the server lets this machine through.","exitCode":5,"status":403,"target":{"path":"/work"},"applied":false,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

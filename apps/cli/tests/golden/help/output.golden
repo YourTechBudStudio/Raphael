@@ -3,19 +3,114 @@
 ==== stdout ====
 raphael help output - Text results, JSON envelopes, paging and diagnostics.
 
-Standard output holds results only. Without --json, lists, search and favorites print one row per item: id, type, state, path and title, in columns padded to the widest value on the page. State is -, active, archived or active,archived, and comes before the title, which is always last. A header line is printed only on a terminal. A write prints a line naming the item, then its path, and its revision when it has one; a write that changed nothing says Unchanged; get prints every field, including the update time. List order defaults to slug ascending; use list --order-by updatedAt:desc for recent changes. Search orders by relevance and does not accept --order-by. Bodies are printed as Markdown by default.
+Standard output holds results only. Without --json, lists, search and favorites
+print one row per item: id, type, state, path and title, in columns padded to
+the widest value on the page. State is -, active, archived or active,archived,
+and comes before the title, which is always last. A header line is printed only
+on a terminal. A write prints a line naming the item, then its path, and its
+revision when it has one; a write that changed nothing says Unchanged; get
+prints every field, including the update time. List order defaults to slug
+ascending; use `list --order-by updatedAt:desc` for recent changes. Search
+orders by relevance and does not accept --order-by. Bodies are printed as
+Markdown by default.
 
-With --json, a successful command prints exactly one document: {"ok":true,"command":"get",...data}. Full-item reads and writes use entity; move, archive and restore use node; lists and favorites use items; search uses items[].node. These are machine field names. Items include path and updatedAt, an ISO 8601 UTC time such as 2026-10-19T10:42:07.123Z; text output prints the same string. No createdAt field is exposed. Update, move, archive, restore, favorite and unfavorite include changed; false means success without a change and without a revision bump. Move also reports previousPath. Favorite commands report `nodeId`, `isFavorite` and `node`, which is null when unfavorite names an id that does not exist. Path reports path.
+With --json, a successful command prints exactly one document:
+{"ok":true,"command":"get",...data}. Full-item reads and writes use entity;
+move, archive and restore use node; lists and favorites use items; search uses
+items[].node. These are machine field names. Items include path and updatedAt,
+an ISO 8601 UTC time such as 2026-10-19T10:42:07.123Z; text output prints the
+same string. No createdAt field is exposed. Update, move, archive, restore,
+favorite and unfavorite include changed; false means success without a change
+and without a revision bump. Move and update also report previousPath, the path
+before the change; text output prints it as was: only when the path changed.
+Favorite commands report `nodeId`, `isFavorite` and `node`, which is null when
+unfavorite names an id that does not exist. Path reports path.
 
-Paged results include page with skip, limit, hasMore, nextSkip and archivedLeftOut, which is true when archived items were left out of the answer. The result footer and runnable next-page command go to standard error, never standard output. Empty-result notes, warnings, hints, prompts and failures also go to standard error. Warnings appear in warnings[] on JSON successes as {code, message}, plus constructs for markdown_degraded. Codes: durability_unconfirmed: login saved the key, but the filesystem did not confirm the write is durable. environment_overrides: login saved the key, but the environment pair is set and is used instead of it. environment_still_set: logout removed the saved login, but the environment pair is still set and still used. version_skew: status found a server of another release that speaks the same protocol. markdown_degraded: create or update stored Markdown constructs only as text; constructs lists them by name. Closing a pipe early does not turn a completed command into a failure.
+Paged results include page with skip, limit, hasMore, nextSkip and
+archivedLeftOut, which is true when archived items were left out of the answer.
+The result footer and runnable next-page command go to standard error, never
+standard output. Empty-result notes, warnings, hints, prompts and failures also
+go to standard error. Warnings appear in warnings[] on JSON successes as
+{code, message}, plus constructs for markdown_degraded. Codes:
+durability_unconfirmed: login saved the key, but the filesystem did not confirm
+the write is durable. environment_overrides: login saved the key, but
+RAPHAEL_ENDPOINT or RAPHAEL_API_KEY is set: with both, remote commands use them
+instead; with one alone, remote commands refuse to run. environment_still_set:
+logout removed the saved login, but RAPHAEL_ENDPOINT or RAPHAEL_API_KEY is still
+set: with both, remote commands use them; with one alone, remote commands refuse
+to run. version_skew: status found a server of another release that speaks the
+same protocol. markdown_degraded: create or update did not store some Markdown
+as written; constructs lists them by name. Closing a pipe early does not turn a
+completed command into a failure.
 
-JSON failures leave stdout empty and print exactly one document to stderr: {"ok":false,"error":{"code":...,"category":...,"message":...,"hint":...,"exitCode":...,"applied":...,"retryable":...}}. Optional fields include status, field, target, serverMessage, details, and connection {endpoint, source, configFile} once a connection was resolved. applied is false when no change was applied, true when known applied, and null when unknown. Retry decisions must consider exitCode and applied; do not blindly retry an uncertain write. The JSON envelope and exit-code meanings are stable within a major version.
+JSON failures leave stdout empty and print exactly one document to stderr:
+{"ok":false,"command":"get","error":{...}}. The only other text stderr can then
+hold is for a person at a terminal: login's prompts, and the note that --body @-
+is reading from one. command is the command as typed (help for every help form),
+or null when none was recognized. error always has code, category, message,
+hint, exitCode, applied and retryable. Optional fields include status, field,
+target, serverMessage, details, and connection {endpoint, source, configFile}
+once a connection was resolved. category is the word for exitCode: failed for 1,
+usage for 2, not_found for 3, conflict for 4, not_configured for 5, retryable
+for 6, outcome_unknown for 7, interrupted for 130 and 143. code is a server code
+or one of this CLI's: usage, cancelled, interrupted, invalid_request,
+unexpected, not_configured, unsupported_platform, no_home,
+relative_xdg_config_home, relative_home, directory_unusable,
+directory_uncreatable, file_unusable, file_unreadable, file_too_large,
+file_malformed, write_failed, incomplete_environment, malformed,
+unsupported_scheme, credentials_in_url, query_not_allowed, fragment_not_allowed,
+api_key_missing, api_key_unsendable, timeout_out_of_range, unreachable,
+blocked_port, not_http, connection_lost, timeout, incompatible_protocol,
+not_raphael, bad_response, http_status, port_in_use, listen_denied,
+host_unavailable, listen_failed, database_in_use, database_newer,
+database_unusable, start_failed, option_invalid, config_unreadable,
+config_too_large, config_malformed, config_unsafe, config_invalid,
+env_unreadable, env_too_large; `raphael help exit-codes` gives each one's exit
+codes and meaning. For a server's answer, details carries what the server
+reported, each field optional: field, index, reason, limit, currentRevision,
+blocking, parentType, childType, location, element; blocking is {id, type}. For
+incompatible_protocol, details is
+{serverProtocol, serverVersion, cliProtocol, cliVersion}, with null for what the
+server did not say, and serverCode when its answer carried a code of its own.
+applied is false when no change was applied, true when known applied, and null
+when unknown. Retry decisions must consider exitCode and applied; do not blindly
+retry an uncertain write. The JSON envelope and exit-code meanings are stable
+within a major version.
 
-For text write failures, the state line distinguishes Nothing was changed., The change was not sent., and The change may or may not have been applied. Set RAPHAEL_DEBUG=1 to include diagnostic stacks. Keep stdout for results when scripting.
+help --json prints one document to stdout: {"ok":true,"command":"help",...}. For
+the root page and for reference it has commands, topics, examples, exitCodes and
+errorCodes; for a command, definition; for a topic, topic. A definition has
+name, summary, group, writes, usage, behavior, options, examples, prints and
+next, and may have constraints and seeAlso. Each option has name, type and
+description, and may have short, multiple, whole {min, max}, valueName, default
+and constraint. A topic has name, summary, body and examples. Each errorCodes
+entry has code, source, exitCodes and categories, and a meaning for this CLI's
+codes.
 
-The default page contains at most 50 results. --limit accepts 1–500; --skip skips results. At most 10 paths or ids may be searched or listed in one request.
+For text write failures, the state line distinguishes Nothing was changed., The
+change was not sent., and The change may or may not have been applied. Set
+RAPHAEL_DEBUG=1 to include diagnostic stacks. Keep stdout for results when
+scripting.
 
-For list: --order-by accepts slug, updatedAt, id with asc or desc; for example --order-by updatedAt:desc. Search orders by relevance and does not accept --order-by.
+On standard error, a line that starts with hint: is a runnable next step, and a
+line that starts with warning: is something a success did not do as asked. Other
+lines are information only, such as Showing 1-3. or Nothing changed: it was
+already archived. A note that also suggests a command puts that command on its
+own hint: line. A hint that is a command quotes all of it, as in hint: Run
+"raphael favorites" to see your favorites. or hint: Did you mean
+"raphael list /work"?
+
+Archive causes print one per line, nearest first: directly, or through the
+archived container above the item, then who set the cause in parentheses. (user)
+is a cause set with archive; restore removes only that cause, and only on the
+item itself. JSON carries each cause as origin, owner and reason.
+
+The default page contains at most 50 results. --limit accepts 1–500; --skip
+skips results. At most 10 paths or ids may be searched or listed in one request.
+
+For list: --order-by accepts slug, updatedAt, id with asc or desc; for example
+`--order-by updatedAt:desc`. Search orders by relevance and does not accept
+--order-by.
 
 Examples:
   raphael list / --json

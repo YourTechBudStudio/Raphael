@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--filter repeats the key "type" in one object.
+hint: Give each key once.

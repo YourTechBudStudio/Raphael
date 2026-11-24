@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+list does not take --lim.
+hint: Did you mean "raphael list /work --limit 5"?

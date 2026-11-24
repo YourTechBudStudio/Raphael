@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+destination: A path must not contain an empty segment at segment 2.
+The change was not sent.
+hint: Run "raphael move --help" for usage.

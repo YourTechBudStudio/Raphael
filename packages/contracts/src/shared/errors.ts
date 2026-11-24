@@ -75,6 +75,27 @@ export const INVALID_INPUT_REASONS = [
 
 export type InvalidInputReason = (typeof INVALID_INPUT_REASONS)[number];
 
+/**
+ * Why an `invalid_parent` failure happened: the containment rule (`parentage`, where `root` is the top
+ * level), or a move destination inside the item being moved (`cycle`).
+ */
+export const INVALID_PARENT_REASONS = ['parentage', 'cycle'] as const;
+
+export type InvalidParentReason = (typeof INVALID_PARENT_REASONS)[number];
+
+/** Where a `slug_conflict` happened: among the top-level items (`root`), or among siblings. */
+export const SLUG_CONFLICT_REASONS = ['root', 'sibling'] as const;
+
+export type SlugConflictReason = (typeof SLUG_CONFLICT_REASONS)[number];
+
+/**
+ * Why a `node_archived` failure happened: the item concerned is archived itself (`direct`), or only
+ * through a container above it (`inherited`).
+ */
+export const NODE_ARCHIVED_REASONS = ['direct', 'inherited'] as const;
+
+export type NodeArchivedReason = (typeof NODE_ARCHIVED_REASONS)[number];
+
 /** Why an `unsupported_media_type` failure happened. */
 export const UNSUPPORTED_MEDIA_REASONS = [
   'unsupported_media_type',
@@ -92,7 +113,7 @@ export type UnsupportedMediaReason = (typeof UNSUPPORTED_MEDIA_REASONS)[number];
  *
  * - `field` names the request field concerned, and `index` the entry within a list field (`scopes`).
  * - `reason` is the code-specific reason: one of `INVALID_INPUT_REASONS`, a content failure reason,
- *   `parentage` or `cycle`, `root` or `sibling`, `direct` or `inherited`.
+ *   `INVALID_PARENT_REASONS`, `SLUG_CONFLICT_REASONS` or `NODE_ARCHIVED_REASONS`.
  * - `limit` is the bound that was exceeded.
  * - `currentRevision` is the revision the target holds now.
  * - `blocking` is the item in the way: the archived container, or the holder of a slug.

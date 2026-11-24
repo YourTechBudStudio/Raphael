@@ -3,4 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 Nothing in /work matches the filter.
-Only direct children were listed. To list everything underneath: raphael list /work --filter '{"type":"project"}' -r
+Only direct children were listed.
+hint: Run "raphael list /work --filter '{"type":"project"}' -r" to list everything underneath.

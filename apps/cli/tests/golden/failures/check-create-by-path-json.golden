@@ -1,0 +1,5 @@
+==== exit ====
+7
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"create","error":{"code":"connection_lost","category":"outcome_unknown","message":"The connection to the server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) was lost before an answer arrived.","hint":"Run \"raphael get /work/p1/zz\" to check whether it was applied before sending it again. If the server speaks https rather than http, run \"raphael login\" with the right address.","exitCode":7,"target":{"path":"/work/p1/zz"},"applied":null,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

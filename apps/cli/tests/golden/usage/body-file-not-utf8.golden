@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---title must not be empty.
+The body file at "<tmp>/latin1.md" is not valid UTF-8.
 The change was not sent.
 hint: Run "raphael create --help" for usage.

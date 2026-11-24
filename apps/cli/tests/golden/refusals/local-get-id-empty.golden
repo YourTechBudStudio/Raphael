@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--id must be a positive whole number.
+hint: Run "raphael get --help" for usage.

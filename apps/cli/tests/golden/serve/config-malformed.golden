@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+"<tmp>/raphael.yaml" could not be read: Flow sequence in block collection must be sufficiently indented and end with a ] at line 2, column 1.
+hint: Fix the configuration, then run "raphael server serve --config <tmp>/raphael.yaml" again.

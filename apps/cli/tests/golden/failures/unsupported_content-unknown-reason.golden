@@ -1,0 +1,8 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The body has something Raphael cannot store (block 3).
+Nothing was changed.
+hint: Run "raphael help content" for the elements Raphael accepts.
+code: unsupported_content (422)

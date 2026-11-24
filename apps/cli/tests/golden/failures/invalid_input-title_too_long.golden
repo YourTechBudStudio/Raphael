@@ -2,7 +2,7 @@
 2
 ==== stdout ====
 ==== stderr ====
---title is longer than 200 characters.
+--title: A title may contain at most 200 characters after trimming.
 Nothing was changed.
 hint: Run "raphael update --help" for usage.
 code: invalid_input (400)

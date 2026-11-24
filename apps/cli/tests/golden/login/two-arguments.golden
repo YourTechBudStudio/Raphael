@@ -3,4 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 "login" takes one address. Got 2 arguments.
+Nothing was saved.
 hint: Run "raphael login --help" for usage.

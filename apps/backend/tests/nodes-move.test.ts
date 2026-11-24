@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { SLUG_MAX_CODE_POINTS } from '@raphael/contracts/nodes';
+import { SLUG_MAX_CODE_POINTS, asSentence, describeSlugRejection } from '@raphael/contracts/nodes';
 
 import {
   createNode as createNodeRaw,
@@ -132,7 +132,10 @@ test('a new slug is held to the submission bound, while an existing long slug st
       reason: 'slug_too_long',
       limit: SLUG_MAX_CODE_POINTS,
     });
-    assert.equal(tooLong.message, 'The slug is longer than 100 characters.');
+    assert.equal(
+      tooLong.message,
+      asSentence(describeSlugRejection({ reason: 'slug_too_long', limit: SLUG_MAX_CODE_POINTS })),
+    );
 
     // A container whose stored slug predates today's bound is still a destination by path.
     const legacy = area(connection, { path: '/personal' }, 'Legacy');
@@ -192,7 +195,7 @@ test('a destination parent that does not exist is not found, in both forms', () 
   });
 });
 
-test('a destination path naming a resource is a taken address, even when it is the target', () => {
+test('a destination path naming another resource is a taken address', () => {
   withMigrated('move-resource-address', (connection) => {
     const target = note(connection, { path: '/work' }, 'Mine');
     const other = note(connection, { path: '/personal' }, 'Theirs');
@@ -211,20 +214,6 @@ test('a destination path naming a resource is a taken address, even when it is t
       holder: { id: other.id, type: 'resource' },
     });
     assert.equal(stored(connection, other.id).revision, other.revision);
-
-    // A row does not conflict with its own index entry, which is why core refuses this itself.
-    const onSelf = refusedUnchanged(connection, target.id, {
-      target: { id: target.id },
-      revision: target.revision,
-      destination: { path: '/work/mine' },
-    });
-    assert.equal(onSelf.code, 'slug_conflict');
-    assert.deepEqual(onSelf.fields, {
-      field: 'destination',
-      slug: 'mine',
-      scope: 'sibling',
-      holder: { id: target.id, type: 'resource' },
-    });
   });
 });
 
@@ -244,11 +233,10 @@ test('a note inside the target named as the destination is a cycle before it is 
   });
 });
 
-test('a container named as its own destination is a cycle, not a type mismatch', () => {
+test('a container named as its own parent is a cycle, not a type mismatch', () => {
   withMigrated('move-self', (connection) => {
     const target = project(connection, { path: '/work' }, 'Apollo');
     for (const destination of [
-      { path: '/work/apollo' },
       { parent: { id: target.id } },
       // An absent address under itself names itself as the parent.
       { path: '/work/apollo/renamed' },
@@ -383,6 +371,7 @@ test('a move to the current location succeeds without writing, in every spelling
   withMigrated('move-noop', (connection) => {
     const target = project(connection, { path: '/work' }, 'Apollo');
     const root = area(connection, { path: '/' }, 'Top');
+    const inner = note(connection, { id: target.id }, 'Inside');
 
     const cases: readonly [number, unknown][] = [
       [target.id, { path: '/work' }],
@@ -390,12 +379,18 @@ test('a move to the current location succeeds without writing, in every spelling
       [target.id, { parent: { path: '/work' }, slug: 'apollo' }],
       [root.id, { parent: { path: '/' } }],
       [root.id, { path: '/' }],
+      // Its own full path is where it already is: not its own slug holder, not a move into itself.
+      [target.id, { path: '/work/apollo' }],
+      [root.id, { path: '/top' }],
+      [inner.id, { path: '/work/apollo/inside' }],
     ];
     for (const [id, destination] of cases) {
       const before = stored(connection, id);
-      const moved = expectRight(
+      const answer = expectRight(
         move(connection, { target: { id }, revision: before.revision, destination }),
-      ).node;
+      );
+      const moved = answer.node;
+      assert.equal(answer.changed, false, JSON.stringify(destination));
       assert.deepEqual(stored(connection, id), before, JSON.stringify(destination));
       assert.equal(moved.revision, before.revision);
       assert.equal(moved.parentId, before.parentId);

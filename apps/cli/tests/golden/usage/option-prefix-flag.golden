@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+search does not take --dir.
+hint: Did you mean "raphael search /work -q x --direct"?

@@ -11,6 +11,10 @@ import {
   API_ERROR_CODES,
   API_ERROR_STATUS,
   INVALID_INPUT_REASONS,
+  INVALID_PARENT_REASONS,
+  NODE_ARCHIVED_REASONS,
+  SLUG_CONFLICT_REASONS,
+  UNSUPPORTED_MEDIA_REASONS,
   type ApiErrorCode,
   type ApiErrorDetails,
   type InvalidInputReason,
@@ -209,6 +213,26 @@ describe('every invalid-input reason', () => {
       );
     });
   }
+  it('renders a reason from a newer server', async () => {
+    assert.equal((INVALID_INPUT_REASONS as readonly string[]).includes('title_profane'), false);
+    await pinBoth(
+      caseName('invalid_input', 'unknown-reason'),
+      ['update', '/work/note', '--title', 'Bad', '--revision', '1'],
+      answering(errorWith('invalid_input', { field: 'title', reason: 'title_profane' })),
+    );
+  });
+});
+
+describe('every unsupported-media reason', () => {
+  for (const reason of UNSUPPORTED_MEDIA_REASONS) {
+    it(`renders ${reason}`, async () => {
+      await pinBoth(
+        caseName('unsupported_media_type', reason),
+        ['list', '/work'],
+        answering(errorWith('unsupported_media_type', { reason })),
+      );
+    });
+  }
 });
 
 describe('every unsupported-content reason', () => {
@@ -238,6 +262,20 @@ describe('every unsupported-content reason', () => {
       );
     });
   }
+  it('renders a reason from a newer server', async () => {
+    assert.equal((CONTENT_FAILURE_REASONS as readonly string[]).includes('too_many_links'), false);
+    await pinBoth(
+      caseName('unsupported_content', 'unknown-reason'),
+      ['update', '/work/note', '--body', '# x', '--revision', '1'],
+      answering(
+        errorWith('unsupported_content', {
+          field: 'body',
+          reason: 'too_many_links',
+          location: [2],
+        }),
+      ),
+    );
+  });
   // Every attribute the validator checks, by the name it really sends, plus a whole-attrs failure
   // that names only the element.
   for (const element of [...Object.values(CHECKED_ATTRIBUTES), 'orderedList']) {
@@ -273,6 +311,26 @@ const pinReasons = (code: ApiErrorCode, cases: readonly ReasonCase[]): void => {
   }
 };
 
+/**
+ * Cases for every reason in the contract's list for `code`, keyed by it so a new reason without a case
+ * fails the typecheck, and `unknown` for a reason from a newer server, which gets a neutral sentence.
+ */
+const pinEveryReason = <Reason extends string>(
+  code: ApiErrorCode,
+  reasons: readonly Reason[],
+  cases: Readonly<Record<Reason | 'unknown', readonly ReasonCase[]>>,
+): void => {
+  for (const reason of [...reasons, 'unknown' as const]) {
+    for (const [name, , details] of cases[reason]) {
+      it(`keys ${code}: ${name} on its reason`, () => {
+        if (reason === 'unknown') assert.equal(reasons.includes(details.reason as Reason), false);
+        else assert.equal(details.reason, reason);
+      });
+    }
+    pinReasons(code, cases[reason]);
+  }
+};
+
 describe('not found, named as typed', () => {
   pinReasons('node_not_found', [
     ['target-path', ['get', '/work/nope/deeper'], { field: 'target' }],
@@ -291,103 +349,146 @@ describe('not found, named as typed', () => {
 });
 
 describe('a taken slug, named as typed', () => {
-  pinReasons('slug_conflict', [
-    [
-      'create-path',
-      ['create', 'resource.note', '/work/n2', '--title', 'N2'],
-      { field: 'slug', reason: 'sibling', blocking: { id: 12, type: 'resource' } },
+  pinEveryReason('slug_conflict', SLUG_CONFLICT_REASONS, {
+    sibling: [
+      [
+        'create-path',
+        ['create', 'resource.note', '/work/n2', '--title', 'N2'],
+        { field: 'slug', reason: 'sibling', blocking: { id: 12, type: 'resource' } },
+      ],
+      [
+        'create-parent-id',
+        ['create', 'project', '--parent-id', '4', '--slug', 'plan', '--title', 'Plan'],
+        { field: 'slug', reason: 'sibling', blocking: { id: 12, type: 'project' } },
+      ],
+      [
+        'update-slug',
+        ['update', '/work/raphael', '--slug', 'taken', '--revision', '1'],
+        { field: 'slug', reason: 'sibling', blocking: { id: 5, type: 'project' } },
+      ],
+      [
+        'update-slug-by-id',
+        ['update', '--id', '7', '--slug', 'taken', '--revision', '1'],
+        { field: 'slug', reason: 'sibling', blocking: { id: 5, type: 'project' } },
+      ],
+      [
+        'move-onto-note',
+        ['move', '/work/p4', '/work/n9', '--revision', '1'],
+        { field: 'destination', reason: 'sibling', blocking: { id: 9, type: 'resource' } },
+      ],
+      [
+        'move-into-container',
+        ['move', '/work/p4', '/personal', '--revision', '1'],
+        { field: 'slug', reason: 'sibling', blocking: { id: 11, type: 'project' } },
+      ],
     ],
-    [
-      'create-parent-id',
-      ['create', 'project', '--parent-id', '4', '--slug', 'plan', '--title', 'Plan'],
-      { field: 'slug', reason: 'sibling', blocking: { id: 12, type: 'project' } },
+    root: [
+      [
+        'create-path-no-holder',
+        ['create', 'area', '/work', '--title', 'Work'],
+        { field: 'slug', reason: 'root' },
+      ],
     ],
-    [
-      'create-path-no-holder',
-      ['create', 'area', '/work', '--title', 'Work'],
-      { field: 'slug', reason: 'root' },
+    unknown: [
+      [
+        'unknown-reason',
+        ['create', 'area', '/admin', '--title', 'Admin'],
+        { field: 'slug', reason: 'reserved' },
+      ],
     ],
-    [
-      'update-slug',
-      ['update', '/work/raphael', '--slug', 'taken', '--revision', '1'],
-      { field: 'slug', reason: 'sibling', blocking: { id: 5, type: 'project' } },
-    ],
-    [
-      'update-slug-by-id',
-      ['update', '--id', '7', '--slug', 'taken', '--revision', '1'],
-      { field: 'slug', reason: 'sibling', blocking: { id: 5, type: 'project' } },
-    ],
-    [
-      'move-onto-note',
-      ['move', '/work/p4', '/work/n9', '--revision', '1'],
-      { field: 'destination', reason: 'sibling', blocking: { id: 9, type: 'resource' } },
-    ],
-    [
-      'move-into-container',
-      ['move', '/work/p4', '/personal', '--revision', '1'],
-      { field: 'slug', reason: 'sibling', blocking: { id: 11, type: 'project' } },
-    ],
-  ]);
+  });
 });
 
 describe('containment, stated from the rule', () => {
-  pinReasons('invalid_parent', [
-    [
-      'root',
-      ['create', 'project', '/plan', '--title', 'Plan'],
-      { field: 'parent', reason: 'parentage', parentType: 'root', childType: 'project' },
+  pinEveryReason('invalid_parent', INVALID_PARENT_REASONS, {
+    parentage: [
+      [
+        'root',
+        ['create', 'project', '/plan', '--title', 'Plan'],
+        { field: 'parent', reason: 'parentage', parentType: 'root', childType: 'project' },
+      ],
+      [
+        'project-holds-area',
+        ['create', 'area', '/work/raphael/sub', '--title', 'Sub'],
+        { field: 'parent', reason: 'parentage', parentType: 'project', childType: 'area' },
+      ],
+      [
+        'project-holds-project',
+        ['move', '/work/p', '/work/raphael', '--revision', '1'],
+        { field: 'destination', reason: 'parentage', parentType: 'project', childType: 'project' },
+      ],
+      [
+        'note-holds-anything',
+        ['create', 'resource.note', '/work/n1/inner', '--title', 'Inner'],
+        { field: 'parent', reason: 'parentage', parentType: 'resource', childType: 'resource' },
+      ],
+      [
+        'note-holds-anything-parent-id',
+        ['create', 'resource.note', '--parent-id', '10', '--slug', 'x', '--body', 'hi'],
+        { field: 'parent', reason: 'parentage', parentType: 'resource', childType: 'resource' },
+      ],
     ],
-    [
-      'project-holds-area',
-      ['create', 'area', '/work/raphael/sub', '--title', 'Sub'],
-      { field: 'parent', reason: 'parentage', parentType: 'project', childType: 'area' },
+    cycle: [
+      [
+        'cycle',
+        ['move', '/work', '/work/sub', '--revision', '1'],
+        { field: 'destination', reason: 'cycle', parentType: 'area', childType: 'area' },
+      ],
     ],
-    [
-      'project-holds-project',
-      ['move', '/work/p', '/work/raphael', '--revision', '1'],
-      { field: 'destination', reason: 'parentage', parentType: 'project', childType: 'project' },
+    unknown: [
+      [
+        'unknown-reason',
+        ['create', 'area', '/work/a/b/c', '--title', 'C'],
+        { field: 'parent', reason: 'depth_limit', parentType: 'area', childType: 'area' },
+      ],
+      [
+        'unknown-reason-move',
+        ['move', '/work/p', '/work/raphael', '--revision', '1'],
+        { field: 'destination', reason: 'depth_limit', parentType: 'area', childType: 'area' },
+      ],
     ],
-    [
-      'note-holds-anything',
-      ['create', 'resource.note', '/work/n1/inner', '--title', 'Inner'],
-      { field: 'parent', reason: 'parentage', parentType: 'resource', childType: 'resource' },
-    ],
-    [
-      'cycle',
-      ['move', '/work', '/work/sub', '--revision', '1'],
-      { field: 'destination', reason: 'cycle', parentType: 'area', childType: 'area' },
-    ],
-  ]);
+  });
 });
 
 describe('archived, with the restore to run', () => {
-  pinReasons('node_archived', [
-    [
-      'target-direct',
-      ['update', '/work/raphael', '--title', 'R', '--revision', '1'],
-      { field: 'target', reason: 'direct', blocking: { id: 7, type: 'project' } },
+  pinEveryReason('node_archived', NODE_ARCHIVED_REASONS, {
+    direct: [
+      [
+        'target-direct',
+        ['update', '/work/raphael', '--title', 'R', '--revision', '1'],
+        { field: 'target', reason: 'direct', blocking: { id: 7, type: 'project' } },
+      ],
+      [
+        'parent-direct',
+        ['create', 'resource.note', '/work/old/n', '--title', 'N'],
+        { field: 'parent', reason: 'direct', blocking: { id: 3, type: 'area' } },
+      ],
+      [
+        'destination',
+        ['move', '/work/p', '/old', '--revision', '1'],
+        { field: 'destination', reason: 'direct', blocking: { id: 3, type: 'area' } },
+      ],
     ],
-    [
-      'target-inherited',
-      ['update', '--id', '8', '--title', 'R', '--revision', '1'],
-      { field: 'target', reason: 'inherited', blocking: { id: 3, type: 'area' } },
+    inherited: [
+      [
+        'target-inherited',
+        ['update', '--id', '8', '--title', 'R', '--revision', '1'],
+        { field: 'target', reason: 'inherited', blocking: { id: 3, type: 'area' } },
+      ],
+      [
+        'parent-inherited',
+        ['create', 'project', '--parent-id', '4', '--slug', 'p', '--title', 'P'],
+        { field: 'parent', reason: 'inherited', blocking: { id: 3, type: 'area' } },
+      ],
     ],
-    [
-      'parent-direct',
-      ['create', 'resource.note', '/work/old/n', '--title', 'N'],
-      { field: 'parent', reason: 'direct', blocking: { id: 3, type: 'area' } },
+    unknown: [
+      [
+        'unknown-reason',
+        ['update', '/work/raphael', '--title', 'R', '--revision', '1'],
+        { field: 'target', reason: 'frozen' },
+      ],
     ],
-    [
-      'parent-inherited',
-      ['create', 'project', '--parent-id', '4', '--slug', 'p', '--title', 'P'],
-      { field: 'parent', reason: 'inherited', blocking: { id: 3, type: 'area' } },
-    ],
-    [
-      'destination',
-      ['move', '/work/p', '/old', '--revision', '1'],
-      { field: 'destination', reason: 'direct', blocking: { id: 3, type: 'area' } },
-    ],
-  ]);
+  });
 });
 
 describe('revision conflicts, by what was sent', () => {
@@ -450,8 +551,8 @@ const KINDS: Record<
       string,
       (
         | { readonly respond: () => Response | Promise<never>; readonly timeoutMs?: number }
-        | { readonly argv: readonly string[] }
         | { readonly interrupt: true }
+        | { readonly unreachable: string }
       ),
     ]
   >
@@ -490,12 +591,53 @@ const KINDS: Record<
         },
       },
     ],
+    [
+      // https to a server whose certificate this machine does not trust.
+      'certificate',
+      {
+        respond: () => {
+          throw socketError('DEPTH_ZERO_SELF_SIGNED_CERT');
+        },
+      },
+    ],
+    [
+      // A port on the Fetch standard's blocklist: refused before anything is opened.
+      'blocked-port',
+      {
+        respond: () => {
+          throw new TypeError('fetch failed', { cause: new Error('bad port') });
+        },
+      },
+    ],
+    [
+      // An SSH server, or TLS spoken to an http:// address: bytes came back, and not HTTP.
+      'not-http',
+      {
+        respond: () => {
+          throw new TypeError('fetch failed', {
+            cause: Object.assign(
+              new Error('Response does not match the HTTP/1.1 protocol (Expected HTTP/)'),
+              { name: 'HTTPParserError' },
+            ),
+          });
+        },
+      },
+    ],
   ],
   // The shortest timeout the client accepts, and an answer that never comes.
   timeout: [['', { respond: () => new Promise<never>(() => {}), timeoutMs: 1_000 }]],
   cancelled: [['sigint', { interrupt: true }]],
-  // A request the shared decoder refuses never leaves; a blank title is one the CLI passes through.
-  invalid_request: [['', { argv: ['create', 'area', '/work', '--title', '   '] }]],
+  invalid_request: [
+    [
+      '',
+      {
+        unreachable:
+          'every field the request decoder checks is checked first by the contracts inspectors the ' +
+          'CLI runs, so no argv reaches the decoder with a value it refuses; a usage refusal is not ' +
+          'counted in its place',
+      },
+    ],
+  ],
   // A proxy's page: a status with no Raphael envelope.
   http: [
     [
@@ -509,11 +651,41 @@ const KINDS: Record<
       },
     ],
     [
+      'proxy-429',
+      {
+        respond: () =>
+          new Response('slow down', { status: 429, headers: { 'content-type': 'text/plain' } }),
+      },
+    ],
+    [
+      'proxy-413',
+      {
+        respond: () =>
+          new Response('<html>Too large</html>', {
+            status: 413,
+            headers: { 'content-type': 'text/html' },
+          }),
+      },
+    ],
+    [
       'proxy-403',
       {
         respond: () =>
           new Response('<html>Forbidden</html>', {
             status: 403,
+            headers: { 'content-type': 'text/html' },
+          }),
+      },
+    ],
+    // A proxy that may have forwarded the request before answering with a status of its own: after
+    // a write, nothing says whether the server applied it. Any other 4xx without its own hint reads
+    // the same way.
+    [
+      'proxy-400',
+      {
+        respond: () =>
+          new Response('<html>Refused</html>', {
+            status: 400,
             headers: { 'content-type': 'text/html' },
           }),
       },
@@ -531,6 +703,16 @@ const KINDS: Record<
       'redirect',
       { respond: () => new Response(null, { status: 302, headers: { location: '/elsewhere' } }) },
     ],
+    ...([303, 307] as const).map(
+      (status) =>
+        [
+          `redirect-${status}`,
+          {
+            respond: () =>
+              new Response(null, { status, headers: { location: 'http://127.0.0.1:2/api' } }),
+          },
+        ] as const,
+    ),
     ['unexpected-status', { respond: () => new Response(null, { status: 304 }) }],
   ],
 };
@@ -540,16 +722,8 @@ describe('client failure kinds', () => {
     [FailureKind, (typeof KINDS)[FailureKind]]
   >) {
     for (const [variant, how] of cases) {
-      if ('argv' in how) {
-        it(`renders ${kind}`, async () => {
-          const server = stubServer(() => {
-            throw new Error('An invalid request must not be sent.');
-          });
-          await pinBoth(caseName('kind', kind, variant), how.argv, (argv) =>
-            runCli(argv, { connect: server.connect }),
-          );
-          assert.equal(server.requests.length, 0);
-        });
+      if ('unreachable' in how) {
+        it.skip(`${kind} cannot be produced: ${how.unreachable}`);
         continue;
       }
       for (const [label, argv] of COMMANDS) {
@@ -573,6 +747,34 @@ describe('client failure kinds', () => {
       runCli(argv, { connect: server.connect }),
     );
   });
+});
+
+describe('the check after a write whose outcome is unknown', () => {
+  // The connection drops after the write went out, so it may have landed. Each check must find the
+  // item whether or not it did: a write that changes the path is checked where it would now be.
+  const CHECKS: ReadonlyArray<readonly [name: string, argv: readonly string[]]> = [
+    ['update-slug-by-path', ['update', '/work/p1/nl', '--slug', 'nl2', '--revision', '1']],
+    ['move-by-path', ['move', '/work/p1/nl2', '/work/p2/nl4', '--revision', '2']],
+    ['move-by-path-to-root', ['move', '/work/p1/nl2', '/', '--revision', '2']],
+    ['move-by-id', ['move', '--id', '7', '/work/p2', '--revision', '2']],
+    ['create-by-path', ['create', 'resource.note', '/work/p1/zz', '--body', 'x']],
+    [
+      'create-by-parent-id',
+      ['create', 'resource.note', '--parent-id', '6', '--slug', 'zz-decision', '--body', 'x'],
+    ],
+  ];
+  for (const [name, argv] of CHECKS) {
+    it(`names a check that finds the item: ${name}`, async () => {
+      const text = await pinBoth(caseName('check', name), argv, (args) =>
+        runCli(args, {
+          connect: stubServer(() => {
+            throw socketError('ECONNRESET');
+          }).connect,
+        }),
+      );
+      assert.equal(text.code, 7);
+    });
+  }
 });
 
 describe('server details are data, not terminal control', () => {
@@ -716,5 +918,72 @@ describe('verification after an answer that could not be read', () => {
     const ran = await runCli(['status'], { connect: server.connect });
     assert.equal(ran.code, 5);
     assert.equal(server.requests.length, 1);
+  });
+});
+
+describe('what RAPHAEL_DEBUG=1 adds', () => {
+  const debugRun = (respond: () => Response) => (argv: readonly string[]) =>
+    runCli(argv, { environment: { RAPHAEL_DEBUG: '1' }, connect: stubServer(respond).connect });
+
+  it('names the shape of an answer that could not be read, never its content', async () => {
+    const run = debugRun(
+      () =>
+        new Response('{"secret note text":', {
+          status: 200,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+        }),
+    );
+    const ran = await run(['update', '/work/p', '--title', 'G']);
+    failures.expectRun('debug-bad-response', ran);
+    assert.match(ran.stderr, /^debug: status 200, application\/json, 20 bytes, not JSON$/mu);
+    assert.doesNotMatch(ran.stderr, /secret/u);
+    // JSON output keeps its documented keys only.
+    const asJson = await run(['update', '/work/p', '--title', 'G', '--json']);
+    assert.doesNotMatch(asJson.stderr, /debug/u);
+  });
+
+  it('names what the system said about a connection', async () => {
+    const ran = await runCli(['get', '/work'], {
+      environment: { RAPHAEL_DEBUG: '1' },
+      connect: stubServer(() => {
+        throw socketError('ECONNREFUSED');
+      }).connect,
+    });
+    failures.expectRun('debug-network', ran);
+    assert.match(ran.stderr, /^debug: Error \(ECONNREFUSED\): ECONNREFUSED$/mu);
+  });
+
+  it('keeps the stack of a thrown failure out of the one JSON document', async () => {
+    const environment = { RAPHAEL_DEBUG: '1' };
+    const text = await runCli(['get', '/work/x', '--bogus'], { environment });
+    assert.match(text.stderr, /^\s+at /mu, 'text keeps the stack');
+    const json = await runCli(['get', '--json', '/work/x', '--bogus'], { environment });
+    assertErrorDocument(json, { exit: 2, code: 'usage' });
+  });
+});
+
+describe('address hints name the address the CLI knows', () => {
+  it('points at the root of an address that carries a path', async () => {
+    const { clientFailureWording } = await import('../src/shared/failure-wording.ts');
+    const endpoint = 'http://127.0.0.1:3105/base';
+    const worded = clientFailureWording(
+      {
+        kind: 'http',
+        effect: 'read',
+        delivery: 'answered',
+        status: 404,
+        code: 'route_not_found',
+        message: 'x',
+      },
+      {
+        context: {},
+        endpoint,
+        connection: { endpoint, source: 'environment', configFile: null },
+        command: 'get',
+        state: 'not_sent',
+        signal: undefined,
+      },
+    );
+    assert.equal(worded.hint, 'Set RAPHAEL_ENDPOINT to http://127.0.0.1:3105.');
   });
 });

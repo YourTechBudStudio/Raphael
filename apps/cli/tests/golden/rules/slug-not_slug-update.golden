@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--slug: A slug must follow this grammar: NFC lowercase Unicode letter or number tokens joined by single hyphens; combining marks may follow the first letter or number in each token.
+The change was not sent.
+hint: Run "raphael update --help" for usage.

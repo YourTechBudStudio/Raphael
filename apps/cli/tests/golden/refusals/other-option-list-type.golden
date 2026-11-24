@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+list does not take --type.
+hint: To filter by type, use --filter '{"type":"area"}'.

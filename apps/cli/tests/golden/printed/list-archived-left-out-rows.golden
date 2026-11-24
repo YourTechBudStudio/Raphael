@@ -4,4 +4,5 @@
 4  area  -  /work/platform  Platform
 ==== stderr ====
 Showing 1. No more.
-Archived items were left out. To include them: raphael list /work -r --include-archived
+Archived items were left out.
+hint: Run "raphael list /work -r --include-archived" to include them.

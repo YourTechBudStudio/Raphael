@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--filter: Tags must be a nonempty tag of at most 50 characters, or $in with at most 25 distinct tags. A list goes inside $in, as in {"tags":{"$in":[...]}}.
+hint: Run "raphael list --help" for usage.

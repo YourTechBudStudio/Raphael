@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--description: A description may be at most 4000 characters.
+The change was not sent.
+hint: Run "raphael update --help" for usage.

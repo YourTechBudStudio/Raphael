@@ -6,19 +6,23 @@ Usage: raphael move <path> <destination> [options]
 
 Move an item while keeping its id.
 
-An existing destination area or project receives the item with its current slug. Otherwise the last path segment supplies a new slug and its parent must exist.
+An existing destination area or project receives the item with its current slug.
+Otherwise the last path segment supplies a new slug and its parent must exist.
 
-Everything inside moves with it. Nothing is overwritten. A directly archived item must be restored first; an item archived only through a parent can move to an active parent.
+Everything inside moves with it. Nothing is overwritten. A directly archived
+item must be restored first; an item archived only through a parent can move to
+an active parent.
 
 Options:
       --id <id>
-      Address by durable id instead of path.
+          Address by stable id instead of path.
       --revision <n>
-      Revision read previously. Without a body change, omitted revisions are read immediately before sending.
+          Revision read previously. When omitted, it is read just before
+          sending.
       --json
-      Print one JSON result.
+          Print the result as one JSON document.
   -h, --help
-      Show this help.
+          Show help.
 
 Examples:
   raphael move /work/raphael /engineering
@@ -26,7 +30,8 @@ Examples:
   raphael move --id 42 /
 
 Prints:
-  The item with its new path, the path it had, and its revision; Unchanged when it was already there. JSON carries `node`, `changed` and `previousPath`.
+  The item with its new path, the path it had, and its revision; Unchanged when
+  it was already there. JSON carries `node`, `changed` and `previousPath`.
 
 Next: raphael get --id 42
 

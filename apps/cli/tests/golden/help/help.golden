@@ -5,15 +5,17 @@ Usage: raphael help [<command> | <topic>] [--json]
 
 Read command help and cross-command guidance.
 
-Commands take precedence over topics. Help works without a connection or saved login.
+Commands take precedence over topics. Help works without a connection or saved
+login. `raphael help <x>`, `raphael <x> --help` and `raphael <x> -h` print the
+same page, as text or, with --json, as the same document.
 
-help reference prints every page in one stream.
+`raphael help reference` prints every page in one stream.
 
 Options:
       --json
-      Print machine-readable command definitions.
+          Print the result as one JSON document.
   -h, --help
-      Show help.
+          Show help.
 
 Examples:
   raphael help create
@@ -21,7 +23,10 @@ Examples:
   raphael help --json search
 
 Prints:
-  Help text, or machine-readable definitions with --json.
+  Help text. With --json, one document {"ok":true,"command":"help",...}:
+  commands, topics, examples, exitCodes and errorCodes for the root page and
+  reference, definition for a command, topic for a topic. `raphael help output`
+  describes it.
 
 Next: raphael help reference
 ==== stderr ====

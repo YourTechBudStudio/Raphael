@@ -11,11 +11,17 @@ import { PROTOCOL_VERSION } from '@raphael/contracts/connection';
 
 import { version } from '../../distribution.ts';
 import { UsageError, parseArgs } from '../../shared/args.ts';
-import { optionsFor, type CommandContext, type CommandDefinition } from '../../shared/command.ts';
+import {
+  HELP_OPTION,
+  JSON_OPTION,
+  optionsFor,
+  type CommandContext,
+  type CommandDefinition,
+} from '../../shared/command.ts';
 import type { ExitCode } from '../../shared/exit.ts';
 import { reportClientFailure } from '../../shared/failure.ts';
 import { forTerminal } from '../../shared/output.ts';
-import { checkServer, describeProtocolMismatch, diagnosisOf } from '../../shared/server-check.ts';
+import { verifyServer } from '../../shared/server-check.ts';
 import { renderSuccess, type Warning } from '../../shared/success.ts';
 import { CLIENT_API_KEY_VARIABLE, CLIENT_ENDPOINT_VARIABLE } from '../../shared/variables.ts';
 
@@ -29,12 +35,9 @@ export const STATUS_DEFINITION: CommandDefinition = {
   behavior: [
     `Uses the connection every remote command uses: ${CLIENT_ENDPOINT_VARIABLE} and ${CLIENT_API_KEY_VARIABLE} when both are set, otherwise the saved login.`,
     'Asks the server once whether the key is accepted and which protocol and release it runs. Changes nothing.',
-    'Exit 0 means remote commands can work. Otherwise the exit code and error are the ones the next command would meet: 5 for no connection, a rejected key, a protocol mismatch or an address that is not a Raphael server, and 6 when the server could not be reached.',
+    'Exit 0 means remote commands can work. Otherwise the exit code and error are the ones the next read would meet: 5 for no connection, a rejected key, a protocol mismatch, or an address that is not a Raphael server or does not speak HTTP; 6 when the server could not be reached or did not answer in time; 1 when the server failed. A write that meets the same failure after it was sent exits 7, because it may have been applied.',
   ],
-  options: [
-    { name: 'json', type: 'boolean', description: 'Print the result as one JSON document.' },
-    { name: 'help', short: 'h', type: 'boolean', description: 'Show help.' },
-  ],
+  options: [JSON_OPTION, HELP_OPTION],
   examples: [
     { argv: ['status'] },
     { argv: ['status', '--json'], description: 'The check an agent runs first.' },
@@ -56,19 +59,8 @@ export const runStatus = async (
   }
   const { streams, session } = context;
   const transport = context.transport();
-  const check = await checkServer(transport, context.signal);
-  // This request is the verification, so what it found is the diagnosis.
-  session.diagnosis = diagnosisOf(check);
+  const check = await verifyServer(session, transport, context.signal);
   if (!check.ok) return reportClientFailure(streams, session, check.failure);
-  if (session.diagnosis?.kind === 'incompatible') {
-    return reportClientFailure(streams, session, {
-      kind: 'bad_response',
-      effect: 'read',
-      delivery: 'answered',
-      code: 'incompatible_protocol',
-      message: describeProtocolMismatch(check.server.protocolVersion),
-    });
-  }
 
   const connection = session.connection;
   const cliVersion = version();
@@ -79,7 +71,7 @@ export const runStatus = async (
           {
             code: 'version_skew',
             message:
-              `The server runs raphael ${forTerminal(serverVersion)} and this CLI is ${cliVersion}. ` +
+              `The server runs Raphael ${forTerminal(serverVersion)} and this CLI is ${cliVersion}. ` +
               'They speak the same protocol, so commands work; update one side to match.',
           },
         ]

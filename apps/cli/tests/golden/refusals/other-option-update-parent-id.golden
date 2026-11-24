@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+update does not take --parent-id.
+The change was not sent.
+hint: Run "raphael update --help" for usage.

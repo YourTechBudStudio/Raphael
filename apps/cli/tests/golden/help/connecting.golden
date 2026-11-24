@@ -3,15 +3,38 @@
 ==== stdout ====
 raphael help connecting - Start a local server and connect a client.
 
-Run a server: put RAPHAEL_SERVER_API_KEY=<key> in an owner-only .env file, made with (umask 077 && touch .env && chmod 600 .env && echo "RAPHAEL_SERVER_API_KEY=$(openssl rand -hex 32)" > .env), then run raphael server serve in that directory. With --config, the .env beside the configuration file is read instead. An environment value wins over .env, and an empty one is refused rather than ignored. The server listens on http://127.0.0.1:3000 unless --host, --port or the configuration file say otherwise, and prints the address and the login command when it starts. It never reads your saved login.
+Run a server: put RAPHAEL_SERVER_API_KEY=<key> in an owner-only .env file, made
+with
+`[ -e .env ] && echo ".env already exists; add RAPHAEL_SERVER_API_KEY to it yourself." >&2 || (umask 077 && set -C && echo "RAPHAEL_SERVER_API_KEY=$(openssl rand -hex 32)" > .env)`,
+then run `raphael server serve` in that directory. With --config, the .env
+beside the configuration file is read instead. An environment value wins over
+.env, and an empty one is refused rather than ignored. The server listens on
+http://127.0.0.1:3000 unless --host, --port or the configuration file say
+otherwise, and prints the address and the login command when it starts. It never
+reads your saved login.
 
-Connect: in another terminal run raphael login http://127.0.0.1:3000 and enter the same key. Login verifies the address and key before saving them with owner-only permissions to $XDG_CONFIG_HOME/raphael/config.json, or ~/.config/raphael/config.json. Without a terminal, pipe the key: printf '%s\n' "$KEY" | raphael login <address> --api-key-stdin. Logging in again replaces the saved login; raphael logout removes it.
+Connect: in another terminal run `raphael login http://127.0.0.1:3000` and enter
+the same key. Login verifies the address and key before saving them with
+owner-only permissions to $XDG_CONFIG_HOME/raphael/config.json, or
+~/.config/raphael/config.json. Without a terminal, pipe the key:
+`printf '%s\n' "$KEY" | raphael login <address> --api-key-stdin`. Logging in
+again replaces the saved login; `raphael logout` removes it.
 
-Check: raphael status reports the server, where its address and key came from, and the protocol and release of each side. Run it first in a script; exit 0 means remote commands can work.
+Check: `raphael status` reports the server, where its address and key came from,
+and the protocol and release of each side. Run it first in a script; exit 0
+means remote commands can work.
 
-Without a saved login, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together. Both or neither: a partial pair is refused, an empty variable counts as unset, and a complete pair overrides the saved login. RAPHAEL_API_KEY is the server's RAPHAEL_SERVER_API_KEY; clients do not read .env, and the server does not read RAPHAEL_API_KEY. A key must be visible ASCII characters with no spaces.
+Without a saved login, set RAPHAEL_ENDPOINT and RAPHAEL_API_KEY together. Both
+or neither: a partial pair is refused, an empty variable counts as unset, and a
+complete pair overrides the saved login. RAPHAEL_API_KEY is the server's
+RAPHAEL_SERVER_API_KEY; clients do not read .env, and the server does not read
+RAPHAEL_API_KEY. A key must be 1 to 512 visible ASCII characters with no spaces.
 
-RAPHAEL_TIMEOUT sets the request timeout in whole seconds, from 1 to 120; the default is 15 seconds. Exit 5 means the connection needs attention: the error names the address and where it came from, and the hint says what to change. Exit 6 means the server could not be reached and nothing was applied. Read help exit-codes before retrying a failed write.
+RAPHAEL_TIMEOUT sets the request timeout in whole seconds, from 1 to 120; the
+default is 15 seconds. Exit 5 means the connection needs attention: the error
+names the address and where it came from, and the hint says what to change. Exit
+6 means the server could not be reached and nothing was applied. Read
+`raphael help exit-codes` before retrying a failed write.
 
 Examples:
   raphael server serve

@@ -2,5 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-Standard input had no key. Nothing was saved.
-hint: Give the server's RAPHAEL_SERVER_API_KEY, then run "raphael login" again.
+Standard input had no key.
+Nothing was saved.
+hint: Pipe the server's RAPHAEL_SERVER_API_KEY, as in: printf '%s\n' "$KEY" | raphael login <endpoint> --api-key-stdin.

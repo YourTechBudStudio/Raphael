@@ -3,4 +3,4 @@
 ==== stdout ====
 No item has id 999, so nothing changed.
 ==== stderr ====
-To see your favorites: raphael favorites
+hint: Run "raphael favorites" to see your favorites.

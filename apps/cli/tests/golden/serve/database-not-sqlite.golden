@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The file at "<tmp>/notes.txt" is not a Raphael database.
+hint: Set --database or database.path to another file, or move this one aside.

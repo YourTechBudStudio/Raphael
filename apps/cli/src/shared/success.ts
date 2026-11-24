@@ -17,6 +17,7 @@
 import type { Session } from './command.ts';
 import { EXIT_OK, type ExitCode } from './exit.ts';
 import { writeJson, writeLine, type Streams } from './output.ts';
+import { CLIENT_API_KEY_VARIABLE, CLIENT_ENDPOINT_VARIABLE } from './variables.ts';
 
 /**
  * Every code a success can carry in `warnings[]`, with what it means. One table, so the output help
@@ -25,13 +26,11 @@ import { writeJson, writeLine, type Streams } from './output.ts';
 export const WARNING_CODES = {
   durability_unconfirmed:
     'login saved the key, but the filesystem did not confirm the write is durable.',
-  environment_overrides:
-    'login saved the key, but the environment pair is set and is used instead of it.',
-  environment_still_set:
-    'logout removed the saved login, but the environment pair is still set and still used.',
+  environment_overrides: `login saved the key, but ${CLIENT_ENDPOINT_VARIABLE} or ${CLIENT_API_KEY_VARIABLE} is set: with both, remote commands use them instead; with one alone, remote commands refuse to run.`,
+  environment_still_set: `logout removed the saved login, but ${CLIENT_ENDPOINT_VARIABLE} or ${CLIENT_API_KEY_VARIABLE} is still set: with both, remote commands use them; with one alone, remote commands refuse to run.`,
   version_skew: 'status found a server of another release that speaks the same protocol.',
   markdown_degraded:
-    'create or update stored Markdown constructs only as text; constructs lists them by name.',
+    'create or update did not store some Markdown as written; constructs lists them by name.',
 } as const satisfies Readonly<Record<string, string>>;
 
 export type WarningCode = keyof typeof WARNING_CODES;
@@ -40,8 +39,13 @@ export type WarningCode = keyof typeof WARNING_CODES;
 export interface Warning {
   readonly code: WarningCode;
   readonly message: string;
-  /** For `markdown_degraded`: the constructs kept only as text, as `DEGRADED_CONSTRUCTS` names them. */
+  /** For `markdown_degraded`: the constructs not stored as written, as `DEGRADED_CONSTRUCTS` names them. */
   readonly constructs?: readonly string[];
+  /**
+   * A command that shows what the warning is about. Text prints it on its own `hint:` line after the
+   * warning; JSON keeps it at the end of `message`, which stays one sentence per warning.
+   */
+  readonly hint?: string;
 }
 
 export interface Success {
@@ -62,12 +66,21 @@ export const renderSuccess = (streams: Streams, session: Session, success: Succe
       ok: true,
       command: invocation.command,
       ...success.data,
-      ...(warnings.length === 0 ? {} : { warnings }),
+      ...(warnings.length === 0
+        ? {}
+        : {
+            warnings: warnings.map(({ hint, ...warning }) =>
+              hint === undefined ? warning : { ...warning, message: `${warning.message} ${hint}` },
+            ),
+          }),
     });
     return EXIT_OK;
   }
   for (const line of success.lines()) writeLine(streams.out, line);
-  for (const warning of warnings) writeLine(streams.err, `warning: ${warning.message}`);
+  for (const warning of warnings) {
+    writeLine(streams.err, `warning: ${warning.message}`);
+    if (warning.hint !== undefined) writeLine(streams.err, `hint: ${warning.hint}`);
+  }
   for (const note of success.notes ?? []) writeLine(streams.err, note);
   return EXIT_OK;
 };

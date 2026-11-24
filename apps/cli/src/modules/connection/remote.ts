@@ -138,8 +138,8 @@ const checked = (
     throw new ConnectionError(
       'api_key_unsendable',
       source === 'environment'
-        ? `${CLIENT_API_KEY_VARIABLE} has characters that cannot be sent: a key must be ${SENDABLE_API_KEY_RULE}.`
-        : `The API key saved in ${forTerminal(configFile ?? '')} has characters that cannot be sent: a key must be ${SENDABLE_API_KEY_RULE}.`,
+        ? `${CLIENT_API_KEY_VARIABLE} cannot be sent: a key must be ${SENDABLE_API_KEY_RULE}.`
+        : `The API key saved in ${forTerminal(configFile ?? '')} cannot be sent: a key must be ${SENDABLE_API_KEY_RULE}.`,
       source === 'environment'
         ? `Set ${CLIENT_API_KEY_VARIABLE} to the server's ${SERVER_API_KEY_VARIABLE}, exactly.`
         : `Run "raphael login" again with the server's ${SERVER_API_KEY_VARIABLE}.`,

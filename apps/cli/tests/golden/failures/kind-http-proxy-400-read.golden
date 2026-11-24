@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) answered 400 without a Raphael error.
+hint: Check any proxy in front of the server, then run the command again.

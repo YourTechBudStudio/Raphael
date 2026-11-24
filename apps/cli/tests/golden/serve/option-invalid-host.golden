@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The server serve options are not valid:
+  --host: must be a non-empty address with no spaces or control characters.
+hint: Run "raphael server serve --help" for usage.

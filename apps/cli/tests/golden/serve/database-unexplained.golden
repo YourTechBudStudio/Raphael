@@ -1,0 +1,6 @@
+==== exit ====
+1
+==== stdout ====
+==== stderr ====
+Cannot open the database at "/srv/raphael.sqlite": Cannot find module 'drizzle-orm/better-sqlite3'.
+hint: Reinstall raphael if this persists, or run it again with RAPHAEL_DEBUG=1 to see where it failed.

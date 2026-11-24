@@ -2,5 +2,6 @@
 6
 ==== stdout ====
 ==== stderr ====
-Could not connect to the server at http://127.0.0.1:9. Nothing was saved.
-hint: Check that the server is running, or give the right address.
+Could not connect to the server at http://127.0.0.1:2: nothing is listening there (connection refused).
+Nothing was saved.
+hint: Start the server with "raphael server serve --port 2", or give the right address.

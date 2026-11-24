@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--metadata is set once, at create. It cannot be changed with update.
+The change was not sent.
+hint: Run "raphael update --help" for usage.

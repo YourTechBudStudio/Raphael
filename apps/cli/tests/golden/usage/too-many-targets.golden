@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Paths and --id take at most 10 targets in total.
+hint: Run "raphael list --help" for usage.

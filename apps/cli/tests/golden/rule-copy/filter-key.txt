@@ -1,0 +1,2 @@
+cli:    --filter: A filter may only use type, kind, tags.
+server: A filter may only use type, kind, tags.

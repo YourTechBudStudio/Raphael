@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+path: A path must start with "/".
+hint: Run "raphael get --help" for usage.

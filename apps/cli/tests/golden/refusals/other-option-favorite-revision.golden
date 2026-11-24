@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+favorite does not take --revision.
+The change was not sent.
+hint: Run "raphael favorite --help" for usage.

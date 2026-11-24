@@ -2,5 +2,5 @@
 2
 ==== stdout ====
 ==== stderr ====
-version takes no positional arguments.
+version takes no arguments.
 hint: Run "raphael version --help" for usage.

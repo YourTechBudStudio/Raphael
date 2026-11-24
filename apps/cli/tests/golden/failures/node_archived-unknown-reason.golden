@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+/work/raphael cannot be changed because something is archived: the server gave a reason this CLI does not know.
+Nothing was changed.
+hint: Run "raphael get /work/raphael" to see what is archived. Check that this CLI and the server are the same version with "raphael status".
+code: node_archived (409)

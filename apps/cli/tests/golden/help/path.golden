@@ -10,11 +10,11 @@ Paths change when an item or a parent moves or changes slug. Ids remain stable.
 
 Options:
       --id <id>
-      Address by durable id instead of path.
+          Address by stable id instead of path.
       --json
-      Print one JSON result.
+          Print the result as one JSON document.
   -h, --help
-      Show this help.
+          Show help.
 
 Examples:
   raphael path /work/raphael

@@ -1,0 +1,7 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Cannot use the server at <other>. This server speaks protocol 2999-01-01; Raphael here understands 2026-10-23. Update Raphael here. This CLI is release 0.0.1; the server's release is 9.9.9.
+Nothing was saved.
+hint: Update raphael on this machine, then run "raphael login <other>" again.

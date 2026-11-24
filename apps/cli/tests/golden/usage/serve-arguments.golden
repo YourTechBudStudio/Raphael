@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+server serve takes no arguments.
+hint: Run "raphael server serve --help" for usage.

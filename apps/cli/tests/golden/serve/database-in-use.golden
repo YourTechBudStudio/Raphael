@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The database at "<tmp>/held.sqlite" is already in use by another process, such as another Raphael server.
+hint: Stop the other process, or use another database with --database or database.path.

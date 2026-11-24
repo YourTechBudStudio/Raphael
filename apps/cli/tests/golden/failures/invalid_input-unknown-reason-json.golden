@@ -1,0 +1,5 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"update","error":{"code":"invalid_input","category":"usage","message":"The server refused the request (--title).","hint":"Run \"raphael update --help\" for usage.","exitCode":2,"status":400,"field":"--title","target":{"path":"/work/note"},"applied":false,"retryable":false,"serverMessage":"The server's sentence for invalid_input.","details":{"field":"title","reason":"title_profane"},"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

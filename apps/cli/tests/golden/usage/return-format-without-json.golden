@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--return-format requires --json.
+hint: Run "raphael get --help" for usage.

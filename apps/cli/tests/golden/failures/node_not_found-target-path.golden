@@ -3,5 +3,5 @@
 ==== stdout ====
 ==== stderr ====
 Nothing exists at /work/nope/deeper.
-hint: Run "raphael list /work/nope" to see what is there.
+hint: Run "raphael list / -r" to see which paths exist.
 code: node_not_found (404)

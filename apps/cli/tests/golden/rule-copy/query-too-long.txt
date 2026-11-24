@@ -1,0 +1,2 @@
+cli:    -q: A query may be at most 1000 characters.
+server: A query may be at most 1000 characters.

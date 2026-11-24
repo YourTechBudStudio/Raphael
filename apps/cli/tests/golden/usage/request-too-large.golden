@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+The serialized request must be at most 1048576 bytes. Reduce --body, --metadata, or other input.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

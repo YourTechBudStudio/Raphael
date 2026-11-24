@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+/ is the top level, not an item.
+hint: Run "raphael list /" to see the items there.

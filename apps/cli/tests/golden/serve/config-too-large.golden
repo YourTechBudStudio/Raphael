@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The configuration file "<tmp>/raphael.yaml" is 71683 bytes, larger than the 65536-byte limit. A Raphael configuration file is a short document; check that the path points at the right file.
+hint: Fix the configuration, then run "raphael server serve --config <tmp>/raphael.yaml" again.

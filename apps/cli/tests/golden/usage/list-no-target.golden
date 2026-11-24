@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+Give at least one path, or --id.
+hint: Run "raphael list --help" for usage.

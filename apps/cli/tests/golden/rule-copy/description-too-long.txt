@@ -1,0 +1,2 @@
+cli:    --description: A description may be at most 4000 characters.
+server: A description may be at most 4000 characters.

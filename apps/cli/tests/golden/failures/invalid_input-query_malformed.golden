@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
--q is not a well-formed query.
+-q: A query must be words or quoted phrases, with AND and OR only between two of them.
 hint: Run "raphael search --help" for usage.
 code: invalid_input (400)

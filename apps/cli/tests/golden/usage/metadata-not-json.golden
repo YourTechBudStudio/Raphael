@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--metadata must be valid JSON: syntax error at line 1, column 6.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

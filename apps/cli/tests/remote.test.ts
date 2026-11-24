@@ -86,6 +86,9 @@ after(async () => {
   for (const directory of directories) rmSync(directory, { recursive: true, force: true });
 });
 
+/** Help text with its line wrapping undone, so a sentence can be matched wherever it breaks. */
+const wrapped = (text: string): string => text.replaceAll(/\s+/gu, ' ');
+
 interface Ran {
   readonly code: number | null;
   readonly stdout: string;
@@ -172,6 +175,17 @@ describe('reading the seeded hierarchy', () => {
     assert.deepEqual(byPath.entity, byId.entity);
   });
 
+  it('reads leading zeros in an id as every whole-number option does', async () => {
+    const byPath = jsonOf(await run(['get', '/work', '--json']));
+    const padded = await run(['get', '--id', `00${byPath.entity.id}`, '--json']);
+    assert.equal(padded.code, 0, padded.stderr);
+    assert.equal(jsonOf(padded).entity.id, byPath.entity.id);
+    const listed = await run(['list', '--id', `0${byPath.entity.id}`, '--limit', '01', '--json']);
+    assert.equal(listed.code, 0, listed.stderr);
+    // Zero is still not an id, however it is written.
+    assert.equal((await run(['get', '--id', '00'])).code, 2);
+  });
+
   it('prints a path for an id', async () => {
     const work = jsonOf(await run(['get', '/work', '--json'])).entity;
     const ran = await run(['path', '--id', String(work.id)]);
@@ -187,6 +201,25 @@ describe('reading the seeded hierarchy', () => {
       ran.stderr,
       'Nothing exists at /nope.\nhint: Run "raphael list /" to see what is there.\ncode: node_not_found (404)\n',
     );
+  });
+
+  it('points a missing path at a place that exists, and following the hint succeeds', async () => {
+    // Only /work exists of these: listing the missing parent's own parent would fail again.
+    const cases: ReadonlyArray<readonly string[]> = [
+      ['create', 'area', '/work/zz/yy/xx', '--title', 'X'],
+      ['move', '/personal', '/work/zz/yy/xx'],
+      ['get', '/work/nope/deeper'],
+      ['path', '/work/nope'],
+      ['create', 'area', '/nope/x', '--title', 'X'],
+    ];
+    for (const argv of cases) {
+      const ran = await run(argv);
+      assert.equal(ran.code, 3, ran.stderr);
+      const hint = /^hint: Run "raphael (.*)" to see/mu.exec(ran.stderr)?.[1];
+      assert.ok(hint !== undefined, ran.stderr);
+      const followed = await run(hint.split(' '));
+      assert.equal(followed.code, 0, `${argv.join(' ')} hinted "${hint}": ${followed.stderr}`);
+    }
   });
 });
 
@@ -244,7 +277,7 @@ describe('creating', () => {
   it('requires a title for a container, but not for a note', async () => {
     const container = await run(['create', 'project', '/work/untitled']);
     assert.equal(container.code, 2);
-    assert.match(container.stderr, /--title is required/);
+    assert.match(container.stderr, /^--title: A title is required\.$/m);
 
     // The CLI does not decide whether a kind may omit a title; it declines to invent one and lets the
     // server answer. So this reaches the server and succeeds on the strength of its body.
@@ -449,7 +482,7 @@ describe('creating', () => {
       '@/does/not/exist',
     ]);
     assert.equal(missing.code, 2);
-    assert.match(missing.stderr, /the body file at "\/does\/not\/exist" does not exist\./);
+    assert.match(missing.stderr, /^The body file at "\/does\/not\/exist" does not exist\./m);
     assert.match(missing.stderr, /Use --body-literal for text beginning with @\./);
 
     const literal = await run([
@@ -515,7 +548,10 @@ describe('pagination', () => {
     // The page note describes the page; it is not one of its rows, so it is on stderr.
     assert.equal(ran.stdout.trimEnd().split('\n').length, 2, 'stdout holds exactly the rows');
     // The footer gives the range and the whole next command, with the page size kept.
-    assert.equal(ran.stderr, 'Showing 1-2. More: raphael list /work --limit 2 --skip 2\n');
+    assert.equal(
+      ran.stderr,
+      'Showing 1-2.\nhint: Run "raphael list /work --limit 2 --skip 2" for the next page.\n',
+    );
   });
 
   it('refuses a limit outside the contract rather than clamping it', async () => {
@@ -534,7 +570,7 @@ describe('pagination', () => {
     assert.equal(ran.code, 2);
     assert.match(
       ran.stderr,
-      /--filter: Type must be area, project, resource, or \$in with one or more of those values\./,
+      /--filter: Type must be area, project, resource, or \$in with one or more distinct values from that list\./,
     );
   });
 
@@ -690,15 +726,15 @@ describe('connecting', () => {
 
   it('reports an unreachable server plainly, with where to look', async () => {
     const ran = await run(['create', 'project', '/work/unreachable', '--title', 'U'], {
-      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:2' },
     });
     // Nothing was ever sent, so this is "not applied, and retrying may work" - not "unknown".
     assert.equal(ran.code, 6);
     assert.equal(
       ran.stderr,
-      'Could not connect to the server at http://127.0.0.1:1 (from RAPHAEL_ENDPOINT).\n' +
+      'Could not connect to the server at http://127.0.0.1:2 (from RAPHAEL_ENDPOINT): nothing is listening there (connection refused).\n' +
         'The change was not sent.\n' +
-        'hint: Check that the server is running, or fix RAPHAEL_ENDPOINT.\n',
+        'hint: Start the server with "raphael server serve --port 2", or fix RAPHAEL_ENDPOINT.\n',
     );
   });
 
@@ -822,7 +858,7 @@ describe('notes', () => {
     assert.equal(unnamed.code, 2);
     assert.match(
       unnamed.stderr,
-      /--title is required: the body and description have no text to take a title from\./,
+      /--title: A title is required\. The body and description have no text to take one from\./,
     );
     assert.equal((await run(['get', '/work/note-unnamed'])).code, 3, 'nothing was sent');
   });
@@ -841,14 +877,14 @@ describe('notes', () => {
   });
 
   it('refuses a nameless note locally, before any request is made', async () => {
-    // The CLI decides this itself; the server's own "Title is required." is never reached.
+    // The CLI decides this itself; the server's own "A title is required." is never reached.
     assertRefusal(
       await run(['create', 'resource.note', '/work/nameless']),
       {
         exit: 2,
         code: 'usage',
         lines: [
-          '--title is required: no body was given to take a title from, and no description. Standard input is not a terminal; to read the body from it, pass --body @-.',
+          '--title: A title is required. No body was given to take one from, and no description. Standard input is not a terminal; to read the body from it, pass --body @-.',
           'The change was not sent.',
           'hint: Run "raphael create --help" for usage.',
         ],
@@ -875,7 +911,7 @@ describe('notes', () => {
     assert.equal(qualified.code, 2);
     assert.match(
       qualified.stderr,
-      /--filter: Type must be area, project, resource, or \$in with one or more of those values\./,
+      /--filter: Type must be area, project, resource, or \$in with one or more distinct values from that list\./,
     );
 
     const byKind = await run([
@@ -1163,7 +1199,7 @@ describe('ordering', () => {
     assert.equal(ran.code, 0);
     assert.match(ran.stdout, /--order-by updatedAt:desc --limit 4/);
     assert.match(
-      ran.stdout,
+      wrapped(ran.stdout),
       /Repeat in priority order\. Fields: slug, updatedAt, id\. Directions: asc, desc\./,
     );
   });
@@ -1173,8 +1209,8 @@ describe('ordering', () => {
     assert.equal(ran.code, 0);
     assert.match(ran.stdout, /area, project, resource\.note/);
     assert.match(
-      ran.stdout,
-      /Notes may derive their title from the first body line, then the description\./,
+      wrapped(ran.stdout),
+      /Without --title, a note takes its title from the text of the body's first paragraph or heading/,
     );
   });
 });
@@ -1485,11 +1521,11 @@ describe('updating', () => {
 
   it('says the change was not sent when the revision could not be read', async () => {
     const ran = await run(['update', '/work/anything', '--tag', 'reviewed'], {
-      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:2' },
     });
     assert.equal(ran.code, 6);
     assert.match(ran.stderr, /^The change was not sent\.$/m);
-    assert.match(ran.stderr, /^hint: Check that the server is running/m);
+    assert.match(ran.stderr, /^hint: Start the server with "raphael server serve --port 2"/m);
   });
 
   it('points at its own help when a body on standard input is refused', async () => {
@@ -1507,9 +1543,9 @@ describe('updating', () => {
   it('documents the revision rule in its help', async () => {
     const ran = await run(['update', '--help']);
     assert.equal(ran.code, 0);
-    assert.match(ran.stdout, /A body replacement requires the revision you read\./);
+    assert.match(wrapped(ran.stdout), /A body replacement requires the revision you read\./);
     assert.match(
-      ran.stdout,
+      wrapped(ran.stdout),
       /Other changes may read and pin the current id and revision for you\./,
     );
   });
@@ -1579,7 +1615,7 @@ describe('updating', () => {
     // flag presence alone, because a dispatched request - including the revision pre-read - would
     // have failed as a transport error with exit 1 instead.
     const ran = await run(['update', '/work/anything', '--active', '--inactive'], {
-      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:2' },
     });
     assert.equal(ran.code, 2);
     assert.match(ran.stderr, /Give --active or --inactive, not both\./);
@@ -1719,7 +1755,7 @@ describe('search', () => {
     assert.equal(removed.code, 2);
     assert.match(
       removed.stderr,
-      /Search includes descendants by default\. Remove -r, or use --direct/,
+      /^search does not take -r: it includes descendants by default\.\nhint: Remove -r, or use --direct/m,
     );
   });
 
@@ -1959,17 +1995,18 @@ describe('search', () => {
   it('documents the grammar and the repeatable query in its help', async () => {
     const ran = await run(['search', '--help']);
     assert.equal(ran.code, 0);
+    const text = wrapped(ran.stdout);
     assert.match(
-      ran.stdout,
-      /Adjacent words mean OR; uppercase AND binds more tightly than uppercase OR\./,
+      text,
+      /Words separated by spaces mean OR; uppercase AND binds more tightly than uppercase OR\. .*Words joined by punctuation, such as auth-token or auth\.token, must appear together and in that order, like a phrase\./,
     );
-    assert.match(ran.stdout, /Double quotes make a phrase\./);
-    assert.match(ran.stdout, /Repeat -q to OR queries together/);
+    assert.match(text, /Double quotes make a phrase\./);
+    assert.match(text, /Repeat -q to OR queries together/);
     assert.match(
-      ran.stdout,
+      text,
       /-q, --query <text>\s+Text to search\. At least one required\. Repeatable\./,
     );
-    assert.match(ran.stdout, /At most \d+ paths or ids may be searched or listed in one request\./);
+    assert.match(text, /At most \d+ paths or ids may be searched or listed in one request\./);
 
     const root = await run(['--help']);
     assert.match(root.stdout, /^ {2}search +Search all descendants by text\.$/m);
@@ -2098,6 +2135,25 @@ describe('moving', () => {
     );
   });
 
+  it('reports a move to its own full path as unchanged, for a note, a project and an area', async () => {
+    const note = await seedNote('/work/move-self-note');
+    const project = await seedProject('/work/move-self-project');
+    const area = await seedArea('/move-self-area');
+    for (const [item, path, type] of [
+      [note, '/work/move-self-note', 'resource.note'],
+      [project, '/work/move-self-project', 'project'],
+      [area, '/move-self-area', 'area'],
+    ] as const) {
+      const ran = await run(['move', path, path]);
+      assert.equal(ran.code, 0, ran.stderr);
+      assert.match(ran.stdout, new RegExp(`^Unchanged ${type} ${item.id}: `), path);
+      assert.equal(ran.stderr, `Nothing changed: it is already at ${path}.\n`);
+      // A retry by id, as after an answer that never arrived, confirms instead of conflicting.
+      const json = jsonOf(await run(['move', '--id', String(item.id), path, '--json']));
+      assert.deepEqual([json.changed, json.node.revision], [false, item.revision], path);
+    }
+  });
+
   it('moves an area to the top level', async () => {
     await seedArea('/work/move-to-top');
     const ran = await run(['move', '/work/move-to-top', '/']);
@@ -2146,13 +2202,13 @@ describe('moving', () => {
 
   it('refuses malformed, missing and extra arguments before anything is sent', async () => {
     // Pointed at a closed port: a usage error must be decided before any request is attempted.
-    const env = { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' };
+    const env = { RAPHAEL_ENDPOINT: 'http://127.0.0.1:2' };
     const cases: readonly [readonly string[], RegExp][] = [
       [['move'], /Give a path, or --id\./],
       [['move', '/work/x'], /Give a destination/],
       [['move', '--id', '5'], /Give a destination/],
-      [['move', '/work/x', 'personal'], /destination "personal": /],
-      [['move', '/work/x', '/personal/'], /destination "\/personal\/": /],
+      [['move', '/work/x', 'personal'], /^destination: A path must start with "\/"\.$/m],
+      [['move', '/work/x', '/personal/'], /^destination: A path must not end with "\/"\.$/m],
       [
         ['move', '/work/x', '/a', '/b'],
         /move takes one source and one destination, or --id and one destination\./,
@@ -2168,13 +2224,18 @@ describe('moving', () => {
       const ran = await run(args, { env });
       assert.equal(ran.code, 2, args.join(' '));
       assert.match(ran.stderr, message, args.join(' '));
-      assert.match(ran.stderr, /raphael move --help/, args.join(' '));
+      // A path that only lacks its leading or trailing slash is answered with the path it meant.
+      assert.match(
+        ran.stderr,
+        /raphael move --help|^hint: (?:Try "\/personal"\.|Did you mean "raphael move \/work\/x \/personal"\?)$/m,
+        args.join(' '),
+      );
     }
   });
 
   it('says the move was not sent when the revision could not be read', async () => {
     const ran = await run(['move', '/work/anything', '/personal'], {
-      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+      env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:2' },
     });
     assert.equal(ran.code, 6);
     assert.match(ran.stderr, /^The change was not sent\.$/m);
@@ -2256,7 +2317,7 @@ describe('archiving and restoring', () => {
     // The next step is not a result, so it is on stderr: restore the container that holds it.
     assert.equal(
       still.stderr,
-      `hint: It is archived through area ${shelf.id}. Run "raphael restore --id ${shelf.id}" to restore that area.\n`,
+      `It is archived through area ${shelf.id}.\nhint: Run "raphael restore --id ${shelf.id}" to restore that area.\n`,
     );
 
     const json = await run(['restore', '--id', String(shelf.id), '--json']);
@@ -2298,7 +2359,7 @@ describe('archiving and restoring', () => {
     // Left out, and said so, with the command that shows them.
     assert.match(
       hidden.stderr,
-      /^Archived items were left out\. To include them: raphael list \/work\/arch-list --include-archived$/m,
+      /^Archived items were left out\.\nhint: Run "raphael list \/work\/arch-list --include-archived" to include them\.$/m,
     );
 
     const shown = await run(['list', '/work/arch-list', '--include-archived']);
@@ -2361,7 +2422,27 @@ describe('archiving and restoring', () => {
     const note = await created(['create', 'resource.note', '/work/arch-mover', '--title', 'M']);
     const toArchived = await run(['move', '--id', String(note.id), '/work/arch-refuse']);
     assert.equal(toArchived.code, 4);
-    assert.match(toArchived.stderr, /^The destination \/work\/arch-refuse is archived/m);
+    assert.match(
+      toArchived.stderr,
+      new RegExp(
+        `^Area ${refuse.id} is archived, so nothing can move to /work/arch-refuse\\.$`,
+        'm',
+      ),
+    );
+    // A new path directly inside the archived area does not exist; the area is what is named.
+    const toNewPath = await run(['move', '--id', String(note.id), '/work/arch-refuse/renamed']);
+    assert.equal(toNewPath.code, 4);
+    assert.match(
+      toNewPath.stderr,
+      new RegExp(
+        `^Area ${refuse.id} is archived, so nothing can move to /work/arch-refuse/renamed\\.$`,
+        'm',
+      ),
+    );
+    assert.match(
+      toNewPath.stderr,
+      new RegExp(`^hint: Run "raphael restore --id ${refuse.id}" first`, 'm'),
+    );
 
     // An inherited-only item moves out, and is active once it is somewhere active.
     const out = await run(['move', '/work/arch-refuse/inner', '/work/arch-rescued']);
@@ -2372,7 +2453,7 @@ describe('archiving and restoring', () => {
   it('says nothing was sent when the pre-read fails', async () => {
     for (const verb of ['archive', 'restore'] as const) {
       const unread = await run([verb, '/work/anything'], {
-        env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:1' },
+        env: { RAPHAEL_ENDPOINT: 'http://127.0.0.1:2' },
       });
       assert.equal(unread.code, 6);
       assert.match(unread.stderr, /^The change was not sent\.$/m);

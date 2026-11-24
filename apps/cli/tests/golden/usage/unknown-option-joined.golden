@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+create does not take --titel.
+The change was not sent.
+hint: Did you mean "raphael create area /work/x --title=X"?

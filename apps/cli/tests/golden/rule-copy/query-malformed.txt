@@ -1,0 +1,2 @@
+cli:    -q: AND and OR must sit between two words.
+server: AND and OR must sit between two words.

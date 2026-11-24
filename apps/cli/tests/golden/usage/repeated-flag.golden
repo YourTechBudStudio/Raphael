@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--return-format can be given only once.
+hint: Run "raphael get --help" for usage.

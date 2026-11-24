@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, test } from 'node:test';
 
+import { API_KEY_MAX_LENGTH, SENDABLE_API_KEY_RULE } from '@raphael/contracts/connection';
 import { Effect } from 'effect';
 
 import { ApiCredential } from '../src/infrastructure/config/credential.ts';
@@ -296,11 +297,52 @@ describe('the environment and the credential', () => {
       writeFileSync(path, `${API_KEY_VARIABLE}=${GOOD_KEY}\n`, 'utf8');
       chmodSync(path, 0o000);
       try {
-        refuses(() => load({ dir, env: {} }), 'env_unreadable');
+        // Even with the key in the environment: a present file that is not being used is the
+        // problem, and the next step says how to fix it.
+        const error = refuses(
+          () => load({ dir, env: { [API_KEY_VARIABLE]: GOOD_KEY } }),
+          'env_unreadable',
+        );
+        assert.equal(
+          error.message,
+          `Cannot read "${path}": permission denied. Raphael will not start while a .env it cannot read is present.`,
+        );
+        assert.equal(error.hint, `Fix the permissions on "${path}", or remove it.`);
       } finally {
         chmodSync(path, 0o600);
       }
     });
+  });
+
+  test('a .env that starts with a byte order mark sets its first variable', () => {
+    withTempDir('env-bom', (dir) => {
+      writeFileSync(join(dir, '.env'), `\uFEFF${API_KEY_VARIABLE}=${GOOD_KEY}\n`, {
+        encoding: 'utf8',
+        mode: 0o600,
+      });
+      const loaded = load({ dir, env: {} });
+      assert.deepEqual(loaded.keySource, {
+        variable: API_KEY_VARIABLE,
+        file: join(dir, '.env'),
+        cutAtComment: false,
+      });
+    });
+  });
+
+  test('says when an unquoted # in the .env value started a comment and cut the key short', () => {
+    for (const [line, cut] of [
+      [`${API_KEY_VARIABLE}=${GOOD_KEY}#rest`, true],
+      [`export ${API_KEY_VARIABLE}=${GOOD_KEY}#rest`, true],
+      [`${API_KEY_VARIABLE}="${GOOD_KEY}#rest"`, false],
+      [`${API_KEY_VARIABLE}='${GOOD_KEY}#rest'`, false],
+      [`${API_KEY_VARIABLE}=${GOOD_KEY} # a comment, as written`, false],
+    ] as const) {
+      withTempDir('env-hash', (dir) => {
+        writeFileSync(join(dir, '.env'), `${line}\n`, { encoding: 'utf8', mode: 0o600 });
+        const loaded = load({ dir, env: {} });
+        assert.equal(loaded.keySource.cutAtComment, cut, line);
+      });
+    }
   });
 
   test('a .env property named __proto__ is read as data, not as a prototype', () => {
@@ -326,7 +368,7 @@ describe('the environment and the credential', () => {
     });
   });
 
-  test('a key may be any length, in visible ASCII with no whitespace', () => {
+  test('a key may be any length up to the limit, in visible ASCII with no whitespace', () => {
     withTempDir('key-shapes', (dir) => {
       // There is no length floor. Hex, base64, a single character: if it can be sent, it is the key.
       for (const key of ['x', 'a3f9'.repeat(16), 'Zm9vYmFyLWJhei1xdXV4LWNvcmdlLWdyYXVsdA==']) {
@@ -348,6 +390,8 @@ describe('the environment and the credential', () => {
         `  ${GOOD_KEY}`,
         '\u{1F511}'.repeat(8),
         'café-key',
+        // Visible ASCII, but longer than any client sends.
+        'a'.repeat(API_KEY_MAX_LENGTH + 1),
       ]) {
         const error = refuses(
           () => load({ dir, env: { [API_KEY_VARIABLE]: key }, readEnvFile: false }),
@@ -355,7 +399,7 @@ describe('the environment and the credential', () => {
         );
         assert.equal(
           error.message,
-          `${API_KEY_VARIABLE} in the environment has characters no client could send: a key must be visible ASCII characters with no spaces.`,
+          `${API_KEY_VARIABLE} in the environment is not a key any client could send: a key must be ${SENDABLE_API_KEY_RULE}.`,
         );
         assert.equal(error.message.includes(key.trim()), false);
         assert.match(error.hint ?? '', /openssl rand -hex 32/u);
@@ -365,7 +409,7 @@ describe('the environment and the credential', () => {
       const fromFile = refuses(() => load({ dir, env: {} }), 'api_key_unsendable');
       assert.match(
         fromFile.message,
-        new RegExp(`^${API_KEY_VARIABLE} in "${envFile}" has characters`, 'u'),
+        new RegExp(`^${API_KEY_VARIABLE} in "${envFile}" is not a key any client could send`, 'u'),
       );
     });
   });
@@ -376,6 +420,11 @@ describe('the environment and the credential', () => {
     assert.throws(() => ApiCredential.fromKey(''), ConfigurationError);
     assert.throws(() => ApiCredential.fromKey(`  ${GOOD_KEY}  `), ConfigurationError);
     assert.doesNotThrow(() => ApiCredential.fromKey('x'));
+    assert.doesNotThrow(() => ApiCredential.fromKey('a'.repeat(API_KEY_MAX_LENGTH)));
+    assert.throws(
+      () => ApiCredential.fromKey('a'.repeat(API_KEY_MAX_LENGTH + 1)),
+      ConfigurationError,
+    );
   });
 
   test('a credential does not become readable by being printed or serialized', () => {
@@ -565,6 +614,7 @@ describe('where the key is looked for, and what a missing key says', () => {
       assert.deepEqual(loaded.keySource, {
         variable: API_KEY_VARIABLE,
         file: join(configDir, '.env'),
+        cutAtComment: false,
       });
     });
   });
@@ -738,6 +788,58 @@ describe('configuration problems and flag overrides', () => {
         typed.message,
         'The server serve options are not valid:\n  --port: must be a number, got "abc".',
       );
+    });
+  });
+
+  test('a host that is clearly not an address to bind is refused, saying what to drop', () => {
+    withTempDir('config-host-shapes', (dir) => {
+      const cases: ReadonlyArray<readonly [string, string]> = [
+        ['http://127.0.0.1', 'must be an address, not a URL; leave out the scheme and any port.'],
+        ['127.0.0.1:3000', 'must be an address without a port; give the port on its own.'],
+        ['localhost:3000', 'must be an address without a port; give the port on its own.'],
+        ['[::1]', 'must be an IPv6 address without brackets, such as ::1.'],
+        ['999.1.1.1', 'must be a valid IPv4 address, with each of its four numbers from 0 to 255.'],
+      ];
+      for (const [host, problem] of cases) {
+        const error = refuses(
+          () =>
+            loadConfiguration({
+              cwd: dir,
+              processEnv: { [API_KEY_VARIABLE]: GOOD_KEY },
+              readEnvFile: false,
+              overrides: { host },
+            }),
+          'option_invalid',
+        );
+        assert.equal(
+          error.message,
+          `The server serve options are not valid:\n  --host: ${problem}`,
+          host,
+        );
+      }
+      // Addresses and names the system judges when it listens are left to it.
+      for (const host of ['::1', '::', 'fe80::1', '0.0.0.0', 'localhost', 'raphael.internal']) {
+        const loaded = loadConfiguration({
+          cwd: dir,
+          processEnv: { [API_KEY_VARIABLE]: GOOD_KEY },
+          readEnvFile: false,
+          overrides: { host },
+        });
+        assert.equal(loaded.options.server.host, host);
+      }
+      // The file's key follows the same rule, as configuration.
+      const path = writeConfig(dir, 'server:\n  host: "http://127.0.0.1"\n');
+      const fromFile = refuses(
+        () =>
+          loadConfiguration({
+            cwd: dir,
+            processEnv: { [API_KEY_VARIABLE]: GOOD_KEY },
+            readEnvFile: false,
+            configPath: path,
+          }),
+        'config_invalid',
+      );
+      assert.match(fromFile.message, /server\.host: must be an address, not a URL/u);
     });
   });
 });

@@ -30,6 +30,12 @@ export interface ClientFailure {
   /** For a `network` failure, what the system reported, when it said. */
   readonly cause?: NetworkCause;
   /**
+   * For an operator diagnosing a `network` or `bad_response` failure: the system's own error name,
+   * code and message, or the shape of an answer that could not be read (status, content type, size,
+   * whether it was JSON). Never a response body, a request, or a credential.
+   */
+  readonly diagnostic?: string;
+  /**
    * For a redirect, the origin it pointed at - scheme, host and port only, never a path or query,
    * which can carry anything the redirecting server chose.
    */
@@ -38,9 +44,20 @@ export interface ClientFailure {
 
 /**
  * Why a connection failed, as far as the system said: nothing listened, the name did not resolve, the
- * TLS handshake failed, the connection was reset, or the network had no route.
+ * TLS handshake failed, the server's certificate was not trusted, the connection was reset, the network
+ * had no route, the port is one the fetch implementation refuses to use (`blocked_port`), or what
+ * came back was not HTTP at all (`not_http`: another protocol on that port, or TLS spoken to an
+ * `http://` address).
  */
-export type NetworkCause = 'refused' | 'dns' | 'tls' | 'reset' | 'unreachable';
+export type NetworkCause =
+  | 'refused'
+  | 'dns'
+  | 'tls'
+  | 'certificate'
+  | 'reset'
+  | 'unreachable'
+  | 'blocked_port'
+  | 'not_http';
 
 /** A capability declares this for each operation; the transport cannot tell from the route. */
 export type OperationEffect = 'read' | 'write';

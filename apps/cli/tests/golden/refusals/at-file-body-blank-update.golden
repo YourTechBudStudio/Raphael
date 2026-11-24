@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--body @file read nothing but whitespace: the body file at "<tmp>/blank.md" has no text. To clear the body on purpose, give --body '' --revision <n>.
+The change was not sent.
+hint: Run "raphael update --help" for usage.

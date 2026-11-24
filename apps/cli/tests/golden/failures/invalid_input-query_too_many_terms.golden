@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
--q has more than 32 terms.
+-q: A query may have at most 32 words or phrases.
 hint: Run "raphael search --help" for usage.
 code: invalid_input (400)

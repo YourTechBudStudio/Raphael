@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"get","error":{"code":"bad_response","category":"not_configured","message":"The server at http://raphael.invalid (from the saved login at /stub/raphael/config.json) redirected the request to http://127.0.0.1:2.","hint":"Run \"raphael login http://127.0.0.1:2\".","exitCode":5,"status":307,"target":{"path":"/work"},"applied":false,"retryable":false,"connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"}}}

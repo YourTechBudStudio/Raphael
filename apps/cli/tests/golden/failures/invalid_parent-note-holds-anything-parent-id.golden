@@ -1,0 +1,8 @@
+==== exit ====
+4
+==== stdout ====
+==== stderr ====
+"x" cannot be created under --parent-id 10: a note cannot contain anything. A note can go inside an area or a project.
+Nothing was changed.
+hint: Run "raphael list /" to choose another place.
+code: invalid_parent (422)

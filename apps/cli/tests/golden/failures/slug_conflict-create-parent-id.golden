@@ -4,5 +4,5 @@
 ==== stderr ====
 The slug "plan" under --parent-id 4 is already taken by project 12.
 Nothing was changed.
-hint: Run "raphael get --id 12" to see what holds it, or choose another slug.
+hint: Run "raphael get --id 12" to see what holds it; it may be this same item, created by an earlier attempt. If not, choose another slug.
 code: slug_conflict (409)

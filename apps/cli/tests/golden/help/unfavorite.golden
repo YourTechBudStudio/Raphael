@@ -6,15 +6,16 @@ Usage: raphael unfavorite <path> [options]
 
 Remove an area or project from favorites.
 
-An item that is not a favorite succeeds without a change, and so does an id that names nothing.
+An item that is not a favorite succeeds without a change, and so does an id that
+names nothing.
 
 Options:
       --id <id>
-      Address by durable id instead of path.
+          Address by stable id instead of path.
       --json
-      Print one JSON result.
+          Print the result as one JSON document.
   -h, --help
-      Show this help.
+          Show help.
 
 Examples:
   raphael unfavorite /work
@@ -22,7 +23,9 @@ Examples:
   raphael unfavorite /work/raphael --json
 
 Prints:
-  The item with its path and favorite state; Unchanged when it already was in that state, and a plain sentence when the id names nothing. JSON carries `nodeId`, `isFavorite`, `changed` and `node`.
+  The item with its path and favorite state; Unchanged when it already was in
+  that state, and a plain sentence when the id names nothing. JSON carries
+  `nodeId`, `isFavorite`, `changed` and `node`.
 
 Next: raphael favorites
 

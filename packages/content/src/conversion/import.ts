@@ -88,6 +88,10 @@ const textNode = (
 
 const REJECTED_LINK = '__rejected_link';
 
+/** A footnote marker, `[^1]`, and the same not preceded by a backslash. */
+const FOOTNOTE = /\[\^[^\]\s]+\]/u;
+const UNESCAPED_FOOTNOTE = /(?<!\\)\[\^[^\]\s]+\]/u;
+
 /**
  * Inline conversion. Marks are tracked on an explicit stack rather than by recursion, and a link
  * whose destination fails policy degrades to its literal Markdown source instead of becoming a
@@ -98,6 +102,9 @@ const convertInline = (token: Token, degraded: Degraded): MutableNode[] => {
   // Plain text runs, code spans excluded, for the raw HTML check after the loop.
   let plain = '';
   const marks: { type: string; attrs?: Record<string, unknown> }[] = [];
+  // How many nodes had been emitted when each open allowed link opened, to tell whether it held any.
+  // Kept beside the marks rather than on them, because marks are copied into the document.
+  const linkStarts: number[] = [];
   const push = (
     text: string,
     withMarks: readonly { type: string; attrs?: Record<string, unknown> }[] = marks,
@@ -133,7 +140,10 @@ const convertInline = (token: Token, degraded: Degraded): MutableNode[] => {
       case 'link_open': {
         const href = child.attrGet('href');
         if (isAllowedHref(href)) {
+          // The link mark holds a destination only, so a title the author wrote is not stored.
+          if ((child.attrGet('title') ?? '') !== '') degraded.add('link_title');
           marks.push({ type: 'link', attrs: { href } });
+          linkStarts.push(out.length);
           break;
         }
         // Reported when met, not when its text is: a link with no label has none.
@@ -147,6 +157,8 @@ const convertInline = (token: Token, degraded: Degraded): MutableNode[] => {
         if (closed?.type === REJECTED_LINK && closed.attrs?.['emittedAt'] === out.length) {
           push(`[](${String(closed.attrs['href'] ?? '')})`);
         }
+        // An allowed link with no label has no text for its mark, so it is not stored at all.
+        if (closed?.type === 'link' && linkStarts.pop() === out.length) degraded.add('empty_link');
         break;
       }
       case 'softbreak':
@@ -179,6 +191,8 @@ const convertInline = (token: Token, degraded: Degraded): MutableNode[] => {
   }
 
   if (containsRawHtml(plain, token.content)) degraded.add('raw_html');
+  // A GFM footnote reference or definition, `[^1]`, as text outside code and written unescaped.
+  if (FOOTNOTE.test(plain) && UNESCAPED_FOOTNOTE.test(token.content)) degraded.add('footnote');
 
   return out.map((node) => {
     if (node.type !== 'text' || node.marks === undefined) return node;

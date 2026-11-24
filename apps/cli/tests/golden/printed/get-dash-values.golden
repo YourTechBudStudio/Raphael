@@ -1,0 +1,20 @@
+==== exit ====
+0
+==== stdout ====
+area 4: Platform
+  path:        /work/platform
+  slug:        platform
+  parent:      1
+  revision:    3
+  updated:     2026-10-19T10:42:07.123Z
+  active:      -
+  archived:    no
+  favorite:    no
+  tags:        "-"
+  description: "-"
+  metadata:    {}
+
+# Heading
+
+Some text.
+==== stderr ====

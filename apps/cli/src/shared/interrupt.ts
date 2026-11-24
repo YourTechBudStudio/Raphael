@@ -63,6 +63,10 @@ export const watchSignals = (
   };
 };
 
+/** The `Interrupted` for a wait that an aborted `watchSignals` signal ended. */
+export const interruptionOf = (signal: AbortSignal): Interrupted =>
+  new Interrupted((signal.reason as InterruptSignal | undefined) ?? 'SIGINT');
+
 /** Throw `Interrupted` if a signal has already arrived, so nothing new starts after one. */
 export const throwIfInterrupted = (interruption: Pick<Interruption, 'received'>): void => {
   const signal = interruption.received();

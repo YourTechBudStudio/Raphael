@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--limit must be a whole number between 1 and 500.
+hint: Run "raphael list --help" for usage.

@@ -6,7 +6,7 @@
  * interrupted. Destroying the stream is what releases the loop; a paused one would hold it forever.
  */
 
-import { Interrupted, type InterruptSignal } from './interrupt.ts';
+import { Interrupted, interruptionOf } from './interrupt.ts';
 
 export const readStandardInput = async (options: {
   readonly limit: number;
@@ -20,7 +20,7 @@ export const readStandardInput = async (options: {
   const chunks: Buffer[] = [];
   let total = 0;
   const interrupted = (): Interrupted =>
-    new Interrupted((signal?.reason as InterruptSignal | undefined) ?? 'SIGINT');
+    signal === undefined ? new Interrupted('SIGINT') : interruptionOf(signal);
   // A function, not a property test: `aborted` flips while this code is suspended.
   const aborted = (): boolean => signal?.aborted === true;
   if (aborted()) throw interrupted();

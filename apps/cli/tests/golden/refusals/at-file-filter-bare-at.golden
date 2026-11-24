@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--filter @ needs a file name after the @, as in --filter @filter.json.
+hint: Run "raphael list --help" for usage.

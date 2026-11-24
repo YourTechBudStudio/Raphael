@@ -2,6 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
---title must not be empty.
+--title: A title is required.
 The change was not sent.
 hint: Run "raphael create --help" for usage.

@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+get does not take --body.
+hint: Run "raphael update --help" for that option.

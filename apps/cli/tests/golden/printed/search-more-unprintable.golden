@@ -5,4 +5,5 @@
 12   project        active  /work/platform/raphael                  Raphael
 305  resource.note  -       /work/platform/raphael/output-contract  Output contract  archived
 ==== stderr ====
-Showing 1-3. More: run the same command with --skip 50.
+Showing 1-3.
+hint: Run the same command with --skip 50 for the next page.

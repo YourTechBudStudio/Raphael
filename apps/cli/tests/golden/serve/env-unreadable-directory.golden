@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+Cannot read "<tmp>/.env": it is a directory. Raphael will not start while a .env it cannot read is present.
+hint: Remove the directory "<tmp>/.env", or replace it with a .env file.

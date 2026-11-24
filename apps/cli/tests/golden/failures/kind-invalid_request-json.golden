@@ -1,5 +1,0 @@
-==== exit ====
-2
-==== stdout ====
-==== stderr ====
-{"ok":false,"command":"create","error":{"code":"usage","category":"usage","message":"--title must not be empty.","hint":"Run \"raphael create --help\" for usage.","exitCode":2,"applied":false,"retryable":false}}

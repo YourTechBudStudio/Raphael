@@ -2,6 +2,7 @@
 5
 ==== stdout ====
 ==== stderr ====
-The server at <endpoint> rejected the API key. Nothing was saved.
+The server at <endpoint> rejected the API key.
+Nothing was saved.
 hint: Run "raphael login <endpoint>" again with the server's RAPHAEL_SERVER_API_KEY, from its environment or .env. It is compared exactly.
 code: unauthorized (401)

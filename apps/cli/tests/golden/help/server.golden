@@ -5,11 +5,11 @@ Usage: raphael server <subcommand> [options]
 
 Manage the server on this machine.
 
-Use server serve to run the server.
+Use `raphael server serve` to run the server.
 
 Options:
   -h, --help
-      Show help.
+          Show help.
 
 Examples:
   raphael server serve --help

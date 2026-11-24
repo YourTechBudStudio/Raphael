@@ -58,6 +58,7 @@ const RUNTIME = [
   'API_KEY_VARIABLE',
   'ApiCredential',
   'CONFIG_DEFAULTS',
+  'CONFIGURED_PORT_RANGE',
   'ConfigurationError',
   'consoleLogger',
   'loadConfiguration',

@@ -148,8 +148,15 @@ export const authorizationHeaderValue = (key: string): string => `${AUTHORIZATIO
 export const hasApiKey = (key: string): boolean => key !== '';
 
 /**
- * Whether a key can travel in the authorization header and arrive as typed: one or more visible ASCII
- * characters, with no whitespace anywhere.
+ * The longest key a client sends. Generated keys (`openssl rand -hex 32`) are 64 characters; the bound
+ * keeps a mistaken paste, such as a whole file, from being accepted as a key and sent with every
+ * request.
+ */
+export const API_KEY_MAX_LENGTH = 512;
+
+/**
+ * Whether a key can travel in the authorization header and arrive as typed: 1 to
+ * `API_KEY_MAX_LENGTH` visible ASCII characters, with no whitespace anywhere.
  *
  * This is about sending, not strength. `fetch` strips leading and trailing whitespace from a header
  * value and refuses characters outside Latin-1, and a Latin-1 character above U+007F arrives as a
@@ -158,10 +165,11 @@ export const hasApiKey = (key: string): boolean => key !== '';
  * failure names where the key came from instead of surfacing as a network error. Generated keys
  * (`openssl rand -hex 32`) are always inside it.
  */
-export const isSendableApiKey = (key: string): boolean => /^[\x21-\x7E]+$/u.test(key);
+export const isSendableApiKey = (key: string): boolean =>
+  key.length <= API_KEY_MAX_LENGTH && /^[\x21-\x7E]+$/u.test(key);
 
 /** `isSendableApiKey` in words, for help and refusals. */
-export const SENDABLE_API_KEY_RULE = 'visible ASCII characters with no spaces';
+export const SENDABLE_API_KEY_RULE = `1 to ${API_KEY_MAX_LENGTH} visible ASCII characters with no spaces`;
 
 export const CONNECTION_ROUTES = {
   verify: { method: 'POST', path: '/api/connection/verify' },

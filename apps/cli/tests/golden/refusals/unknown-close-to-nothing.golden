@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+"frobnicate" is not a command.
+hint: Run "raphael help" to see the commands.

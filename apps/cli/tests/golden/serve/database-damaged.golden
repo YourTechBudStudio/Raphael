@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The database at "/srv/raphael.sqlite" is damaged.
+hint: Restore it from a backup, or use another database with --database or database.path.

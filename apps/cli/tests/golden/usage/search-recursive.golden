@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+search does not take -r: it includes descendants by default.
+hint: Remove -r, or use --direct for direct children only.

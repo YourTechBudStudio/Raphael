@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--body @ needs a file name after the @, as in --body @draft.md. Use --body-literal for text beginning with @.
+The change was not sent.
+hint: Run "raphael create --help" for usage.

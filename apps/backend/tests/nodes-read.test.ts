@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
+import { asSentence, describePathRejection, parsePath } from '@raphael/contracts/nodes';
+import { Either } from 'effect';
+
 import { createNode as createNodeRaw, getNode, toPublicError } from '../src/modules/nodes/index.ts';
 import {
   clockAt,
@@ -123,7 +126,10 @@ test('a noncanonical path is an input problem rather than a missing node', () =>
     for (const path of ['/Work', '/work/', 'work', '/work//plan', '/work/../personal']) {
       const error = toPublicError(expectLeft(runNodes(connection, getNode({ target: { path } }))));
       assert.equal(error.code, 'invalid_input', path);
-      assert.equal(error.message, 'The target is not valid.');
+      // The path rule it broke, in the contract's words; never the path itself.
+      const rejection = parsePath(path);
+      assert.ok(Either.isLeft(rejection), path);
+      assert.equal(error.message, asSentence(describePathRejection(rejection.left)));
     }
   });
 });

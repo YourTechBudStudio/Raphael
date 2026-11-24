@@ -2,5 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-"not an address" is not a usable address: it has no scheme. Nothing was saved.
+"not an address" is not a usable address: it has no scheme.
+Nothing was saved.
 hint: Give the full address, such as http://127.0.0.1:3000, then run "raphael login" again.

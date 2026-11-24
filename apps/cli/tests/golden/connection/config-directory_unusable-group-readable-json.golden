@@ -1,0 +1,5 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+{"ok":false,"command":"get","error":{"code":"directory_unusable","category":"not_configured","message":"\"<tmp>/raphael\" is accessible to other users (mode 755). Raphael will not report a credential as protected when it is not.","hint":"If it is yours, run \"chmod 700 <tmp>/raphael\".","exitCode":5,"applied":false,"retryable":false}}

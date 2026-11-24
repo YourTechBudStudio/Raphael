@@ -6,17 +6,18 @@ Usage: raphael get <path> [options]
 
 Read one item and its current revision.
 
-Read one area, project, or note, including its body, tags, metadata and archive causes. Markdown export is best effort; see help content.
+Read one area, project, or note, including its body, tags, metadata and archive
+causes. Markdown export is best effort; see `raphael help content`.
 
 Options:
       --id <id>
-      Address by durable id instead of path.
+          Address by stable id instead of path.
       --return-format <format>
-      Returned body: markdown or tiptap. Requires --json. Default: markdown.
+          Returned body: markdown or tiptap. Requires --json. Default: markdown.
       --json
-      Print one JSON result.
+          Print the result as one JSON document.
   -h, --help
-      Show this help.
+          Show help.
 
 Examples:
   raphael get /work/raphael/api-design
@@ -24,7 +25,8 @@ Examples:
   raphael get --id 42 --return-format tiptap --json
 
 Prints:
-  Every field, including path, revision and update time, then the body. JSON carries `entity`.
+  Every field, including path, revision and update time, then the body. JSON
+  carries `entity`.
 
 Next: raphael update --id 42 --title "Reviewed design"
 

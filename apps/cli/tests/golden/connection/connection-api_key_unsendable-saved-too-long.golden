@@ -1,0 +1,6 @@
+==== exit ====
+5
+==== stdout ====
+==== stderr ====
+The API key saved in <tmp>/raphael/config.json cannot be sent: a key must be 1 to 512 visible ASCII characters with no spaces.
+hint: Run "raphael login" again with the server's RAPHAEL_SERVER_API_KEY.

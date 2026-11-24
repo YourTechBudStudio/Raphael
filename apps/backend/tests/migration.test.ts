@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
-import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, test } from 'node:test';
 
 import { createEmptyDocument } from '@raphael/content';
+import Database from 'better-sqlite3';
 
 import { openDatabase } from '../src/infrastructure/database/connection.ts';
 import {
+  ForeignDatabaseError,
   MigrationHistoryError,
   migrateToLatest,
   migrationsFolder,
@@ -268,6 +270,48 @@ describe('migration history guard', () => {
       assert.equal(count(connection.db, 'SELECT count(*) AS c FROM nodes'), 2);
     } finally {
       connection.close();
+      temp.cleanup();
+    }
+  });
+});
+
+describe("another application's database", () => {
+  test('is refused before anything is written, and left byte for byte as it was', () => {
+    const temp = tempDatabase('foreign');
+    try {
+      const other = new Database(temp.file);
+      other.exec(
+        'CREATE TABLE invoices (id INTEGER, amount INTEGER); INSERT INTO invoices VALUES (1, 100);',
+      );
+      other.close();
+      const before = readFileSync(temp.file);
+      assert.throws(
+        () => openDatabase({ databasePath: temp.file }),
+        (error) =>
+          error instanceof ForeignDatabaseError && /not a Raphael database/u.test(error.message),
+      );
+      assert.deepEqual(readFileSync(temp.file), before);
+      assert.deepEqual(
+        readdirSync(temp.dir),
+        ['raphael.db'],
+        'no journal, WAL or shared-memory file',
+      );
+    } finally {
+      temp.cleanup();
+    }
+  });
+
+  test('an empty file is still opened and migrated', () => {
+    const temp = tempDatabase('empty-file');
+    try {
+      writeFileSync(temp.file, '');
+      const connection = openMigrated(temp.file);
+      try {
+        assert.equal(count(connection.db, 'SELECT count(*) AS c FROM nodes'), 2);
+      } finally {
+        connection.close();
+      }
+    } finally {
       temp.cleanup();
     }
   });

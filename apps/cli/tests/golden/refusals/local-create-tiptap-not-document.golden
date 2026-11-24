@@ -1,0 +1,7 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--body must be a TipTap document object with type doc and optional array content.
+The change was not sent.
+hint: Run "raphael help content" for the elements Raphael accepts.

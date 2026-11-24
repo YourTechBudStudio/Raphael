@@ -2,5 +2,6 @@
 2
 ==== stdout ====
 ==== stderr ====
-That address is not usable: it includes a query string. Nothing was saved.
+That address is not usable: it includes a query string.
+Nothing was saved.
 hint: Remove the part of the address after "?", then run "raphael login" again.

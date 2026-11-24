@@ -1,0 +1,20 @@
+==== exit ====
+0
+==== stdout ====
+area 4: Platform
+  path:        /work/platform
+  slug:        platform
+  parent:      1
+  revision:    3
+  updated:     2026-10-19T10:42:07.123Z
+  active:      -
+  archived:    no
+  favorite:    no
+  tags:        "tab\\u0009x", "tab\tx", "back\\slash", "\"q\"", plain
+  description: "Ends a\u2028line, and \\u0009 is text"
+  metadata:    {}
+
+# Heading
+
+Some text.
+==== stderr ====

@@ -1,0 +1,5 @@
+==== exit ====
+0
+==== stdout ====
+{"ok":true,"command":"login","endpoint":"<endpoint>","protocolVersion":"2026-10-23","configFile":"<tmp>/raphael/config.json","replaced":null,"warnings":[{"code":"environment_overrides","message":"RAPHAEL_API_KEY is set without RAPHAEL_ENDPOINT, so remote commands here refuse to run until you unset it or set both."}]}
+==== stderr ====

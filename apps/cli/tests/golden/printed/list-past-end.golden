@@ -2,4 +2,5 @@
 0
 ==== stdout ====
 ==== stderr ====
-Nothing at --skip 100. Start again: raphael list /work
+Nothing at --skip 100.
+hint: Run "raphael list /work" to start again.

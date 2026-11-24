@@ -1,0 +1,5 @@
+==== exit ====
+0
+==== stdout ====
+{"ok":true,"command":"update","entity":{"id":305,"type":"resource","kind":"note","parentId":1,"slug":"contract","revision":2,"title":"Item 305","description":"","tags":[],"active":false,"archived":false,"isFavorite":false,"updatedAt":"2026-10-19T10:42:07.123Z","path":"/work/platform/raphael/contract","body":{"format":"markdown","value":"# Heading\n\nSome text."},"metadata":{},"archiveCauses":[]},"changed":true,"previousPath":"/work/platform/raphael/output-contract"}
+==== stderr ====

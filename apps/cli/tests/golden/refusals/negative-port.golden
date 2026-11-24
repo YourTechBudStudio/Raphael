@@ -1,0 +1,6 @@
+==== exit ====
+2
+==== stdout ====
+==== stderr ====
+--port must be a whole number between 1 and 65535.
+hint: Run "raphael server serve --help" for usage.

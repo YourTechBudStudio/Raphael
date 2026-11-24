@@ -1,5 +1,5 @@
 ==== exit ====
 0
 ==== stdout ====
-{"ok":true,"command":"status","connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"},"protocolVersion":"2026-10-23","serverVersion":"9.9.9","cliVersion":"<version>","warnings":[{"code":"version_skew","message":"The server runs raphael 9.9.9 and this CLI is 0.0.1. They speak the same protocol, so commands work; update one side to match."}]}
+{"ok":true,"command":"status","connection":{"endpoint":"http://raphael.invalid","source":"saved_login","configFile":"/stub/raphael/config.json"},"protocolVersion":"2026-10-23","serverVersion":"9.9.9","cliVersion":"<version>","warnings":[{"code":"version_skew","message":"The server runs Raphael 9.9.9 and this CLI is 0.0.1. They speak the same protocol, so commands work; update one side to match."}]}
 ==== stderr ====
