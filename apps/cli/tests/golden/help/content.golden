@@ -52,7 +52,11 @@ sent as Markdown it is refused. To keep JSON as note text, put it in a fenced
 code block. Markdown output is a best-effort export of the stored document; use
 `--json --return-format tiptap` to read its structured body. --return-format
 requires --json; it controls the response, while --body-format controls
-submitted content.
+submitted content. In JSON, an item's `body` is {format, value}: value is the
+Markdown string, or with tiptap the document object, which
+`--body-format tiptap` accepts back unchanged. To edit part of a body without
+the Markdown export altering the rest, read it as tiptap, change `body.value`,
+and send that document back with --revision.
 
 Examples:
   raphael create resource.note /work/idea --body '# An idea'

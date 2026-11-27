@@ -21,6 +21,7 @@ Raphael is a second brain for agents. It combines PARA and CODE to organize info
   - `docs/adrs/README.md` (use it as an index; read only ADRs relevant to the task)
   - Additionally, make sure to read any relevant engineering guidance files before starting to code.
 - Never hard-wrap prose in Markdown files. Keep each paragraph and list item on one source line.
+- When a change adds or alters a CLI capability or a concept agents reason about, update the `raphael-docs` skill in `apps/cli/skill/` as [ADR 0010](docs/adrs/0010-agent-skill-scope.md) describes.
 - After code changes, run `pnpm check`. Each package has its own `check` command. Use `pnpm fix` to fix formatting issues.
 - Never start persistent processes such as servers, `pnpm run dev`, or `pnpm run start`. Instead, suggest that the user run those commands. Finite automated tests and probes may start temporary listeners they own, and must tear them down before finishing.
 - Do not run state-changing Git commands unless the user explicitly asks. Read-only Git commands such as diffs, status, and commit history are allowed.
